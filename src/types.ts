@@ -1,0 +1,14 @@
+export type FieldType = "string" | "number" | "boolean" | "date" | "datetime" | "enum" | "array" | "object";
+export type FieldDefinition = { name: string; type: FieldType; required?: boolean; enumValues?: string[]; default?: unknown; description?: string };
+export type StoreSchema = { version: number; fields: FieldDefinition[] };
+export type Project = { id: string; name: string; description?: string; createdAt: string; updatedAt: string; archivedAt?: string };
+export type Store = { id: string; projectId: string; name: string; description?: string; schema: StoreSchema; createdAt: string; updatedAt: string; archivedAt?: string };
+export type RecordData = Record<string, unknown>;
+export type AtlasRecord = { id: string; projectId: string; storeId: string; data: RecordData; createdAt: string; updatedAt: string; archivedAt?: string };
+export type AuditOperation = "project.created" | "project.updated" | "project.archived" | "store.created" | "store.updated" | "store.schema_updated" | "store.archived" | "record.created" | "record.updated" | "record.archived";
+export type AuditEvent = { id: string; occurredAt: string; client: string; operation: AuditOperation; projectId: string; storeId?: string; recordId?: string; previous?: unknown; resulting?: unknown };
+export type AtlasData = { schemaVersion: 1; projects: Project[]; stores: Store[]; records: AtlasRecord[]; auditEvents: AuditEvent[] };
+export type FilterOperator = "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in" | "contains";
+export type RecordFilter = { field: string; operator: FilterOperator; value: unknown };
+export type SortSpec = { field: string; direction?: "asc" | "desc" };
+export type Page<T> = { items: T[]; total: number; limit: number; offset: number };
