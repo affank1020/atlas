@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { AtlasStore } from "./store.js";
+import type { AtlasRepository } from "./store.js";
 import type { AtlasData, AtlasRecord, AuditEvent, AuditOperation, FieldDefinition, Page, Project, RecordData, RecordFilter, SortSpec, Store } from "./types.js";
 
 export class AtlasError extends Error { constructor(message: string, readonly code = "INVALID_REQUEST") { super(message); } }
@@ -9,9 +9,9 @@ const active = <T extends { archivedAt?: string }>(items: T[], includeArchived =
 const cleanText = (value: string, label: string) => { const result = value.trim(); if (!result) throw new AtlasError(`${label} cannot be empty.`); return result; };
 
 export class AtlasCatalog {
-    constructor(readonly store: AtlasStore) {}
+    constructor(readonly store: AtlasRepository) {}
 
-    async status() { const data = await this.store.snapshot(); return { product: "Atlas", version: "2.0.0", storage: "atomic-json", schemaVersion: data.schemaVersion, projects: active(data.projects).length, stores: active(data.stores).length, records: active(data.records).length }; }
+    async status() { const data = await this.store.snapshot(); return { product: "Atlas", version: "2.0.0", storage: "postgresql", schemaVersion: data.schemaVersion, projects: active(data.projects).length, stores: active(data.stores).length, records: active(data.records).length }; }
     async listProjects(includeArchived = false) { return active((await this.store.snapshot()).projects, includeArchived); }
     async getProject(id: string, includeArchived = false) { return this.requireProject(await this.store.snapshot(), id, includeArchived); }
     async createProject(input: { name: string; description?: string } & Client) {
@@ -47,9 +47,8 @@ export class AtlasCatalog {
         return this.store.transaction((state) => { const store = this.requireStore(state, input.projectId, input.storeId); const results: AtlasRecord[] = []; for (const operation of input.operations) { if (operation.action === "create") { const stamp = now(); const record: AtlasRecord = { id: randomUUID(), projectId: input.projectId, storeId: input.storeId, data: this.validateRecord(store.schema.fields, operation.data), createdAt: stamp, updatedAt: stamp }; state.records.push(record); this.audit(state, "record.created", input.client, input.projectId, input.storeId, record.id, undefined, record); results.push(record); } else { const record = this.requireRecord(state, input.projectId, input.storeId, operation.recordId); const before = structuredClone(record); if (operation.action === "update") { record.data = this.validateRecord(store.schema.fields, operation.replace ? operation.data : { ...record.data, ...operation.data }); record.updatedAt = now(); this.audit(state, "record.updated", input.client, input.projectId, input.storeId, record.id, before, record); } else { record.archivedAt = now(); record.updatedAt = record.archivedAt; this.audit(state, "record.archived", input.client, input.projectId, input.storeId, record.id, before, record); } results.push(record); } } return { results }; });
     }
     async queryRecords(input: { projectId: string; storeId: string; filters?: RecordFilter[]; sort?: SortSpec[]; limit?: number; offset?: number; includeArchived?: boolean }): Promise<Page<AtlasRecord>> {
-        const data = await this.store.snapshot(); const store = this.requireStore(data, input.projectId, input.storeId, input.includeArchived); const known = new Set(store.schema.fields.map((x) => x.name)); for (const filter of input.filters ?? []) if (!known.has(filter.field)) throw new AtlasError(`Unknown filter field '${filter.field}' for store '${store.name}'.`); for (const sort of input.sort ?? []) if (!known.has(sort.field) && !["createdAt", "updatedAt"].includes(sort.field)) throw new AtlasError(`Unknown sort field '${sort.field}' for store '${store.name}'.`);
-        let items = active(data.records.filter((x) => x.projectId === input.projectId && x.storeId === input.storeId), input.includeArchived).filter((record) => (input.filters ?? []).every((filter) => this.matches(record.data[filter.field], filter)));
-        items.sort((a, b) => { for (const spec of input.sort ?? [{ field: "createdAt", direction: "asc" as const }]) { const av = spec.field in a ? (a as unknown as Record<string, unknown>)[spec.field] : a.data[spec.field]; const bv = spec.field in b ? (b as unknown as Record<string, unknown>)[spec.field] : b.data[spec.field]; const order = this.compare(av, bv); if (order) return spec.direction === "desc" ? -order : order; } return a.id.localeCompare(b.id); }); const total = items.length; const limit = Math.min(Math.max(input.limit ?? 50, 1), 100); const offset = Math.max(input.offset ?? 0, 0); return { items: items.slice(offset, offset + limit), total, limit, offset };
+        const data = await this.store.snapshot(); const store = this.requireStore(data, input.projectId, input.storeId, input.includeArchived); const known = new Set(store.schema.fields.map((x) => x.name)); for (const filter of input.filters ?? []) { if (!known.has(filter.field)) throw new AtlasError(`Unknown filter field '${filter.field}' for store '${store.name}'.`); if(filter.operator==="in"&&!Array.isArray(filter.value)) throw new AtlasError(`Filter 'in' for '${filter.field}' requires an array value.`); } for (const sort of input.sort ?? []) if (!known.has(sort.field) && !["createdAt", "updatedAt"].includes(sort.field)) throw new AtlasError(`Unknown sort field '${sort.field}' for store '${store.name}'.`);
+        return this.store.queryRecords(store,input);
     }
     async auditHistory(input: { projectId?: string; storeId?: string; recordId?: string; operation?: AuditOperation; limit?: number }) { const data = await this.store.snapshot(); const limit = Math.min(Math.max(input.limit ?? 50, 1), 200); return data.auditEvents.filter((x) => (!input.projectId || x.projectId === input.projectId) && (!input.storeId || x.storeId === input.storeId) && (!input.recordId || x.recordId === input.recordId) && (!input.operation || x.operation === input.operation)).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).slice(0, limit); }
 

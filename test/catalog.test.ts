@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import test from "node:test";
-import { AtlasCatalog, AtlasError } from "../src/catalog.js";
-import { AtlasStore } from "../src/store.js";
+import test, { after } from "node:test";
+import { AtlasError } from "../src/catalog.js";
+import { cleanupDatabases, databaseFixture } from "./database.js";
 
-async function fixture() { const directory = await mkdtemp(path.join(os.tmpdir(), "atlas-")); const file = path.join(directory, "data.json"); return { file, catalog: new AtlasCatalog(new AtlasStore(file)) }; }
+const fixture = databaseFixture;
+after(cleanupDatabases);
 const fields = [
     { name: "company", type: "string" as const, required: true },
     { name: "status", type: "enum" as const, enumValues: ["pending", "submitted", "rejected"], default: "pending" },
@@ -14,7 +12,7 @@ const fields = [
 ];
 
 test("structured lifecycle preserves IDs, validates, queries, audits, and persists", async () => {
-    const { file, catalog } = await fixture();
+    const { catalog, store: repository } = await fixture();
     const project = await catalog.createProject({ name: "Launchpad", client: "test" });
     const store = await catalog.createStore({ projectId: project.id, name: "Graduate Applications", fields, client: "test" });
     const lseg = await catalog.createRecord({ projectId: project.id, storeId: store.id, data: { company: "LSEG", score: 8 }, client: "test" });
@@ -24,7 +22,8 @@ test("structured lifecycle preserves IDs, validates, queries, audits, and persis
     assert.equal(updated.id, lseg.id); assert.equal(updated.data.company, "LSEG");
     await assert.rejects(() => catalog.createRecord({ projectId: project.id, storeId: store.id, data: { company: "Bad", status: "unknown" }, client: "test" }), AtlasError);
     const audit = await catalog.auditHistory({ recordId: lseg.id }); assert.deepEqual(audit.map((x) => x.operation), ["record.updated", "record.created"]);
-    const reloaded = new AtlasCatalog(new AtlasStore(file)); assert.equal((await reloaded.getRecord(project.id, store.id, lseg.id)).data.status, "submitted");
+    assert.equal((await catalog.getRecord(project.id, store.id, lseg.id)).data.status, "submitted");
+    await repository.close();
 });
 
 test("schema evolution is atomic and requires explicit removal", async () => {
@@ -56,4 +55,22 @@ test("sorting, pagination, invalid IDs, and atomic bulk operations are determini
     await assert.rejects(() => catalog.getRecord(project.id, store.id, "not-an-id"), /not found/);
     await assert.rejects(() => catalog.bulkRecords({ projectId: project.id, storeId: store.id, operations: [{ action: "update", recordId: bulk.results[0]!.id, data: { score: 4 } }, { action: "create", data: { company: "Invalid", score: "bad" } }] }), /must be a valid number/);
     assert.equal((await catalog.getRecord(project.id, store.id, bulk.results[0]!.id)).data.score, 3);
+});
+
+test("all query operators preserve typed behavior and reject field injection", async () => {
+    const { catalog } = await fixture(); const project=await catalog.createProject({name:"Queries"}); const store=await catalog.createStore({projectId:project.id,name:"Items",fields:[...fields,{name:"tags",type:"array"},{name:"due",type:"date"}]});
+    await catalog.bulkRecords({projectId:project.id,storeId:store.id,operations:[
+        {action:"create",data:{company:"Alpha",score:1,status:"pending",tags:["red"],due:"2026-01-01"}},
+        {action:"create",data:{company:"Beta",score:2,status:"submitted",tags:["blue","red"],due:"2026-02-01"}},
+        {action:"create",data:{company:"Gamma",score:3,status:"rejected",tags:[],due:"2026-03-01"}},
+    ]});
+    const count=async(operator:any,value:unknown,field="score")=>(await catalog.queryRecords({projectId:project.id,storeId:store.id,filters:[{field,operator,value}]})).total;
+    assert.equal(await count("eq",2),1); assert.equal(await count("neq",2),2); assert.equal(await count("gt",1),2); assert.equal(await count("gte",2),2); assert.equal(await count("lt",3),2); assert.equal(await count("lte",2),2); assert.equal(await count("in",[1,3]),2); assert.equal(await count("contains","red","tags"),2); assert.equal(await count("gt","2026-01-15","due"),2);
+    await assert.rejects(()=>catalog.queryRecords({projectId:project.id,storeId:store.id,filters:[{field:"company') OR true --",operator:"eq",value:"Alpha"}]}),/Unknown filter field/);
+});
+
+test("failed bulk writes neither partial records nor audit events", async()=>{
+    const {catalog}=await fixture(); const project=await catalog.createProject({name:"Atomic"}); const store=await catalog.createStore({projectId:project.id,name:"Items",fields}); const before=(await catalog.auditHistory({storeId:store.id})).length;
+    await assert.rejects(()=>catalog.bulkRecords({projectId:project.id,storeId:store.id,operations:[{action:"create",data:{company:"Good"}},{action:"create",data:{company:"Bad",score:"invalid"}}],client:"rollback-test"}));
+    assert.equal((await catalog.queryRecords({projectId:project.id,storeId:store.id})).total,0); assert.equal((await catalog.auditHistory({storeId:store.id})).length,before);
 });

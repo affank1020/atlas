@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { AtlasCatalog, AtlasError } from "./catalog.js";
-import { AtlasStore } from "./store.js";
+import { AtlasStore, requireDatabaseUrl } from "./store.js";
 import { atlasStatus } from "./status.js";
 import { callAtlasTool } from "./tools.js";
 
@@ -45,9 +45,10 @@ export function createAtlasMcpServer(catalog: AtlasCatalog) {
     return server;
 }
 
-export function createAtlasHttpServer(options: { dataFile?: string } = {}) {
-    const catalog = new AtlasCatalog(new AtlasStore(options.dataFile));
-    return createServer(async (request: IncomingMessage, response: ServerResponse) => {
+export function createAtlasHttpServer(options: { databaseUrl?: string } = {}) {
+    const repository = new AtlasStore(requireDatabaseUrl(options.databaseUrl));
+    const catalog = new AtlasCatalog(repository);
+    const http = createServer(async (request: IncomingMessage, response: ServerResponse) => {
         const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-atlas-client", "access-control-allow-methods": "GET,POST,OPTIONS" };
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
         const toolMatch = request.url?.match(/^\/api\/tools\/([a-z_]+)$/);
@@ -71,9 +72,13 @@ export function createAtlasHttpServer(options: { dataFile?: string } = {}) {
         try { await server.connect(transport); await transport.handleRequest(request, response); }
         catch (error) { if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" }); if (!response.writableEnded) response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
     });
+    http.on("close", () => { void repository.close(); });
+    return http;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const host = process.env.ATLAS_HOST ?? "127.0.0.1"; const port = Number(process.env.ATLAS_PORT ?? 3000);
-    createAtlasHttpServer({ dataFile: process.env.ATLAS_DATA_FILE }).listen(port, host, () => console.log(`Atlas structured MCP listening on http://${host}:${port}/mcp`));
+    const databaseUrl=requireDatabaseUrl(); const probe=new AtlasStore(databaseUrl);
+    try { await probe.snapshot(); } catch(error) { console.error(`Atlas cannot connect to its migrated PostgreSQL database: ${error instanceof Error?error.message:String(error)}`); process.exit(1); } finally { await probe.close(); }
+    createAtlasHttpServer({ databaseUrl }).listen(port, host, () => console.log(`Atlas PostgreSQL MCP listening on http://${host}:${port}/mcp`));
 }

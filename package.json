@@ -8,17 +8,22 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build --silent && node --test dist/test/*.test.js"
+    "test": "npm run build --silent && node --test dist/test/*.test.js",
+    "db:migrate": "node scripts/db.mjs migrate",
+    "db:status": "node scripts/db.mjs status",
+    "db:import-json": "node scripts/import-json.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
+    "pg": "^8.23.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
