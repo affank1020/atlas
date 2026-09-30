@@ -1,0 +1,30 @@
+{
+  "storePolicies": [
+    {
+      "storeId": "fdc76bff-ccce-4a2f-b5b9-187aa6e5e6f8",
+      "authorityRole": "canonical",
+      "equivalenceKind": "same_fact",
+      "identityFields": ["company"],
+      "comparisonFields": ["status"],
+      "effectiveTimeFields": ["oaCompletedAt", "appliedAt"],
+      "currentField": "status",
+      "currentValues": ["active"],
+      "historicalValues": ["rejected", "withdrawn"],
+      "note": "Explicit operational application-state source policy."
+    },
+    {
+      "storeId": "d05a907e-5f78-4555-8c7e-bc468b41f5c4",
+      "authorityRole": "mirror",
+      "canonicalStoreId": "fdc76bff-ccce-4a2f-b5b9-187aa6e5e6f8",
+      "equivalenceKind": "same_fact",
+      "identityFields": ["company"],
+      "comparisonFields": ["status"],
+      "effectiveTimeFields": ["lastChecked", "openingDate"],
+      "currentField": "listingStatus",
+      "currentValues": ["open", "live"],
+      "historicalValues": ["closed", "expired"],
+      "note": "Spreadsheet-derived openings mirror; supporting discovery, not operational application state."
+    }
+  ],
+  "recordPolicies": []
+}

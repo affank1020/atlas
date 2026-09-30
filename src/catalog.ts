@@ -11,7 +11,7 @@ const cleanText = (value: string, label: string) => { const result = value.trim(
 export class AtlasCatalog {
     constructor(readonly store: AtlasRepository) {}
 
-    async status() { const data = await this.store.snapshot(); return { product: "Atlas", version: "2.0.0", storage: "postgresql", schemaVersion: data.schemaVersion, projects: active(data.projects).length, stores: active(data.stores).length, records: active(data.records).length }; }
+    async status() { const data = await this.store.snapshot(); const counts=(items:{archivedAt?:string}[])=>({active:active(items).length,archived:items.filter((item)=>!!item.archivedAt).length,total:items.length}); const projects=counts(data.projects),stores=counts(data.stores),records=counts(data.records); return { product: "Atlas", version: "2.0.0", storage: "postgresql", schemaVersion: data.schemaVersion, projects:projects.active, stores:stores.active, records:records.active, counts:{projects,stores,records} }; }
     async listProjects(includeArchived = false) { return active((await this.store.snapshot()).projects, includeArchived); }
     async getProject(id: string, includeArchived = false) { return this.requireProject(await this.store.snapshot(), id, includeArchived); }
     async createProject(input: { name: string; description?: string } & Client) {

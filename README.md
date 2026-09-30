@@ -4,6 +4,70 @@ Atlas is a local structured-data platform for intelligent clients, exposed over 
 
 Atlas deliberately does not interpret natural language. Clients decide what data means and call the explicit data tools.
 
+## Fabric Stage 1
+
+Fabric is a higher-level subsystem that consumes Atlas Core without changing Core's project/store/record model. It provides two additional MCP tools:
+
+- `search_atlas`: PostgreSQL-backed discovery across active records in all stores, optionally limited to selected projects.
+- `request_context`: a bounded, provenance-rich selection of records for another client to use as context; it does not generate an answer.
+
+`search_atlas` accepts an optional diagnostic `mode`: `lexical`, `semantic`, or `hybrid`. Hybrid is the default.
+
+Fabric creates deterministic searchable projections from arbitrary JSON record values, retaining normalized field names alongside strings, numbers, booleans, dates, arrays, nested objects, and null values. Results include canonical records, project/store provenance, scores, matching fields, snippets, reasons, ranking components, and search-scope diagnostics.
+
+`fabric_search_documents` is disposable derived state. Immediately before every Fabric request, Fabric transactionally upserts active canonical Core rows and removes documents whose records, stores, or projects are archived. This synchronous-on-read model gives Stage 1 simple, explicit consistency without making Core call Fabric. Deleting and rebuilding this table cannot damage canonical Core data.
+
+Ranking combines PostgreSQL full-text relevance, exact-phrase matching, generic substring term coverage, matching field diagnostics, and project/store metadata. There are no project- or store-specific ranking rules, embeddings, LLM calls, or inferred relationships.
+
+### Deterministic retrieval hardening
+
+Fabric maintains separate display and searchable projections. Display projections retain complete values for provenance and debugging; UUIDs, URLs, long compact machine identifiers, nulls, and empty collections do not contribute their values to ranking. Every result reports searchable fields and display-only fields with exclusion reasons.
+
+Terms of two characters or fewer use token-boundary matching instead of unrestricted substring matching. Ranking has explicit stable project/store/record ID tie-breakers, so identical data and queries produce identical ordering.
+
+Context assembly applies a deterministic evidence floor and may return fewer than `maxRecords`. It also compares projected value-token overlap conservatively, retaining the richer record when two selections are clear near-duplicates. Context diagnostics report relevance-floor rejections and every diversification decision. These rules remain generic: no project, store, schema, or domain names are special-cased.
+
+### Semantic and hybrid retrieval
+
+Stage 2 adds a vendor-neutral `EmbeddingProvider` boundary. The default provider uses the local Ollama API with `nomic-embed-text`; configure it with `FABRIC_EMBEDDING_MODEL` and `OLLAMA_URL`. No paid API or external vector database is used.
+
+`fabric_semantic_documents` stores disposable embeddings of the existing safe searchable projection as PostgreSQL `double precision[]` values. UUIDs, URLs, opaque identifiers, nulls, and empty collections therefore reach neither lexical ranking nor embeddings. PostgreSQL calculates cosine similarity through `fabric_cosine_similarity`. Active semantic candidates require raw cosine similarity of at least `0.35`.
+
+On each semantic or hybrid read, Fabric synchronizes lexical projections, embeds only missing or changed semantic documents, removes archived documents, and stores the model name, source text, dimension, source timestamp, and vector. `FabricSearchService.rebuildSemanticIndex()` truncates this derived table; the next search recreates it from canonical Core data.
+
+Hybrid ranking uses deterministic weighted reciprocal ranks:
+
+```text
+lexical contribution = lexical match ? 0.45 / lexical rank : 0
+semantic contribution = semantic match ? 0.55 / semantic rank : 0
+hybrid score = lexical contribution + semantic contribution
+```
+
+Ties resolve by semantic score, lexical normalized score, project ID, store ID, then record ID. Diagnostics expose both ranks and contributions, raw lexical score, cosine similarity, normalized semantic score, retrieval sources, model, candidate counts, and provider status.
+
+If Ollama is unavailable, hybrid search falls back to the frozen lexical channel and reports `semanticStatus: "unavailable"`; semantic-only mode returns no results with the same diagnostic. Core reads and writes remain independent and operational.
+
+### Deterministic authority policy
+
+Fabric applies an explicit authority pass to context candidates after retrieval and the relevance floor, but before diversification. It does not change lexical, semantic, or hybrid candidate scoring. `search_atlas` therefore keeps the Stage 2 ordering contract; `request_context` may suppress a lower-authority equivalent and explains every decision in diagnostics.
+
+Policy is persisted separately from canonical Core data:
+
+- `fabric_store_authority_policies` declares a store's role, optional canonical store, equivalence kind, identity and comparison fields, semantic effective-time fields, and explicit current/historical markers.
+- `fabric_record_authority_policies` provides sparse record-level overrides, explicit effective time, and explicit supersession links.
+
+Equivalence is opt-in and deterministic. Only stores with compatible policy and the same normalized values for all configured identity fields enter a group. `same_entity` links records about one entity without assuming that every field states the same fact. `same_fact` additionally permits explicitly configured comparison fields to produce contradiction diagnostics. Unconfigured records are never equated by fuzzy similarity, names, timestamps, or retrieval proximity.
+
+Preference is lexicographic and evidence-based: explicit supersession, authority role (`canonical`, `primary`, `unknown`, `supporting`, `mirror`/`derived`, `historical`), explicit currentness, then semantic effective time. Fabric never treats database `updated_at` as domain currentness. Equal evidence remains unresolved: conflicting records are preserved and flagged instead of receiving an invented winner. If the policy subsystem fails, context assembly fails open and reports `authorityStatus: "unavailable"`; Core remains independent.
+
+The repository includes an explicit policy example in `config/fabric-authority.json`. Apply it after migrations with:
+
+```bash
+npm run fabric:configure-authority
+```
+
+The Observatory Context view renders equivalence groups, preferred and suppressed records, contradiction status, rationale, and temporal evidence.
+
 ## Data model
 
 ```text
@@ -87,7 +151,7 @@ No model server, embedding service, vector database, Ollama installation, or sem
 
 ## Health check
 
-`GET /health` returns the version, storage format, and active project/store/record counts. All MCP traffic uses `POST /mcp`.
+`GET /health` returns the version, storage format, and active project/store/record counts. Its legacy top-level `projects`, `stores`, and `records` fields intentionally mean active entities. The additive `counts` object reports `{ active, archived, total }` for each canonical entity type; Fabric-derived documents are never included. All MCP traffic uses `POST /mcp`.
 
 ## Observatory compatibility
 

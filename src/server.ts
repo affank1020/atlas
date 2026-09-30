@@ -7,6 +7,7 @@ import { AtlasCatalog, AtlasError } from "./catalog.js";
 import { AtlasStore, requireDatabaseUrl } from "./store.js";
 import { atlasStatus } from "./status.js";
 import { callAtlasTool } from "./tools.js";
+import { createFabric, type FabricServices } from "./fabric/index.js";
 
 const field = z.object({ name: z.string(), type: z.enum(["string", "number", "boolean", "date", "datetime", "enum", "array", "object"]), required: z.boolean().optional(), enumValues: z.array(z.string()).optional(), default: z.unknown().optional(), description: z.string().optional() });
 const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
@@ -14,7 +15,7 @@ const client = { client: z.string().optional() };
 const include = { includeArchived: z.boolean().optional() };
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 
-export function createAtlasMcpServer(catalog: AtlasCatalog) {
+export function createAtlasMcpServer(catalog: AtlasCatalog, fabric:FabricServices) {
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
     const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>, handler: (input: any) => Promise<unknown>) => server.registerTool(name, { description, inputSchema }, async (input) => { try { return result(await handler(input)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
 
@@ -42,12 +43,15 @@ export function createAtlasMcpServer(catalog: AtlasCatalog) {
     const auditInput = { projectId: z.string().uuid().optional(), storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), operation: z.enum(["project.created", "project.updated", "project.archived", "store.created", "store.updated", "store.schema_updated", "store.archived", "record.created", "record.updated", "record.archived"]).optional(), limit: z.number().int().min(1).max(200).optional() };
     tool("get_audit_history", "Read immutable audit history filtered by ownership or operation.", auditInput, (x) => catalog.auditHistory(x));
     tool("get_recent_activity", "Read recent mutations across Atlas or within a project/store/record.", auditInput, (x) => catalog.auditHistory(x));
+    tool("search_atlas","Search active records across arbitrary Atlas projects and stores through Fabric.",{query:z.string().min(1),projectIds:z.array(z.string().uuid()).optional(),limit:z.number().int().min(1).max(100).optional(),mode:z.enum(["lexical","semantic","hybrid"]).optional()},(x)=>fabric.search.search(x));
+    tool("request_context","Retrieve a bounded, provenance-rich Atlas context pack without generating an answer.",{query:z.string().min(1),projectIds:z.array(z.string().uuid()).optional(),maxRecords:z.number().int().min(1).max(50).optional()},(x)=>fabric.context.request(x));
     return server;
 }
 
 export function createAtlasHttpServer(options: { databaseUrl?: string } = {}) {
     const repository = new AtlasStore(requireDatabaseUrl(options.databaseUrl));
     const catalog = new AtlasCatalog(repository);
+    const fabric=createFabric(requireDatabaseUrl(options.databaseUrl));
     const http = createServer(async (request: IncomingMessage, response: ServerResponse) => {
         const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-atlas-client", "access-control-allow-methods": "GET,POST,OPTIONS" };
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
@@ -57,7 +61,7 @@ export function createAtlasHttpServer(options: { databaseUrl?: string } = {}) {
                 const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
                 const input = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
                 if (!input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
-                const value = await callAtlasTool(catalog, toolMatch[1], input);
+                const value = toolMatch[1]==="search_atlas"?await fabric.search.search(input):toolMatch[1]==="request_context"?await fabric.context.request(input):await callAtlasTool(catalog, toolMatch[1], input);
                 response.writeHead(200, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify(value));
             } catch (error) {
                 const known = error instanceof AtlasError; response.writeHead(known && error.code === "NOT_FOUND" ? 404 : 400, { ...cors, "content-type": "application/json" });
@@ -67,12 +71,12 @@ export function createAtlasHttpServer(options: { databaseUrl?: string } = {}) {
         }
         if (request.method === "GET" && request.url === "/health") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(await catalog.status())); return; }
         if (request.method !== "POST" || request.url !== "/mcp") { response.writeHead(404, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Not found" })); return; }
-        const server = createAtlasMcpServer(catalog); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        const server = createAtlasMcpServer(catalog,fabric); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         response.on("close", () => { void transport.close(); void server.close(); });
         try { await server.connect(transport); await transport.handleRequest(request, response); }
         catch (error) { if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" }); if (!response.writableEnded) response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
     });
-    http.on("close", () => { void repository.close(); });
+    http.on("close", () => { void repository.close(); void fabric.repository.close(); });
     return http;
 }
 

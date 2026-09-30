@@ -11,7 +11,8 @@
     "test": "npm run build --silent && node --test dist/test/*.test.js",
     "db:migrate": "node scripts/db.mjs migrate",
     "db:status": "node scripts/db.mjs status",
-    "db:import-json": "node scripts/import-json.mjs"
+    "db:import-json": "node scripts/import-json.mjs",
+    "fabric:configure-authority": "node scripts/configure-authority.mjs"
   },
   "engines": {
     "node": ">=20"

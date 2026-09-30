@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile,readdir } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import { AtlasCatalog } from "../src/catalog.js";
@@ -12,9 +12,8 @@ export async function databaseFixture() {
     const schema = `atlas_test_${randomUUID().replaceAll("-", "")}`; schemas.push(schema);
     const admin = new Pool({ connectionString: baseUrl });
     await admin.query(`CREATE SCHEMA ${schema}`);
-    const sql = await readFile(path.join(process.cwd(), "migrations", "001_initial.sql"), "utf8");
     const client = await admin.connect();
-    try { await client.query(`SET search_path TO ${schema}`); await client.query(sql); } finally { client.release(); await admin.end(); }
+    try { await client.query(`SET search_path TO ${schema},public`); for(const file of (await readdir(path.join(process.cwd(),"migrations"))).filter((x)=>x.endsWith(".sql")).sort()) await client.query(await readFile(path.join(process.cwd(),"migrations",file),"utf8")); } finally { client.release(); await admin.end(); }
     const url = new URL(baseUrl); url.searchParams.set("options", `-csearch_path=${schema}`);
     const store = new AtlasStore(url.toString()); stores.push(store);
     return { catalog: new AtlasCatalog(store), store, databaseUrl: url.toString() };

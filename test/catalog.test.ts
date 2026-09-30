@@ -48,6 +48,8 @@ test("project and store updates and archives obey active visibility", async () =
     await catalog.archiveProject(project.id); assert.equal((await catalog.listProjects()).length, 0); assert.equal((await catalog.listProjects(true)).length, 1);
 });
 
+test("status distinguishes active, archived, and total canonical counts",async()=>{const {catalog}=await fixture();const project=await catalog.createProject({name:"Counts"});const store=await catalog.createStore({projectId:project.id,name:"Records",fields});const first=await catalog.createRecord({projectId:project.id,storeId:store.id,data:{company:"Active"}});const second=await catalog.createRecord({projectId:project.id,storeId:store.id,data:{company:"Archived"}});await catalog.archiveRecord(project.id,store.id,second.id);const status=await catalog.status();assert.equal(status.records,1);assert.deepEqual(status.counts.records,{active:1,archived:1,total:2});assert.equal((await catalog.getRecord(project.id,store.id,first.id)).id,first.id);});
+
 test("sorting, pagination, invalid IDs, and atomic bulk operations are deterministic", async () => {
     const { catalog } = await fixture(); const project = await catalog.createProject({ name: "P" }); const store = await catalog.createStore({ projectId: project.id, name: "S", fields });
     const bulk = await catalog.bulkRecords({ projectId: project.id, storeId: store.id, operations: [{ action: "create", data: { company: "C", score: 3 } }, { action: "create", data: { company: "A", score: 1 } }, { action: "create", data: { company: "B", score: 2 } }] }); assert.equal(bulk.results.length, 3);
