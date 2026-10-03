@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 const client=new Client({name:"atlas-live-verifier",version:"2"}); await client.connect(new StreamableHTTPClientTransport(new URL(process.env.ATLAS_URL??"http://127.0.0.1:3000/mcp")));
@@ -11,3 +12,4 @@ const updated=await call("update_record",{projectId:project.id,storeId:store.id,
 const before=(await call("list_records",{projectId:project.id,storeId:store.id})).total; let invalidBulkRejected=false; try{await call("bulk_records",{projectId:project.id,storeId:store.id,operations:[{action:"create",data:{company:"Would Roll Back",role:"Temporary",status:"active",stage:"verification",appliedAt:"2026-09-29",oaStatus:"pending"}},{action:"create",data:{company:"Invalid"}}]});}catch{invalidBulkRejected=true;} const after=(await call("list_records",{projectId:project.id,storeId:store.id})).total;
 await call("archive_record",{projectId:project.id,storeId:store.id,recordId:temporary.id,client:"postgres-live-verifier"});
 console.log(JSON.stringify({project:project.name,store:store.name,lseg:{id:lseg.id,oaStatus:lseg.data.oaStatus,auditEvents:lsegAudit.length},macquarie:{id:macquarie.id},query:{total:records.total,first:records.items[0]?.data.company},temporary:{stableId:temporary.id===updated.id,auditEvents:temporaryAudit.length,archived:true},invalidBulk:{rejected:invalidBulkRejected,noPartialCommit:before===after}},null,2)); await client.close();
+import "dotenv/config";

@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {Client} from "@modelcontextprotocol/sdk/client/index.js";
 import {StreamableHTTPClientTransport} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 const client=new Client({name:"fabric-semantic-live-verifier",version:"1"});await client.connect(new StreamableHTTPClientTransport(new URL(process.env.ATLAS_URL??"http://127.0.0.1:3000/mcp")));
@@ -7,3 +8,4 @@ const required={};for(const query of ["OA","MEMORY VISIBILITY","graduate job sea
 const amazon={};for(const mode of ["lexical","semantic","hybrid"])amazon[mode]=compact(await call("search_atlas",{query:"Amazon software engineering internship",mode,limit:5}));
 const repeat=await call("search_atlas",{query:"Amazon software engineering internship",mode:"hybrid",limit:20});const repeatAgain=await call("search_atlas",{query:"Amazon software engineering internship",mode:"hybrid",limit:20});const context=await call("request_context",{query:"What context is relevant to my Amazon software engineering internship?",maxRecords:8});
 console.log(JSON.stringify({required,amazon,stableOrdering:repeat.results.map((x)=>x.record.id).join(",")===repeatAgain.results.map((x)=>x.record.id).join(","),context:{diagnostics:context.diagnostics,selections:context.selections.map((x)=>({project:x.project.name,store:x.store.name,id:x.record.id,score:x.score,lexical:x.ranking.lexicalScore,semantic:x.ranking.semanticSimilarity,hybrid:x.ranking.hybridScore}))}},null,2));await client.close();
+import "dotenv/config";

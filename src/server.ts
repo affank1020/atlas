@@ -1,3 +1,5 @@
+import "dotenv/config";
+import { askAtlasInputSchema } from "./apps/ask-atlas/input.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -8,14 +10,26 @@ import { AtlasStore, requireDatabaseUrl } from "./store.js";
 import { atlasStatus } from "./status.js";
 import { callAtlasTool } from "./tools.js";
 import { createFabric, type FabricServices } from "./fabric/index.js";
+import { AskAtlasService } from "./apps/ask-atlas/index.js";
+import { OllamaAnswerGenerationProvider } from "./apps/ask-atlas/provider.js";
+import { AskAtlasInterpreter } from "./apps/ask-atlas/interpreter.js";
+import { AskAtlasRetrievalExecutor } from "./apps/ask-atlas/retrieval-executor.js";
+import { AskPortfolioService } from "./apps/ask-portfolio/index.js";
+import { ContentfulPortfolioIntegration, verifyContentfulWebhook } from "./integrations/contentful.js";
 
 const field = z.object({ name: z.string(), type: z.enum(["string", "number", "boolean", "date", "datetime", "enum", "array", "object"]), required: z.boolean().optional(), enumValues: z.array(z.string()).optional(), default: z.unknown().optional(), description: z.string().optional() });
 const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
 const client = { client: z.string().optional() };
 const include = { includeArchived: z.boolean().optional() };
+const viewQuery = z.object({ name: z.string(), storeId: z.string().uuid(), filters: z.array(z.object({ field: z.string(), operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"]), value: z.unknown() })).optional(), sort: z.array(z.object({ field: z.string(), direction: z.enum(["asc", "desc"]).optional() })).optional(), limit: z.number().int().min(1).max(100).optional() });
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 
-export function createAtlasMcpServer(catalog: AtlasCatalog, fabric:FabricServices) {
+const fabricSearchSchema = z.object({ query: z.string().trim().min(1).max(4000), projectIds: z.array(z.string().uuid()).optional(), limit: z.number().int().min(1).max(100).optional(), mode: z.enum(["lexical", "semantic", "hybrid"]).optional() });
+const fabricContextSchema = z.object({ query: z.string().trim().min(1).max(4000), projectIds: z.array(z.string().uuid()).optional(), maxRecords: z.number().int().min(1).max(50).optional() });
+
+const createAskAtlas = (catalog: AtlasCatalog, fabric: FabricServices) => { const provider = new OllamaAnswerGenerationProvider(); return new AskAtlasService(fabric.context, provider, new AskAtlasInterpreter(provider, catalog), new AskAtlasRetrievalExecutor(fabric.context, catalog, fabric.authority)); };
+
+export function createAtlasMcpServer(catalog: AtlasCatalog, fabric:FabricServices, askAtlas = createAskAtlas(catalog, fabric), askPortfolio = new AskPortfolioService(askAtlas), contentful = new ContentfulPortfolioIntegration(fabric.repository)) {
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
     const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>, handler: (input: any) => Promise<unknown>) => server.registerTool(name, { description, inputSchema }, async (input) => { try { return result(await handler(input)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
 
@@ -40,11 +54,21 @@ export function createAtlasMcpServer(catalog: AtlasCatalog, fabric:FabricService
     tool("bulk_records", "Atomically create, update, or archive up to 100 records. Inspect the schema and existing records first; any invalid operation rolls back the whole batch.", { ...scope, operations: z.array(z.discriminatedUnion("action", [z.object({ action: z.literal("create"), data: z.record(z.string(), z.unknown()) }), z.object({ action: z.literal("update"), recordId: z.string().uuid(), data: z.record(z.string(), z.unknown()), replace: z.boolean().optional() }), z.object({ action: z.literal("archive"), recordId: z.string().uuid() })])).min(1).max(100), ...client }, (x) => catalog.bulkRecords(x));
     tool("list_records", "List records with deterministic pagination and optional archived records.", { ...scope, limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).optional(), ...include }, (x) => catalog.queryRecords(x));
     tool("query_records", "Query a store using typed filters, multi-field sorting, limit, and offset.", { ...scope, filters: z.array(z.object({ field: z.string(), operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"]), value: z.unknown() })).optional(), sort: z.array(z.object({ field: z.string(), direction: z.enum(["asc", "desc"]).optional() })).optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).optional(), ...include }, (x) => catalog.queryRecords(x));
-    const auditInput = { projectId: z.string().uuid().optional(), storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), operation: z.enum(["project.created", "project.updated", "project.archived", "store.created", "store.updated", "store.schema_updated", "store.archived", "record.created", "record.updated", "record.archived"]).optional(), limit: z.number().int().min(1).max(200).optional() };
+    tool("list_views","List persistent Views belonging to a project.",{projectId:z.string().uuid(),...include},x=>catalog.listViews(x.projectId,x.includeArchived));
+    tool("get_view","Get one persistent View by project and stable View ID.",{projectId:z.string().uuid(),viewId:z.string().uuid(),...include},x=>catalog.getView(x.projectId,x.viewId,x.includeArchived));
+    tool("create_view","Create a persistent project View from declared Store queries and a Handlebars HTML template.",{projectId:z.string().uuid(),name:z.string(),slug:z.string().optional(),description:z.string().optional(),queries:z.array(viewQuery),html:z.string(),css:z.string(),...client},x=>catalog.createView(x));
+    tool("update_view","Update a persistent View while preserving its stable ID.",{projectId:z.string().uuid(),viewId:z.string().uuid(),name:z.string().optional(),slug:z.string().nullable().optional(),description:z.string().nullable().optional(),queries:z.array(viewQuery).optional(),html:z.string().optional(),css:z.string().optional(),...client},x=>catalog.updateView(x));
+    tool("archive_view","Archive a View.",{projectId:z.string().uuid(),viewId:z.string().uuid(),...client},x=>catalog.archiveView(x.projectId,x.viewId,x.client));
+    tool("render_view","Render a View deterministically against current Core records.",{projectId:z.string().uuid(),viewId:z.string().uuid()},x=>catalog.renderView(x.projectId,x.viewId));
+    const auditInput = { projectId: z.string().uuid().optional(), storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), operation: z.enum(["project.created", "project.updated", "project.archived", "store.created", "store.updated", "store.schema_updated", "store.archived", "record.created", "record.updated", "record.archived", "view.created", "view.updated", "view.archived"]).optional(), limit: z.number().int().min(1).max(200).optional() };
     tool("get_audit_history", "Read immutable audit history filtered by ownership or operation.", auditInput, (x) => catalog.auditHistory(x));
     tool("get_recent_activity", "Read recent mutations across Atlas or within a project/store/record.", auditInput, (x) => catalog.auditHistory(x));
-    tool("search_atlas","Search active records across arbitrary Atlas projects and stores through Fabric.",{query:z.string().min(1),projectIds:z.array(z.string().uuid()).optional(),limit:z.number().int().min(1).max(100).optional(),mode:z.enum(["lexical","semantic","hybrid"]).optional()},(x)=>fabric.search.search(x));
-    tool("request_context","Retrieve a bounded, provenance-rich Atlas context pack without generating an answer.",{query:z.string().min(1),projectIds:z.array(z.string().uuid()).optional(),maxRecords:z.number().int().min(1).max(50).optional()},(x)=>fabric.context.request(x));
+    tool("search_atlas", "Search active Atlas records using lexical, semantic, or hybrid retrieval.", fabricSearchSchema.shape, x => fabric.search.search(x));
+    tool("request_context", "Retrieve a bounded, authority-aware Atlas evidence pack.", fabricContextSchema.shape, x => fabric.context.request(x));
+    tool("ask_atlas", "Chat about Atlas records using fresh evidence and optional conversation history.", askAtlasInputSchema.shape, x => askAtlas.ask(x));
+    tool("ask_portfolio", "Chat about the public portfolio corpus. Scope is fixed server-side and cannot be widened by callers.", askAtlasInputSchema.shape, x => askPortfolio.ask(x));
+    tool("get_contentful_status", "Report the Contentful portfolio integration and derived Fabric corpus status.", {}, () => contentful.status());
+    tool("sync_portfolio", "Fully reconcile the published Contentful portfolio corpus into Fabric.", {}, () => contentful.syncPortfolio("manual"));
     return server;
 }
 
@@ -52,16 +76,41 @@ export function createAtlasHttpServer(options: { databaseUrl?: string } = {}) {
     const repository = new AtlasStore(requireDatabaseUrl(options.databaseUrl));
     const catalog = new AtlasCatalog(repository);
     const fabric=createFabric(requireDatabaseUrl(options.databaseUrl));
+    const askAtlas=createAskAtlas(catalog,fabric);
+    const askPortfolio=new AskPortfolioService(askAtlas);
+    const contentful=new ContentfulPortfolioIntegration(fabric.repository);
+    void contentful.syncPortfolio("startup").catch(error => console.error(`Contentful portfolio startup sync failed: ${error instanceof Error ? error.message : String(error)}`));
     const http = createServer(async (request: IncomingMessage, response: ServerResponse) => {
         const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-atlas-client", "access-control-allow-methods": "GET,POST,OPTIONS" };
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
+        if (request.method === "POST" && request.url === "/integrations/contentful/webhook") {
+            const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            const rawBody = Buffer.concat(chunks).toString("utf8");
+            if (!contentful.config.webhookSecret) { response.writeHead(503, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Contentful webhook signing is not configured." })); return; }
+            try {
+                if (!verifyContentfulWebhook(request, rawBody, contentful.config.webhookSecret, contentful.config.requestTtlSeconds)) throw new Error("Invalid Contentful signature.");
+            } catch (error) { response.writeHead(401, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Invalid Contentful webhook signature.", message: error instanceof Error ? error.message : String(error) })); return; }
+            const idempotencyKey = String(request.headers["x-contentful-idempotency-key"] ?? "").trim();
+            const topic = String(request.headers["x-contentful-topic"] ?? "unknown");
+            if (!idempotencyKey) { response.writeHead(400, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Missing X-Contentful-Idempotency-Key." })); return; }
+            try {
+                const accepted = await contentful.acceptWebhook(idempotencyKey, topic);
+                if (accepted) void contentful.syncPortfolio("webhook", topic).catch(error => console.error(`Contentful portfolio webhook sync failed: ${error instanceof Error ? error.message : String(error)}`));
+                response.writeHead(accepted ? 202 : 200, { "content-type": "application/json" }); response.end(JSON.stringify({ accepted, duplicate: !accepted }));
+            } catch (error) { response.writeHead(500, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Unable to persist Contentful webhook delivery.", message: error instanceof Error ? error.message : String(error) })); }
+            return;
+        }
+        if (request.method === "POST" && request.url === "/api/ask-portfolio") {
+            try { const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk)); const input = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}; const value = await askPortfolio.ask(input); response.writeHead(200, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify(value)); }
+            catch (error) { response.writeHead(400, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify({ error: "INVALID_REQUEST", message: error instanceof Error ? error.message : String(error) })); } return;
+        }
         const toolMatch = request.url?.match(/^\/api\/tools\/([a-z_]+)$/);
         if (request.method === "POST" && toolMatch) {
             try {
                 const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
                 const input = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
                 if (!input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
-                const value = toolMatch[1]==="search_atlas"?await fabric.search.search(input):toolMatch[1]==="request_context"?await fabric.context.request(input):await callAtlasTool(catalog, toolMatch[1], input);
+                const value = toolMatch[1]==="ask_atlas"?await askAtlas.ask(input):toolMatch[1]==="ask_portfolio"?await askPortfolio.ask(input):toolMatch[1]==="get_contentful_status"?await contentful.status():toolMatch[1]==="sync_portfolio"?await contentful.syncPortfolio("manual"):toolMatch[1]==="search_atlas"?await fabric.search.search(fabricSearchSchema.parse(input)):toolMatch[1]==="request_context"?await fabric.context.request(fabricContextSchema.parse(input)):await callAtlasTool(catalog, toolMatch[1], input);
                 response.writeHead(200, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify(value));
             } catch (error) {
                 const known = error instanceof AtlasError; response.writeHead(known && error.code === "NOT_FOUND" ? 404 : 400, { ...cors, "content-type": "application/json" });
@@ -71,7 +120,7 @@ export function createAtlasHttpServer(options: { databaseUrl?: string } = {}) {
         }
         if (request.method === "GET" && request.url === "/health") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(await catalog.status())); return; }
         if (request.method !== "POST" || request.url !== "/mcp") { response.writeHead(404, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Not found" })); return; }
-        const server = createAtlasMcpServer(catalog,fabric); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        const server = createAtlasMcpServer(catalog,fabric,askAtlas,askPortfolio,contentful); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         response.on("close", () => { void transport.close(); void server.close(); });
         try { await server.connect(transport); await transport.handleRequest(request, response); }
         catch (error) { if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" }); if (!response.writableEnded) response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }

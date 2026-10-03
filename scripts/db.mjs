@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";

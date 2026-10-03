@@ -4,6 +4,7 @@ export const atlasToolNames = [
     "get_atlas_status", "list_projects", "get_project", "create_project", "update_project", "archive_project",
     "list_stores", "get_store", "create_store", "update_store", "update_store_schema", "archive_store",
     "create_record", "get_record", "update_record", "archive_record", "bulk_records", "list_records", "query_records",
+    "list_views", "get_view", "create_view", "update_view", "archive_view", "render_view",
     "get_audit_history", "get_recent_activity",
 ] as const;
 
@@ -31,6 +32,12 @@ export async function callAtlasTool(catalog: AtlasCatalog, name: string, input: 
         case "bulk_records": return catalog.bulkRecords(input);
         case "list_records": return catalog.queryRecords(input);
         case "query_records": return catalog.queryRecords(input);
+        case "list_views": return catalog.listViews(input.projectId, input.includeArchived);
+        case "get_view": return catalog.getView(input.projectId, input.viewId, input.includeArchived);
+        case "create_view": return catalog.createView(input);
+        case "update_view": return catalog.updateView(input);
+        case "archive_view": return catalog.archiveView(input.projectId, input.viewId, input.client);
+        case "render_view": return catalog.renderView(input.projectId, input.viewId);
         case "get_audit_history": return catalog.auditHistory(input);
         case "get_recent_activity": return catalog.auditHistory(input);
         default: throw new AtlasError(`Unknown Atlas tool '${name}'.`, "NOT_FOUND");

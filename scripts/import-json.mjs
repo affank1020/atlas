@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
@@ -18,3 +19,4 @@ try {
   for(const x of state.auditEvents) await client.query("INSERT INTO audit_events(id,client,operation,project_id,store_id,record_id,before_state,after_state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[x.id,x.client,x.operation,x.projectId??null,x.storeId??null,x.recordId??null,x.previous??null,x.resulting??null,x.occurredAt]);
   await client.query("COMMIT"); console.log(JSON.stringify({source,projects:state.projects.length,stores:state.stores.length,records:state.records.length,auditEvents:state.auditEvents.length},null,2));
 } catch(error){ await client.query("ROLLBACK"); throw error; } finally { client.release(); await pool.end(); }
+import "dotenv/config";
