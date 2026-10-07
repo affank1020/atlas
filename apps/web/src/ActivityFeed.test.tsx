@@ -1,0 +1,62 @@
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { ActivityFeed } from './ActivityFeed';
+import type { AuditEvent } from './types';
+const api = vi.hoisted(() => ({ callTool: vi.fn() }));
+vi.mock('./api', () => api);
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
+const result: AuditEvent = { id: 'done', occurredAt: '2026-10-06T19:52:37Z', client: 'chatgpt', operation: 'workspace.unity_invoked', projectId: 'project', workspaceId: 'workspace', resulting: { attemptId: 'attempt', command: 'editor_play', outcome: 'completed' } };
+const request: AuditEvent = { ...result, id: 'request', operation: 'workspace.mutation_requested', resulting: { attemptId: 'attempt', command: 'editor_play', operation: 'workspace.unity_invoked' } };
+const tick = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); };
+it('shows project Core/View/workspace activity, attribution, details and filters', async () => {
+    api.callTool.mockImplementation(async (name: string, args: Record<string, string>) => name === 'list_project_workspaces' ? [{ id: 'workspace', name: 'AI Football' }] : args.workspaceId ? [result] : [result, request, { ...result, id: 'core', workspaceId: undefined, operation: 'record.created', resulting: {} }, { ...result, id: 'view', workspaceId: undefined, operation: 'view.updated', resulting: {} }]);
+    render(<ActivityFeed projectId="project" title="Project activity" />);
+    expect(await screen.findByText('Started Play Mode')).toBeInTheDocument();
+    expect(await screen.findByText('ChatGPT · Unity · AI Football')).toBeInTheDocument();
+    expect(screen.getByText('Record created')).toBeInTheDocument(); expect(screen.getByText('View updated')).toBeInTheDocument();
+    expect(api.callTool).toHaveBeenCalledWith('get_recent_activity', { projectId: 'project', limit: 200 }, expect.any(AbortSignal));
+    fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'unity' } });
+    expect(screen.queryByText('Record created')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Started Play Mode'));
+    expect(screen.getByText('Started Play Mode').closest('details')).toHaveAttribute('open');
+    expect(screen.getByText('editor_play')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'workspace' } });
+    expect(await screen.findByText('Started Play Mode')).toBeInTheDocument();
+    expect(api.callTool).toHaveBeenCalledWith('get_recent_activity', { projectId: 'project', workspaceId: 'workspace', limit: 200 }, expect.any(AbortSignal));
+});
+it('refreshes without duplicates, keeps expanded rows, replaces pending and stops on unmount', async () => {
+    vi.useFakeTimers(); let events = [request];
+    api.callTool.mockImplementation(async (name: string) => name === 'list_project_workspaces' ? [] : events);
+    const mounted = render(<ActivityFeed projectId="project" />);
+    await act(async () => {});
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Requested: Started Play Mode'));
+    events = [result, request, result]; await tick();
+    expect(screen.getAllByText('Started Play Mode')).toHaveLength(1);
+    expect(screen.getByText('Started Play Mode').closest('details')).toHaveAttribute('open');
+    await tick(); expect(screen.getAllByText('Started Play Mode')).toHaveLength(1);
+    const count = api.callTool.mock.calls.length; const signal = api.callTool.mock.calls[0][2];
+    mounted.unmount(); await tick(); expect(api.callTool).toHaveBeenCalledTimes(count); expect(signal.aborted).toBe(true);
+});
+it('retains activity on refresh failure and ignores late responses after scope changes', async () => {
+    vi.useFakeTimers(); let fail = false;
+    api.callTool.mockImplementation(async (name: string) => { if (name === 'list_project_workspaces') return []; if (fail) throw new Error('offline'); return [result]; });
+    const mounted = render(<ActivityFeed projectId="project" />); await act(async () => {});
+    fail = true; await tick(); expect(screen.getByRole('alert')).toHaveTextContent('offline'); expect(screen.getByText('Started Play Mode')).toBeInTheDocument();
+    fail = false; await tick(); expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    let resolve!: (data: AuditEvent[]) => void;
+    api.callTool.mockImplementation(() => new Promise(r => { resolve = r; }));
+    mounted.rerender(<ActivityFeed projectId="other" />); await act(async () => {});
+    mounted.unmount(); await act(async () => resolve([result])); expect(screen.queryByText('Started Play Mode')).not.toBeInTheDocument();
+});
+
+it('does not overlap requests and pauses polling while hidden', async () => {
+    vi.useFakeTimers(); let resolve!: (data: AuditEvent[]) => void;
+    api.callTool.mockImplementation((name: string) => name === 'list_project_workspaces' ? Promise.resolve([]) : new Promise(r => { resolve = r; }));
+    render(<ActivityFeed projectId="project" />); await tick(); await tick();
+    expect(api.callTool).toHaveBeenCalledTimes(1);
+    await act(async () => resolve([result]));
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const count = api.callTool.mock.calls.length; await tick(); expect(api.callTool).toHaveBeenCalledTimes(count);
+    visibility.mockRestore(); await tick(); expect(api.callTool).toHaveBeenCalledTimes(count + 1);
+});

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test,{after} from "node:test";
-import type {EmbeddingProvider} from "../src/fabric/embeddings.js";
-import {createFabric} from "../src/fabric/index.js";
+import type {EmbeddingProvider} from "../apps/server/src/fabric/embeddings.js";
+import {createFabric} from "../apps/server/src/fabric/index.js";
 import {cleanupDatabases,databaseFixture} from "./database.js";
 after(cleanupDatabases);
 

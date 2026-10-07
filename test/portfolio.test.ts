@@ -4,8 +4,8 @@ import {mkdtemp,rm} from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import sharp from "sharp";
-import {createFabric} from "../src/fabric/index.js";
-import {PortfolioMediaService,PortfolioService,PORTFOLIO_SOURCE_TYPE} from "../src/apps/portfolio/index.js";
+import {createFabric} from "../apps/server/src/fabric/index.js";
+import {PortfolioMediaService,PortfolioService,PORTFOLIO_SOURCE_TYPE} from "../apps/server/src/apps/portfolio/index.js";
 import {cleanupDatabases,databaseFixture} from "./database.js";
 
 after(cleanupDatabases);

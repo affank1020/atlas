@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { createFabric } from "../src/fabric/index.js";
-import { retrievalTerms } from "../src/fabric/relevance.js";
+import { createFabric } from "../apps/server/src/fabric/index.js";
+import { retrievalTerms } from "../apps/server/src/fabric/relevance.js";
 import { cleanupDatabases, databaseFixture } from "./database.js";
 after(cleanupDatabases);
 

@@ -1,0 +1,23 @@
+.activity-filters { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px 22px; border-bottom: 1px solid var(--line, var(--border)); }
+.activity-filters label { display: grid; gap: 5px; font-size: 12px; }
+.activity-scroll { max-height: 620px; overflow: auto; position: relative; overflow-anchor: none; }
+.activity-item { border-bottom: 1px solid var(--line, var(--border)); }
+.activity-item summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 22px; cursor: pointer; }
+.activity-item summary:focus-visible { outline: 2px solid var(--border-strong); outline-offset: -3px; }
+.activity-action, .activity-state { display: grid; gap: 6px; }
+.activity-action { min-width: 0; overflow-wrap: anywhere; }
+.activity-action small, .activity-state small, .activity-state time { opacity: .75; font-size: 12px; }
+.activity-state { text-align: right; flex-shrink: 0; font-size: 13px; }
+.activity-failed { border-left: 3px solid var(--border); }
+.activity-failed .activity-state > span, .activity-error { color: var(--danger); }
+.activity-pending { border-left: 3px solid var(--border-strong); }
+.activity-details { padding: 0 22px 18px; }
+.activity-details dl { margin: 0; display: grid; gap: 10px; }
+.activity-details dl > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; }
+.activity-details dt { font-size: 12px; opacity: .7; }
+.activity-details dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+.activity-details pre { margin: 0; max-height: 260px; overflow: auto; white-space: pre-wrap; }
+.activity-footnote { font-size: 12px; opacity: .65; padding: 10px 22px; }
+@media (max-width: 600px) { .activity-item summary { align-items: flex-start; flex-direction: column; } .activity-state { text-align: left; } .activity-details dl > div { grid-template-columns: 1fr; } }
+
+.activity-filters select { max-width: 280px; min-width: 130px; padding: 7px 10px; border: 1px solid var(--line, var(--border)); border-radius: 6px; background: transparent; color: inherit; }

@@ -5,10 +5,10 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {cleanupDatabases,databaseFixture} from './database.js';
 import {universityFixture} from './views-v3-fixture.js';
-import {AtlasCatalog} from '../src/catalog.js';
-import {AtlasStore} from '../src/store.js';
-import {createAtlasHttpServer} from '../src/server.js';
-import type {ViewAction} from '../src/types.js';
+import {AtlasCatalog} from '../apps/server/src/catalog.js';
+import {AtlasStore} from '../apps/server/src/store.js';
+import {createAtlasHttpServer} from '../apps/server/src/server.js';
+import type {ViewAction} from '../apps/server/src/types.js';
 after(cleanupDatabases);
 
 test('University Start/Complete write through Core, refresh pending data, audit source and survive repository reopen',async()=>{
@@ -61,10 +61,10 @@ test('V2 definitions stay read-only and preserve templates, params, flattened da
 });
 
 test('standalone active slug, parameters, archive/unknown routing and MCP V3 contract',async()=>{
- const fixture=await databaseFixture();const {project,view,first}=await universityFixture(fixture.catalog);const server=createAtlasHttpServer({databaseUrl:fixture.databaseUrl});server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address() as {port:number};const base=`http://127.0.0.1:${address.port}`;
+ const fixture=await databaseFixture();const {project,view,first}=await universityFixture(fixture.catalog);const server=createAtlasHttpServer({databaseUrl:fixture.databaseUrl,nodeExecution:'remote'});server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address() as {port:number};const base=`http://127.0.0.1:${address.port}`;
  const client=new Client({name:'v3-test',version:'1'});
  try{
-  const route=`${base}/projects/${project.id}/views/${view.slug}`;const response=await fetch(route+'?module=MATH37011');assert.equal(response.status,200);const page=await response.text();assert.match(page,/frame.srcdoc=themedDocument\(rendered\)/);assert.match(page,/color-scheme:dark/);assert.match(page,/atlas-button>button\{color:#15171c\}/);assert.match(page,/MATH37011/);assert.match(page,/installViewHost/);assert.match(page,/allow-scripts allow-popups allow-popups-to-escape-sandbox/);
+  const route=`${base}/projects/${project.id}/views/${view.slug}`;const response=await fetch(route+'?module=MATH37011');assert.equal(response.status,200);const page=await response.text();assert.match(page,/frame.srcdoc=themedDocument\(rendered\)/);assert.match(page,/color-scheme:dark/);assert.match(page,/atlas-button>button\{color:#15171c\}/);assert.match(page,/MATH37011/);assert.match(page,/installViewHost/);assert.match(page,/allow-scripts allow-popups allow-popups-to-escape-sandbox/);assert.match(page,/restoreScroll/);assert.match(page,/atlas-view-scroll/);
   assert.equal((await fetch(`${base}/projects/${project.id}/views/missing`)).status,404);assert.equal((await fetch(route+'?undeclared=x')).status,400);
   await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp')));const tools=(await client.listTools()).tools;const schema=tools.find(t=>t.name==='update_view')!.inputSchema as any;assert.ok(schema.properties.actions);assert.ok(schema.properties.manifest);assert.ok(schema.properties.script);for(const name of ['create_view','update_view'])assert.match(tools.find(t=>t.name===name)!.description!,/Safe external links.*noopener noreferrer/);
   const result=await client.callTool({name:'execute_view_action',arguments:{projectId:project.id,viewId:view.id,action:'startTask',input:{recordId:first.id}}});assert.ok(!result.isError);assert.equal((result.structuredContent as any).result.record.data.status,'in_progress');

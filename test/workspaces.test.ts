@@ -7,11 +7,11 @@ import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { WorkspaceFiles, MAX_FILE_BYTES, git } from '../src/workspaces/files.js';
-import { UnityAdapter, UnityCliConnection, type Workspace, type UnityConnection } from '../src/workspaces/adapter.js';
-import { WorkspaceService } from '../src/workspaces/service.js';
-import { workspaceSchemas } from '../src/workspaces/contracts.js';
-import { createAtlasHttpServer } from '../src/server.js';
+import { WorkspaceFiles, MAX_FILE_BYTES, git } from '../apps/node/src/capabilities/workspace-files/files.js';
+import { UnityAdapter, UnityCliConnection, type Workspace, type UnityConnection } from '../apps/node/src/capabilities/unity/unity.js';
+import { localWorkspaceService, localHttpServer } from './local-node-fixture.js';
+import { workspaceSchemas } from '../apps/server/src/workspaces/contracts.js';
+import { createAtlasHttpServer } from '../apps/server/src/server.js';
 import { cleanupDatabases, databaseFixture } from './database.js';
 const dirs: string[] = [];
 after(async () => { await cleanupDatabases(); await Promise.all(dirs.map(x => fs.rm(x, { recursive: true, force: true }))); });
@@ -95,7 +95,7 @@ test('optional Unity CLI, package state, discovered capabilities, local approval
 test('workspace persistence, project isolation, audit intents/outcomes, concurrent edits and archival', async () => {
     const { catalog, store } = await databaseFixture(); const { root, repo } = await disk();
     const project = await catalog.createProject({ name: 'Workspaces' }); const other = await catalog.createProject({ name: 'Other' });
-    const service = new WorkspaceService(catalog, store.pool, [root]);
+    const service = localWorkspaceService(catalog, store.pool, [root]);
     const workspace: any = await service.call('create_workspace', { projectId: project.id, name: 'Repo', rootPath: repo });
     const scope = { projectId: project.id, workspaceId: workspace.id };
     await assert.rejects(service.call('get_workspace', { ...scope, projectId: other.id }));
@@ -137,7 +137,7 @@ test('Unity result and failed attempts retain client, command, workspace and pai
     const { catalog, store } = await databaseFixture(); const { root, repo } = await disk();
     const project = await catalog.createProject({ name: 'Unity activity' });
     const adapter = { status: async () => ({}), capabilities: async () => ({}), invoke: async (_workspace: Workspace, command: string) => ({ isError: command === 'editor_stop' }) };
-    const service = new WorkspaceService(catalog, store.pool, [root], new Map([['unity', adapter]]));
+    const service = localWorkspaceService(catalog, store.pool, [root], new Map([['unity', adapter]]));
     const workspace: any = await service.call('create_workspace', { projectId: project.id, name: 'AI Football', rootPath: repo, kind: 'unity' });
     for (const command of ['editor_play', 'editor_stop', 'console', 'get_component_properties', 'capture_game_view']) {
         await service.call('unity_run_command', { projectId: project.id, workspaceId: workspace.id, command, client: 'chatgpt' });
@@ -156,7 +156,7 @@ test('Unity result and failed attempts retain client, command, workspace and pai
 test('real MCP and HTTP workspace flow preserves Core and rejects browser origins', async () => {
     const fixture = await databaseFixture(); const { root, repo } = await disk();
     const oldRoots = process.env.ATLAS_WORKSPACE_ROOTS; process.env.ATLAS_WORKSPACE_ROOTS = root;
-    const http = createAtlasHttpServer({ databaseUrl: fixture.databaseUrl }); const client = new Client({ name: 'workspace-smoke', version: '1' });
+    const { http, services } = localHttpServer(fixture.databaseUrl, [root]); const client = new Client({ name: 'workspace-smoke', version: '1' });
     try {
         http.listen(0, '127.0.0.1'); await once(http, 'listening'); const address = http.address() as { port: number }; const url = `http://127.0.0.1:${address.port}`;
         await client.connect(new StreamableHTTPClientTransport(new URL(url + '/mcp')));
@@ -186,5 +186,5 @@ test('real MCP and HTTP workspace flow preserves Core and rejects browser origin
         const denied = await fetch(url + '/api/tools/get_workspace', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.invalid' }, body: JSON.stringify(scope) }); assert.equal(denied.status, 403);
         assert.equal((await call('get_atlas_status', {})).version, '2.0.0');
         const latest = await call('workspace_read_file', { ...scope, path: read.path }); await call('workspace_delete_file', { ...scope, path: read.path, expectedSha256: latest.sha256 }); await call('archive_workspace', scope);
-    } finally { await client.close(); await new Promise<void>(resolve => http.close(() => resolve())); if (oldRoots === undefined) delete process.env.ATLAS_WORKSPACE_ROOTS; else process.env.ATLAS_WORKSPACE_ROOTS = oldRoots; }
+    } finally { await client.close(); await new Promise<void>(resolve => http.close(() => resolve())); await services.lifecycle.close(); if (oldRoots === undefined) delete process.env.ATLAS_WORKSPACE_ROOTS; else process.env.ATLAS_WORKSPACE_ROOTS = oldRoots; }
 });

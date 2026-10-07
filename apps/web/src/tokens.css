@@ -1,0 +1,36 @@
+/* Atlas Web design contract. Feature styles consume these roles, never raw colors. */
+:root {
+  color-scheme: dark;
+  --bg: #15171c;
+  --bg-secondary: #111318;
+  --surface: #191c22;
+  --surface-elevated: #22262e;
+  --surface-hover: #292e38;
+  --border: #303540;
+  --border-strong: #505a6b;
+  --text-primary: #eeede9;
+  --text-secondary: #b7becb;
+  --text-muted: #929cac;
+  --accent: #a0b2ff;
+  --accent-solid: #455bbe;
+  --accent-soft: #252f50;
+  --success: #8dd8b0;
+  --success-soft: #203a30;
+  --warning: #e9be79;
+  --warning-soft: #3c3223;
+  --danger: #f39c9b;
+  --danger-soft: #432a30;
+  --information: #9ecafa;
+  --shadow-color: #00000040;
+  --line: var(--border);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px;
+  --text-xs: .75rem; --text-sm: .8125rem; --text-base: .875rem;
+  --text-lg: 1.125rem; --text-title: clamp(1.6rem, 3vw, 2rem);
+  --control-sm: 30px; --control-md: 36px; --control-lg: 44px;
+  --transition: 140ms ease;
+  --shadow-dialog: 0 16px 64px var(--shadow-color);
+}

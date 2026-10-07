@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { devTasksSchema } from '../../dist/src/workspaces/dev-tasks.js';
+import { devTasksSchema } from '@atlas/protocol/dev-tasks';
 export async function readDevTasks(file) {
     return devTasksSchema.parse(JSON.parse(await readFile(file, 'utf8')));
 }

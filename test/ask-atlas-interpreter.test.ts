@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AskAtlasService } from "../src/apps/ask-atlas/index.js";
-import { AskAtlasInterpreter, type InterpretationProvider } from "../src/apps/ask-atlas/interpreter.js";
-import { AskAtlasRetrievalExecutor } from "../src/apps/ask-atlas/retrieval-executor.js";
-import { parseRetrievalPlan } from "../src/apps/ask-atlas/retrieval-plan.js";
-import type { AnswerGenerationProvider, GenerationRequest } from "../src/apps/ask-atlas/types.js";
-import type { ContextResponse } from "../src/fabric/types.js";
-import type { AtlasRecord, Project, Store } from "../src/types.js";
+import { AskAtlasService } from "../apps/server/src/apps/ask-atlas/index.js";
+import { AskAtlasInterpreter, type InterpretationProvider } from "../apps/server/src/apps/ask-atlas/interpreter.js";
+import { AskAtlasRetrievalExecutor } from "../apps/server/src/apps/ask-atlas/retrieval-executor.js";
+import { parseRetrievalPlan } from "../apps/server/src/apps/ask-atlas/retrieval-plan.js";
+import type { AnswerGenerationProvider, GenerationRequest } from "../apps/server/src/apps/ask-atlas/types.js";
+import type { ContextResponse } from "../apps/server/src/fabric/types.js";
+import type { AtlasRecord, Project, Store } from "../apps/server/src/types.js";
 
 const project: Project = { id: "11111111-1111-4111-8111-111111111111", name: "Launchpad", createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const store: Store = { id: "22222222-2222-4222-8222-222222222222", projectId: project.id, name: "Graduate Applications", schema: { version: 1, fields: [{ name: "company", type: "string" }, { name: "status", type: "string" }, { name: "oaStatus", type: "string" }] }, createdAt: "2026-01-01", updatedAt: "2026-01-01" };

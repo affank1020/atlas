@@ -8,8 +8,8 @@ try{
  await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3000/mcp')));
  const call=async(name,args)=>{const response=await client.callTool({name,arguments:args});if(response.isError)throw new Error(JSON.stringify(response.content));return response.structuredContent.result};
  const current=await call('get_view',{projectId,viewId});
- const before=JSON.parse(await readFile(new URL('../examples/views/university-v2-reference.json',import.meta.url),'utf8'));
- const next=JSON.parse(await readFile(new URL('../examples/views/university-v3.json',import.meta.url),'utf8'));
+ const before=JSON.parse(await readFile(new URL('../apps/server/examples/views/university-v2-reference.json',import.meta.url),'utf8'));
+ const next=JSON.parse(await readFile(new URL('../apps/server/examples/views/university-v3.json',import.meta.url),'utf8'));
  if(current.slug!==next.slug)throw new Error('Unexpected University View slug.');
  if(current.script!==before.script&&current.script!==next.script)throw new Error('Dashboard changed after inspection; inspect before migrating.');
  if(JSON.stringify(current.queries)!==JSON.stringify(before.queries)&&JSON.stringify(current.queries)!==JSON.stringify(next.queries))throw new Error('Queries changed after inspection.');

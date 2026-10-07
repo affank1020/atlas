@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { AtlasCatalog, AtlasError } from "../src/catalog.js";
+import { AtlasCatalog, AtlasError } from "../apps/server/src/catalog.js";
 import { cleanupDatabases, databaseFixture } from "./database.js";
 
 after(cleanupDatabases);

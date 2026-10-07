@@ -1,0 +1,37 @@
+import test, { after } from 'node:test';
+import assert from 'node:assert/strict';
+import { databaseFixture, cleanupDatabases } from './database.js';
+import { NodeIdentity } from '../apps/server/src/nodes/identity.js';
+import { PostgresNodeRepository } from '../apps/server/src/infrastructure/database/nodes.js';
+
+after(cleanupDatabases);
+test('one-use enrolment, per-Node authentication, rotation, revocation and durable placement', async () => {
+    const fixture = await databaseFixture();
+    const identity = new NodeIdentity(fixture.store.pool);
+    const ticket = await identity.ticket();
+    const a = await identity.enrol({ token: ticket.enrolmentToken, name: 'A', platform: 'test' });
+    await identity.authenticate(a.nodeId, a.credential);
+    await assert.rejects(identity.enrol({ token: ticket.enrolmentToken, name: 'Replay', platform: 'test' }), (error: any) => error.code === 'ENROLMENT_USED');
+    const second = await identity.ticket();
+    const b = await identity.enrol({ token: second.enrolmentToken, name: 'B', platform: 'test' });
+    await assert.rejects(identity.authenticate(b.nodeId, a.credential), (error: any) => error.code === 'NODE_AUTH_INVALID');
+    const project = await fixture.catalog.createProject({ name: 'Placement' });
+    const defaultNode = (await new PostgresNodeRepository(fixture.store.pool).getDefault()).id;
+    const inserted = await fixture.store.pool.query("INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id) VALUES(gen_random_uuid(),$1,'Placed','/tmp','generic',NULL,$2) RETURNING id", [project.id, defaultNode]);
+    const workspaceId = inserted.rows[0].id;
+    await identity.assign({ projectId: project.id, workspaceId, nodeId: a.nodeId, expectedNodeId: defaultNode });
+    await assert.rejects(identity.assign({ projectId: project.id, workspaceId, nodeId: b.nodeId, expectedNodeId: defaultNode }), (error: any) => error.code === 'CONFLICT');
+    await identity.assign({ projectId: project.id, workspaceId, nodeId: b.nodeId, expectedNodeId: a.nodeId });
+    assert.equal((await fixture.store.pool.query('SELECT node_id FROM workspaces WHERE id=$1', [workspaceId])).rows[0].node_id, b.nodeId);
+    const rotation = await identity.ticket(a.nodeId, true);
+    await assert.rejects(identity.authenticate(a.nodeId, a.credential), (error: any) => error.code === 'NODE_AUTH_INVALID');
+    const replaced = await identity.enrol({ token: rotation.enrolmentToken, name: 'A', platform: 'test' });
+    assert.equal(replaced.nodeId, a.nodeId);
+    await identity.authenticate(a.nodeId, replaced.credential);
+    const newIdentity = new NodeIdentity(fixture.store.pool);
+    await newIdentity.authenticate(a.nodeId, replaced.credential);
+    await newIdentity.revoke(a.nodeId);
+    await assert.rejects(newIdentity.authenticate(a.nodeId, replaced.credential), (error: any) => error.code === 'NODE_REVOKED');
+    const rows = await fixture.store.pool.query('SELECT credential_hash FROM nodes WHERE id=$1', [a.nodeId]);
+    assert.equal(rows.rows[0].credential_hash, null);
+});

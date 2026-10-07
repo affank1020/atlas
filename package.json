@@ -1,37 +1,46 @@
 {
-  "name": "atlas-mcp-poc",
+  "name": "atlas-monorepo",
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Atlas structured data platform exposed through MCP",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/src/server.js",
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build --silent && node --test dist/test/*.test.js",
+    "dev:server": "npm run dev -w @atlas/server",
+    "dev:node": "npm run dev -w @atlas/node",
+    "dev:web": "npm run dev -w @atlas/web",
+    "start:server": "npm run start -w @atlas/server",
+    "start:node": "npm run start -w @atlas/node",
+    "build:protocol": "npm run build -w @atlas/protocol",
+    "build:server": "npm run build:protocol && npm run build:views && npm run build -w @atlas/server",
+    "build:node": "npm run build:protocol && npm run build -w @atlas/node",
+    "build:web": "npm run build:views && npm run build -w @atlas/web",
+    "build": "npm run build:protocol && npm run build:views && npm run build -w @atlas/server && npm run build -w @atlas/node && npm run build -w @atlas/web",
+    "test:server": "npm run build:server && node --import tsx --test test/*.test.ts",
+    "test:node": "npm run build:node && node --import tsx --test test/remote-node.test.ts test/node-identity.test.ts test/workspace-dev.test.ts test/workspaces.test.ts",
+    "test:web": "npm run test -w @atlas/web",
+    "test": "npm run build && node --import tsx --test test/*.test.ts && npm run test:web",
     "db:migrate": "node scripts/db.mjs migrate",
-    "workspace:register-atlas": "npm run build --silent && node scripts/register-atlas-workspace.mjs",
     "db:status": "node scripts/db.mjs status",
-    "db:import-json": "node scripts/import-json.mjs",
-    "fabric:configure-authority": "node scripts/configure-authority.mjs"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.1",
-    "acorn": "^8.19.0",
-    "dotenv": "^17.4.2",
-    "handlebars": "^4.7.9",
-    "parse5": "^8.0.1",
-    "pg": "^8.23.0",
-    "sharp": "^0.35.5",
-    "zod": "^4.6.5"
+    "workspace:register-atlas": "node scripts/register-atlas-workspace.mjs",
+    "verify:remote-node": "node --import tsx scripts/verify-remote-node.mjs",
+    "build:views": "npm run build -w @atlas/view-runtime",
+    "verify:workspace": "node --import tsx scripts/workspace-live-verify.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
     "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@atlas/protocol": "2.0.0",
+    "@atlas/server": "2.0.0",
+    "@atlas/node": "2.0.0",
+    "pg": "^8.23.0",
+    "dotenv": "^17.4.2"
   }
 }

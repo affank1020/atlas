@@ -1,0 +1,16 @@
+{
+  "name": "@atlas/view-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "exports": {
+    "./view-host": "./dist/view-host.js",
+    "./view-kit": "./dist/view-kit.js"
+  },
+  "files": [
+    "dist"
+  ]
+}

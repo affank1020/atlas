@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { databaseFixture, cleanupDatabases } from './database.js';
-import { PostgresNodeRepository } from '../src/infrastructure/database/nodes.js';
-import { PostgresWorkspaceRepository } from '../src/infrastructure/database/workspaces.js';
-import { LocalNodeRuntime } from '../src/infrastructure/nodes/local-runtime.js';
-import { WorkspaceService } from '../src/workspaces/application.js';
-import { NodeService } from '../src/nodes/service.js';
-import { NodeRouter } from '../src/nodes/router.js';
-import { requiredCapability, type NodeRuntime, type NodeOperation } from '../src/nodes/runtime.js';
-import type { NodeCapability } from '../src/nodes/model.js';
+import { PostgresNodeRepository } from '../apps/server/src/infrastructure/database/nodes.js';
+import { PostgresWorkspaceRepository } from '../apps/server/src/infrastructure/database/workspaces.js';
+import { LocalNodeRuntime } from '../apps/node/src/platforms/desktop/runtime.js';
+import { WorkspaceService } from '../apps/server/src/workspaces/application.js';
+import { NodeService } from '../apps/server/src/nodes/service.js';
+import { NodeRouter } from '../apps/server/src/nodes/router.js';
+import { requiredCapability, type NodeRuntime, type NodeOperation } from '../apps/server/src/nodes/runtime.js';
+import type { NodeCapability } from '../apps/server/src/nodes/model.js';
 after(cleanupDatabases);
 const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'];
 function runtime(capabilities = all): NodeRuntime {
@@ -26,7 +26,7 @@ test('migration preserves active/archived Workspace metadata and audit history, 
     }
     const before = (await store.pool.query('SELECT * FROM workspaces ORDER BY id')).rows;
     const audit = (await store.pool.query('SELECT * FROM audit_events ORDER BY id')).rows;
-    await store.pool.query(await readFile('migrations/012_nodes.sql', 'utf8'));
+    await store.pool.query(await readFile('apps/server/migrations/012_nodes.sql', 'utf8'));
     const after = (await store.pool.query('SELECT * FROM workspaces ORDER BY id')).rows;
     assert.deepEqual(after.map(({ node_id, ...rest }) => rest), before);
     assert.equal(new Set(after.map(row => row.node_id)).size, 1);

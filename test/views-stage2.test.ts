@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test,{after} from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {cleanupDatabases,databaseFixture} from './database.js';
-import {validateManifest,validatePresentation,validateParams,renderTemplate} from '../src/views.js';
-import {viewDocument} from '../src/view-runtime.js';
-import {callAtlasTool} from '../src/tools.js';
+import {validateManifest,validatePresentation,validateParams,renderTemplate} from '../apps/server/src/views.js';
+import {viewDocument} from '../apps/server/src/view-runtime.js';
+import {callAtlasTool} from '../apps/server/src/tools.js';
 after(cleanupDatabases);
 const manifest={viewKitVersion:1 as const,capabilities:['client-script','url-params'] as ('client-script'|'url-params')[],params:{q:''}};
 
@@ -60,7 +60,7 @@ test('Stage 2 roundtrip, preview, data, params, revisions, concurrency and archi
 
 test('Graduate dashboard reference renders live and empty data and retains legacy HTML callers',async()=>{
  const {catalog}=await databaseFixture();const project=await catalog.createProject({name:'Reference'});const store=await catalog.createStore({projectId:project.id,name:'Applications',fields:[{name:'company',type:'string'},{name:'status',type:'string'}]});
- const definition=JSON.parse(await readFile('examples/views/graduate-applications.json','utf8'));
+ const definition=JSON.parse(await readFile('apps/server/examples/views/graduate-applications.json','utf8'));
  const input={projectId:project.id,queries:[{name:'applications',storeId:store.id}],...definition};
  assert.match((await catalog.previewView(input)).renderedHtml,/No applications yet/);
  await catalog.createRecord({projectId:project.id,storeId:store.id,data:{company:'Macquarie',status:'active'}});
@@ -72,4 +72,5 @@ test('Graduate dashboard reference renders live and empty data and retains legac
 test('query data cannot close its JSON script boundary or inject unapproved script',()=>{
  const doc=viewDocument({html:'<p>Safe</p>',css:'',data:{items:['</script><script>alert(1)</script>']},params:{},manifest:{}});
  assert.match(doc,/\\u003c\/script>/);assert.equal((doc.match(/<script>/g)||[]).length,1);
+ assert.match(doc,/scroll:\{x:Math\.max\(0,scrollX\),y:Math\.max\(0,scrollY\)\}/);assert.match(doc,/atlas-view-scroll/);
 });

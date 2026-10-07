@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AskAtlasService, ASK_ATLAS_ABSTENTION } from "../src/apps/ask-atlas/index.js";
-import type { AnswerGenerationProvider, AskAtlasModel, GenerationRequest } from "../src/apps/ask-atlas/types.js";
-import type { ContextResponse } from "../src/fabric/types.js";
+import { AskAtlasService, ASK_ATLAS_ABSTENTION } from "../apps/server/src/apps/ask-atlas/index.js";
+import type { AnswerGenerationProvider, AskAtlasModel, GenerationRequest } from "../apps/server/src/apps/ask-atlas/types.js";
+import type { ContextResponse } from "../apps/server/src/fabric/types.js";
 
 const selection = (recordId: string, data: Record<string, unknown> = { company: "Example", status: "OA completed" }) => ({
     project: { id: "11111111-1111-4111-8111-111111111111", name: "Applications" },

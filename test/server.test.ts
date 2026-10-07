@@ -3,13 +3,13 @@ import { once } from "node:events";
 import test, { after } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createAtlasHttpServer } from "../src/server.js";
+import { createAtlasHttpServer } from "../apps/server/src/server.js";
 import { cleanupDatabases, databaseFixture } from "./database.js";
 
 after(cleanupDatabases);
 
 test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () => {
-    const fixture = await databaseFixture(); await fixture.store.close(); const http = createAtlasHttpServer({ databaseUrl: fixture.databaseUrl }); http.listen(0, "127.0.0.1"); await once(http, "listening");
+    const fixture = await databaseFixture(); await fixture.store.close(); const http = createAtlasHttpServer({ databaseUrl: fixture.databaseUrl, nodeExecution: 'remote' }); http.listen(0, "127.0.0.1"); await once(http, "listening");
     const address = http.address(); if (!address || typeof address === "string") throw new Error("No address");
     const client = new Client({ name: "test", version: "1" }); await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
     const names = (await client.listTools()).tools.map((x) => x.name); assert.ok(names.includes("create_record")); assert.ok(names.includes("query_records")); assert.ok(names.includes("ask_atlas")); assert.ok(names.includes("ask_portfolio")); assert.ok(names.includes("sync_portfolio")); assert.ok(names.includes("get_contentful_status")); assert.ok(names.includes("search_atlas")); assert.ok(names.includes("request_context")); assert.ok(!names.includes("ingest_conversation"));

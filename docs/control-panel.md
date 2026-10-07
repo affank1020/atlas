@@ -14,7 +14,7 @@ From the Atlas repository:
 ./atlasctl up
 ```
 
-This starts PostgreSQL, Atlas, Observatory, and the OpenAI MCP tunnel in
+This starts PostgreSQL, Atlas Server, Atlas Node, Atlas Web, and the OpenAI MCP tunnel in
 dependency order. To use Ask Atlas, include Ollama:
 
 ```bash
@@ -38,6 +38,12 @@ Useful commands:
 
 ```bash
 ./atlasctl status
+./atlasctl start server
+./atlasctl stop server
+./atlasctl start node
+./atlasctl stop node
+./atlasctl start web
+./atlasctl stop web
 ./atlasctl logs
 ./atlasctl logs tunnel
 ./atlasctl restart --ask
@@ -50,15 +56,16 @@ Useful commands:
 `down` leaves PostgreSQL running so routine restarts are quick. `down --all`
 also stops its Docker Compose service. Processes that were already running in
 another terminal are shown as `RUNNING*` and are never stopped by Atlas
-Control.
+Control. The old `atlas` and `observatory` service names remain accepted as
+legacy aliases for `server` and `web`.
 
-Observatory is at <http://127.0.0.1:5173>. The tunnel's own diagnostics are at
+Atlas Web is at <http://127.0.0.1:5173>. The tunnel's own diagnostics are at
 <http://127.0.0.1:8080/ui>.
 
 ## Requirements
 
 - Docker Desktop for PostgreSQL
-- Node.js and installed dependencies in both `atlas` and `atlas-ui`
+- Node.js and installed dependencies in the monorepo root
 - `tunnel-client` with the existing `atlas-local` profile
 - Ollama and the Atlas models for `--ask`
 

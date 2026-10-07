@@ -1,11 +1,12 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: new URL("../apps/server/.env", import.meta.url), quiet: true });
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
 
 const url=process.env.DATABASE_URL;
 if(!url) throw new Error("DATABASE_URL is required.");
-const source=process.argv[2] ?? path.join(process.cwd(),"data","atlas-structured.json");
+const source=process.argv[2] ?? path.join(process.cwd(),"apps/server/data","atlas-structured.json");
 const state=JSON.parse(await readFile(source,"utf8"));
 for(const key of ["projects","stores","records","auditEvents"]) if(!Array.isArray(state[key])) throw new Error(`Invalid Atlas JSON: '${key}' must be an array.`);
 const pool=new pg.Pool({connectionString:url}); const client=await pool.connect();
@@ -19,4 +20,5 @@ try {
   for(const x of state.auditEvents) await client.query("INSERT INTO audit_events(id,client,operation,project_id,store_id,record_id,before_state,after_state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[x.id,x.client,x.operation,x.projectId??null,x.storeId??null,x.recordId??null,x.previous??null,x.resulting??null,x.occurredAt]);
   await client.query("COMMIT"); console.log(JSON.stringify({source,projects:state.projects.length,stores:state.stores.length,records:state.records.length,auditEvents:state.auditEvents.length},null,2));
 } catch(error){ await client.query("ROLLBACK"); throw error; } finally { client.release(); await pool.end(); }
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: new URL("../apps/server/.env", import.meta.url), quiet: true });

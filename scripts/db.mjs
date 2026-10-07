@@ -1,4 +1,5 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: new URL("../apps/server/.env", import.meta.url), quiet: true });
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
@@ -7,7 +8,7 @@ const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is required.");
 const pool = new pg.Pool({ connectionString: url });
 const mode = process.argv[2] ?? "migrate";
-const directory = path.join(process.cwd(), "migrations");
+const directory = path.join(process.cwd(), "apps/server/migrations");
 try {
   await pool.query("CREATE TABLE IF NOT EXISTS atlas_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
   const files = (await readdir(directory)).filter((x) => /^\d+.*\.sql$/.test(x)).sort();

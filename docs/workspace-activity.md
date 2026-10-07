@@ -32,7 +32,7 @@ Existing mutation intents/results are preserved. New workspace events include th
 
 ## Manual verification: Final Year Project / AI Football
 
-1. Restart the Atlas backend using your normal development runner (or `./atlasctl restart` from the Atlas repository if using the managed stack) so new inspection auditing is loaded. The UI development server hot-reloads; production UI users should run `npm run build` in `atlas-ui` and serve the updated output.
+1. Restart the Atlas backend using your normal development runner (or `./atlasctl restart` from the Atlas repository if using the managed stack) so new inspection auditing is loaded. The UI development server hot-reloads; production UI users should run `npm run build` in `apps/web` and serve the updated output.
 2. Open Observatory at http://127.0.0.1:5173 and choose Projects → Final Year Project. Project activity is directly after the Workspace panel. The Unity command catalog is collapsed by default; expand Unity commands only when needed. Choose **AI Football** in the Workspace filter. Keep this page visible beside ChatGPT.
 3. With the AI Football Unity project open and Pipeline connected, ask ChatGPT: “Using Atlas, find the Final Year Project and AI Football workspace. Run editor_status, console, get_component_properties for an existing component, and capture_game_view. Use client chatgpt.” Supply a component identifier from scene inspection if needed. The commands must already be locally approved.
 4. Ask ChatGPT to start then stop Play Mode through `unity_run_command` (`editor_play`, `editor_stop`). Expect readable completed rows within approximately five seconds of each call completing. Each operation should appear once, even though its audit contains an intent and result.
@@ -45,9 +45,9 @@ This feed shows the latest 200 raw audit events in the selected scope, not pagin
 
 ## Changed files
 
-Atlas: `src/workspaces/service.ts`, `src/workspaces/contracts.ts`, `src/server.ts`, `src/types.ts`, `test/workspaces.test.ts`, this guide.
+Atlas: `apps/server/src/workspaces/service.ts`, `apps/server/src/workspaces/contracts.ts`, `apps/server/src/server.ts`, `apps/server/src/types.ts`, `test/workspaces.test.ts`, this guide.
 
-Observatory: `src/activity.ts`, `src/ActivityFeed.tsx`, `src/activity.css`, `src/activity.test.ts`, `src/ActivityFeed.test.tsx`, `src/App.tsx`, `src/api.ts`, `src/types.ts`.
+Observatory: `apps/server/src/activity.ts`, `apps/server/src/ActivityFeed.tsx`, `apps/server/src/activity.css`, `apps/server/src/activity.test.ts`, `apps/server/src/ActivityFeed.test.tsx`, `apps/server/src/App.tsx`, `apps/server/src/api.ts`, `apps/server/src/types.ts`.
 
 ## Validation
 

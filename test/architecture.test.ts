@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { ServerLifecycle } from '../src/server/lifecycle.js';
-import { loadServerConfig } from '../src/server/config.js';
-import { createMcpTransport } from '../src/api/mcp/index.js';
-import type { TransportServices } from '../src/server/dispatch.js';
+import { ServerLifecycle } from '../apps/server/src/server/lifecycle.js';
+import { loadServerConfig } from '../apps/server/src/server/config.js';
+import { createMcpTransport } from '../apps/server/src/api/mcp/index.js';
+import type { TransportServices } from '../apps/server/src/server/dispatch.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -13,7 +14,7 @@ async function sources(directory: string): Promise<string[]> {
     return (await Promise.all((await readdir(directory, { withFileTypes: true })).map(entry => entry.isDirectory() ? sources(path.join(directory, entry.name)) : entry.name.endsWith('.ts') ? [path.join(directory, entry.name)] : []))).flat();
 }
 test('dependency boundaries hold transitively, including compatibility re-exports', async () => {
-    const root = path.resolve('src');
+    const root = path.resolve('apps/server/src');
     const files = await sources(root);
     const graph = new Map<string, string[]>();
     for (const file of files) {
@@ -53,6 +54,26 @@ test('dependency boundaries hold transitively, including compatibility re-export
     }
 });
 
+test('Atlas Control exposes Server, Node and Web as separate services with legacy aliases', async () => {
+    const source = await readFile('scripts/atlas-control.mjs', 'utf8');
+    assert.match(source, /server: \{ label: "Atlas Server"/);
+    assert.match(source, /node: \{ label: "Atlas Node"/);
+    assert.match(source, /web: \{ label: "Atlas Web"/);
+    assert.match(source, /atlas: "server"/);
+    assert.match(source, /observatory: "web"/);
+    assert.match(source, /\["postgres", "server", .*\["node"\].*"web"/s);
+    assert.match(source, /\["tunnel", "ollama", "web", "node", "server"/);
+    const help = spawnSync('./atlasctl', ['--help'], { encoding: 'utf8' });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /Services: postgres, server, node, web, tunnel, ollama/);
+    assert.match(help.stdout, /Legacy aliases: atlas → server, observatory → web/);
+    const status = spawnSync('./atlasctl', ['status'], { encoding: 'utf8' });
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /Atlas Server/);
+    assert.match(status.stdout, /Atlas Node/);
+    assert.match(status.stdout, /Atlas Web/);
+});
+
 test('MCP names and argument schemas match the complete pre-refactor contract', async () => {
     const expected = JSON.parse(await readFile('test/mcp-contract.json', 'utf8'));
     for (const item of expected.filter((tool: any) => ['get_audit_history', 'get_recent_activity'].includes(tool.name))) {
@@ -66,7 +87,12 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
     try {
         await server.connect(a); await client.connect(b);
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task'].includes(tool.name)).map(({ name, inputSchema }) => ({ name, inputSchema })), expected);
+        const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
+        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', ...v2].includes(tool.name)).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        const create = stable.find(item => item.name === 'create_workspace');
+        if (create) delete (create.inputSchema as any).properties.nodeId;
+        assert.deepEqual(stable, expected);
+        assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name), v2);
         assert.deepEqual(tools.filter(tool => ['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task'].includes(tool.name)).map(tool => tool.name), ['workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_nodes', 'get_node']);
     } finally { await client.close(); await server.close(); }
 });
@@ -109,4 +135,38 @@ test('configuration validates listen port and captures independent execution/pro
     assert.equal(config.ai.baseUrl, 'http://local:11434');
     assert.throws(() => loadServerConfig({ DATABASE_URL: env.DATABASE_URL, ATLAS_PORT: 'NaN' }), /ATLAS_PORT/);
     assert.throws(() => loadServerConfig({}), /DATABASE_URL/);
+});
+
+test('monorepo application packages preserve independent deployment boundaries', async () => {
+    const root = path.resolve('.');
+    const applications = ['apps/server', 'apps/node', 'apps/web', 'packages/protocol', 'packages/view-runtime'];
+    const manifests = new Map<string, any>();
+    for (const application of applications) manifests.set(application, JSON.parse(await readFile(path.join(root, application, 'package.json'), 'utf8')));
+    const dependencyNames = (application: string) => Object.keys(manifests.get(application).dependencies ?? {});
+    assert.ok(dependencyNames('apps/server').includes('@atlas/protocol'));
+    assert.ok(dependencyNames('apps/node').includes('@atlas/protocol'));
+    assert.ok(!dependencyNames('apps/server').includes('@atlas/node'));
+    assert.ok(!dependencyNames('apps/node').includes('@atlas/server'));
+    assert.ok(!dependencyNames('apps/web').includes('@atlas/server'));
+    assert.ok(!dependencyNames('apps/web').includes('@atlas/node'));
+    assert.ok(!dependencyNames('packages/protocol').some((name: string) => name.startsWith('@atlas/')));
+    const code = await Promise.all(applications.map(async application => {
+        const files = await sources(path.join(root, application, 'src'));
+        return [application, await Promise.all(files.map(async file => [file, await readFile(file, 'utf8')]))] as const;
+    }));
+    for (const [application, files] of code) for (const [file, source] of files) {
+        const imports = [...source.matchAll(/(?:from\s*|import\s*\(?\s*)["']([^"']+)["']/g)].map(match => match[1]);
+        for (const imported of imports) {
+            assert.ok(!imported.includes('apps/server') && !imported.includes('apps/node'), `${file} imports application source`);
+            if (imported.startsWith('.')) {
+                const target = path.resolve(path.dirname(file), imported);
+                assert.ok(target.startsWith(path.join(root, application) + path.sep), `${file} imports outside its package: ${imported}`);
+            }
+            if (application === 'apps/server') assert.ok(!imported.startsWith('@atlas/node'), `${file} imports Node`);
+            if (application === 'apps/node') assert.ok(!imported.startsWith('@atlas/server'), `${file} imports Server`);
+            if (application === 'packages/protocol') assert.ok(!imported.startsWith('@atlas/'), `${file} imports an application`);
+        }
+    }
+    const serverSources = (code.find(([application]) => application === 'apps/server')?.[1] ?? []).map(([, source]) => source).join('\n');
+    assert.doesNotMatch(serverSources, /(?:import|new)\s+(?:LocalNodeRuntime|StandaloneNode)|(?:node:)?child_process["']/ );
 });

@@ -8,12 +8,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { databaseFixture, cleanupDatabases } from '../dist/test/database.js';
-import { createAtlasHttpServer } from '../dist/src/server.js';
+import { databaseFixture, cleanupDatabases } from '../test/database.ts';
+import { localHttpServer } from '../test/local-node-fixture.ts';
 const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'atlas-workspace-smoke-')));
 process.env.ATLAS_WORKSPACE_ROOTS = root;
 const fixture = await databaseFixture();
-const server = createAtlasHttpServer({ databaseUrl: fixture.databaseUrl });
+const { http: server, services } = localHttpServer(fixture.databaseUrl, [root]);
 const client = new Client({ name: 'workspace-manual-verification', version: '1' });
 try {
     execFileSync('/usr/bin/git', ['init', '-q', root]);
@@ -36,12 +36,14 @@ try {
     assert.equal((await call('workspace_git_status', scope)).dirty, true);
     const diff = await call('workspace_git_diff', scope); assert.match(diff.diff, /goals = 1/);
     console.log(diff.diff);
-    assert.equal((await call('unity_status', scope)).state, 'no_adapter');
+    const unavailable = await client.callTool({ name: 'unity_status', arguments: scope });
+    assert.equal(unavailable.isError, true);
+    assert.match(JSON.stringify(unavailable), /CAPABILITY_UNAVAILABLE/);
     const history = await call('get_audit_history', { workspaceId: workspace.id });
     assert.ok(history.some(x => x.operation === 'workspace.file_patched'));
     await call('archive_workspace', scope);
     console.log('Workspace MCP smoke completed; fixture will be removed.');
 } finally {
     await client.close(); await new Promise(resolve => server.close(resolve));
-    await cleanupDatabases(); await rm(root, { recursive: true, force: true });
+    await services.lifecycle.close(); await cleanupDatabases(); await rm(root, { recursive: true, force: true });
 }

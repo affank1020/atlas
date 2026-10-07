@@ -1,0 +1,37 @@
+export type FieldType = "string" | "number" | "boolean" | "date" | "datetime" | "enum" | "array" | "object";
+export type FieldDefinition = { name: string; type: FieldType; required?: boolean; enumValues?: string[]; default?: unknown; description?: string };
+export type Project = { id: string; name: string; description?: string; createdAt: string; updatedAt: string; archivedAt?: string };
+export type Store = { id: string; projectId: string; name: string; description?: string; schema: { version: number; fields: FieldDefinition[] }; createdAt: string; updatedAt: string; archivedAt?: string };
+export type AtlasRecord = { id: string; projectId: string; storeId: string; data: Record<string, unknown>; createdAt: string; updatedAt: string; archivedAt?: string };
+// Keep unknown/future adapter operations readable without a frontend schema release.
+export type AuditOperation = string;
+export type AuditEvent = { id: string; occurredAt: string; client: string; operation: AuditOperation; projectId?: string; viewId?: string; storeId?: string; recordId?: string; workspaceId?: string; previous?: unknown; resulting?: unknown };
+export type AtlasStatus = { product: string; version: string; storage: string; schemaVersion: number; projects: number; stores: number; records: number };
+export type Page<T> = { items: T[]; total: number; limit: number; offset: number };
+export type FilterOperator = "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in" | "contains";
+export type RecordFilter = { field: string; operator: FilterOperator; value: unknown };
+export type SortSpec = { field: string; direction: "asc" | "desc" };
+export type ViewQuery = { name: string; storeId: string; filters?: RecordFilter[]; sort?: SortSpec[]; limit?: number };
+export type ViewManifest = {viewKitVersion?:1;layout?:"dashboard"|"document"|"wide";capabilities?:("client-script"|"url-params"|"record-actions")[];params?:Record<string,string>};
+export type ViewAction = {name:string;type:"record.update"|"record.create";storeId:string;allowedFields:string[];fixedData?:Record<string,unknown>};
+export type View = {actions?:ViewAction[];manifest?:ViewManifest;script?:string; id: string; projectId: string; name: string; slug?: string; description?: string; queries: ViewQuery[]; html: string; css: string; createdAt: string; updatedAt: string; archivedAt?: string };
+export type ViewRenderResult = {runtimeId:string;actions?:ViewAction[];standalonePath?:string;document:string;params:Record<string,string>;manifest?:ViewManifest;script?:string; view: Pick<View, "id" | "projectId" | "name" | "slug">; data: Record<string, Record<string, unknown>[]>; renderedHtml: string; css: string; diagnostics: { queries: { name: string; storeId: string; returned: number }[] } };
+export type RetrievalMode = "lexical" | "semantic" | "hybrid";
+export type FabricResult = {
+    project: { id: string; name: string };
+    store: { id: string; name: string };
+    record: AtlasRecord;
+    score: number;
+    matchedFields: string[];
+    snippet: string;
+    reasons: string[];
+    ranking: Record<string, unknown>;
+    projection?: Record<string, unknown>;
+    [key: string]: unknown;
+};
+export type FabricSearchResponse = { query: string; results: FabricResult[]; diagnostics: Record<string, unknown>; [key: string]: unknown };
+export type FabricContextResponse = { query: string; selections: FabricResult[]; diagnostics: Record<string, unknown>; [key: string]: unknown };
+export type AskAtlasSource = { label: string; projectId: string; projectName: string; storeId: string; storeName: string; recordId: string; snippet: string; [key: string]: unknown };
+export type AskAtlasModel = "qwen3:1.7b" | "qwen3:4b";
+export type AskAtlasResponse = { question: string; answer: string; abstained?: boolean; sources: AskAtlasSource[]; diagnostics: { provider?: string; model?: string; requestedModel?: string; resolvedModel?: string; latencyMs?: number; contextRecordCount: number; authorityStatus: string; unresolvedConflicts: number; relevantUnresolvedConflicts: number; authorityDecisions: unknown[]; relevanceFloorRejected: number; authoritySuppressed: number; redundancyRejected: number; truncated?: boolean; validationFailure?: string; semanticStatus?: string; semanticError?: string; conversationTurns?: number; retrieval?: { strategy?: string; operations?: Array<Record<string, unknown>> }; interpreter?: { provider?: string; model?: string; intent?: string; plan?: unknown; validationStatus?: string; error?: string }; retrievalPlan?: { originalQuery: string; augmentedQueries?: string[]; reason?: string }; [key: string]: unknown } };
+export type PortfolioSyncStatus = { connected: boolean; status: "not_configured" | "idle" | "syncing" | "failed"; spaceId?: string; environment: string; lastTrigger?: string; lastEvent?: string; lastStartedAt?: string; lastSuccessfulSync?: string; lastError?: string; counts: Record<string, number> };

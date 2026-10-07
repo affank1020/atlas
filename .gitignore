@@ -1,8 +1,19 @@
 node_modules/
 dist/
 .env
+.env.node
 .DS_Store
 *.log
 data/*.json
 !data/.gitkeep
 data/media/
+
+# Local configuration and build caches anywhere in the workspace
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.node.example
+**/node_modules/
+**/dist/
+**/*.tsbuildinfo
+apps/server/data/media/

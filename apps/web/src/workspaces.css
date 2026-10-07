@@ -1,0 +1,15 @@
+.workspace-body { padding: 20px 22px; overflow-wrap: anywhere; }
+.workspace-body > h3:first-child { margin-top: 0; }
+.workspace-body .form { padding: 0; }
+.workspace-body details { margin: 14px 0; }
+.workspace-body summary { cursor: pointer; }
+.workspace-body pre { padding: 16px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.workspace-body .form-actions { flex-wrap: wrap; margin: 18px 0; }
+.workspace-body li { margin: 6px 0; }
+.workspace-body [role="alert"] { color: var(--danger); }
+
+.node-capabilities { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.workspace-host { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--border); }
+
+.workspace-dev { margin-block: 18px; padding-block: 10px; border-block: 1px solid var(--border); }
+.workspace-dev pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

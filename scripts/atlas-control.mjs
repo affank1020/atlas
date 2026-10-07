@@ -9,7 +9,10 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 const atlasDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const uiDir = resolve(atlasDir, "../atlas-ui");
+const serverDir = resolve(atlasDir, "apps/server");
+const nodeDir = resolve(atlasDir, "apps/node");
+const uiDir = resolve(atlasDir, "apps/web");
+const composeArgs = ["compose", "-f", join(atlasDir, "infra/docker-compose.yml")];
 const runtimeDir = join(tmpdir(), `atlas-control-${process.getuid?.() ?? "user"}`);
 const tunnelProfile = join(homedir(), ".config/tunnel-client/atlas-local.yaml");
 const keychainService = "atlas-tunnel-client";
@@ -19,10 +22,16 @@ const colors = process.stdout.isTTY
   ? { green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m", dim: "\x1b[2m", bold: "\x1b[1m", reset: "\x1b[0m" }
   : { green: "", yellow: "", red: "", dim: "", bold: "", reset: "" };
 
+const serviceAliases = {
+  atlas: "server",
+  observatory: "web",
+};
+
 const services = {
   postgres: { label: "PostgreSQL", type: "docker", port: 5432, cwd: atlasDir },
-  atlas: { label: "Atlas", command: "npm", args: ["run", "dev"], port: 3000, cwd: atlasDir, url: "http://127.0.0.1:3000/health" },
-  observatory: { label: "Observatory", command: "npm", args: ["run", "dev"], port: 5173, cwd: uiDir, url: "http://127.0.0.1:5173/" },
+  server: { label: "Atlas Server", command: "npm", args: ["run", "dev:server"], port: 3000, cwd: atlasDir, requires: join(serverDir, ".env"), url: "http://127.0.0.1:3000/health" },
+  node: { label: "Atlas Node", command: "npm", args: ["run", "dev:node"], cwd: atlasDir, requires: join(nodeDir, ".env.node") },
+  web: { label: "Atlas Web", command: "npm", args: ["run", "dev:web"], port: 5173, cwd: atlasDir, url: "http://127.0.0.1:5173/" },
   tunnel: { label: "MCP tunnel", command: "tunnel-client", args: ["run", "--profile", "atlas-local"], port: 8080, cwd: atlasDir, url: "http://127.0.0.1:8080/readyz", requires: tunnelProfile },
   ollama: { label: "Ollama", command: "ollama", args: ["serve"], port: 11434, cwd: atlasDir, url: "http://127.0.0.1:11434/api/tags", optional: true },
 };
@@ -123,11 +132,29 @@ async function serviceState(name) {
   if (service.type === "docker") {
     if (await portOpen(service.port)) return { state: "external", detail: `already listening on :${service.port}` };
     if (!commandExists("docker")) return { state: "missing", detail: "Docker command not found" };
-    const result = spawnSync("docker", ["compose", "ps", "--status", "running", "--services"], { cwd: atlasDir, encoding: "utf8" });
+    const result = spawnSync("docker", [...composeArgs, "ps", "--status", "running", "--services"], { cwd: atlasDir, encoding: "utf8" });
     const running = result.status === 0 && result.stdout.split(/\s+/).includes("postgres");
     return running ? { state: "running", detail: "Docker Compose" } : { state: "stopped" };
   }
   const pid = readPid(name);
+  if (name === "node" && !pid && existsSync(service.requires)) {
+    const match = readFileSync(service.requires, "utf8").match(/^ATLAS_NODE_ID=([0-9a-f-]{36})\s*$/m);
+    if (match) {
+      try {
+        const response = await fetch("http://127.0.0.1:3000/api/tools/get_node", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ nodeId: match[1] }), signal: AbortSignal.timeout(500),
+        });
+        if (response.ok && (await response.json()).status === "online")
+          return { state: "external", detail: "connected to Atlas Server outside Atlas Control" };
+      } catch { /* Server unavailable; continue with managed-process status. */ }
+    }
+  }
+  if (!service.port) {
+    if (pid) return { state: "running", detail: `managed · pid ${pid}` };
+    if (service.requires && !existsSync(service.requires)) return { state: "missing", detail: `missing ${service.requires}` };
+    return { state: "stopped" };
+  }
   const listening = await portOpen(service.port);
   if (pid && listening) return { state: "running", detail: `managed · pid ${pid} · :${service.port}` };
   if (pid) return { state: "starting", detail: `managed · pid ${pid}` };
@@ -154,7 +181,7 @@ async function printStatus() {
     console.log(`${stateText(current.state)}  ${service.label.padEnd(14)}${suffix}`);
   }
   console.log(`\n${colors.dim}* Running outside Atlas Control; it will be left alone.${colors.reset}`);
-  console.log(`Observatory: http://127.0.0.1:5173`);
+  console.log(`Web:        http://127.0.0.1:5173`);
   console.log(`Tunnel UI:  http://127.0.0.1:8080/ui`);
 }
 
@@ -180,7 +207,7 @@ async function startService(name) {
   }
   if (service.type === "docker") {
     console.log(`Starting ${service.label}…`);
-    const result = spawnSync("docker", ["compose", "up", "-d", "postgres"], { cwd: atlasDir, stdio: "inherit" });
+    const result = spawnSync("docker", [...composeArgs, "up", "-d", "postgres"], { cwd: atlasDir, stdio: "inherit" });
     if (result.status !== 0) return false;
     return waitForPort(service.port, 30000);
   }
@@ -198,9 +225,15 @@ async function startService(name) {
     console.error(`${colors.red}✗${colors.reset} Could not open Terminal: ${opened.stderr.trim()}`);
     return false;
   }
-  const ready = await waitForPort(service.port);
+  const ready = service.port ? await waitForPort(service.port) : await (async () => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      if (readPid(name)) return true;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    }
+    return false;
+  })();
   if (!ready) {
-    console.error(`${colors.red}✗${colors.reset} ${service.label} did not open :${service.port}. Run ./atlasctl logs ${name}.`);
+    console.error(`${colors.red}✗${colors.reset} ${service.label} did not start. Run ./atlasctl logs ${name}.`);
     return false;
   }
   console.log(`${colors.green}✓${colors.reset} ${service.label} is ready.`);
@@ -224,7 +257,7 @@ async function stopService(name) {
       return false;
     }
     console.log(`Stopping ${service.label}…`);
-    const result = spawnSync("docker", ["compose", "stop", "postgres"], { cwd: atlasDir, stdio: "inherit" });
+    const result = spawnSync("docker", [...composeArgs, "stop", "postgres"], { cwd: atlasDir, stdio: "inherit" });
     return result.status === 0;
   }
   const { pid: pidFile } = paths(name);
@@ -261,12 +294,16 @@ async function stopService(name) {
 }
 
 function selectedService(value) {
-  if (!services[value]) {
+  const canonical = serviceAliases[value] ?? value;
+  if (!services[canonical]) {
     console.error(`Unknown service "${value}". Choose: ${Object.keys(services).join(", ")}`);
     process.exitCode = 2;
     return undefined;
   }
-  return value;
+  if (canonical !== value) {
+    console.log(`"${value}" is a legacy alias for "${canonical}".`);
+  }
+  return canonical;
 }
 
 function showLogs(name) {
@@ -295,16 +332,18 @@ Usage:
   ./atlasctl logs [service]    Show the latest managed logs
   ./atlasctl configure tunnel-key
                                Save the tunnel API key in macOS Keychain
-  ./atlasctl open              Open Observatory in the default browser
+  ./atlasctl open              Open Atlas Web in the default browser
 
-Services: postgres, atlas, observatory, tunnel, ollama
+Services: postgres, server, node, web, tunnel, ollama
+Legacy aliases: atlas → server, observatory → web
 
-The normal stack is PostgreSQL + Atlas + Observatory + MCP tunnel.
+The normal stack is PostgreSQL + Atlas Server + Atlas Node + Atlas Web + MCP tunnel.
 Ollama is optional and only included by --ask.`);
 }
 
 async function up(includeAsk) {
-  for (const name of ["postgres", "atlas", "observatory", ...(includeAsk ? ["ollama"] : []), "tunnel"]) {
+  const remoteNode = true;
+  for (const name of ["postgres", "server", ...(remoteNode ? ["node"] : []), "web", ...(includeAsk ? ["ollama"] : []), "tunnel"]) {
     if (!await startService(name)) { process.exitCode = 1; return; }
   }
   console.log(`\nAtlas is ready${includeAsk ? " with Ask Atlas support" : ""}.`);
@@ -312,7 +351,7 @@ async function up(includeAsk) {
 }
 
 async function down(includePostgres) {
-  for (const name of ["tunnel", "ollama", "observatory", "atlas", ...(includePostgres ? ["postgres"] : [])]) await stopService(name);
+  for (const name of ["tunnel", "ollama", "web", "node", "server", ...(includePostgres ? ["postgres"] : [])]) await stopService(name);
 }
 
 const [command = "status", argument] = process.argv.slice(2);

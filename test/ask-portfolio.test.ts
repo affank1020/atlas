@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { AskPortfolioService } from "../src/apps/ask-portfolio/index.js";
-import { createFabric } from "../src/fabric/index.js";
-import { ContentfulPortfolioIntegration, PORTFOLIO_PROJECT_ID, signContentfulRequest, verifyContentfulWebhook } from "../src/integrations/contentful.js";
+import { AskPortfolioService } from "../apps/server/src/apps/ask-portfolio/index.js";
+import { createFabric } from "../apps/server/src/fabric/index.js";
+import { ContentfulPortfolioIntegration, PORTFOLIO_PROJECT_ID, signContentfulRequest, verifyContentfulWebhook } from "../apps/server/src/integrations/contentful.js";
 import { cleanupDatabases, databaseFixture } from "./database.js";
 
 after(cleanupDatabases);

@@ -129,7 +129,7 @@ Supply the actual project ID and same-project Store ID when calling `create_view
 }
 ```
 
-The full Graduate Applications reference is in `examples/views/graduate-applications.json`. `scripts/migrate-graduate-view.mjs PROJECT_ID VIEW_ID` previews and updates that named dashboard through MCP while retaining its original queries and stable ID. Migration snapshots remain in audit history.
+The full Graduate Applications reference is in `apps/server/examples/views/graduate-applications.json`. `scripts/migrate-graduate-view.mjs PROJECT_ID VIEW_ID` previews and updates that named dashboard through MCP while retaining its original queries and stable ID. Migration snapshots remain in audit history.
 
 ## Security and supported JavaScript
 
@@ -149,7 +149,7 @@ Open a project → New View, or open an existing View → Edit View. Edit name, 
 
 Backend tests cover legacy/current rendering, persistence, audit snapshots, archive semantics, query/manifest/script validation, preview, concurrency and the reference dashboard. Observatory tests cover the iframe contract, parameter bridge and editor preview/save behaviour.
 
-For browser regression checks: `npm run build`, generate a temporary fixture with `node test/view-browser-fixture.mjs ../atlas-ui/public/__view-runtime-test.html`, open that path in the Observatory dev server, check PASS and exercise tabs/search/sorting, then delete the generated public file before a production build. The fixture verifies parent DOM, cookies, storage, network, workers, eval, query data, CSS, components and parameter messaging using the actual browser.
+For browser regression checks: `npm run build`, generate a temporary fixture with `node test/view-browser-fixture.mjs apps/web/public/__view-runtime-test.html`, open that path in the Observatory dev server, check PASS and exercise tabs/search/sorting, then delete the generated public file before a production build. The fixture verifies parent DOM, cookies, storage, network, workers, eval, query data, CSS, components and parameter messaging using the actual browser.
 
 V3 regression coverage includes action ownership/schema boundaries, revoked declarations, create/update, normal audit provenance, persistence after reopening Core, standalone routes, refresh, host message validation and unchanged University ranking. The real-browser fixture `test/run-views-v3-browser.mjs` runs the production server on port 3001 against an isolated PostgreSQL schema; stop it with SIGTERM to clean up. No AI is involved in View actions or refresh. Archive/destructive actions, a schema-aware form builder, external links, npm dependencies and a visual layout editor remain deferred.
 
@@ -218,6 +218,6 @@ Normal record audit events include project/store/record IDs, `viewId`, and `clie
 
 ## University reference implementation
 
-`examples/views/university-v3.json` preserves the original twelve queries and deterministic Focus Now ranking from `university-v2-reference.json`. Four additional queries supply module topics, assessments, recent activity and attempts. Start and Complete declare only Study Tasks `status` writes, fixed to `in_progress` and `completed`. Successful writes refresh the pending task list and recalculate Focus Now locally, without Fabric or Ask Atlas.
+`apps/server/examples/views/university-v3.json` preserves the original twelve queries and deterministic Focus Now ranking from `university-v2-reference.json`. Four additional queries supply module topics, assessments, recent activity and attempts. Start and Complete declare only Study Tasks `status` writes, fixed to `in_progress` and `completed`. Successful writes refresh the pending task list and recalculate Focus Now locally, without Fabric or Ask Atlas.
 
 Module buttons set the declared `module` URL parameter; one persistent View provides the overview and module detail tabs. The saved **Task Prioritisation Policy v1** remains unchanged and visible. `scripts/upgrade-university-view.mjs` previews and updates the known dashboard with a concurrency check, and verifies that Project Guidance records are unchanged.

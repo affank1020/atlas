@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Atlas structured data platform exposed through MCP",
+  "engines": {
+    "node": ">=20"
+  },
+  "name": "@atlas/server",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "npm run build --silent && node --import tsx --test ../../test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "acorn": "^8.19.0",
+    "dotenv": "^17.4.2",
+    "handlebars": "^4.7.9",
+    "parse5": "^8.0.1",
+    "pg": "^8.23.0",
+    "sharp": "^0.35.5",
+    "@atlas/protocol": "2.0.0",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5",
+    "@atlas/view-runtime": "1.0.0"
+  },
+  "devDependencies": {},
+  "files": [
+    "dist",
+    "migrations"
+  ]
+}

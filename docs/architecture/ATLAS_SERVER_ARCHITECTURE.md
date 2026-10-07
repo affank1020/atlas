@@ -1,3 +1,7 @@
+# Current monorepo boundary
+
+Server is `apps/server`, Node is `apps/node`, and shared wire contracts are `packages/protocol`. Server composition uses the remote gateway only and does not contain local execution. `packages/view-runtime` holds the browser host/kit shared with Web. The previous path tables and local execution discussion below document the pre-monorepo implementation; use the root [README](../../README.md) and [deployment notes](../deployment.md) for current commands and paths.
+
 # Atlas Server architecture
 
 Architecture refactor, 2026-10-07. This describes implemented boundaries and explicitly distinguishes future work. This is a code refactor, not a data-model or product-contract migration.

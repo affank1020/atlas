@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test,{after} from "node:test";
-import {createFabric} from "../src/fabric/index.js";
-import type {StoreAuthorityPolicy} from "../src/fabric/repository.js";
+import {createFabric} from "../apps/server/src/fabric/index.js";
+import type {StoreAuthorityPolicy} from "../apps/server/src/fabric/repository.js";
 import {cleanupDatabases,databaseFixture} from "./database.js";
 after(cleanupDatabases);
 const fields=[{name:"subject",type:"string" as const,required:true},{name:"value",type:"string" as const,required:true},{name:"status",type:"string" as const},{name:"effectiveAt",type:"date" as const},{name:"detail",type:"string" as const}];

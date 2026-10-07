@@ -1,8 +1,8 @@
 // Generate a real-browser regression page; the deliberately hostile script bypasses
 // authoring validation so these checks exercise the browser boundary itself.
-// npm run build && node test/view-browser-fixture.mjs ../atlas-ui/public/__view-runtime-test.html
+// npm run build && node test/view-browser-fixture.mjs ../apps/web/public/__view-runtime-test.html
 import {writeFile} from 'node:fs/promises';
-import {viewDocument} from '../dist/src/view-runtime.js';
+import {viewDocument} from '../apps/server/dist/view-runtime.js';
 const target=process.argv[2];if(!target)throw new Error('Provide an output HTML path');
 const script=String.raw`
 atlas.onReady(async () => {

@@ -6,11 +6,11 @@ Workspaces bind an Atlas Project to a local directory. Stores and Views retain t
 
 `MCP / Observatory HTTP → shared validated tool dispatch → WorkspaceService → PostgreSQL + WorkspaceFiles / WorkspaceAdapter`
 
-- `src/workspaces/contracts.ts`: the same strict Zod contracts serve MCP and HTTP.
-- `src/workspaces/service.ts`: project ownership, workspace lifecycle, concurrency, durable audit intents and outcomes. It depends on Core; Core does not depend on Workspaces or Unity.
-- `src/workspaces/files.ts`: bounded filesystem and fixed Git operations.
-- `src/workspaces/adapter.ts`: adapter interface and optional Unity implementation.
-- `migrations/011_workspaces.sql`: UUID workspace records, project foreign key, one-active-workspace partial unique index, and indexed `audit_events.workspace_id`.
+- `apps/server/src/workspaces/contracts.ts`: the same strict Zod contracts serve MCP and HTTP.
+- `apps/server/src/workspaces/application.ts`: project ownership, workspace lifecycle, concurrency, durable audit intents and outcomes. It depends on Core; Core does not depend on Workspaces or Unity.
+- `apps/node/src/capabilities/workspace-files/files.ts`: bounded filesystem and fixed Git operations.
+- `apps/node/src/capabilities/unity/unity.ts`: adapter interface and optional Unity implementation.
+- `apps/server/migrations/011_workspaces.sql`: UUID workspace records, project foreign key, one-active-workspace partial unique index, and indexed `audit_events.workspace_id`.
 - Observatory `WorkspacePanel.tsx`: configuration, health, Git changes, Unity command schemas, and read-only file preview.
 
 The service is created lazily. A missing workspace migration/root/CLI or unavailable Editor affects only workspace requests. Core snapshots do not query the workspace table. Workspace IDs do not change when renamed. Archiving detaches without deleting files. Archived projects cannot operate on workspaces. Roots and adapters are immutable for a binding; archive and register again to change them. The active-workspace index can be relaxed in a later migration without changing the domain shape.
@@ -122,4 +122,4 @@ Use `create_workspace`; retain its returned `id` as `workspaceId`. Generic tree/
 
 ## Verification
 
-`npm test` includes isolated PostgreSQL, filesystem, Git, Unity mock, audit, project isolation and real MCP transport regressions. `npm run build && node scripts/workspace-live-verify.mjs` separately exercises the main MCP file-edit/Git/audit flow against a disposable repository/schema. Observatory uses `npm test` and `npm run build` in `atlas-ui`.
+`npm test` includes isolated PostgreSQL, filesystem, Git, Unity mock, audit, project isolation and real MCP transport regressions. `npm run build && node scripts/workspace-live-verify.mjs` separately exercises the main MCP file-edit/Git/audit flow against a disposable repository/schema. Observatory uses `npm test` and `npm run build` in `apps/web`.

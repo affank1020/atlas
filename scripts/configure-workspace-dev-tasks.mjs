@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+loadEnv({ path: new URL('../apps/server/.env', import.meta.url), quiet: true });
 import pg from 'pg';
 import { configureDevTasks, readDevTasks } from './lib/workspace-dev.mjs';
 if (process.argv.length !== 4 || !process.env.DATABASE_URL) {

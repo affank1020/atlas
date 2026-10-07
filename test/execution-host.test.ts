@@ -1,13 +1,13 @@
-import { NodeRouter } from '../src/nodes/router.js';
-import { NodeService } from '../src/nodes/service.js';
-import { PostgresNodeRepository } from '../src/infrastructure/database/nodes.js';
+import { NodeRouter } from '../apps/server/src/nodes/router.js';
+import { NodeService } from '../apps/server/src/nodes/service.js';
+import { PostgresNodeRepository } from '../apps/server/src/infrastructure/database/nodes.js';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { databaseFixture, cleanupDatabases } from './database.js';
-import { WorkspaceService } from '../src/workspaces/application.js';
-import { PostgresWorkspaceRepository } from '../src/infrastructure/database/workspaces.js';
-import type { ExecutionHost } from '../src/workspaces/runtime.js';
-import type { WorkspaceRepository } from '../src/workspaces/repository.js';
+import { WorkspaceService } from '../apps/server/src/workspaces/application.js';
+import { PostgresWorkspaceRepository } from '../apps/server/src/infrastructure/database/workspaces.js';
+import type { ExecutionHost } from '../apps/server/src/workspaces/runtime.js';
+import type { WorkspaceRepository } from '../apps/server/src/workspaces/repository.js';
 after(cleanupDatabases);
 
 test('Workspace service registers and executes an opaque host binding without server filesystem access', async () => {

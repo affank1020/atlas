@@ -10,7 +10,7 @@ try {
  const call=async(name,args)=>{const result=await client.callTool({name,arguments:args});if(result.isError)throw new Error(JSON.stringify(result.content));return result.structuredContent.result};
  const view=await call('get_view',{projectId,viewId});
  if(view.name!=='Graduate Applications Dashboard'||!view.queries.some(q=>q.name==='applications'))throw new Error('Expected Graduate Applications Dashboard with applications binding.');
- const definition=JSON.parse(await readFile(new URL('../examples/views/graduate-applications.json',import.meta.url),'utf8'));
+ const definition=JSON.parse(await readFile(new URL('../apps/server/examples/views/graduate-applications.json',import.meta.url),'utf8'));
  await call('preview_view',{projectId,queries:view.queries,...definition});
  await call('update_view',{projectId,viewId,expectedUpdatedAt:view.updatedAt,...definition});
  const rendered=await call('render_view',{projectId,viewId});

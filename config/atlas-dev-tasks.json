@@ -1,5 +1,52 @@
 {
-  "test": { "executable": "npm", "args": ["test"], "passEnvironment": ["DATABASE_URL"], "timeoutMs": 120000 },
-  "typecheck": { "executable": "npm", "args": ["run", "build"], "timeoutMs": 120000 },
-  "build": { "executable": "npm", "args": ["run", "build"], "timeoutMs": 120000 }
+  "test": {
+    "executable": "npm",
+    "args": [
+      "test"
+    ],
+    "passEnvironment": [
+      "DATABASE_URL"
+    ],
+    "timeoutMs": 600000
+  },
+  "build": {
+    "executable": "npm",
+    "args": [
+      "run",
+      "build"
+    ],
+    "timeoutMs": 120000
+  },
+  "typecheck": {
+    "executable": "npm",
+    "args": [
+      "run",
+      "build"
+    ],
+    "timeoutMs": 120000
+  },
+  "server_build": {
+    "executable": "npm",
+    "args": [
+      "run",
+      "build:server"
+    ],
+    "timeoutMs": 120000
+  },
+  "node_build": {
+    "executable": "npm",
+    "args": [
+      "run",
+      "build:node"
+    ],
+    "timeoutMs": 120000
+  },
+  "web_build": {
+    "executable": "npm",
+    "args": [
+      "run",
+      "build:web"
+    ],
+    "timeoutMs": 120000
+  }
 }
