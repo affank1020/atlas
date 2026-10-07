@@ -1,0 +1,307 @@
+{
+  "name": "University Learning Dashboard",
+  "slug": "university-learning-dashboard",
+  "manifest": {
+    "layout": "dashboard",
+    "params": {
+      "q": "",
+      "module": ""
+    },
+    "capabilities": [
+      "client-script",
+      "url-params",
+      "record-actions"
+    ],
+    "viewKitVersion": 1
+  },
+  "queries": [
+    {
+      "name": "modules",
+      "sort": [
+        {
+          "field": "code",
+          "direction": "asc"
+        }
+      ],
+      "limit": 20,
+      "filters": [
+        {
+          "field": "status",
+          "value": "active",
+          "operator": "eq"
+        }
+      ],
+      "storeId": "5d55699b-1822-4136-a5c0-ec58b656f1c6"
+    },
+    {
+      "name": "pendingTasks",
+      "sort": [
+        {
+          "field": "dueDate",
+          "direction": "asc"
+        },
+        {
+          "field": "priority",
+          "direction": "desc"
+        }
+      ],
+      "limit": 100,
+      "filters": [
+        {
+          "field": "status",
+          "value": [
+            "not_started",
+            "in_progress"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc"
+    },
+    {
+      "name": "activeTopics",
+      "sort": [
+        {
+          "field": "moduleCode",
+          "direction": "asc"
+        },
+        {
+          "field": "name",
+          "direction": "asc"
+        }
+      ],
+      "limit": 100,
+      "filters": [
+        {
+          "field": "status",
+          "value": [
+            "exposed",
+            "learning"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "b5b649eb-8e6a-45fd-a57b-88c91686c548"
+    },
+    {
+      "name": "openAssessments",
+      "sort": [
+        {
+          "field": "dueDate",
+          "direction": "asc"
+        }
+      ],
+      "limit": 100,
+      "filters": [
+        {
+          "field": "status",
+          "value": [
+            "not_started",
+            "in_progress"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "ee8b5d79-8d5e-4c70-ba55-6080ae0f01cd"
+    },
+    {
+      "name": "uxTopics",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "COMP33511",
+          "operator": "eq"
+        }
+      ],
+      "storeId": "b5b649eb-8e6a-45fd-a57b-88c91686c548"
+    },
+    {
+      "name": "uxTasks",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "COMP33511",
+          "operator": "eq"
+        },
+        {
+          "field": "status",
+          "value": [
+            "not_started",
+            "in_progress"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc"
+    },
+    {
+      "name": "gamesTopics",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "COMP34111",
+          "operator": "eq"
+        }
+      ],
+      "storeId": "b5b649eb-8e6a-45fd-a57b-88c91686c548"
+    },
+    {
+      "name": "gamesTasks",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "COMP34111",
+          "operator": "eq"
+        },
+        {
+          "field": "status",
+          "value": [
+            "not_started",
+            "in_progress"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc"
+    },
+    {
+      "name": "markovTopics",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "MATH37011",
+          "operator": "eq"
+        }
+      ],
+      "storeId": "b5b649eb-8e6a-45fd-a57b-88c91686c548"
+    },
+    {
+      "name": "markovTasks",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "MATH37011",
+          "operator": "eq"
+        },
+        {
+          "field": "status",
+          "value": [
+            "not_started",
+            "in_progress"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc"
+    },
+    {
+      "name": "mamlTopics",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "MATH36160",
+          "operator": "eq"
+        }
+      ],
+      "storeId": "b5b649eb-8e6a-45fd-a57b-88c91686c548"
+    },
+    {
+      "name": "mamlTasks",
+      "limit": 100,
+      "filters": [
+        {
+          "field": "moduleCode",
+          "value": "MATH36160",
+          "operator": "eq"
+        },
+        {
+          "field": "status",
+          "value": [
+            "not_started",
+            "in_progress"
+          ],
+          "operator": "in"
+        }
+      ],
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc"
+    },
+    {
+      "name": "moduleTopics",
+      "storeId": "b5b649eb-8e6a-45fd-a57b-88c91686c548",
+      "limit": 100,
+      "sort": [
+        {
+          "field": "name",
+          "direction": "asc"
+        }
+      ]
+    },
+    {
+      "name": "moduleAssessments",
+      "storeId": "ee8b5d79-8d5e-4c70-ba55-6080ae0f01cd",
+      "limit": 100,
+      "sort": [
+        {
+          "field": "dueDate",
+          "direction": "asc"
+        }
+      ]
+    },
+    {
+      "name": "recentActivity",
+      "storeId": "13db9f3d-befb-4b04-b025-e939e5351205",
+      "limit": 100,
+      "sort": [
+        {
+          "field": "date",
+          "direction": "desc"
+        }
+      ]
+    },
+    {
+      "name": "recentAttempts",
+      "storeId": "972bec1d-e829-4478-8990-63140dac991d",
+      "limit": 100,
+      "sort": [
+        {
+          "field": "date",
+          "direction": "desc"
+        }
+      ]
+    }
+  ],
+  "html": "<atlas-page>\n<div id=\"university-overview\">\n  <atlas-header title=\"University\" subtitle=\"2026\u201327 \u00b7 Learning state & workload\"></atlas-header>\n\n  <atlas-stat-grid>\n    <atlas-stat label=\"Active modules\" value=\"{{modules.length}}\"></atlas-stat>\n    <atlas-stat id=\"focus-stat\" label=\"Focus now\" value=\"\u2014\"></atlas-stat>\n    <atlas-stat label=\"Currently learning\" value=\"{{activeTopics.length}}\"></atlas-stat>\n    <atlas-stat label=\"Open assessments\" value=\"{{openAssessments.length}}\"></atlas-stat>\n  </atlas-stat-grid>\n\n  <section class=\"module-grid\" aria-label=\"Modules\">\n    <atlas-card class=\"module-card\">\n      <atlas-button variant=\"secondary\" data-module=\"COMP33511\" label=\"Open COMP33511\">COMP33511 \u2197</atlas-button>\n      <h2>User Experience</h2>\n      <p class=\"atlas-muted\">Semester 1 \u00b7 coverage, critique and discussion</p>\n      <div class=\"module-meta\">\n        <atlas-badge tone=\"info\">{{uxTopics.length}} topics</atlas-badge>\n        <atlas-badge tone=\"warning\">{{uxTasks.length}} pending</atlas-badge>\n      </div>\n    </atlas-card>\n    <atlas-card class=\"module-card\">\n      <atlas-button variant=\"secondary\" data-module=\"COMP34111\" label=\"Open COMP34111\">COMP34111 \u2197</atlas-button>\n      <h2>AI and Games</h2>\n      <p class=\"atlas-muted\">Semester 1 \u00b7 game theory, search and Hex project</p>\n      <div class=\"module-meta\">\n        <atlas-badge tone=\"info\">{{gamesTopics.length}} topics</atlas-badge>\n        <atlas-badge tone=\"warning\">{{gamesTasks.length}} pending</atlas-badge>\n      </div>\n    </atlas-card>\n    <atlas-card class=\"module-card\">\n      <atlas-button variant=\"secondary\" data-module=\"MATH37011\" label=\"Open MATH37011\">MATH37011 \u2197</atlas-button>\n      <h2>Markov Processes</h2>\n      <p class=\"atlas-muted\">Semester 1 \u00b7 notes, sheets and weekly quizzes</p>\n      <div class=\"module-meta\">\n        <atlas-badge tone=\"info\">{{markovTopics.length}} topics</atlas-badge>\n        <atlas-badge tone=\"warning\">{{markovTasks.length}} pending</atlas-badge>\n      </div>\n    </atlas-card>\n    <atlas-card class=\"module-card\">\n      <atlas-button variant=\"secondary\" data-module=\"MATH36160\" label=\"Open MATH36160\">MATH36160 \u2197</atlas-button>\n      <h2>Mathematical Applications of Machine Learning</h2>\n      <p class=\"atlas-muted\">Full year \u00b7 theory now, applications in Semester 2</p>\n      <div class=\"module-meta\">\n        <atlas-badge tone=\"info\">{{mamlTopics.length}} topics</atlas-badge>\n        <atlas-badge tone=\"warning\">{{mamlTasks.length}} pending</atlas-badge>\n      </div>\n    </atlas-card>\n  </section>\n\n  <atlas-card class=\"focus-card\">\n    <div class=\"section-heading\">\n      <div>\n        <h2>Focus now</h2>\n        <p class=\"atlas-muted\">Ranks module-week bundles using carry-over age, course order, current week, deadlines and requiredness.</p>\n      </div>\n      <atlas-badge tone=\"info\">Policy v1</atlas-badge>\n    </div>\n    <div id=\"focus-list\" class=\"focus-list\"></div>\n  </atlas-card>\n\n  <atlas-card>\n    <div class=\"section-heading\">\n      <div>\n        <h2>What needs doing</h2>\n        <p class=\"atlas-muted\">Universal task queue across every active module.</p>\n      </div>\n      <atlas-badge tone=\"warning\">{{pendingTasks.length}} open</atlas-badge>\n    </div>\n    {{#if pendingTasks}}\n    <atlas-table sortable filterable param=\"q\" search-label=\"Search university tasks\">\n      <table>\n        <caption class=\"atlas-muted\">Pending study tasks</caption>\n        <thead><tr><th scope=\"col\">Module</th><th scope=\"col\">Task</th><th scope=\"col\">Type</th><th scope=\"col\">Priority</th><th scope=\"col\">Due</th><th scope=\"col\">Status</th><th scope=\"col\" data-no-sort>Actions</th></tr></thead>\n        <tbody>\n          {{#each pendingTasks}}\n          <tr>\n            <td><atlas-badge tone=\"info\">{{value moduleCode}}</atlas-badge></td>\n            <th scope=\"row\">{{value title}}</th>\n            <td>{{value type}}</td>\n            <td>{{value priority}}</td>\n            <td>{{value dueDate}}</td>\n            <td>{{value status}}</td><td><div class=\"task-actions\"><atlas-button data-task-id=\"{{_atlas.id}}\" data-task-action=\"startTask\" {{#if (eq status \"in_progress\")}}disabled{{/if}}>Start</atlas-button><atlas-button data-task-id=\"{{_atlas.id}}\" data-task-action=\"completeTask\">Complete</atlas-button></div></td>\n          </tr>\n          {{/each}}\n        </tbody>\n      </table>\n    </atlas-table>\n    {{else}}<atlas-empty-state title=\"Nothing pending\">Your university task queue is clear.</atlas-empty-state>{{/if}}\n  </atlas-card>\n\n  <section class=\"two-col\">\n    <atlas-card>\n      <h2>Current learning state</h2>\n      <p class=\"atlas-muted\">Only topics you have actually started appear here.</p>\n      {{#if activeTopics}}\n      <div class=\"learning-list\">\n        {{#each activeTopics}}\n        <div class=\"learning-row\">\n          <div><strong>{{value name}}</strong><div class=\"atlas-muted\">{{value moduleCode}}</div></div>\n          <div class=\"learning-state\"><atlas-badge tone=\"info\">{{value status}}</atlas-badge><span class=\"confidence\">Confidence {{value confidence}}</span></div>\n        </div>\n        {{/each}}\n      </div>\n      {{else}}<atlas-empty-state title=\"No learning state yet\">Topics will appear here once study activity starts creating evidence.</atlas-empty-state>{{/if}}\n    </atlas-card>\n\n    <atlas-card>\n      <h2>Assessments</h2>\n      <p class=\"atlas-muted\">Open assessments across the academic year.</p>\n      {{#if openAssessments}}\n      <div class=\"assessment-list\">\n        {{#each openAssessments}}\n        <div class=\"assessment-row\">\n          <div><strong>{{value title}}</strong><div class=\"atlas-muted\">{{value moduleCode}} \u00b7 {{value type}}</div></div>\n          <div class=\"assessment-meta\"><span>{{value weight}}%</span><span>{{value dueDate}}</span></div>\n        </div>\n        {{/each}}\n      </div>\n      {{else}}<atlas-empty-state title=\"No open assessments\">Nothing currently tracked.</atlas-empty-state>{{/if}}\n    </atlas-card>\n  </section>\n</div>\n<section id=\"module-detail\" hidden>\n  <atlas-button variant=\"secondary\" data-module=\"\">\u2190 All modules</atlas-button>\n  <atlas-header title=\"Module detail\"></atlas-header>\n  <h2 id=\"module-title\"></h2><p id=\"module-description\" class=\"atlas-muted\"></p>\n  <p class=\"atlas-muted\">Task Prioritisation Policy v1 \u00b7 Same live learning data</p>\n  <atlas-card><h2>Pending Study Tasks</h2><div id=\"module-tasks\"></div></atlas-card>\n  <atlas-tabs label=\"Module learning detail\">\n    <section label=\"Topics\"><atlas-card><h2>Topics & learning state</h2><div id=\"module-topics\"></div></atlas-card></section>\n    <section label=\"Assessments\"><atlas-card><h2>Assessments</h2><div id=\"module-assessments\"></div></atlas-card></section>\n    <section label=\"Study activity\"><atlas-card><h2>Recent Study Activity</h2><div id=\"module-activity\"></div></atlas-card></section>\n    <section label=\"Attempts\"><atlas-card><h2>Recent Attempts</h2><div id=\"module-attempts\"></div></atlas-card></section>\n  </atlas-tabs>\n</section>\n</atlas-page>",
+  "css": ".module-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--atlas-space-4);margin:var(--atlas-space-5) 0}.module-card h2{margin-top:var(--atlas-space-2);margin-bottom:var(--atlas-space-2)}.module-kicker{font-size:.78rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--atlas-muted)}.module-meta{display:flex;flex-wrap:wrap;gap:var(--atlas-space-2);margin-top:var(--atlas-space-4)}.section-heading{display:flex;justify-content:space-between;gap:var(--atlas-space-4);align-items:flex-start}.two-col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--atlas-space-4);margin-top:var(--atlas-space-4)}.learning-list,.assessment-list{display:grid;gap:var(--atlas-space-2);margin-top:var(--atlas-space-4)}.learning-row,.assessment-row{display:flex;justify-content:space-between;gap:var(--atlas-space-4);align-items:center;padding:var(--atlas-space-3) 0;border-top:1px solid var(--atlas-border)}.learning-state,.assessment-meta{display:flex;align-items:center;gap:var(--atlas-space-3);white-space:nowrap}.confidence{color:var(--atlas-muted);font-size:.9rem}caption{text-align:left;padding-bottom:var(--atlas-space-4)}tbody th{color:var(--atlas-text);font-size:1rem}@media(max-width:860px){.module-grid,.two-col{grid-template-columns:1fr}.learning-row,.assessment-row{align-items:flex-start;flex-direction:column}}.focus-card{margin-bottom:var(--atlas-space-4)}.focus-list{display:grid;gap:var(--atlas-space-2);margin-top:var(--atlas-space-4)}.focus-item{display:grid;grid-template-columns:auto 1fr auto;gap:var(--atlas-space-3);align-items:center;padding:var(--atlas-space-3) 0;border-top:1px solid var(--atlas-border)}.focus-rank{font-weight:700;color:var(--atlas-muted);font-variant-numeric:tabular-nums}.focus-main strong{display:block}.focus-reason{font-size:.85rem;color:var(--atlas-muted);margin-top:2px}.focus-meta{display:flex;gap:var(--atlas-space-2);align-items:center;flex-wrap:wrap;justify-content:flex-end}@media(max-width:700px){.focus-item{grid-template-columns:auto 1fr}.focus-meta{grid-column:2;justify-content:flex-start}}\n.task-actions{display:flex;gap:var(--atlas-space-2);flex-wrap:wrap}.focus-item>.task-actions{grid-column:2 / -1}.module-task-row{padding:var(--atlas-space-4) 0;border-bottom:1px solid var(--atlas-border)}#module-detail>atlas-header{margin-top:var(--atlas-space-6)}.module-grid{margin:var(--atlas-space-6) 0}\n",
+  "script": "atlas.onReady(() => {\n  const tasks = Array.isArray(atlas.data.pendingTasks) ? atlas.data.pendingTasks : [];\n  const today = new Date();\n  today.setHours(0,0,0,0);\n\n  const monday = new Date(today);\n  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));\n  const sunday = new Date(monday);\n  sunday.setDate(sunday.getDate() + 6);\n\n  const parseDate = value => {\n    if (!value) return null;\n    const date = new Date(value + 'T00:00:00');\n    return Number.isNaN(date.getTime()) ? null : date;\n  };\n  const dayDiff = (a,b) => Math.round((a-b)/86400000);\n  const weeksBetween = (later,earlier) => Math.max(0,Math.floor(dayDiff(later,earlier)/7));\n  const orderValue = task => Number.isFinite(Number(task.order)) ? Number(task.order) : 9999;\n  const priorityBoost = task => task.priority === 'high' ? 24 : task.priority === 'medium' ? 10 : 0;\n\n  const bundles = new Map();\n\n  tasks.forEach((task,index) => {\n    const weekly = task.week !== undefined && task.week !== null;\n    const key = weekly\n      ? (task.moduleCode || 'UNKNOWN') + '::week::' + String(task.week)\n      : (task.moduleCode || 'UNKNOWN') + '::standalone::' + String(index);\n\n    if (!bundles.has(key)) {\n      bundles.set(key,{\n        key,\n        moduleCode:task.moduleCode || 'UNKNOWN',\n        week:weekly ? task.week : null,\n        weekStart:weekly ? task.weekStart : null,\n        tasks:[]\n      });\n    }\n    bundles.get(key).tasks.push(task);\n  });\n\n  const rankBundle = bundle => {\n    const weekly = bundle.week !== null;\n    const sorted = [...bundle.tasks].sort((a,b) => {\n      const ao=orderValue(a), bo=orderValue(b);\n      if (ao !== bo) return ao-bo;\n      if (a.required === b.required) return String(a.title||'').localeCompare(String(b.title||''));\n      return a.required === true ? -1 : 1;\n    });\n\n    const urgent = sorted\n      .map(task => ({task,due:parseDate(task.dueDate)}))\n      .filter(x => x.due && dayDiff(x.due,today) <= 7)\n      .sort((a,b) => a.due-b.due || orderValue(a.task)-orderValue(b.task));\n\n    let selected;\n    if (urgent.length) {\n      selected=urgent[0].task;\n    } else {\n      selected=sorted.find(task => task.required === true) || sorted[0];\n    }\n\n    let score=0;\n    const reasons=[];\n\n    if (weekly) {\n      const start=parseDate(bundle.weekStart);\n      if (start) {\n        if (start < monday) {\n          const age=Math.max(1,weeksBetween(monday,start));\n          score += 120 + Math.min(100, age*22);\n          reasons.push('carry-over ' + age + (age===1 ? ' week' : ' weeks'));\n        } else if (start <= sunday) {\n          score += 105;\n          reasons.push('current week');\n        } else {\n          const ahead=Math.max(1,weeksBetween(start,monday));\n          score -= 70 + Math.min(50,ahead*12);\n          reasons.push('future week');\n        }\n      }\n\n      const unfinishedRequired=sorted.filter(task => task.required === true).length;\n      score += Math.min(30, unfinishedRequired*5);\n\n      const earlierRequired=sorted.filter(task =>\n        task.required === true && orderValue(task) < orderValue(selected)\n      ).length;\n\n      if (earlierRequired > 0 && !urgent.length) {\n        score -= earlierRequired*35;\n      }\n\n      if (!urgent.length && selected) reasons.push('next in course order');\n    }\n\n    const due=parseDate(selected && selected.dueDate);\n    if (due) {\n      const delta=dayDiff(due,today);\n      if (delta < 0) {\n        score += 190 + Math.min(45,-delta*3);\n        reasons.unshift('overdue');\n      } else if (delta <= 7) {\n        score += 145 - delta*5;\n        reasons.unshift('due in ' + delta + (delta===1 ? ' day' : ' days'));\n      } else if (delta <= 21) {\n        score += 65 - delta;\n        reasons.push('deadline approaching');\n      }\n    }\n\n    score += priorityBoost(selected || {});\n    if (selected && selected.required === true) score += 15;\n    if (selected && selected.required === false) score -= 12;\n\n    if (!weekly) {\n      if (!due) score += 30;\n      if (selected && selected.required === true) score += 15;\n    }\n\n    return {\n      bundle,\n      task:selected,\n      score,\n      reasons:[...new Set(reasons)].filter(Boolean).slice(0,3)\n    };\n  };\n\n  const ranked=[...bundles.values()]\n    .map(rankBundle)\n    .filter(entry => entry.task && entry.score > 0)\n    .sort((a,b) =>\n      b.score-a.score ||\n      String(a.bundle.moduleCode).localeCompare(String(b.bundle.moduleCode)) ||\n      orderValue(a.task)-orderValue(b.task)\n    );\n\n  const focus=ranked.slice(0,6);\n  const stat=document.querySelector('#focus-stat strong');\n  if (stat) stat.textContent=String(focus.length);\n\n  const root=document.getElementById('focus-list');\n  if (!root) return;\n  root.textContent='';\n\n  if (!focus.length) {\n    const empty=document.createElement('atlas-empty-state');\n    empty.setAttribute('title','Nothing urgent');\n    empty.textContent='No current, carry-over or deadline-driven work needs attention.';\n    root.append(empty);\n    return;\n  }\n\n  focus.forEach((entry,index) => {\n    const row=document.createElement('div');\n    row.className='focus-item';\n    row.dataset.recordId=entry.task._atlas.id;\n\n    const rank=document.createElement('span');\n    rank.className='focus-rank';\n    rank.textContent=String(index+1).padStart(2,'0');\n\n    const main=document.createElement('div');\n    main.className='focus-main';\n\n    const strong=document.createElement('strong');\n    strong.textContent=entry.task.title || 'Untitled task';\n\n    const reason=document.createElement('div');\n    reason.className='focus-reason';\n    const prefix=entry.bundle.week !== null ? 'Week '+entry.bundle.week+' \u00b7 ' : '';\n    reason.textContent=prefix + (entry.reasons.join(' \u00b7 ') || 'pending');\n\n    main.append(strong,reason);\n\n    const meta=document.createElement('div');\n    meta.className='focus-meta';\n\n    const module=document.createElement('atlas-badge');\n    module.setAttribute('tone','info');\n    module.textContent=entry.bundle.moduleCode;\n    meta.append(module);\n\n    if (entry.task.priority) {\n      const priority=document.createElement('span');\n      priority.className='atlas-muted';\n      priority.textContent=entry.task.priority;\n      meta.append(priority);\n    }\n\n    if (entry.task.dueDate) {\n      const due=document.createElement('span');\n      due.className='atlas-muted';\n      due.textContent='Due '+entry.task.dueDate;\n      meta.append(due);\n    }\n\n    row.append(rank,main,meta);\n    root.append(row);\n  });\n});\n\natlas.onReady(() => {\n  const taskButton = (label, name, task) => {\n    const control = document.createElement('atlas-button');\n    control.textContent = label;\n    control.dataset.taskId = task._atlas.id;\n    control.dataset.taskAction = name;\n    if (name === 'startTask' && task.status === 'in_progress') control.setAttribute('disabled', '');\n    return control;\n  };\n  const controls = task => {\n    const group = document.createElement('div');\n    group.className = 'task-actions';\n    group.append(taskButton('Start', 'startTask', task), taskButton('Complete', 'completeTask', task));\n    return group;\n  };\n  document.querySelectorAll('.focus-item').forEach(row => {\n    const task = atlas.data.pendingTasks.find(item => item._atlas.id === row.dataset.recordId);\n    if (task) row.append(controls(task));\n  });\n  const chosen = atlas.params.module || '';\n  const detail = document.getElementById('module-detail');\n  const overview = document.getElementById('university-overview');\n  if (chosen) {\n    overview.hidden = true;\n    detail.hidden = false;\n    const module = atlas.data.modules.find(item => item.code === chosen);\n    document.getElementById('module-title').textContent = module ? module.code + ' \u00b7 ' + module.name : chosen;\n    document.getElementById('module-description').textContent = module ? (module.overview || 'Your current learning state and workload.') : 'This module is not in the active module list.';\n    const pending = atlas.data.pendingTasks.filter(item => item.moduleCode === chosen);\n    const tasksRoot = document.getElementById('module-tasks');\n    if (!pending.length) {\n      const empty = document.createElement('atlas-empty-state');\n      empty.textContent = 'No pending study tasks for this module.';\n      tasksRoot.append(empty);\n    }\n    pending.forEach(task => {\n      const row = document.createElement('div');\n      row.className = 'module-task-row';\n      const title = document.createElement('strong');\n      title.textContent = task.title;\n      const meta = document.createElement('p');\n      meta.className = 'atlas-muted';\n      meta.textContent = task.status.replaceAll('_', ' ') + (task.dueDate ? ' \u00b7 Due ' + task.dueDate : '');\n      row.append(title, meta, controls(task));\n      tasksRoot.append(row);\n    });\n    const show = (rootId, rows, describe) => {\n      const root = document.getElementById(rootId);\n      if (!rows.length) {\n        const empty = document.createElement('atlas-empty-state');\n        empty.textContent = 'Nothing recorded for this module yet.';\n        root.append(empty);\n      }\n      rows.forEach(item => {\n        const row = document.createElement('p');\n        row.textContent = describe(item);\n        root.append(row);\n      });\n    };\n    show('module-topics', atlas.data.moduleTopics.filter(item => item.moduleCode === chosen), item => item.name + ' \u00b7 ' + item.status.replaceAll('_', ' ') + (item.confidence === undefined ? '' : ' \u00b7 Confidence ' + item.confidence));\n    show('module-assessments', atlas.data.moduleAssessments.filter(item => item.moduleCode === chosen), item => item.title + ' \u00b7 ' + item.status.replaceAll('_', ' ') + (item.dueDate ? ' \u00b7 Due ' + item.dueDate : ''));\n    show('module-activity', atlas.data.recentActivity.filter(item => item.moduleCode === chosen).slice(0, 10), item => item.date + ' \u00b7 ' + item.activity + (item.outcome ? ' \u00b7 ' + item.outcome : ''));\n    show('module-attempts', atlas.data.recentAttempts.filter(item => item.moduleCode === chosen).slice(0, 10), item => item.date + ' \u00b7 ' + item.questionSummary + ' \u00b7 ' + item.result.replaceAll('_', ' '));\n  }\n  document.querySelectorAll('[data-module]').forEach(control => {\n    control.onclick = async () => {\n      try {\n        atlas.setParam('module', control.dataset.module || null);\n        await atlas.refresh();\n      } catch (error) { atlas.toast(error.message, 'error'); }\n    };\n  });\n  document.querySelectorAll('atlas-button[data-task-action]').forEach(control => {\n    control.onclick = async () => {\n      if (control.disabled || control.loading) return;\n      control.loading = true;\n      try {\n        await atlas.action(control.dataset.taskAction, {recordId: control.dataset.taskId});\n        atlas.toast(control.dataset.taskAction === 'completeTask' ? 'Task completed.' : 'Task started.');\n        await atlas.refresh();\n      } catch (error) { atlas.toast(error.message, 'error'); control.loading = false; }\n    };\n  });\n});\n",
+  "actions": [
+    {
+      "name": "startTask",
+      "type": "record.update",
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc",
+      "allowedFields": [
+        "status"
+      ],
+      "fixedData": {
+        "status": "in_progress"
+      }
+    },
+    {
+      "name": "completeTask",
+      "type": "record.update",
+      "storeId": "4833e1a3-57e0-4995-9113-2b2052f0b7fc",
+      "allowedFields": [
+        "status"
+      ],
+      "fixedData": {
+        "status": "completed"
+      }
+    }
+  ]
+}

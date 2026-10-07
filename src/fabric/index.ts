@@ -1,4 +1,4 @@
-/** Atlas Fabric: active derived retrieval layer, reactivated 2026-10-02. */
+/** Frozen retrieval implementation. Production consumers use RetrievalService. */
 import { FabricContextService } from "./context.js";
 import { FabricSearchRepository } from "./repository.js";
 import { FabricSearchService } from "./search.js";

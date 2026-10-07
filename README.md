@@ -1,5 +1,7 @@
 # Atlas
 
+The persistent backend is **Atlas Server**; the browser client is **Atlas Web** (formerly Observatory). See [Atlas Server architecture](docs/architecture/ATLAS_SERVER_ARCHITECTURE.md) for service boundaries, compatibility, and Atlas Node execution.
+
 Atlas is a local structured-data platform for intelligent clients, exposed over MCP. It stores typed records behind explicit project and store boundaries and provides stable identifiers, controlled schema evolution, structured querying, archival, and an immutable mutation audit trail.
 
 Atlas Core exposes explicit data tools. Ask Atlas adds conversational, evidence-grounded answers on top of Core and Fabric.
@@ -86,11 +88,30 @@ Answers use fresh records with valid citations, explain missing details where po
 
 Start Ollama with the installed `qwen3:4b`, `qwen3:1.7b`, and `nomic-embed-text` models available. Generation, planning, and embedding requests have timeouts; hybrid retrieval can still fall back lexically if embeddings are unavailable. `node scripts/ask-atlas-live-verify.mjs` runs read-only smoke questions against an existing local dataset; `npm test` uses isolated PostgreSQL test schemas and deterministic fixtures.
 
-## Ask Portfolio and Contentful
+## Portfolio publishing
+
+Portfolio is a contained first-class Atlas project with six canonical stores: Profile, Contact, Projects, Experience, Posts, and Collections. Observatory provides its purpose-built editor and media library at `#/portfolio`; the same draft records remain accessible through normal internal Core/MCP tools.
+
+Core Portfolio records are always drafts. Saving through Observatory or generic MCP never changes the public site. `publish_portfolio_entry` validates required fields, slug uniqueness, referenced assets, and image alt text, then creates an immutable revision and moves that record's publication pointer. `unpublish_portfolio_entry` removes the public pointer without deleting the draft, and any old revision can be restored into the draft without implicitly publishing it.
+
+Fabric deliberately classifies the editable Core rows as `portfolio-draft` and excludes them from default retrieval. The publisher reconciles only active publication revisions into the disposable `portfolio-published` corpus. Ask Portfolio is hard-scoped to that source and project. Ask Atlas searches the same published projection by default, while private drafts cannot leak into either agent.
+
+Media metadata, checksums, alt text, captions, dimensions, and variant records live in PostgreSQL. Binary originals live under `ATLAS_MEDIA_DIR` (`./data/media` by default and gitignored); images receive 480px thumbnail and 1600px preview WebP variants. PDFs are stored and delivered as originals. This filesystem boundary can later be replaced by an S3-compatible adapter without changing content records or publication revisions.
+
+The read-only website contract is `GET /api/public/portfolio`. It returns only published revisions in the portfolio site's existing hero/contact/work/experience/posts/collections shape, with absolute Atlas media URLs. Immutable media is delivered from `GET /api/media/:assetId/:variant`.
+
+Portfolio's dedicated MCP/HTTP tools are:
+
+- `get_portfolio_dashboard`, `get_portfolio_schemas`, `list_portfolio_entries`, `get_portfolio_entry`
+- `save_portfolio_draft`, `publish_portfolio_entry`, `unpublish_portfolio_entry`, `archive_portfolio_entry`
+- `list_portfolio_revisions`, `restore_portfolio_revision`, `rebuild_portfolio_index`
+- `list_portfolio_media`, `upload_portfolio_media`, `update_portfolio_media`
+
+## Ask Portfolio and legacy Contentful bridge
 
 Ask Portfolio reuses the Ask Atlas grounding and conversation engine, but its server-side scope is always replaced with the fixed Portfolio corpus. Caller-supplied project IDs and planned retrieval cannot widen that boundary. It is available as `ask_portfolio`, as `POST /api/ask-portfolio`, and as a separate Observatory tab with independent local conversation history.
 
-Contentful remains authoritative. `syncPortfolio()` reads published entries and document assets from the Content Delivery API, resolves included entry/asset links, creates deterministic Fabric projections, and fully reconciles inserts, updates, unpublishes, and deletes. These documents live only in `fabric_search_documents`; no Atlas Core project, store, record, or audit row is created. Normal Ask Portfolio questions read Fabric and therefore make no Contentful requests.
+The earlier Contentful-to-Fabric bridge remains available as a temporary reference/rollback path. `syncPortfolio()` reads published entries and document assets from the Content Delivery API, resolves included entry/asset links, creates deterministic Fabric projections, and fully reconciles inserts, updates, unpublishes, and deletes. These legacy documents live only in `fabric_search_documents`; no Atlas Core record or audit row is created. They are excluded from default Fabric/Ask retrieval now that the Atlas-native Portfolio publisher is canonical, but remain inspectable internally with an explicit `contentful-portfolio` source scope.
 
 Configure the server (never the browser) with:
 
@@ -143,11 +164,13 @@ Atlas serves Streamable HTTP at `http://127.0.0.1:3000/mcp`:
 
 All mutation tools accept an optional `client` label. Atlas records the operation, timestamp, target IDs, client, and before/after state in the audit trail.
 
-## Views Stage 1
+## Views Stage 3
 
-Views are persistent project-owned pages. Each View declares uniquely named, bounded queries against active Stores in the same Project. `render_view` executes those queries through Core, binds record data by query name, and renders the stored HTML with Handlebars. Rendering is deterministic and always reads current records; it does not use Fabric, semantic retrieval, an LLM, or arbitrary SQL.
+Views are persistent project-owned pages composed of saved Store queries, a Handlebars template, CSS, an optional versioned manifest and optional sandboxed script. Rendering executes current same-project queries on the server without AI or arbitrary user JavaScript. Stage 1 definitions and stable URLs remain supported.
 
-Stored presentation content is untrusted. Core validates template syntax and rejects scripts, embedded browsing contexts, form controls, event handlers, navigation/resource URL attributes, CSS imports, CSS URLs, and executable CSS. It checks rendered HTML again after binding data. Observatory adds a second boundary: the result is loaded through `srcdoc` in an iframe with an empty `sandbox` attribute and a deny-by-default Content Security Policy. Stage 1 intentionally supports no JavaScript or external presentation resources.
+View Kit v1 supplies shared tokens, responsive components, table search/sorting and accessible tabs. Observatory includes manual editing, unsaved previews, data inspection, mobile sizing and audit revision history. MCP adds `preview_view` and `get_view_history`; create/update accept manifest/script and a `template` alias for `html`.
+
+Read the [Views authoring guide](docs/views-authoring.md) for the component/token reference, runtime API, manifest capabilities, example and security model. View JavaScript runs only in an opaque-origin iframe with CSP restrictions; V3 adds declared `record.create`/`record.update` actions through normal Core validation and audit, stable `_atlas` record metadata, and `atlas.refresh()`. Standalone pages are available at `/projects/:projectId/views/:slug`; Observatory exposes Open View and action editing. The University dashboard demonstrates Start/Complete and parameterised module navigation without AI.
 
 ## Schema evolution
 
@@ -199,6 +222,7 @@ Configuration:
 
 - `ATLAS_HOST` defaults to `127.0.0.1`.
 - `ATLAS_PORT` defaults to `3000`.
+- `ATLAS_MEDIA_DIR` defaults to `./data/media`.
 - `DATABASE_URL` is required (for example `postgresql://atlas:atlas@127.0.0.1:5432/atlas`).
 
 No model server, embedding service, vector database, Ollama installation, or semantic-interpreter environment variables are required.
@@ -210,3 +234,19 @@ No model server, embedding service, vector database, Ollama installation, or sem
 ## Observatory compatibility
 
 Observatory V2 continues to use the unchanged MCP/HTTP tool contract; it does not connect to PostgreSQL or know how records are stored.
+
+## Workspaces V1 — local project infrastructure
+
+Projects can now bind a local repository alongside Stores and Views. Workspace MCP tools provide bounded file listing, UTF-8 reading, literal search, hash-guarded edits, read-only Git inspection and an optional Unity CLI/Pipeline adapter. Files stay on disk; no ingestion or Fabric integration is added. The Observatory project page includes binding, health, changed files, Unity capabilities and a read-only preview.
+
+Apply migration `011_workspaces.sql` with `npm run db:migrate`, configure `ATLAS_WORKSPACE_ROOTS`, and restart Atlas. Filesystem access is disabled by default. Unity invocation additionally requires locally approved command names. See [Workspace architecture, security, tools, setup and roadmap](docs/workspaces.md), including exact steps for the existing Final Year Project.
+
+### Atlas Node V1
+
+Workspaces are hosted by a persistent local Node and execute through NodeRouter. Run `npm run db:migrate` to apply the additive Node/Workspace ownership migration before starting the updated Server. Existing Workspace IDs, bindings and audit history are preserved. Atlas Web shows Infrastructure → Nodes and Workspace host details. See [Atlas Nodes](docs/architecture/ATLAS_NODES.md) for capabilities, lifecycle and future transport boundaries.
+
+### Workspace development checks
+
+Atlas Nodes support `workspace.dev` through two MCP/HTTP tools: `workspace_list_dev_tasks({projectId,workspaceId})` and `workspace_run_dev_task({projectId,workspaceId,task})`. A task is owner-configured process argv, executed by the Workspace's Node in its registered root; callers cannot submit commands, cwd or environment overrides. Results include exit code, stdout/stderr, timestamps, timeout and truncation flags. Command failure is returned as a result, and compact execution metadata appears in Atlas Web Activity.
+
+Apply the additive migration with `npm run db:migrate`. To register this Atlas checkout itself, include its path in `ATLAS_WORKSPACE_ROOTS` and run `npm run workspace:register-atlas`. The verified tasks are `test` (`npm test`), `typecheck` (`npm run build`), and `build` (`npm run build`); Atlas has no lint script. For another Workspace, place trusted task definitions in a local JSON file and run `node scripts/configure-workspace-dev-tasks.mjs <workspace-uuid> <trusted-json-file>`. See [Atlas Nodes](docs/architecture/ATLAS_NODES.md#controlled-development-tasks) for schema, example result, safety rules and limitations. Arbitrary shell execution is deliberately unsupported.

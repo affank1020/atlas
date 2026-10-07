@@ -1,0 +1,479 @@
+[
+  {
+    "id": "5d55699b-1822-4136-a5c0-ec58b656f1c6",
+    "name": "Modules",
+    "fields": [
+      {
+        "name": "code",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "academicYear",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "teachingPeriod",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "semester_1",
+          "semester_2",
+          "full_year"
+        ]
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "active",
+          "completed",
+          "planned"
+        ]
+      },
+      {
+        "name": "overview",
+        "type": "string"
+      },
+      {
+        "name": "teachingFormat",
+        "type": "string"
+      },
+      {
+        "name": "assessmentSummary",
+        "type": "string"
+      },
+      {
+        "name": "studyGuidance",
+        "type": "string"
+      }
+    ]
+  },
+  {
+    "id": "b5b649eb-8e6a-45fd-a57b-88c91686c548",
+    "name": "Topics",
+    "fields": [
+      {
+        "name": "moduleCode",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "group",
+        "type": "string"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "not_started",
+          "exposed",
+          "learning",
+          "comfortable",
+          "mastered"
+        ]
+      },
+      {
+        "name": "confidence",
+        "type": "number"
+      },
+      {
+        "name": "priority",
+        "type": "enum",
+        "enumValues": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "name": "lastStudied",
+        "type": "date"
+      },
+      {
+        "name": "learningNotes",
+        "type": "string"
+      },
+      {
+        "name": "struggles",
+        "type": "array"
+      },
+      {
+        "name": "nextSteps",
+        "type": "array"
+      }
+    ]
+  },
+  {
+    "id": "13db9f3d-befb-4b04-b025-e939e5351205",
+    "name": "Study Activity",
+    "fields": [
+      {
+        "name": "moduleCode",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "topicName",
+        "type": "string"
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "type",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "lecture",
+          "seminar",
+          "tutorial",
+          "reading",
+          "problem_sheet",
+          "lab",
+          "revision",
+          "assignment",
+          "other"
+        ]
+      },
+      {
+        "name": "activity",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "outcome",
+        "type": "string"
+      },
+      {
+        "name": "confidenceAfter",
+        "type": "number"
+      },
+      {
+        "name": "needsFollowUp",
+        "type": "boolean"
+      }
+    ]
+  },
+  {
+    "id": "972bec1d-e829-4478-8990-63140dac991d",
+    "name": "Attempts",
+    "fields": [
+      {
+        "name": "moduleCode",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "topicName",
+        "type": "string"
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "source",
+        "type": "string"
+      },
+      {
+        "name": "questionRef",
+        "type": "string"
+      },
+      {
+        "name": "questionSummary",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "result",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "stuck",
+          "incorrect",
+          "partial",
+          "solved_with_hint",
+          "solved"
+        ]
+      },
+      {
+        "name": "struggledWith",
+        "type": "string"
+      },
+      {
+        "name": "resolution",
+        "type": "string"
+      },
+      {
+        "name": "revisit",
+        "type": "boolean"
+      },
+      {
+        "name": "confidenceAfter",
+        "type": "number"
+      }
+    ]
+  },
+  {
+    "id": "ee8b5d79-8d5e-4c70-ba55-6080ae0f01cd",
+    "name": "Assessments",
+    "fields": [
+      {
+        "name": "moduleCode",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "type",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "coursework",
+          "test",
+          "exam",
+          "project",
+          "presentation",
+          "other"
+        ]
+      },
+      {
+        "name": "dueDate",
+        "type": "date"
+      },
+      {
+        "name": "weight",
+        "type": "number"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "not_started",
+          "in_progress",
+          "submitted",
+          "completed"
+        ]
+      },
+      {
+        "name": "format",
+        "type": "string"
+      },
+      {
+        "name": "restrictions",
+        "type": "string"
+      },
+      {
+        "name": "grade",
+        "type": "number"
+      },
+      {
+        "name": "feedback",
+        "type": "string"
+      }
+    ]
+  },
+  {
+    "id": "39957fcd-a574-4155-b4d8-2e4d91bb94ec",
+    "name": "Resources",
+    "fields": [
+      {
+        "name": "moduleCode",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "topicName",
+        "type": "string"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "type",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "reading",
+          "notes",
+          "slides",
+          "podcast",
+          "textbook",
+          "problem_sheet",
+          "lab",
+          "lecture_recording",
+          "quiz",
+          "past_paper",
+          "mock_exam",
+          "other"
+        ]
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "not_started",
+          "in_progress",
+          "completed",
+          "reference"
+        ]
+      },
+      {
+        "name": "importance",
+        "type": "enum",
+        "enumValues": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "name": "source",
+        "type": "string"
+      },
+      {
+        "name": "notes",
+        "type": "string"
+      }
+    ]
+  },
+  {
+    "id": "4833e1a3-57e0-4995-9113-2b2052f0b7fc",
+    "name": "Study Tasks",
+    "fields": [
+      {
+        "name": "moduleCode",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "week",
+        "type": "number"
+      },
+      {
+        "name": "weekStart",
+        "type": "date"
+      },
+      {
+        "name": "dueDate",
+        "type": "date"
+      },
+      {
+        "name": "order",
+        "type": "number"
+      },
+      {
+        "name": "topicName",
+        "type": "string"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "type",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "admin",
+          "lecture",
+          "reading",
+          "podcast",
+          "slides",
+          "quiz",
+          "problem_set",
+          "assignment",
+          "project",
+          "exam_prep",
+          "seminar",
+          "drop_in",
+          "resource",
+          "other"
+        ]
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": true,
+        "enumValues": [
+          "not_started",
+          "in_progress",
+          "completed",
+          "skipped"
+        ]
+      },
+      {
+        "name": "priority",
+        "type": "enum",
+        "enumValues": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "name": "required",
+        "type": "boolean"
+      },
+      {
+        "name": "dependsOn",
+        "type": "array",
+        "description": "Optional stable Study Task record IDs that should normally be completed before this task. Use only for explicit dependencies; weekly course order is otherwise represented by week + order."
+      },
+      {
+        "name": "source",
+        "type": "string"
+      },
+      {
+        "name": "details",
+        "type": "string"
+      }
+    ]
+  },
+  {
+    "id": "9ad508b8-6d86-4d2c-8d3e-23682fc7b894",
+    "name": "Project Guidance",
+    "fields": [
+      {
+        "name": "scope",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "rule",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "details",
+        "type": "string"
+      }
+    ]
+  }
+]

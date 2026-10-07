@@ -6,9 +6,9 @@ import type { FabricAuthorityService } from "./authority.js";
 export class FabricContextService {
     constructor(readonly searchService: FabricSearchService, readonly authorityService?: FabricAuthorityService) {}
 
-    async request(input: { query: string; projectIds?: string[]; maxRecords?: number }): Promise<ContextResponse> {
+    async request(input: { query: string; projectIds?: string[]; sourceTypes?: string[]; maxRecords?: number }): Promise<ContextResponse> {
         const maxRecords = Math.min(Math.max(input.maxRecords ?? 10, 1), 50);
-        const search = await this.searchService.search({ query: input.query, projectIds: input.projectIds, limit: 100 });
+        const search = await this.searchService.search({ query: input.query, projectIds: input.projectIds, sourceTypes: input.sourceTypes, limit: 100 });
         const termTarget = Math.min(3, Math.max(1, Math.ceil(search.diagnostics.terms.length * 0.67)));
         const eligible = search.results.filter(result => result.ranking.exactPhrase || mentionsEntity(result, input.query) ||
             result.ranking.matchedTermCount >= termTarget ||

@@ -8,12 +8,12 @@ import { AtlasStore } from "../src/store.js";
 const baseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://localhost/postgres";
 const schemas: string[] = [];
 const stores: AtlasStore[] = [];
-export async function databaseFixture() {
+export async function databaseFixture(throughMigration?: string) {
     const schema = `atlas_test_${randomUUID().replaceAll("-", "")}`; schemas.push(schema);
     const admin = new Pool({ connectionString: baseUrl });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const client = await admin.connect();
-    try { await client.query(`SET search_path TO ${schema},public`); for(const file of (await readdir(path.join(process.cwd(),"migrations"))).filter((x)=>x.endsWith(".sql")).sort()) await client.query(await readFile(path.join(process.cwd(),"migrations",file),"utf8")); } finally { client.release(); await admin.end(); }
+    try { await client.query(`SET search_path TO ${schema},public`); for(const file of (await readdir(path.join(process.cwd(),"migrations"))).filter((x)=>x.endsWith(".sql") && (!throughMigration || x <= throughMigration)).sort()) await client.query(await readFile(path.join(process.cwd(),"migrations",file),"utf8")); } finally { client.release(); await admin.end(); }
     const url = new URL(baseUrl); url.searchParams.set("options", `-csearch_path=${schema}`);
     const store = new AtlasStore(url.toString()); stores.push(store);
     return { catalog: new AtlasCatalog(store), store, databaseUrl: url.toString() };

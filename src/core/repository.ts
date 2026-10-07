@@ -1,0 +1,2 @@
+import type { AtlasData, AtlasRecord, Page, RecordFilter, SortSpec, Store } from "../types.js";
+export interface AtlasRepository { snapshot(): Promise<AtlasData>; transaction<T>(operation: (draft: AtlasData) => T | Promise<T>): Promise<T>; queryRecords(store: Store, input: { filters?: RecordFilter[]; sort?: SortSpec[]; limit?: number; offset?: number; includeArchived?: boolean }): Promise<Page<AtlasRecord>>; close(): Promise<void>; }

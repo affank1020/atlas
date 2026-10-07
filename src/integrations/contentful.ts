@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { verifyRequest } from "@contentful/node-apps-toolkit";
+import { loadPortfolioConfig } from "../server/config.js";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { escape as queryEscape } from "node:querystring";
 import type { IncomingMessage } from "node:http";
 import type { FabricSearchRepository, ExternalFabricDocument } from "../fabric/repository.js";
 import { projectRecord } from "../fabric/projection.js";
@@ -41,7 +42,22 @@ const uuidFor = (value: string) => {
 const headersOf = (request: IncomingMessage) => Object.fromEntries(Object.entries(request.headers).flatMap(([key, value]) => value === undefined ? [] : [[key, Array.isArray(value) ? value.join(",") : value]]));
 
 export function verifyContentfulWebhook(request: IncomingMessage, rawBody: string, secret: string, ttlSeconds: number) {
-    return verifyRequest(secret, { method: "POST", path: request.url ?? "/integrations/contentful/webhook", headers: headersOf(request), body: rawBody }, ttlSeconds);
+    const headers=headersOf(request),signature=headers["x-contentful-signature"],timestamp=Number.parseInt(headers["x-contentful-timestamp"]??"",10),signedHeaders=(headers["x-contentful-signed-headers"]??"").split(",").filter(Boolean);
+    if(secret.length!==64||signature?.length!==64||!Number.isFinite(timestamp)||timestamp<=1577836800000||signedHeaders.length<2)return false;
+    if(ttlSeconds!==0&&Date.now()-timestamp>=ttlSeconds*1000)throw new Error(`Contentful webhook signature is older than ${ttlSeconds}s.`);
+    const selected=Object.fromEntries(Object.entries(headers).filter(([key])=>signedHeaders.includes(key)));
+    const expected=signContentfulRequest(secret,{method:"POST",path:request.url??"/integrations/contentful/webhook",headers:selected,body:rawBody},timestamp)["x-contentful-signature"];
+    const actualBytes=Buffer.from(signature),expectedBytes=Buffer.from(expected);return actualBytes.length===expectedBytes.length&&timingSafeEqual(actualBytes,expectedBytes);
+}
+
+export function signContentfulRequest(secret:string,request:{method:string;path:string;headers?:Record<string,string>;body?:string},timestamp=Date.now()){
+    if(secret.length!==64)throw new Error("Contentful signing secrets must contain 64 characters.");
+    const headers=Object.fromEntries(Object.entries(request.headers??{}).map(([key,value])=>[key.toLowerCase().trim(),value.trim()]));
+    const signed=[...new Set([...Object.keys(headers),"x-contentful-signed-headers","x-contentful-timestamp"])].sort();
+    headers["x-contentful-timestamp"]=String(timestamp);headers["x-contentful-signed-headers"]=signed.join(",");
+    const sorted=Object.entries(headers).sort(([a],[b])=>a>b?1:-1);const [pathname,search]=request.path.split("?");const normalizedPath=encodeURI(search?`${pathname}?${queryEscape(search)}`:pathname!);
+    const canonical=[request.method,normalizedPath,sorted.map(([key,value])=>`${key}:${value}`).join(";"),request.body??""].join("\n");
+    return {"x-contentful-signature":createHmac("sha256",secret).update(canonical).digest("hex"),"x-contentful-signed-headers":headers["x-contentful-signed-headers"]!,"x-contentful-timestamp":String(timestamp)};
 }
 
 const plainName = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim();
@@ -114,7 +130,7 @@ export class ContentfulPortfolioIntegration {
     private inFlight?: Promise<PortfolioSyncStatus>;
     private pending?: { trigger: "startup" | "manual" | "webhook"; event?: string };
 
-    constructor(readonly repository: FabricSearchRepository, env: NodeJS.ProcessEnv = process.env, readonly fetcher: typeof fetch = fetch) {
+    constructor(readonly repository: FabricSearchRepository, env: NodeJS.ProcessEnv = loadPortfolioConfig().integrationEnvironment, readonly fetcher: typeof fetch = fetch) {
         this.config = {
             spaceId: env.CONTENTFUL_SPACE_ID,
             environment: env.CONTENTFUL_ENVIRONMENT ?? "master",

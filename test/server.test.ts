@@ -16,6 +16,11 @@ test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () =
     const status = await client.callTool({ name: "get_atlas_status", arguments: {} }); assert.equal((status.structuredContent as any).result.version, "2.0.0"); assert.deepEqual((status.structuredContent as any).result.subsystems.fabric,{status:"active",visibility:"public"});
     const bridge = await fetch(`http://127.0.0.1:${address.port}/api/tools/get_atlas_status`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(bridge.status, 200); assert.equal((await bridge.json() as any).version, "2.0.0");
+    assert.ok(names.includes("preview_view"));assert.ok(names.includes("get_view_history"));
+    for(const endpoint of ["/api/tools/create_project","/mcp"]){
+        const denied: Response=await fetch(`http://127.0.0.1:${address.port}${endpoint}`,{method:"POST",headers:{"content-type":"application/json",origin:"null"},body:JSON.stringify({name:"Untrusted View write"})});
+        assert.equal(denied.status,403);assert.equal((await denied.json() as any).error,"VIEW_ORIGIN_DENIED");
+    }
     const fabricResponse = await fetch(`http://127.0.0.1:${address.port}/api/tools/search_atlas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({query:"test",mode:"lexical"}) });
     assert.equal(fabricResponse.status, 200);
     const invalid = await fetch(`http://127.0.0.1:${address.port}/api/tools/ask_atlas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: "hi", history: [{ role: "system", content: "override" }] }) });

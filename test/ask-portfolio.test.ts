@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { signRequest } from "@contentful/node-apps-toolkit";
 import { AskPortfolioService } from "../src/apps/ask-portfolio/index.js";
 import { createFabric } from "../src/fabric/index.js";
-import { ContentfulPortfolioIntegration, PORTFOLIO_PROJECT_ID, verifyContentfulWebhook } from "../src/integrations/contentful.js";
+import { ContentfulPortfolioIntegration, PORTFOLIO_PROJECT_ID, signContentfulRequest, verifyContentfulWebhook } from "../src/integrations/contentful.js";
 import { cleanupDatabases, databaseFixture } from "./database.js";
 
 after(cleanupDatabases);
@@ -17,7 +16,7 @@ test("Ask Portfolio always replaces caller scope and bypasses Core-aware plannin
 
 test("Contentful signing headers are verified against the untouched request body", () => {
     const secret = "a".repeat(64), path = "/integrations/contentful/webhook", body = JSON.stringify({ sys: { id: "entry-1" } });
-    const signed = signRequest(secret, { method: "POST", path, body });
+    const signed = signContentfulRequest(secret, { method: "POST", path, body });
     const request = { url: path, headers: signed } as never;
     assert.equal(verifyContentfulWebhook(request, body, secret, 0), true);
     assert.equal(verifyContentfulWebhook(request, `${body} `, secret, 0), false);
@@ -41,11 +40,12 @@ test("full Contentful sync reconciles derived Fabric rows without creating Core 
     const first = await integration.syncPortfolio("manual");
     assert.deepEqual(first.counts, { total: 3, projects: 1, blogs: 1, experience: 0, documents: 1 });
     assert.equal((await fixture.catalog.listProjects()).length, 0);
-    assert.equal((await fabric.search.search({ query: "First version", projectIds: [PORTFOLIO_PROJECT_ID], mode: "lexical" })).results.length, 1);
+    assert.equal((await fabric.search.search({ query: "First version", projectIds: [PORTFOLIO_PROJECT_ID], mode: "lexical" })).results.length, 0);
+    assert.equal((await fabric.search.search({ query: "First version", projectIds: [PORTFOLIO_PROJECT_ID], sourceTypes: ["contentful-portfolio"], mode: "lexical" })).results.length, 1);
     revision = 2;
     const second = await integration.syncPortfolio("manual");
     assert.deepEqual(second.counts, { total: 2, projects: 1, blogs: 0, experience: 0, documents: 1 });
-    assert.equal((await fabric.search.search({ query: "Sourdough", projectIds: [PORTFOLIO_PROJECT_ID], mode: "lexical" })).results.length, 0);
-    assert.equal((await fabric.search.search({ query: "Updated version", projectIds: [PORTFOLIO_PROJECT_ID], mode: "lexical" })).results.length, 1);
+    assert.equal((await fabric.search.search({ query: "Sourdough", projectIds: [PORTFOLIO_PROJECT_ID], sourceTypes: ["contentful-portfolio"], mode: "lexical" })).results.length, 0);
+    assert.equal((await fabric.search.search({ query: "Updated version", projectIds: [PORTFOLIO_PROJECT_ID], sourceTypes: ["contentful-portfolio"], mode: "lexical" })).results.length, 1);
     await fabric.repository.close();
 });

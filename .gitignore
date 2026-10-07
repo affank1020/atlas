@@ -5,3 +5,4 @@ dist/
 *.log
 data/*.json
 !data/.gitkeep
+data/media/
