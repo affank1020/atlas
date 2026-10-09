@@ -61,7 +61,8 @@ test('Atlas Control exposes Server, Node and Web as separate services with legac
     assert.match(source, /web: \{ label: "Atlas Web"/);
     assert.match(source, /atlas: "server"/);
     assert.match(source, /observatory: "web"/);
-    assert.match(source, /\["postgres", "server", .*\["node"\].*"web"/s);
+    assert.match(source, /for \(const name of \["postgres", "server", "node", "web"/);
+    assert.match(source, /if \(hosted\).*startService\("node"\)/s);
     assert.match(source, /\["tunnel", "ollama", "web", "node", "server"/);
     const help = spawnSync('./atlasctl', ['--help'], { encoding: 'utf8' });
     assert.equal(help.status, 0, help.stderr);

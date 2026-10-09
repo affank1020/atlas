@@ -323,9 +323,12 @@ function usage() {
   console.log(`Atlas Control
 
 Usage:
-  ./atlasctl up [--ask]        Start the normal stack; --ask also starts Ollama
-  ./atlasctl down [--all]      Stop managed services; --all also stops PostgreSQL
-  ./atlasctl restart [--ask]   Restart the managed stack
+  ./atlasctl up --hosted       Start only the MacBook Node for the hosted Server
+  ./atlasctl down --hosted     Stop only the managed MacBook Node
+  ./atlasctl restart --hosted  Restart only the managed MacBook Node
+  ./atlasctl up [--ask]        Legacy local development stack, including MCP tunnel
+  ./atlasctl down [--all]      Stop local managed services; --all stops PostgreSQL
+  ./atlasctl restart [--ask]   Restart the legacy local development stack
   ./atlasctl status            Show what is running
   ./atlasctl start <service>   Start one service
   ./atlasctl stop <service>    Stop one managed service
@@ -337,28 +340,49 @@ Usage:
 Services: postgres, server, node, web, tunnel, ollama
 Legacy aliases: atlas → server, observatory → web
 
-The normal stack is PostgreSQL + Atlas Server + Atlas Node + Atlas Web + MCP tunnel.
-Ollama is optional and only included by --ask.`);
+The hosted mode uses the HTTPS Atlas Server and starts only the MacBook Node.
+Set ATLAS_SERVER_URL=wss://affan-atlas.duckdns.org/node/connect in apps/node/.env.node first.
+Legacy local mode still starts PostgreSQL + Server + Node + Web + MCP tunnel.
+Ollama is optional and included with --ask in legacy local mode.`);
 }
 
-async function up(includeAsk) {
-  const remoteNode = true;
-  for (const name of ["postgres", "server", ...(remoteNode ? ["node"] : []), "web", ...(includeAsk ? ["ollama"] : []), "tunnel"]) {
+async function up(includeAsk, hosted = false) {
+  if (hosted) {
+    const nodeConfig = join(nodeDir, ".env.node");
+    if (!existsSync(nodeConfig)) {
+      console.error("Missing apps/node/.env.node; keep the existing Node identity and credential.");
+      process.exitCode = 1;
+      return;
+    }
+    const contents = readFileSync(nodeConfig, "utf8");
+    const match = contents.match(/^ATLAS_SERVER_URL\s*=\s*[\"']?([^\"'\r\n# ]+)/m);
+    if (!match || !/^wss:\/\/[^/]+\/node\/connect\/?$/.test(match[1])) {
+      console.error("Hosted mode requires ATLAS_SERVER_URL=wss://<hostname>/node/connect in apps/node/.env.node.");
+      console.error("Do not change ATLAS_NODE_ID or ATLAS_NODE_CREDENTIAL.");
+      process.exitCode = 1;
+      return;
+    }
+    if (!await startService("node")) process.exitCode = 1;
+    else console.log("Hosted Node started. Local Server, Web, PostgreSQL and MCP tunnel were not started.");
+    return;
+  }
+  for (const name of ["postgres", "server", "node", "web", ...(includeAsk ? ["ollama"] : []), "tunnel"]) {
     if (!await startService(name)) { process.exitCode = 1; return; }
   }
   console.log(`\nAtlas is ready${includeAsk ? " with Ask Atlas support" : ""}.`);
   console.log("Open http://127.0.0.1:5173");
 }
 
-async function down(includePostgres) {
+async function down(includePostgres, hosted = false) {
+  if (hosted) { await stopService("node"); return; }
   for (const name of ["tunnel", "ollama", "web", "node", "server", ...(includePostgres ? ["postgres"] : [])]) await stopService(name);
 }
 
 const [command = "status", argument] = process.argv.slice(2);
 switch (command) {
-  case "up": await up(process.argv.includes("--ask")); break;
-  case "down": await down(process.argv.includes("--all")); break;
-  case "restart": await down(false); await up(process.argv.includes("--ask")); break;
+  case "up": await up(process.argv.includes("--ask"), process.argv.includes("--hosted")); break;
+  case "down": await down(process.argv.includes("--all"), process.argv.includes("--hosted")); break;
+  case "restart": await down(false, process.argv.includes("--hosted")); await up(process.argv.includes("--ask"), process.argv.includes("--hosted")); break;
   case "status": await printStatus(); break;
   case "start": if (selectedService(argument)) await startService(argument); break;
   case "stop": if (selectedService(argument)) await stopService(argument); break;

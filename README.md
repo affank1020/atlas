@@ -21,6 +21,8 @@ Server and Node depend on `@atlas/protocol`; protocol has no application depende
 
 Node.js 20+ and PostgreSQL are required. Run `npm ci` once at the root, then `npm run db:migrate` with `apps/server/.env` configured. Keep all `.env` files private. Start the three apps independently with `npm run dev:server`, `npm run dev:node`, and `npm run dev:web`. `./atlasctl start server`, `./atlasctl start node`, and `./atlasctl start web` manage individual local processes; `./atlasctl up` explicitly starts the combined development stack plus PostgreSQL and the MCP tunnel. For a local Compose database use `docker compose -f infra/docker-compose.yml up -d postgres`.
 
+For the hosted topology, edit only the existing private `apps/node/.env.node` to set `ATLAS_SERVER_URL=wss://affan-atlas.duckdns.org/node/connect`, then use `./atlasctl up --hosted` to start only the MacBook Node. The old `./atlasctl up` command remains a local-development stack and still starts the Secure MCP Tunnel; it is not a production startup command. See the [operations runbook](docs/OPERATIONS.md) for Node migration, diagnostics, and the MCP authentication cutover.
+
 `npm run build` builds both shared packages and all three applications. `npm test` runs the 113 Server/Node integration tests (using isolated PostgreSQL schemas) and the Web test suite. `npm run build:server`, `build:node`, `build:web`, `test:server`, `test:node`, and `test:web` are available individually. `npm run start:server` and `npm run start:node` use compiled entrypoints.
 
 ## Configuration and identity
