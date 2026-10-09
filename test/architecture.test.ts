@@ -6,6 +6,8 @@ import path from 'node:path';
 import { ServerLifecycle } from '../apps/server/src/server/lifecycle.js';
 import { loadServerConfig } from '../apps/server/src/server/config.js';
 import { createMcpTransport } from '../apps/server/src/api/mcp/index.js';
+import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
+import { portfolioApplication } from '../apps/server/src/apps/portfolio-definition.js';
 import type { TransportServices } from '../apps/server/src/server/dispatch.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -85,17 +87,20 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         const index = operations.indexOf('workspace.unity_invoked') + 1;
         operations.splice(index, 0, 'workspace.dev_invoked', 'workspace.dev_tasks_listed', 'workspace.dev_tasks_configured');
     }
-    const server = createMcpTransport({ portfolio: {}, media: {}, dispatch: async () => null } as unknown as TransportServices);
+    const applications = new ApplicationRegistry([portfolioApplication({ portfolio: {} as any, media: {} as any, askPortfolio: {} as any, contentful: {} as any })]);
+    const server = createMcpTransport({ portfolio: {}, media: {}, applications, dispatch: async () => null } as unknown as TransportServices);
     const client = new Client({ name: 'architecture-contract', version: '1' });
     const [a, b] = InMemoryTransport.createLinkedPair();
     try {
         await server.connect(a); await client.connect(b);
         const { tools } = await client.listTools();
         const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
-        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', ...v2].includes(tool.name)).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2].includes(tool.name)).map(({ name, inputSchema }) => ({ name, inputSchema }));
         const create = stable.find(item => item.name === 'create_workspace');
         if (create) delete (create.inputSchema as any).properties.nodeId;
-        assert.deepEqual(stable, expected);
+        const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
+        assert.deepEqual(stable.sort(byName), expected.sort(byName));
+        assert.deepEqual(tools.filter(tool => ['list_applications', 'get_application'].includes(tool.name)).map(tool => tool.name), ['list_applications', 'get_application']);
         assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name), v2);
         assert.deepEqual(tools.filter(tool => ['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task'].includes(tool.name)).map(tool => tool.name), ['workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_nodes', 'get_node']);
     } finally { await client.close(); await server.close(); }

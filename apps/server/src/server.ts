@@ -12,6 +12,8 @@ import { workspacesFor } from './workspaces/service.js';
 import type { WorkspaceToolName } from './workspaces/contracts.js';
 import { createAskAtlas } from './server/ai.js';
 import { createDispatcher } from './server/dispatch.js';
+import { ApplicationRegistry } from './apps/registry.js';
+import { portfolioApplication } from './apps/portfolio-definition.js';
 import { composeServer, startBackgroundWork } from './server/composition.js';
 import { loadServerConfig } from './server/config.js';
 import { createHttpTransport } from './api/http/index.js';
@@ -21,7 +23,7 @@ export function createAtlasMcpServer(catalog: AtlasCatalog, fabric: FabricServic
     askAtlas = createAskAtlas(catalog, new RetrievalService(fabric.search, fabric.context, fabric.authority)),
     askPortfolio = new AskPortfolioService(createAskAtlas(catalog, new RetrievalService(fabric.search, fabric.context, fabric.authority), { projectIds: [PORTFOLIO_PROJECT_ID], sourceTypes: [PORTFOLIO_SOURCE_TYPE], retrievalMode: 'direct' })),
     contentful = new ContentfulPortfolioIntegration(fabric.repository), portfolio?: PortfolioService, media?: PortfolioMediaService) {
-    const services = { nodes: { call: (name: import("./nodes/contracts.js").NodeToolName, input: unknown) => workspacesFor(catalog).runtime.nodes.call(name, input) }, catalog, views: catalog.views, workspaces: { call: (name: WorkspaceToolName, input: unknown) => workspacesFor(catalog).call(name, input) }, retrieval: new RetrievalService(fabric.search, fabric.context, fabric.authority), askAtlas, askPortfolio, contentful, portfolio, media };
+    const services = { nodes: { call: (name: import("./nodes/contracts.js").NodeToolName, input: unknown) => workspacesFor(catalog).runtime.nodes.call(name, input) }, catalog, views: catalog.views, workspaces: { call: (name: WorkspaceToolName, input: unknown) => workspacesFor(catalog).call(name, input) }, retrieval: new RetrievalService(fabric.search, fabric.context, fabric.authority), askAtlas, askPortfolio, contentful, portfolio, media, applications: new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful })]) };
     return createMcpTransport({ ...services, dispatch: createDispatcher(services) });
 }
 export function createAtlasHttpServer(options: { databaseUrl?: string; nodeExecution?: 'local' | 'remote' } = {}) {

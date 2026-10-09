@@ -13,7 +13,7 @@ Architecture refactor, 2026-10-07. This describes implemented boundaries and exp
 - **Atlas Web** is the browser client, formerly Observatory. No Web redesign accompanies this refactor.
 - **Atlas Node** is a trusted execution device/runtime hosting Workspaces. Node V1 runs locally; see [Atlas Nodes](ATLAS_NODES.md). **Agent** is reserved for AI/software actors.
 
-Projects are the ownership boundary. Today they own Stores, Records, Views and Workspaces, with immutable audit history. Applications and Automations are future Project primitives; do not expose placeholders as implemented capabilities.
+Projects are the ownership boundary. Today they own Stores, Records, Views and Workspaces, with immutable audit history. Applications V1 are code-defined Project-owned launchable features with typed HTTP/MCP actions (see [Applications](../applications.md)). They do not yet have a database-backed instance or arbitrary code-loading capability. Automations remain a future Project primitive.
 
 > Server capability → stable application/service contract → transport/API → Atlas Web surface.
 

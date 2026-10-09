@@ -1,0 +1,17 @@
+.project-applications .application-section-copy { margin: 12px 20px 20px; color: var(--text-secondary); font-size: .9rem; }
+.application-status { padding: 20px; color: var(--text-secondary); }
+.application-grid { padding: 0 20px 24px; display: grid; gap: 12px; }
+.application-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); padding: 20px; display: flex; align-items: center; gap: 16px; }
+.application-card-icon { width: 46px; height: 46px; border-radius: 10px; flex: none; background: var(--surface-hover); display: grid; place-items: center; color: var(--text-primary); font-weight: 700; }
+.application-card-details { flex: 1; min-width: 0; }
+.application-card-details h3 { margin: 0 0 5px; font-size: 1.03rem; }
+.application-card-details p { margin: 0 0 5px; color: var(--text-secondary); }
+.application-card-details small { color: var(--text-muted); }
+.application-launch { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; padding: 9px 16px; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text-primary); background: var(--surface-hover); font-weight: 650; white-space: nowrap; }
+.application-launch:hover { background: var(--surface-secondary); }
+.application-window { min-height: 100vh; background: var(--surface); color: var(--text-primary); }
+.application-window-bar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 30px; background: var(--surface-elevated); border-bottom: 1px solid var(--border); }
+.application-window-bar a { text-decoration: none; color: var(--text-primary); font-size: .84rem; font-weight: 650; }
+.application-window-brand { color: var(--text-muted); font-size: .81rem; }
+.application-window-main { width: 100%; min-width: 0; }
+@media (max-width: 680px) { .application-card { flex-wrap: wrap; } .application-launch { width: 100%; } .application-window-bar { padding: 14px 18px; } }

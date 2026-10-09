@@ -82,7 +82,7 @@ export class ViewService {
     }
     async getViewBySlug(projectId:string,slug:string){
         const data=await this.store.snapshot();this.core.requireProject(data,projectId);
-        const view=data.views.find(v=>v.projectId===projectId&&v.slug===slug&&!v.archivedAt);
+        const view=data.views.find(v=>v.projectId===projectId&&!v.archivedAt&&(v.slug===slug||v.id===slug));
         if(!view)throw new AtlasError('View not found or archived.','NOT_FOUND');return view;
     }
 

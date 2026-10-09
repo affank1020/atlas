@@ -11,6 +11,7 @@ import type { ContentfulPortfolioIntegration } from '../integrations/contentful.
 import type { PortfolioService, PortfolioMediaService } from '../portfolio/index.js';
 import { fabricSearchSchema, fabricContextSchema } from '../retrieval/input.js';
 import { callCoreTool } from './core-dispatch.js';
+import type { ApplicationRegistry } from '../apps/registry.js';
 export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
@@ -22,11 +23,12 @@ export interface ApplicationServices {
     contentful: ContentfulPortfolioIntegration;
     portfolio?: PortfolioService;
     media?: PortfolioMediaService;
+    applications: ApplicationRegistry;
 }
 export type TransportServices = ApplicationServices & { dispatch(name: string, input?: any): Promise<unknown> };
 /** One application dispatch path for HTTP, MCP and future internal job callers. */
 export function createDispatcher(services: ApplicationServices) {
-    const { catalog, views, workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media } = services;
+    const { catalog, views, workspaces, retrieval, askAtlas, applications } = services;
     return async (name: string, input: any = {}): Promise<unknown> => {
         if (Object.hasOwn(nodeSchemas, name)) {
             if (!services.nodes) throw new AtlasError("Node registry is unavailable.", "NODE_UNAVAILABLE");
@@ -34,30 +36,18 @@ export function createDispatcher(services: ApplicationServices) {
         }
         switch (name) {
             case 'ask_atlas': return askAtlas.ask(input);
-            case 'ask_portfolio': return askPortfolio.ask(input);
-            case 'get_contentful_status': return contentful.status();
-            case 'sync_portfolio': return contentful.syncPortfolio('manual');
             case 'search_atlas': return retrieval.search(fabricSearchSchema.parse(input));
             case 'request_context': return retrieval.context(fabricContextSchema.parse(input));
         }
-        if (portfolio && media) {
-            switch (name) {
-                case 'get_portfolio_dashboard': return portfolio.dashboard();
-                case 'get_portfolio_schemas': return portfolio.schemas();
-                case 'list_portfolio_entries': return portfolio.listEntries(input.contentType);
-                case 'get_portfolio_entry': return portfolio.getEntry(input.recordId);
-                case 'save_portfolio_draft': return portfolio.saveDraft(input);
-                case 'publish_portfolio_entry': return portfolio.publish(input.recordId, input.client);
-                case 'unpublish_portfolio_entry': return portfolio.unpublish(input.recordId);
-                case 'archive_portfolio_entry': return portfolio.archive(input.recordId, input.client);
-                case 'list_portfolio_revisions': return portfolio.revisions(input.recordId);
-                case 'restore_portfolio_revision': return portfolio.restore(input.recordId, input.revisionId, input.client);
-                case 'rebuild_portfolio_index': return portfolio.rebuildPublishedIndex();
-                case 'list_portfolio_media': return media.list();
-                case 'upload_portfolio_media': return media.upload(input);
-                case 'update_portfolio_media': return media.update(input.assetId, input);
-            }
+        if (name === 'list_applications') {
+            await catalog.getProject(input.projectId);
+            return applications.list(input.projectId);
         }
+        if (name === 'get_application') {
+            await catalog.getProject(input.projectId);
+            return applications.get(input.projectId, input.slug);
+        }
+        if (applications.hasTool(name)) return applications.invoke(name, input);
         return callCoreTool(catalog, views, workspaces, name, input);
     };
 }

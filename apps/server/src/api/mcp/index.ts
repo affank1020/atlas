@@ -8,7 +8,6 @@ import { askAtlasInputSchema } from "../../ai/ask-atlas/input.js";
 import { AtlasError } from "../../shared/errors.js";
 import { atlasStatus } from "../../status.js";
 import { fabricSearchSchema, fabricContextSchema } from "../../retrieval/input.js";
-import { PORTFOLIO_CONTENT_TYPES } from "../../portfolio/index.js";
 import type { TransportServices } from "../../server/dispatch.js";
 const field = z.object({ name: z.string(), type: z.enum(["string", "number", "boolean", "date", "datetime", "enum", "array", "object"]), required: z.boolean().optional(), enumValues: z.array(z.string()).optional(), default: z.unknown().optional(), description: z.string().optional() });
 const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
@@ -18,7 +17,6 @@ const viewQuery = z.object({ name: z.string(), storeId: z.string().uuid(), filte
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 
 export function createMcpTransport(services: TransportServices, oauthScope?: string) {
-    const { portfolio, media } = services;
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
     const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => server.registerTool(name,
       { description, inputSchema, ...(oauthScope ? { securitySchemes: [{ type: 'oauth2' as const, scopes: [oauthScope] }] } : {}) },
@@ -76,26 +74,9 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     tool("search_atlas", "Search active Atlas records using lexical, semantic, or hybrid retrieval.", fabricSearchSchema.shape);
     tool("request_context", "Retrieve a bounded, authority-aware Atlas evidence pack.", fabricContextSchema.shape);
     tool("ask_atlas", "Chat about Atlas records using fresh evidence and optional conversation history.", askAtlasInputSchema.shape);
-    tool("ask_portfolio", "Chat about the public portfolio corpus. Scope is fixed server-side and cannot be widened by callers.", askAtlasInputSchema.shape);
-    tool("get_contentful_status", "Report the Contentful portfolio integration and derived Fabric corpus status.", {});
-    tool("sync_portfolio", "Fully reconcile the published Contentful portfolio corpus into Fabric.", {});
-    if (portfolio && media) {
-        const contentType = z.enum(Object.keys(PORTFOLIO_CONTENT_TYPES) as [keyof typeof PORTFOLIO_CONTENT_TYPES, ...(keyof typeof PORTFOLIO_CONTENT_TYPES)[]]);
-        tool("get_portfolio_dashboard", "Read Portfolio draft, publication, and media counts.", {});
-        tool("get_portfolio_schemas", "List the canonical Portfolio content types and fields.", {});
-        tool("list_portfolio_entries", "List Portfolio drafts and publication state.", { contentType: contentType.optional() });
-        tool("get_portfolio_entry", "Read one Portfolio draft and its publication state.", { recordId: z.string().uuid() });
-        tool("save_portfolio_draft", "Create or replace a Portfolio draft. This never publishes it.", { contentType, recordId: z.string().uuid().optional(), data: z.record(z.string(), z.unknown()), ...client });
-        tool("publish_portfolio_entry", "Validate and explicitly publish an immutable Portfolio revision.", { recordId: z.string().uuid(), ...client });
-        tool("unpublish_portfolio_entry", "Remove an entry from the public Portfolio corpus without deleting its draft.", { recordId: z.string().uuid() });
-        tool("archive_portfolio_entry", "Archive a Portfolio draft and remove it from publication.", { recordId: z.string().uuid(), ...client });
-        tool("list_portfolio_revisions", "List immutable publication revisions for a Portfolio entry.", { recordId: z.string().uuid() });
-        tool("restore_portfolio_revision", "Copy an immutable revision back into the editable draft without publishing it.", { recordId: z.string().uuid(), revisionId: z.string().uuid(), ...client });
-        tool("rebuild_portfolio_index", "Fully reconcile published Portfolio revisions into Fabric.", {});
-        tool("list_portfolio_media", "List Portfolio media metadata and local delivery URLs.", {});
-        tool("upload_portfolio_media", "Upload an image or PDF as base64; images receive thumbnail and preview variants.", { fileName: z.string().min(1), mimeType: z.string(), base64: z.string().min(1), altText: z.string().optional(), caption: z.string().optional(), ...client });
-        tool("update_portfolio_media", "Update media alt text, caption, or archive state.", { assetId: z.string().uuid(), altText: z.string().nullable().optional(), caption: z.string().nullable().optional(), status: z.enum(["active","archived"]).optional() });
-    }
+    tool('list_applications', 'List launchable first-party Applications in a Project.', { projectId: z.string().uuid() });
+    tool('get_application', 'Get the registered Application manifest for a Project.', { projectId: z.string().uuid(), slug: z.string() });
+    for (const definition of services.applications.tools()) tool(definition.name, definition.description, definition.inputSchema);
     return server;
 }
 

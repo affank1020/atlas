@@ -65,6 +65,9 @@ test('standalone active slug, parameters, archive/unknown routing and MCP V3 con
  const client=new Client({name:'v3-test',version:'1'});
  try{
   const route=`${base}/projects/${project.id}/views/${view.slug}`;const response=await fetch(route+'?module=MATH37011');assert.equal(response.status,200);const page=await response.text();assert.match(page,/frame.srcdoc=themedDocument\(rendered\)/);assert.match(page,/color-scheme:dark/);assert.match(page,/atlas-button>button\{color:#15171c\}/);assert.match(page,/MATH37011/);assert.match(page,/installViewHost/);assert.match(page,/allow-scripts allow-popups allow-popups-to-escape-sandbox/);assert.match(page,/restoreScroll/);assert.match(page,/atlas-view-scroll/);
+  const withoutSlug=await fixture.catalog.createView({projectId:project.id,name:'Legacy without slug',queries:[],html:'<p>Legacy</p>',css:''});
+  assert.equal((await fetch(`${base}/projects/${project.id}/views/${withoutSlug.id}`)).status,200);
+  assert.equal((await fetch(`${base}/projects/${project.id}/views/${view.id}`)).status,200);
   assert.equal((await fetch(`${base}/projects/${project.id}/views/missing`)).status,404);assert.equal((await fetch(route+'?undeclared=x')).status,400);
   await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp')));const tools=(await client.listTools()).tools;const schema=tools.find(t=>t.name==='update_view')!.inputSchema as any;assert.ok(schema.properties.actions);assert.ok(schema.properties.manifest);assert.ok(schema.properties.script);for(const name of ['create_view','update_view'])assert.match(tools.find(t=>t.name===name)!.description!,/Safe external links.*noopener noreferrer/);
   const result=await client.callTool({name:'execute_view_action',arguments:{projectId:project.id,viewId:view.id,action:'startTask',input:{recordId:first.id}}});assert.ok(!result.isError);assert.equal((result.structuredContent as any).result.record.data.status,'in_progress');

@@ -16,6 +16,8 @@ import { PortfolioMediaService, PortfolioService, PORTFOLIO_PROJECT_ID, PORTFOLI
 import { WorkspaceService } from '../workspaces/application.js';
 import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
+import { ApplicationRegistry } from '../apps/registry.js';
+import { portfolioApplication } from '../apps/portfolio-definition.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
 import type { NodeRuntime } from '../nodes/runtime.js';
@@ -36,7 +38,8 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media]);
-    const services = { config, catalog, nodes, identity, nodeGateway, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, lifecycle };
+    const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful })]);
+    const services = { config, catalog, nodes, identity, nodeGateway, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;
