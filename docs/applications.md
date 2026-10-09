@@ -38,10 +38,16 @@ without embedding it in a View sandbox or requiring another server.
 V1 deliberately does **not** load arbitrary code, dynamically install
 third-party packages, create a database-backed Application instance, or grant
 scripts unrestricted machine access. Registration is done in source code.
-There is currently one configured Portfolio instance. Domain-specific
-permissions, execution approvals and device capabilities remain the
-responsibility of their existing Atlas service/Node boundaries.
+There are two code-defined Application instances: **Portfolio** and
+**Football Training** (FYP). Domain-specific permissions and device capabilities
+remain the responsibility of existing Atlas service/Node boundaries.
 
-For Football Training, add a second Application definition that routes
-validated training actions through the already-authenticated Atlas Node
-to the local Python driver; do not execute Python on the hosted Server.
+Football Training is implemented in `apps/server/src/apps/football-training.ts`
+and `apps/web/src/FootballTraining.tsx`. Its validated operations route through
+the project-owned Unity Workspace to the Mac Node's `football.training`
+capability, never to a Python runtime on the hosted Server. The external
+Python driver is developed separately in the FYP workspace. See
+[`football-training-application.md`](football-training-application.md).
+
+Portfolio and Ask Portfolio no longer have global sidebar entries; the
+legacy URLs remain supported. Portfolio links to Ask Portfolio internally.

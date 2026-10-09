@@ -2,6 +2,7 @@ import { runDevTask } from '../../capabilities/dev/runner.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
 import { UnityAdapter } from '../../capabilities/unity/unity.js';
+import { footballControl } from '../../capabilities/football.js';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 import type { NodeCapability } from '@atlas/protocol/node-model';
@@ -16,7 +17,7 @@ export class LocalNodeRuntime implements NodeRuntime {
         this.files = new WorkspaceFiles(roots);
         this.adapters = adapters ?? new Map([["unity", new UnityAdapter(this.files)]]);
     }
-    getCapabilities(): NodeCapability[] { return ["workspace.files", "workspace.git", "workspace.dev", ...(this.adapters.has("unity") ? ["unity" as const] : [])]; }
+    getCapabilities(): NodeCapability[] { return ["workspace.files", "workspace.git", "workspace.dev", "football.training", ...(this.adapters.has("unity") ? ["unity" as const] : [])]; }
     bind(rootPath: string) { return this.files.bind(rootPath); }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {
         const adapter = workspace.adapter ? this.adapters.get(workspace.adapter) : undefined;
@@ -43,6 +44,7 @@ export class LocalNodeRuntime implements NodeRuntime {
                 case 'unity_status': return adapter ? adapter.status(workspace) : { available: false, state: 'no_adapter' };
                 case 'unity_list_commands': return adapter ? adapter.capabilities(workspace) : { available: false, state: 'no_adapter', commands: [] };
                 case 'unity_run_command': if (!adapter) throw new AtlasError('Workspace has no available Unity adapter.', 'ADAPTER_UNAVAILABLE'); return adapter.invoke(workspace, x.command, x.parameters);
+                case 'football_control': return footballControl(workspace, x);
             }
     }
 }

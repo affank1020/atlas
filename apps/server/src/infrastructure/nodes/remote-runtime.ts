@@ -18,7 +18,7 @@ export class RemoteNodeRuntime implements NodeRuntime {
     }); }
     execute(workspace: Workspace, operation: NodeOperation, input: Record<string, any>): Promise<unknown> {
         const taskTimeout = operation === 'workspace_run_dev_task' ? workspace.devTasks[input.task]?.timeoutMs ?? 120_000 : 0;
-        const timeoutMs = taskTimeout ? Math.min(taskTimeout + 15_000, 615_000) : operation.startsWith('unity_') ? 60_000 : 30_000;
+        const timeoutMs = taskTimeout ? Math.min(taskTimeout + 15_000, 615_000) : operation.startsWith('unity_') ? 60_000 : operation === 'football_control' ? 60_000 : 30_000;
         return this.request({ kind: 'execute', workspace, operation, input }, timeoutMs);
     }
     private request(payload: Record<string, unknown>, timeoutMs: number): Promise<unknown> {

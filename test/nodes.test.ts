@@ -12,7 +12,7 @@ import { NodeRouter } from '../apps/server/src/nodes/router.js';
 import { requiredCapability, type NodeRuntime, type NodeOperation } from '../apps/server/src/nodes/runtime.js';
 import type { NodeCapability } from '../apps/server/src/nodes/model.js';
 after(cleanupDatabases);
-const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'];
+const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'unity'];
 function runtime(capabilities = all): NodeRuntime {
     return { getCapabilities: () => capabilities, bind: async binding => `node:${binding}`, execute: async (workspace, operation) => ({ nodeId: workspace.nodeId, operation }) };
 }
@@ -84,8 +84,13 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
         workspace_delete_file: { path: 'a', expectedSha256: 'a'.repeat(64) }, workspace_list_dev_tasks: {}, workspace_run_dev_task: { task: 'test' }, workspace_git_status: {}, workspace_git_diff: {},
         unity_status: {}, unity_list_commands: {}, unity_run_command: { command: 'editor_play', parameters: {} },
     };
-    for (const operation of Object.keys(requiredCapability) as NodeOperation[]) await service.call(operation, { ...scope, ...inputs[operation] });
+    for (const operation of Object.keys(requiredCapability).filter(op => op !== 'football_control') as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
     assert.equal(invoked.length, 13);
+    // Internal first-party Application commands reach the owning Node through NodeRouter,
+    // but are intentionally not exposed by WorkspaceService's generic public API.
+    await assert.rejects(service.call('football_control' as any, { ...scope, action: 'drills' }), (e: any) => e.code === 'INVALID_REQUEST');
+    await router.execute(workspace, 'football_control', { ...scope, action: 'drills' });
+    assert.equal(invoked.at(-1), `${workspace.nodeId}:football_control`);
     // A second registered runtime proves routing is by ownership, not a global local fallback.
     const otherId = randomUUID();
     await store.pool.query("INSERT INTO nodes(id,name,status,capabilities) VALUES($1,'Other','online',$2)", [otherId, all]);
@@ -107,6 +112,6 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
 });
 
 test('LocalNodeRuntime advertises implemented capabilities without claiming a connected Editor', () => {
-    assert.deepEqual(new LocalNodeRuntime([], new Map()).getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev']);
+    assert.deepEqual(new LocalNodeRuntime([], new Map()).getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training']);
     assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), all);
 });

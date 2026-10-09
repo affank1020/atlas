@@ -10,6 +10,7 @@ import { workspaceSchemas, type WorkspaceToolName } from './contracts.js';
 export class WorkspaceService {
     constructor(readonly catalog: Pick<CoreService, 'getProject'>, readonly repository: WorkspaceRepository, readonly runtime: NodeRouter) {}
     async call(name: WorkspaceToolName, input: unknown) {
+        if (!Object.hasOwn(workspaceSchemas, name)) throw new AtlasError('Unsupported Workspace operation.', 'INVALID_REQUEST');
         const parsed = workspaceSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x: any = parsed.data;

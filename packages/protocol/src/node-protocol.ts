@@ -4,7 +4,7 @@ import { devTasksSchema } from './dev-tasks.js';
 import { requiredCapability } from './runtime.js';
 export const NODE_PROTOCOL_VERSION = 2;
 export const MAX_NODE_FRAME_BYTES = 2 * 1024 * 1024;
-export const capabilitySchema = z.enum(['workspace.files', 'workspace.git', 'workspace.dev', 'unity']);
+export const capabilitySchema = z.enum(['workspace.files', 'workspace.git', 'workspace.dev', 'unity', 'football.training']);
 export const registrationSchema = z.object({
     type: z.literal('register'), protocol: z.literal(NODE_PROTOCOL_VERSION),
     nodeId: z.string().uuid(), name: z.string().trim().min(1).max(200),

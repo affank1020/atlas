@@ -15,7 +15,7 @@ export function AskPortfolio() {
         <div><span className="sync-dot idle" /><b>Atlas Portfolio · published corpus</b><small>Drafts are excluded from this agent</small></div>
         <dl><div><dt>Projects</dt><dd>{count("projects","published")}</dd></div><div><dt>Posts</dt><dd>{count("posts","published")}</dd></div><div><dt>Experience</dt><dd>{count("experience","published")}</dd></div><div><dt>Media</dt><dd>{status?.media.active??0}</dd></div></dl>
         {error ? <span className="sync-error">{error}</span> : null}
-        <a className="button ghost" href="#/portfolio">Manage content</a>
+        <a className="button ghost" href="#/projects/d99a6c45-a4ec-5ef6-8f22-c07d31f8bb38/applications/portfolio">Manage content</a>
     </section>;
     return <AskChat agentName="Ask Portfolio" toolName="ask_portfolio" storageKey="atlas.observatory.ask-portfolio.history" introEyebrow="Grounded in the published portfolio" introCopy="Ask about projects, experience, writing, and profile content explicitly published from Atlas Portfolio into Fabric." examples={EXAMPLES} fixedScope="Published Portfolio only" banner={banner} />;
 }

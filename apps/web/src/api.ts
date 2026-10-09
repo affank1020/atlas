@@ -7,7 +7,7 @@ class ToolRequestError extends Error {
 }
 
 export async function callTool<T>(name: string, input: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
-    const timeoutMs = name === "workspace_run_dev_task" ? 660_000 : name === "ask_atlas" || name === "ask_portfolio" ? 240_000 : 30_000;
+    const timeoutMs = name === "workspace_run_dev_task" ? 660_000 : name === "ask_atlas" || name === "ask_portfolio" ? 240_000 : name === "football_index_policy" ? 70_000 : 30_000;
     let response: Response;
     try {
         response = await fetch(`${API_BASE}/api/tools/${name}`, {

@@ -8,13 +8,16 @@ const file = z.string().min(1).max(4096);
 const directory = z.string().max(4096).default('');
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const text = z.string().max(512 * 1024);
+// The Football Application's internal Node operation must not become a generic
+// Workspace tool exposed through MCP or the unscoped HTTP dispatcher.
+const { football_control: _footballControl, ...publicWorkspaceOperations } = workspaceOperationSchemas;
 export const workspaceSchemas = {
     list_project_workspaces: z.object({ ...project, includeArchived: z.boolean().optional() }).strict(),
     get_workspace: z.object({ ...scope, includeArchived: z.boolean().optional() }).strict(),
     create_workspace: z.object({ ...project, ...client, name, rootPath: file, nodeId: z.string().uuid().optional(), kind: z.enum(['generic', 'unity']).default('generic') }).strict(),
     update_workspace: z.object({ ...scope, ...client, name: name.optional() }).strict(),
     archive_workspace: z.object({ ...scope, ...client }).strict(),
-    ...workspaceOperationSchemas,
+    ...publicWorkspaceOperations,
 
 };
 export type WorkspaceToolName = keyof typeof workspaceSchemas;

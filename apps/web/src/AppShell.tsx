@@ -35,8 +35,6 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                 {link('#/nodes', 'Nodes', page === 'nodes', '▤')}
                 {link('#/activity', 'Activity', page === 'activity', '≋')}
                 <p className="nav-group">Tools</p>
-                {link('#/portfolio', 'Portfolio', page === 'portfolio', '◇')}
-                {link('#/ask-portfolio', 'Ask Portfolio', page === 'ask-portfolio', '↗')}
                 <details className="developer-nav" open={page === 'fabric' || undefined}><summary>Developer</summary>{link('#/fabric', 'Retrieval inspector', page === 'fabric', '⌘')}</details>
             </nav>
             <div className="sidebar-foot">Atlas Server<small>{API_BASE}</small></div>

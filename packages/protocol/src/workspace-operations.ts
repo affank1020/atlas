@@ -19,5 +19,21 @@ export const workspaceOperationSchemas = {
     unity_status: z.object({ ...scope, ...client }).strict(),
     unity_list_commands: z.object({ ...scope, ...client }).strict(),
     unity_run_command: z.object({ ...scope, ...client, command: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,199}$/), parameters: z.record(z.string(), z.unknown()).default({}).refine(x => JSON.stringify(x).length <= 65536, 'Parameters exceed 64 KiB') }).strict(),
+    // Internal first-party football control: not published as a generic Workspace MCP tool.
+    // Only the Football Training Application exposes carefully scoped typed actions.
+    football_control: z.object({
+        ...scope,
+        action: z.enum(['drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan']),
+        drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
+        runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
+        policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
+        preset: z.enum(['smoke', 'full']).optional(),
+        arenas: z.number().int().min(1).max(16).optional(),
+        basePort: z.number().int().min(1024).max(65519).optional(),
+        seed: z.number().int().min(0).max(2147483647).optional(),
+        episodes: z.number().int().min(1).max(10000).optional(),
+        lines: z.number().int().min(1).max(200).optional(),
+    }).strict(),
+
 };
 export type WorkspaceOperation = keyof typeof workspaceOperationSchemas;
