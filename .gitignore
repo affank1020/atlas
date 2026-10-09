@@ -18,3 +18,5 @@ data/media/
 **/*.tsbuildinfo
 apps/server/data/media/
 infra/production.env
+
+/apps/server/data/*.json
