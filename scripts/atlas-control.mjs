@@ -147,31 +147,29 @@ function portOpen(port, timeout = 350) {
   });
 }
 
+function nodeTarget() {
+  const config = join(nodeDir, ".env.node");
+  if (!existsSync(config)) return undefined;
+  const value = readFileSync(config, "utf8").match(/^ATLAS_SERVER_URL\s*=\s*["']?([^"'\r\n# ]+)/m)?.[1];
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "wss:" ? "hosted" : "local";
+  } catch { return "invalid"; }
+}
+
 async function serviceState(name) {
   const service = services[name];
   if (service.type === "docker") {
     if (await portOpen(service.port)) return { state: "external", detail: `already listening on :${service.port}` };
-    if (!commandExists("docker")) return { state: "missing", detail: "Docker command not found" };
+    if (!commandExists("docker")) return { state: "stopped", detail: "Docker unavailable (only needed for local dev)" };
     const result = spawnSync("docker", [...composeArgs, "ps", "--status", "running", "--services"], { cwd: atlasDir, encoding: "utf8" });
     const running = result.status === 0 && result.stdout.split(/\s+/).includes("postgres");
     return running ? { state: "running", detail: "Docker Compose" } : { state: "stopped" };
   }
   const pid = readPid(name);
-  if (name === "node" && !pid && existsSync(service.requires)) {
-    const match = readFileSync(service.requires, "utf8").match(/^ATLAS_NODE_ID=([0-9a-f-]{36})\s*$/m);
-    if (match) {
-      try {
-        const response = await fetch("http://127.0.0.1:3000/api/tools/get_node", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ nodeId: match[1] }), signal: AbortSignal.timeout(500),
-        });
-        if (response.ok && (await response.json()).status === "online")
-          return { state: "external", detail: "connected to Atlas Server outside Atlas Control" };
-      } catch { /* Server unavailable; continue with managed-process status. */ }
-    }
-  }
   if (!service.port) {
-    if (pid) return { state: "running", detail: `managed · pid ${pid}` };
+    if (pid) return { state: "running", detail: `managed · pid ${pid}${name === "node" ? " · configured " + (nodeTarget() || "unknown") : ""}` };
     if (service.requires && !existsSync(service.requires)) return { state: "missing", detail: `missing ${service.requires}` };
     return { state: "stopped" };
   }
@@ -348,9 +346,9 @@ Usage:
   ./atlasctl down              Stop only the managed MacBook Node
   ./atlasctl restart           Restart only the managed MacBook Node
   ./atlasctl dev up [--ask]    Start the legacy local development stack + MCP tunnel
-  ./atlasctl dev down [--all]  Stop the local dev stack; --all also stops PostgreSQL
+  ./atlasctl dev down [--all]  Stop local dev services without stopping a hosted Node
   ./atlasctl dev restart       Restart the local development stack
-  ./atlasctl status            Show local process status
+  ./atlasctl status            Show local service status (Docker only needed for dev)
   ./atlasctl start <service>   Start one service
   ./atlasctl stop <service>    Stop one managed service
   ./atlasctl logs [service]    Show the latest managed logs
@@ -415,7 +413,10 @@ async function up(includeAsk, hosted = true) {
 
 async function down(includePostgres, hosted = true) {
   if (hosted) { await stopService("node"); return; }
-  for (const name of ["tunnel", "ollama", "web", "node", "server", ...(includePostgres ? ["postgres"] : [])]) await stopService(name);
+  // Dev teardown must never terminate the independently managed hosted Node.
+  const devServices = ["tunnel", "ollama", "web", ...(nodeTarget() === "local" ? ["node"] : []), "server", ...(includePostgres ? ["postgres"] : [])];
+  if (nodeTarget() === "hosted") console.log("Hosted Atlas Node is untouched by dev down.");
+  for (const name of devServices) await stopService(name);
 }
 
 const [command = "status", argument] = process.argv.slice(2);
@@ -473,8 +474,8 @@ switch (command) {
     break;
   case "status": await printStatus(); break;
   case "vps": vpsCommand(argument || "status", process.argv[3]); break;
-  case "start": if (selectedService(argument)) await startService(argument); break;
-  case "stop": if (selectedService(argument)) await stopService(argument); break;
+  case "start": { const name = selectedService(argument); if (name && !await startService(name)) process.exitCode = 1; break; }
+  case "stop": { const name = selectedService(argument); if (name && !await stopService(name)) process.exitCode = 1; break; }
   case "logs": showLogs(argument); break;
   case "configure":
     if (argument === "tunnel-key") await configureTunnelKey();
