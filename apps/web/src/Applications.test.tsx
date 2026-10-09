@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ProjectApplications, ApplicationWindow } from './Applications';
 import { callTool } from './api';
 
@@ -11,6 +11,7 @@ const manifest = {
 };
 
 beforeEach(() => { vi.resetAllMocks(); });
+afterEach(cleanup);
 
 test('Applications are launchable in a new tab from the owning Project', async () => {
     vi.mocked(callTool).mockResolvedValue([manifest]);
@@ -33,6 +34,18 @@ test('A launched Application renders a dedicated page without the project View h
 test('Unknown Application registrations fail visibly instead of rendering Portfolio', async () => {
     vi.mocked(callTool).mockRejectedValue(new Error('Application not found'));
     render(<ApplicationWindow projectId="other-project" slug="portfolio" />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Application not found');
+    expect(screen.queryByText('Portfolio publishing UI')).not.toBeInTheDocument();
+});
+
+test('switching Project clears a previously loaded Application when the next lookup fails', async () => {
+    vi.mocked(callTool).mockImplementation(async (_name, args) => {
+        if (args?.projectId === 'project-portfolio') return manifest as never;
+        throw new Error('Application not found');
+    });
+    const window = render(<ApplicationWindow projectId="project-portfolio" slug="portfolio" />);
+    expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
+    window.rerender(<ApplicationWindow projectId="other-project" slug="portfolio" />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Application not found');
     expect(screen.queryByText('Portfolio publishing UI')).not.toBeInTheDocument();
 });

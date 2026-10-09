@@ -5,7 +5,9 @@ import { Pool } from "pg";
 import { AtlasCatalog } from "../apps/server/src/catalog.js";
 import { AtlasStore } from "../apps/server/src/store.js";
 
-const baseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://localhost/postgres";
+// Default to the disposable local PostgreSQL container in infra/docker-compose.yml.
+// CI and other environments can override this using TEST_DATABASE_URL or DATABASE_URL.
+const baseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://atlas:atlas@127.0.0.1:5432/atlas";
 const schemas: string[] = [];
 const stores: AtlasStore[] = [];
 export async function databaseFixture(throughMigration?: string) {

@@ -53,9 +53,11 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
     useEffect(() => {
         let active = true;
         setBusy(true);
+        setApplication(undefined);
+        setError('');
         callTool<ApplicationManifest>('get_application', { projectId, slug })
             .then(app => { if (active) { setApplication(app); setError(''); } })
-            .catch(e => { if (active) setError(e instanceof Error ? e.message : String(e)); })
+            .catch(e => { if (active) { setApplication(undefined); setError(e instanceof Error ? e.message : String(e)); } })
             .finally(() => { if (active) setBusy(false); });
         return () => { active = false; };
     }, [projectId, slug]);
@@ -65,7 +67,8 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
         document.title = `${application.name} · Atlas`;
         return () => { document.title = previous; };
     }, [application]);
-    const Component = application ? applicationComponents[application.type] : undefined;
+    const currentApplication = application?.projectId === projectId && application.slug === slug ? application : undefined;
+    const Component = currentApplication && !error ? applicationComponents[currentApplication.type] : undefined;
     return <div className="application-window">
         <header className="application-window-bar">
             <a href={`#/projects/${projectId}/applications`} className="application-back">← Project Applications</a>
@@ -74,7 +77,7 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
         <main className="application-window-main">
             {busy && <p role="status" className="application-status">Loading Application…</p>}
             {error && <div role="alert" className="notice error">{error}</div>}
-            {!busy && application && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
+            {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
             {Component && !busy && <Component />}
         </main>
     </div>;

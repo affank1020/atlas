@@ -22,7 +22,7 @@ export function ViewFrame({rendered,preview=false,embedded=false,mobile=false,ac
             action(name,input){return callTool('execute_view_action',{projectId:rendered.view.projectId,viewId:actionViewId,action:name,input})},
             async refresh(params){if(!onRefresh)throw new Error('Refresh is unavailable.');return onRefresh(params)},onError});
     },[rendered,preview,embedded,actionsEnabled,actionViewId,onRefresh,onError]);
-    const documentFrame=useMemo(()=><iframe ref={frame} title={preview?'Unsaved View preview':rendered.view.name} sandbox={rendered.manifest?"allow-scripts allow-popups allow-popups-to-escape-sandbox":"allow-popups allow-popups-to-escape-sandbox"} referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" srcDoc={themedViewDocument(rendered)}/>,[rendered.document,rendered.view.name,rendered.manifest,preview]);
+    const documentFrame=useMemo(()=><iframe ref={frame} title={preview&&!embedded?'Unsaved View preview':rendered.view.name} sandbox={rendered.manifest?"allow-scripts allow-popups allow-popups-to-escape-sandbox":"allow-popups allow-popups-to-escape-sandbox"} referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" srcDoc={themedViewDocument(rendered)}/>,[rendered.document,rendered.view.name,rendered.manifest,preview,embedded]);
     return <section className={`view-frame ${mobile?'view-mobile':''}`}>{documentFrame}</section>;
 }
 
