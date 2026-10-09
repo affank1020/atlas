@@ -40,7 +40,9 @@ Caddy routing is intentionally conservative:
 
 - `/node/connect` and `/node/enrol` bypass human Basic Auth because Atlas Node authenticates with its Server-issued credential or one-use enrolment token.
 - `/api/public/portfolio`, `/api/media/*`, and the signed Contentful webhook remain public.
-- Atlas Web, `/api/*`, `/mcp`, `/projects/*`, and `/health` are protected by Caddy Basic Auth as an interim single-user production boundary.
+- Atlas Web, `/api/*`, `/projects/*`, and `/health` are protected by Caddy Basic Auth as an interim single-user production boundary.
+- Hosted `/mcp` bypasses Basic Auth but **requires** an Auth0-issued OAuth Bearer token verified by Atlas Server (issuer, audience, expiry, scope, owner subject and signature). Hosted MCP fails closed with HTTP 503 until OAuth is configured; see [direct MCP OAuth setup](MCP_AUTH.md).
+- `/.well-known/oauth-protected-resource` is a public OAuth discovery endpoint and exposes no private Atlas data.
 
 Basic Auth is appropriate for the initial private single-user deployment, but it is not the long-term Atlas identity model. Replace it with first-class Atlas authentication/OAuth before multi-user or third-party access.
 
@@ -86,7 +88,8 @@ Before first deployment:
 
 The deploy workflow uploads only the Compose manifest, not the environment
 file. Images are chosen by `ATLAS_IMAGE_TAG`, which the workflow sets to the
-commit SHA. Existing volumes are not deleted. Do not use `docker compose down -v`
+commit SHA and persists in the private VPS environment after successful rollout.
+Existing volumes are not deleted. Do not use `docker compose down -v`
 on a live installation.
 
 For a cautious first boot before DNS/HTTPS, the manual source-build

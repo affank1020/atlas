@@ -7,8 +7,10 @@ import { standaloneViewPage } from "../../view-standalone.js";
 import { verifyContentfulWebhook } from "../../integrations/contentful.js";
 import type { ServerServices } from "../../server/composition.js";
 import { createMcpTransport } from "../mcp/index.js";
+import { createMcpTokenVerifier, mcpResourceMetadata } from '../mcp/oauth.js';
 export function createHttpTransport(services: ServerServices) {
     const { catalog, askPortfolio, contentful, portfolio, media, lifecycle, config } = services;
+    const mcpVerifier = createMcpTokenVerifier(config.mcpAuth);
     const http = createServer(async (request: IncomingMessage, response: ServerResponse) => {
         const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-atlas-client", "access-control-allow-methods": "GET,POST,OPTIONS" };
         // Opaque-origin View frames must never invoke privileged HTTP/MCP endpoints,
@@ -34,6 +36,13 @@ export function createHttpTransport(services: ServerServices) {
             } catch (error) {
                 response.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' }); response.end(JSON.stringify({ error: error instanceof AtlasError ? error.code : 'INVALID_REQUEST', message: error instanceof Error ? error.message : 'Enrolment failed.' }));
             }
+            return;
+        }
+        // OAuth metadata must be public so ChatGPT can discover and link the MCP app.
+        if (request.method === 'GET' && (request.url === '/.well-known/oauth-protected-resource' || request.url === '/.well-known/oauth-protected-resource/mcp')) {
+            if (!config.mcpAuth.enabled) { response.writeHead(404); response.end(); return; }
+            response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' });
+            response.end(JSON.stringify(mcpResourceMetadata(config.mcpAuth)));
             return;
         }
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
@@ -87,7 +96,31 @@ export function createHttpTransport(services: ServerServices) {
         }
         if (request.method === "GET" && request.url === "/health") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(await catalog.status())); return; }
         if (request.method !== "POST" || request.url !== "/mcp") { response.writeHead(404, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Not found" })); return; }
-        const server = createMcpTransport(services); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        // Public ingress MUST fail closed unless OAuth is configured. Local
+        // loopback development retains its existing direct MCP behavior.
+        if (config.mcpAuth.trustedIngress && !config.mcpAuth.enabled) {
+            response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+            response.end(JSON.stringify({ error: 'MCP_OAUTH_NOT_CONFIGURED' }));
+            return;
+        }
+        if (config.mcpAuth.enabled) {
+            let authenticated = false;
+            try { authenticated = await mcpVerifier.authenticate(request.headers.authorization); }
+            catch {
+                response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+                response.end(JSON.stringify({ error: 'MCP_AUTH_PROVIDER_UNAVAILABLE' }));
+                return;
+            }
+            if (!authenticated) {
+                response.writeHead(401, {
+                    'content-type': 'application/json', 'cache-control': 'no-store',
+                    'www-authenticate': `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource', config.mcpAuth.resource).toString()}", scope="${config.mcpAuth.scope}"`
+                });
+                response.end(JSON.stringify({ error: 'MCP_UNAUTHORIZED' }));
+                return;
+            }
+        }
+        const server = createMcpTransport(services, config.mcpAuth.enabled ? config.mcpAuth.scope : undefined); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         response.on("close", () => { void transport.close(); void server.close(); });
         try { await server.connect(transport); await transport.handleRequest(request, response); }
         catch (error) { if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" }); if (!response.writableEnded) response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }

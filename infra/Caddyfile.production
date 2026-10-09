@@ -18,8 +18,13 @@
         @public path /api/public/portfolio /api/media/* /integrations/contentful/webhook
         reverse_proxy @public server:3000
 
-        # Temporary production ingress for the private Atlas UI/API/MCP surface.
-        # Replace this with first-class Atlas auth/OAuth before multi-user use.
+        # ChatGPT connects directly to streamable HTTP MCP using OAuth.
+        # The Server validates JWT audience, signature, scopes and owner subject.
+        # If OAuth is unset, hosted /mcp returns 503 (never anonymous access).
+        @mcp path /mcp /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
+        reverse_proxy @mcp server:3000
+
+        # Temporary private human UI/API boundary, independent of MCP OAuth.
         basic_auth {
             {$ATLAS_ADMIN_USER} {$ATLAS_ADMIN_PASSWORD_HASH}
         }

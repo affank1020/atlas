@@ -19,8 +19,11 @@ Unity and workspace execution. Atlas Node connects **outbound** by WSS.
 - `postgres` is private; Server binds to VPS loopback `127.0.0.1:3000`;
   `ingress` alone publishes 80/443.
 - The raw `/mcp` endpoint is NOT a public unauthenticated API. Caddy Basic Auth
-  protects Web/API/MCP; `/node/connect` and `/node/enrol` bypass **human**
-  Basic Auth but require server-validated Node credentials or one-use tokens.
+  protects Web and ordinary APIs, while `/mcp` uses dedicated OAuth bearer
+  verification on Atlas Server; if hosted OAuth is unset, `/mcp` returns 503.
+  See [direct MCP authentication](MCP_AUTH.md). `/node/connect` and `/node/enrol`
+  bypass **human** Basic Auth but require server-validated Node credentials or
+  one-use tokens.
 
 ## Read-only VPS diagnostics
 
@@ -33,6 +36,11 @@ cd ~/atlas-deploy
 chmod 700 atlas-vps.sh
 ./atlas-vps.sh diagnose
 ```
+
+You can also use the local CLI over SSH: `./atlasctl vps status`,
+`./atlasctl vps diagnose`, `./atlasctl vps mcp` or `./atlasctl vps logs server`. It uses the `ovh`
+SSH alias by default; set `ATLAS_VPS_SSH_HOST` to a different trusted SSH
+alias if necessary.
 
 Other commands: `./atlas-vps.sh status`, `health`, `https`, `nodes`,
 `migrations`, `logs ingress`, `logs server`, `follow server`.
@@ -81,8 +89,10 @@ or credential rotation should be needed.
 
    Keep `ATLAS_NODE_ID`, `ATLAS_NODE_CREDENTIAL`, and
    `ATLAS_WORKSPACE_ROOTS` **unchanged**. Do not commit or paste these secrets.
-4. Start `./atlasctl up --hosted`. It starts **only Node**, not local Server,
-   Web, PostgreSQL or MCP tunnel. `./atlasctl down --hosted` stops only Node.
+4. Start `./atlasctl up`. It starts **only Node**, not local Server,
+   Web, PostgreSQL or MCP tunnel. `./atlasctl down` stops only Node.
+   The previous `--hosted` flag is now optional for compatibility; the full
+   local stack requires an explicit `./atlasctl dev up`.
 5. On the VPS run `./atlas-vps.sh nodes` and confirm the same Node UUID is
    **online** with its existing Workspace assignments. Try a harmless
    `workspace_git_status` through the hosted Atlas interface to confirm routing.
@@ -101,14 +111,15 @@ since the database dump before declaring the Mac database retired.
 
 The currently connected ChatGPT Atlas integration uses the old Secure MCP Tunnel
 pointing at the local Server. It does **not** automatically switch because DNS
-and HTTPS now work. The public Caddy `/mcp` route is protected by HTTP Basic Auth,
-which is not a direct ChatGPT plugin authentication mechanism.
+and HTTPS now work. The new hosted `/mcp` endpoint includes an OAuth JWT gate,
+but still requires an operator-configured issuer and user. Follow the complete
+[Auth0 + ChatGPT setup runbook](MCP_AUTH.md).
 
 To remove the tunnel completely:
-1. Put standards-compatible OAuth 2.1 authentication and authorisation in
-   front of the hosted `/mcp` endpoint (e.g. via an established IdP), including
-   discovery metadata and access-token validation. Do **not** remove security
-   from `/mcp` to make it reachable.
+1. Configure Auth0 for the MCP audience and owner identity, set the three
+   production OAuth environment values, deploy the new images, and confirm
+   a tokenless POST to `/mcp` returns **401 Bearer**. Do **not** disable OAuth
+   to make the endpoint reachable.
 2. Create a new direct ChatGPT MCP plugin with endpoint
    `https://affan-atlas.duckdns.org/mcp`, authenticate and verify tool
    discovery and a read-only call against the **VPS**.
@@ -166,6 +177,10 @@ Suppose you buy `example.com` and want `atlas.example.com`:
    direct MCP plugin's server URL/metadata if one has been installed.
 5. An optional Caddy redirect can keep the old hostname alive for a transition;
    configure that explicitly, otherwise only the new hostname is served.
+
+Remember to update `ATLAS_MCP_RESOURCE` to the new URL `/mcp` and register the
+new audience/resource in your OAuth provider before changing ChatGPT's MCP
+connection; the resource audience is part of access-token validation.
 
 The Node UUID, workspace IDs, database contents, Docker images and repo do not
 need to change for a domain move. A hostname move is largely DNS, TLS and

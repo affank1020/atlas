@@ -37,8 +37,23 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const trustedIngress = env.ATLAS_TRUSTED_INGRESS === 'true';
     if (!['127.0.0.1', 'localhost', '::1'].includes(host) && !trustedIngress)
         throw new Error('Non-loopback Atlas Server binding requires ATLAS_TRUSTED_INGRESS=true and a reviewed private/reverse-proxy ingress.');
+    const oauthIssuer = env.ATLAS_MCP_OAUTH_ISSUER?.trim() || '';
+    const oauthSubject = env.ATLAS_MCP_OAUTH_ALLOWED_SUBJECT?.trim() || '';
+    const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
+    const scope = 'atlas:access';
+    if (oauthIssuer || oauthSubject || mcpResource) {
+        if (!oauthIssuer || !oauthSubject || !mcpResource) throw new Error('Atlas MCP OAuth requires ATLAS_MCP_OAUTH_ISSUER, ATLAS_MCP_OAUTH_ALLOWED_SUBJECT and ATLAS_MCP_RESOURCE together.');
+        const issuer = new URL(oauthIssuer);
+        const resource = new URL(mcpResource);
+        if (issuer.protocol !== 'https:' || !issuer.hostname || issuer.search || issuer.hash || issuer.pathname !== '/' ||
+            resource.protocol !== 'https:' || resource.pathname !== '/mcp' || resource.search || resource.hash || resource.origin === issuer.origin)
+            throw new Error('Atlas MCP OAuth requires an HTTPS issuer root and an HTTPS /mcp resource on separate origins.');
+        if (!/^[a-zA-Z0-9|._:@-]{3,256}$/.test(oauthSubject)) throw new Error('Invalid ATLAS_MCP_OAUTH_ALLOWED_SUBJECT.');
+    }
     return {
         databaseUrl, host, port,
+        mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
+            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio: loadPortfolioConfig(env),
     };

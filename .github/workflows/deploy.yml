@@ -59,4 +59,5 @@ jobs:
             "cd atlas-deploy && export ATLAS_IMAGE_TAG='$IMAGE_TAG' && \
              docker compose --env-file infra/production.env -f infra/docker-compose.production.yml pull server ingress && \
              docker compose --env-file infra/production.env -f infra/docker-compose.production.yml up -d --no-build --wait && \
-             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml ps"
+             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml ps && \
+             sed -i 's/^ATLAS_IMAGE_TAG=.*/ATLAS_IMAGE_TAG=$IMAGE_TAG/' infra/production.env"

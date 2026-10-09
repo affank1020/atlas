@@ -50,6 +50,24 @@ https() {
   }
 }
 
+mcp() {
+  local host metadata status challenge
+  host="$(domain)"
+  [[ -n "$host" ]] || { echo "Atlas site hostname is missing." >&2; return 1; }
+  printf 'MCP OAuth resource discovery: https://%s/.well-known/oauth-protected-resource\n' "$host"
+  metadata="$(curl --fail --silent --show-error --connect-timeout 4 --max-time 12 "https://$host/.well-known/oauth-protected-resource")" || return
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$metadata" | jq '{resource, authorization_servers, scopes_supported}'
+  else
+    printf '%s\n' "$metadata"
+  fi
+  printf '\nUnauthenticated MCP POST (should be 401 Bearer):\n'
+  status="$(curl --silent --show-error --connect-timeout 4 --max-time 12 \
+    --output /dev/null --write-out '%{http_code}' -X POST "https://$host/mcp")" || return
+  printf 'HTTP status: %s\n' "$status"
+  [[ "$status" == "401" ]] || { echo "Unexpected MCP status: expected 401 Bearer." >&2; return 1; }
+}
+
 nodes() {
   printf '%s\n' 'Node registrations/presence (VPS loopback):'
   local response
@@ -70,6 +88,7 @@ Atlas VPS diagnostics (run on the VPS, no sudo needed for a Docker-enabled accou
   ./atlas-vps.sh status                  Docker container status and health
   ./atlas-vps.sh health                  Check local Atlas Server and migrated counts
   ./atlas-vps.sh https                   Check TLS and Basic Auth protection
+  ./atlas-vps.sh mcp                     Inspect OAuth discovery and tokenless MCP rejection
   ./atlas-vps.sh nodes                   Inspect live Node presence
   ./atlas-vps.sh migrations              Check applied database migrations
   ./atlas-vps.sh logs [server|ingress|postgres]
@@ -86,6 +105,7 @@ case "${1:-help}" in
   status) compose ps ;;
   health) health ;;
   https) https ;;
+  mcp) mcp ;;
   nodes) nodes ;;
   migrations) compose exec -T server node scripts/db.mjs status ;;
   logs|follow)

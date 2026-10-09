@@ -40,6 +40,26 @@ function paths(name) {
   return { pid: join(runtimeDir, `${name}.pid`), log: join(runtimeDir, `${name}.log`) };
 }
 
+function hostedWebUrl() {
+  const configFile = join(nodeDir, ".env.node");
+  if (existsSync(configFile)) {
+    // Read the hostname only; never print the Node identity or credential.
+    const match = readFileSync(configFile, "utf8")
+      .match(/^ATLAS_SERVER_URL\s*=\s*["']?([^"'\r\n# ]+)/m);
+    if (match) {
+      try {
+        const url = new URL(match[1]);
+        if (url.protocol === "wss:" && url.pathname === "/node/connect") {
+          url.protocol = "https:";
+          url.pathname = "/";
+          return url.toString();
+        }
+      } catch { /* Ignore invalid local configuration; startup reports its error. */ }
+    }
+  }
+  return "https://affan-atlas.duckdns.org/";
+}
+
 function commandExists(command) {
   return spawnSync("sh", ["-c", `command -v "$1" >/dev/null 2>&1`, "sh", command]).status === 0;
 }
@@ -181,8 +201,9 @@ async function printStatus() {
     console.log(`${stateText(current.state)}  ${service.label.padEnd(14)}${suffix}`);
   }
   console.log(`\n${colors.dim}* Running outside Atlas Control; it will be left alone.${colors.reset}`);
-  console.log(`Web:        http://127.0.0.1:5173`);
-  console.log(`Tunnel UI:  http://127.0.0.1:8080/ui`);
+  console.log(`Hosted Web: ${hostedWebUrl()}`);
+  console.log(`Local dev:  http://127.0.0.1:5173`);
+  console.log(`Legacy MCP tunnel UI: http://127.0.0.1:8080/ui`);
 }
 
 async function waitForPort(port, milliseconds = 15000) {
@@ -323,30 +344,37 @@ function usage() {
   console.log(`Atlas Control
 
 Usage:
-  ./atlasctl up --hosted       Start only the MacBook Node for the hosted Server
-  ./atlasctl down --hosted     Stop only the managed MacBook Node
-  ./atlasctl restart --hosted  Restart only the managed MacBook Node
-  ./atlasctl up [--ask]        Legacy local development stack, including MCP tunnel
-  ./atlasctl down [--all]      Stop local managed services; --all stops PostgreSQL
-  ./atlasctl restart [--ask]   Restart the legacy local development stack
-  ./atlasctl status            Show what is running
+  ./atlasctl up                Start only the MacBook Node for the hosted Server
+  ./atlasctl down              Stop only the managed MacBook Node
+  ./atlasctl restart           Restart only the managed MacBook Node
+  ./atlasctl dev up [--ask]    Start the legacy local development stack + MCP tunnel
+  ./atlasctl dev down [--all]  Stop the local dev stack; --all also stops PostgreSQL
+  ./atlasctl dev restart       Restart the local development stack
+  ./atlasctl status            Show local process status
   ./atlasctl start <service>   Start one service
   ./atlasctl stop <service>    Stop one managed service
   ./atlasctl logs [service]    Show the latest managed logs
   ./atlasctl configure tunnel-key
                                Save the tunnel API key in macOS Keychain
-  ./atlasctl open              Open Atlas Web in the default browser
+  ./atlasctl open              Open hosted Atlas Web
+  ./atlasctl dev open          Open local development Atlas Web
+  ./atlasctl vps status        Check VPS Docker services via SSH
+  ./atlasctl vps diagnose      Run VPS diagnostics via SSH
+  ./atlasctl vps mcp           Check hosted MCP OAuth protection
+  ./atlasctl vps logs server   Inspect VPS Server logs via SSH
 
 Services: postgres, server, node, web, tunnel, ollama
 Legacy aliases: atlas → server, observatory → web
 
-The hosted mode uses the HTTPS Atlas Server and starts only the MacBook Node.
+This CLI runs on your Mac; the 'vps' subcommands call the VPS diagnostics over SSH.
+By default, up/down/restart manage only the MacBook Node connecting to hosted Atlas.
 Set ATLAS_SERVER_URL=wss://affan-atlas.duckdns.org/node/connect in apps/node/.env.node first.
-Legacy local mode still starts PostgreSQL + Server + Node + Web + MCP tunnel.
-Ollama is optional and included with --ask in legacy local mode.`);
+The explicit 'dev' mode manages PostgreSQL + local Server + Node + Web + MCP tunnel.
+The old --hosted forms remain aliases for up/down/restart during migration.
+Ollama is optional and included with --ask in local development mode.`);
 }
 
-async function up(includeAsk, hosted = false) {
+async function up(includeAsk, hosted = true) {
   if (hosted) {
     const nodeConfig = join(nodeDir, ".env.node");
     if (!existsSync(nodeConfig)) {
@@ -366,6 +394,18 @@ async function up(includeAsk, hosted = false) {
     else console.log("Hosted Node started. Local Server, Web, PostgreSQL and MCP tunnel were not started.");
     return;
   }
+  // Never combine a local Server/MCP tunnel with a Node pointing at production.
+  const nodeConfig = join(nodeDir, ".env.node");
+  if (existsSync(nodeConfig)) {
+    const contents = readFileSync(nodeConfig, "utf8");
+    const configured = contents.match(/^ATLAS_SERVER_URL\s*=\s*["']?([^"'\r\n# ]+)/m)?.[1];
+    if (configured && !/^ws:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):3000\/node\/connect\/?$/.test(configured)) {
+      console.error("Local dev requires the Node to point at ws://127.0.0.1:3000/node/connect.");
+      console.error("The Node is configured for a different Server. Use './atlasctl up' instead.");
+      process.exitCode = 2;
+      return;
+    }
+  }
   for (const name of ["postgres", "server", "node", "web", ...(includeAsk ? ["ollama"] : []), "tunnel"]) {
     if (!await startService(name)) { process.exitCode = 1; return; }
   }
@@ -373,17 +413,66 @@ async function up(includeAsk, hosted = false) {
   console.log("Open http://127.0.0.1:5173");
 }
 
-async function down(includePostgres, hosted = false) {
+async function down(includePostgres, hosted = true) {
   if (hosted) { await stopService("node"); return; }
   for (const name of ["tunnel", "ollama", "web", "node", "server", ...(includePostgres ? ["postgres"] : [])]) await stopService(name);
 }
 
 const [command = "status", argument] = process.argv.slice(2);
+function vpsCommand(action = "status", service) {
+  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose"]);
+  const targets = new Set(["server", "postgres", "ingress"]);
+  if (!valid.has(action) || (service && (!["logs", "follow"].includes(action) || !targets.has(service)))) {
+    console.error("Usage: ./atlasctl vps [status|health|https|mcp|nodes|migrations|diagnose|logs|follow] [server|ingress|postgres]");
+    process.exitCode = 2;
+    return;
+  }
+  const host = process.env.ATLAS_VPS_SSH_HOST || "ovh";
+  if (!/^[a-zA-Z0-9._@-]+$/.test(host)) {
+    console.error("ATLAS_VPS_SSH_HOST must be a simple SSH host alias or user@host.");
+    process.exitCode = 2;
+    return;
+  }
+  const script = "cd ~/atlas-deploy && ./atlas-vps.sh " + action + (service ? " " + service : "");
+  const result = spawnSync("ssh", ["-o", "BatchMode=yes", host, script], { stdio: "inherit" });
+  if (result.error) {
+    console.error("SSH failed: " + result.error.message);
+    process.exitCode = 1;
+  } else if (result.signal) {
+    process.exitCode = 1;
+  } else {
+    process.exitCode = result.status ?? 1;
+  }
+}
+const failDevFlag = () => {
+  if (process.argv.includes("--ask") || process.argv.includes("--all")) {
+    console.error("Local-stack flags belong under './atlasctl dev'. Try './atlasctl dev up --ask' or './atlasctl dev down --all'.");
+    process.exitCode = 2;
+    return true;
+  }
+  return false;
+};
 switch (command) {
-  case "up": await up(process.argv.includes("--ask"), process.argv.includes("--hosted")); break;
-  case "down": await down(process.argv.includes("--all"), process.argv.includes("--hosted")); break;
-  case "restart": await down(false, process.argv.includes("--hosted")); await up(process.argv.includes("--ask"), process.argv.includes("--hosted")); break;
+  case "up": if (!failDevFlag()) await up(false, true); break;
+  case "down": if (!failDevFlag()) await down(false, true); break;
+  case "restart":
+    if (!failDevFlag()) { await down(false, true); if (!process.exitCode) await up(false, true); }
+    break;
+  case "dev":
+    switch (argument || "status") {
+      case "up": await up(process.argv.includes("--ask"), false); break;
+      case "down": await down(process.argv.includes("--all"), false); break;
+      case "restart":
+        await down(false, false);
+        if (!process.exitCode) await up(process.argv.includes("--ask"), false);
+        break;
+      case "status": await printStatus(); break;
+      case "open": spawn("open", ["http://127.0.0.1:5173"], { detached: true, stdio: "ignore" }).unref(); break;
+      default: console.error("Usage: ./atlasctl dev [up|down|restart|status|open] [--ask|--all]"); process.exitCode = 2;
+    }
+    break;
   case "status": await printStatus(); break;
+  case "vps": vpsCommand(argument || "status", process.argv[3]); break;
   case "start": if (selectedService(argument)) await startService(argument); break;
   case "stop": if (selectedService(argument)) await stopService(argument); break;
   case "logs": showLogs(argument); break;
@@ -391,7 +480,7 @@ switch (command) {
     if (argument === "tunnel-key") await configureTunnelKey();
     else { console.error("Usage: ./atlasctl configure tunnel-key"); process.exitCode = 2; }
     break;
-  case "open": spawn("open", ["http://127.0.0.1:5173"], { detached: true, stdio: "ignore" }).unref(); break;
+  case "open": spawn("open", [hostedWebUrl()], { detached: true, stdio: "ignore" }).unref(); break;
   case "help": case "--help": case "-h": usage(); break;
   default: console.error(`Unknown command "${command}".\n`); usage(); process.exitCode = 2;
 }
