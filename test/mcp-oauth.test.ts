@@ -79,6 +79,26 @@ test('Host-configured MCP OAuth fails closed for missing, partial and invalid co
     assert.equal(configured.mcpAuth.enabled, true);
 });
 
+test('Atlas canonicalizes an Auth0 issuer for metadata and exact JWT issuer validation', async () => {
+    const issuerWithoutSlash = 'https://dev-lgttgg6z833e6cgk.us.auth0.com';
+    const canonicalIssuer = issuerWithoutSlash + '/';
+    const configured = loadServerConfig({
+        DATABASE_URL: 'postgresql://localhost/example',
+        ATLAS_TRUSTED_INGRESS: 'true',
+        ATLAS_MCP_OAUTH_ISSUER: issuerWithoutSlash,
+        ATLAS_MCP_OAUTH_ALLOWED_SUBJECT: config.subject,
+        ATLAS_MCP_RESOURCE: config.resource,
+    });
+
+    assert.equal(configured.mcpAuth.issuer, canonicalIssuer);
+    assert.deepEqual(mcpResourceMetadata(configured.mcpAuth).authorization_servers, [canonicalIssuer]);
+
+    const verifier = createMcpTokenVerifier(configured.mcpAuth, async () =>
+        new Response(JSON.stringify({ keys: [jwk] }), { status: 200 }));
+    assert.equal(await verifier.authenticate('Bearer ' + jwt({ iss: canonicalIssuer })), true);
+    assert.equal(await verifier.authenticate('Bearer ' + jwt({ iss: issuerWithoutSlash })), false);
+});
+
 async function withHttp(mcpAuth: McpAuthOptions, run: (base: string) => Promise<void>) {
     const server = createHttpTransport({
         config: { mcpAuth, workspace: { origins: [] } },

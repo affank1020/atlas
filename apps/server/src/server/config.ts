@@ -37,7 +37,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const trustedIngress = env.ATLAS_TRUSTED_INGRESS === 'true';
     if (!['127.0.0.1', 'localhost', '::1'].includes(host) && !trustedIngress)
         throw new Error('Non-loopback Atlas Server binding requires ATLAS_TRUSTED_INGRESS=true and a reviewed private/reverse-proxy ingress.');
-    const oauthIssuer = env.ATLAS_MCP_OAUTH_ISSUER?.trim() || '';
+    let oauthIssuer = env.ATLAS_MCP_OAUTH_ISSUER?.trim() || '';
     const oauthSubject = env.ATLAS_MCP_OAUTH_ALLOWED_SUBJECT?.trim() || '';
     const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
     const scope = 'atlas:access';
@@ -49,6 +49,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
             resource.protocol !== 'https:' || resource.pathname !== '/mcp' || resource.search || resource.hash || resource.origin === issuer.origin)
             throw new Error('Atlas MCP OAuth requires an HTTPS issuer root and an HTTPS /mcp resource on separate origins.');
         if (!/^[a-zA-Z0-9|._:@-]{3,256}$/.test(oauthSubject)) throw new Error('Invalid ATLAS_MCP_OAUTH_ALLOWED_SUBJECT.');
+        // Auth0 publishes its root issuer with a trailing slash. Keep that exact
+        // canonical form for discovery and strict JWT `iss` validation.
+        oauthIssuer = issuer.toString();
     }
     return {
         databaseUrl, host, port,
