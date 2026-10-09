@@ -19,6 +19,8 @@ services:
       - no-new-privileges:true
 
   server:
+    # Releases pull an immutable commit-SHA image; local builds remain supported.
+    image: ghcr.io/affank1020/atlas-server:${ATLAS_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: infra/server.Dockerfile
@@ -58,6 +60,7 @@ services:
       - no-new-privileges:true
 
   ingress:
+    image: ghcr.io/affank1020/atlas-web:${ATLAS_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: infra/web.Dockerfile

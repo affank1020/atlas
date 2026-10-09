@@ -16,3 +16,5 @@ dist
 infra/production.env
 
 apps/server/data/media
+# Local Atlas state must not enter Docker build contexts.
+apps/server/data/*.json

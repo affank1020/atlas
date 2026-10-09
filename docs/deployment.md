@@ -44,6 +44,55 @@ Caddy routing is intentionally conservative:
 
 Basic Auth is appropriate for the initial private single-user deployment, but it is not the long-term Atlas identity model. Replace it with first-class Atlas authentication/OAuth before multi-user or third-party access.
 
+## GitHub Actions and VPS deployment
+
+The checked-in workflows live in `.github/workflows/ci.yml` and
+`.github/workflows/deploy.yml`. Production manifests are maintained in
+`infra/docker-compose.production.yml`, while `.dockerignore` excludes local
+Atlas data snapshots from Docker build contexts.
+
+- **Atlas CI** runs on pushes to `main`, pull requests, and manual dispatch.
+  It runs `npm test` on Node 22 with an isolated PostgreSQL 16 service, then
+  builds both Docker images. Successful main builds publish
+  `ghcr.io/affank1020/atlas-server` and `ghcr.io/affank1020/atlas-web`
+  tagged with the exact Git commit SHA and with `latest`. It uses the
+  short-lived GitHub Actions token rather than a stored registry password.
+- **Atlas Deploy** is manual-only (`workflow_dispatch`) and restricted to
+  `main`. It deploys the images tagged with the workflow's commit SHA using
+  `docker compose pull` and `up --no-build --wait`. It does not run Node
+  on the VPS or copy the repository's local data.
+
+Before first deployment:
+
+1. Confirm both GHCR images exist for the chosen commit. Package visibility
+   is independent of repository visibility. Make them public in GitHub
+   package settings **or** configure Docker's GHCR read authentication on the VPS.
+2. Create a GitHub Actions environment named `production` with appropriate
+   environment protection/approval rules. In that environment, add these
+   secrets: `VPS_HOST` (server address), `VPS_USER` (SSH account),
+   `VPS_SSH_PRIVATE_KEY` (dedicated deployment key), and
+   `VPS_SSH_KNOWN_HOSTS` (the independently verified SSH host-key entry,
+   e.g. `hostname ssh-ed25519 AAAA...`). Verify the host key out-of-band;
+   do not blindly trust an `ssh-keyscan` result.
+3. On the VPS, ensure `docker compose` works for the SSH account and create
+   `~/atlas-deploy/infra/production.env` **on the VPS only**. Fill in real
+   PostgreSQL credentials, site DNS, HTTPS address, and the Basic Auth hash
+   based on `infra/production.env.example`. Never add this file to GitHub.
+4. Before redirecting an existing Node or treating VPS Atlas as authoritative,
+   back up the Mac's PostgreSQL database and plan a tested data migration to
+   the persistent VPS volume. A fresh production volume starts empty.
+5. Confirm DNS points to the VPS, ports 80/443 are reachable, and HTTPS can
+   be provisioned by Caddy. Then trigger **Atlas Deploy** in GitHub Actions.
+
+The deploy workflow uploads only the Compose manifest, not the environment
+file. Images are chosen by `ATLAS_IMAGE_TAG`, which the workflow sets to the
+commit SHA. Existing volumes are not deleted. Do not use `docker compose down -v`
+on a live installation.
+
+For a cautious first boot before DNS/HTTPS, the manual source-build
+`postgres server` procedure below remains available over an SSH tunnel. The
+workflow deliberately does not automate this partial bootstrap.
+
 ## First deployment
 
 Copy the example environment file:

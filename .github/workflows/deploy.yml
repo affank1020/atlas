@@ -1,0 +1,62 @@
+name: Atlas Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          install -d -m 700 "$HOME/.ssh"
+          (umask 077; printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519")
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Upload versioned Compose manifest
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
+            'mkdir -p "$HOME/atlas-deploy/infra" && test -s "$HOME/atlas-deploy/infra/production.env"'
+          scp -o StrictHostKeyChecking=yes infra/docker-compose.production.yml \
+            "$VPS_USER@$VPS_HOST:atlas-deploy/infra/docker-compose.production.yml"
+      - name: Pull commit-pinned images and deploy
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          IMAGE_TAG: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
+            "cd atlas-deploy && export ATLAS_IMAGE_TAG='$IMAGE_TAG' && \
+             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml pull server ingress && \
+             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml up -d --no-build --wait && \
+             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml ps"
