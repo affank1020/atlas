@@ -1,12 +1,12 @@
 # Atlas Control
 
-Atlas Control is the lightweight launcher for the local Atlas stack. It keeps
-the commands, process IDs, and logs in one place so the stack can be restarted
-without reconstructing terminal history.
+Atlas Control manages the hosted MacBook Node and the optional local development
+stack as separate lifecycles. It keeps owned process IDs and logs in one place
+without claiming or stopping unrelated processes.
 
-Each long-running service opens in its own Terminal window, where its live
-output remains visible. The original terminal stays available for control
-commands.
+Terminal-managed services open in their own window, where live output remains
+visible. A launchd-managed hosted Node runs in the background and writes to the
+log paths reported by `./atlasctl launchd status`.
 
 From the Atlas repository:
 
@@ -14,12 +14,32 @@ From the Atlas repository:
 ./atlasctl up
 ```
 
-This starts PostgreSQL, Atlas Server, Atlas Node, Atlas Web, and the OpenAI MCP tunnel in
-dependency order. To use Ask Atlas, include Ollama:
+This builds and starts only the compiled MacBook Node configured by
+`apps/node/.env.node` for the hosted VPS. It has no file watcher. For automatic
+login startup and unexpected-exit recovery, install the user LaunchAgent:
 
 ```bash
-./atlasctl up --ask
+./atlasctl launchd install
+./atlasctl launchd status
 ```
+
+The plist refers to `.env.node` but contains no Node ID or credential. Remove
+it without deleting credentials, Workspace configuration, or logs with
+`./atlasctl launchd uninstall`.
+
+## Local development
+
+The local stack is always explicit and keeps the watcher-based Node:
+
+```bash
+./atlasctl dev up
+./atlasctl dev up --ask
+./atlasctl dev down
+./atlasctl dev down --all
+```
+
+`dev down` stops only managed development processes. `--all` additionally
+stops managed Compose PostgreSQL; neither form stops the hosted Node.
 
 ## One-time tunnel setup
 
@@ -46,18 +66,17 @@ Useful commands:
 ./atlasctl stop web
 ./atlasctl logs
 ./atlasctl logs tunnel
-./atlasctl restart --ask
+./atlasctl restart
 ./atlasctl start ollama
 ./atlasctl stop ollama
 ./atlasctl down
-./atlasctl down --all
+./atlasctl vps diagnose
 ```
 
-`down` leaves PostgreSQL running so routine restarts are quick. `down --all`
-also stops its Docker Compose service. Processes that were already running in
-another terminal are shown as `RUNNING*` and are never stopped by Atlas
-Control. The old `atlas` and `observatory` service names remain accepted as
-legacy aliases for `server` and `web`.
+`up`, `down`, and `restart` affect only the hosted Node. Processes started by
+another terminal or supervisor are shown separately as unmanaged and are never
+stopped by Atlas Control. The old `atlas` and `observatory` service names remain
+accepted as legacy aliases for `server` and `web`.
 
 Atlas Web is at <http://127.0.0.1:5173>. The tunnel's own diagnostics are at
 <http://127.0.0.1:8080/ui>.

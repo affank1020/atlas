@@ -89,8 +89,10 @@ or credential rotation should be needed.
 
    Keep `ATLAS_NODE_ID`, `ATLAS_NODE_CREDENTIAL`, and
    `ATLAS_WORKSPACE_ROOTS` **unchanged**. Do not commit or paste these secrets.
-4. Start `./atlasctl up`. It starts **only Node**, not local Server,
-   Web, PostgreSQL or MCP tunnel. `./atlasctl down` stops only Node.
+4. Start `./atlasctl up`. It builds and starts **only the compiled Node**, not
+   local Server, Web, PostgreSQL or MCP tunnel. It does not use `tsx watch`, so
+   rebuilding shared packages cannot interrupt Workspace operations.
+   `./atlasctl down` stops only the hosted Node.
    The previous `--hosted` flag is now optional for compatibility; the full
    local stack requires an explicit `./atlasctl dev up`.
 5. On the VPS run `./atlas-vps.sh nodes` and confirm the same Node UUID is
@@ -99,6 +101,36 @@ or credential rotation should be needed.
 6. If the Node does not connect, use `./atlasctl logs node` on the Mac.
    Check DNS, TLS, URL, Node credential, and Workspace root paths. Revert the
    URL to local loopback only if returning to the local Server intentionally.
+
+### Automatic hosted Node startup with launchd
+
+Atlas Control can install a per-user LaunchAgent after the hosted Node URL and
+existing identity are configured:
+
+```bash
+./atlasctl launchd install
+./atlasctl launchd status
+```
+
+Installation builds the Node, replaces a Terminal-managed Atlas Control Node,
+and starts the compiled entrypoint at login. The plist contains only absolute
+executable/configuration paths and a conservative `PATH`; credentials remain
+exclusively in the private `apps/node/.env.node`. Unexpected process exits are
+restarted, while the Node's own WebSocket client reconnects without exiting
+when the VPS is temporarily unavailable.
+
+`./atlasctl up`, `down`, and `restart` use launchd automatically while the
+LaunchAgent is installed. Logs are written to `~/Library/Logs/Atlas/node.log`
+and `node-error.log`, and are also shown by `./atlasctl logs node`. Remove the
+agent without deleting credentials, Workspace roots, or logs with:
+
+```bash
+./atlasctl launchd uninstall
+```
+
+If installation reports an unmanaged Node process, close or stop the Terminal
+or supervisor that owns it and retry. Atlas Control deliberately will not kill
+a process it cannot prove it started.
 
 **Important split-brain warning:** A copied PostgreSQL database is a snapshot,
 not continuous replication. Until the ChatGPT MCP connection is migrated, the

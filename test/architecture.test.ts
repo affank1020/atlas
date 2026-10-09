@@ -57,13 +57,16 @@ test('dependency boundaries hold transitively, including compatibility re-export
 test('Atlas Control exposes Server, Node and Web as separate services with legacy aliases', async () => {
     const source = await readFile('scripts/atlas-control.mjs', 'utf8');
     assert.match(source, /server: \{ label: "Atlas Server"/);
-    assert.match(source, /node: \{ label: "Atlas Node"/);
+    assert.match(source, /node: \{ label: "Local Dev Node"/);
+    assert.match(source, /hostedNodeService = \{ label: "Hosted Atlas Node"/);
     assert.match(source, /web: \{ label: "Atlas Web"/);
     assert.match(source, /atlas: "server"/);
     assert.match(source, /observatory: "web"/);
     assert.match(source, /for \(const name of \["postgres", "server", "node", "web"/);
-    assert.match(source, /if \(hosted\).*startService\("node"\)/s);
-    assert.match(source, /\["tunnel", "ollama", "web", "node", "server"/);
+    assert.match(source, /if \(hosted\).*startHostedNode\(\)/s);
+    assert.match(source, /args: \["run", "start:node"\]/);
+    assert.match(source, /args: \["run", "dev:node"\]/);
+    assert.match(source, /stopLocalNode\(\)/);
     const help = spawnSync('./atlasctl', ['--help'], { encoding: 'utf8' });
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /Services: postgres, server, node, web, tunnel, ollama/);
