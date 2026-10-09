@@ -1,6 +1,10 @@
 name: Atlas Deploy
 
 on:
+  workflow_run:
+    workflows: [Atlas CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,12 +17,28 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to VPS
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 0
+      - name: Verify deployment commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
       - name: Configure SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
@@ -36,6 +56,37 @@ jobs:
           (umask 077; printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519")
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Reject stale deployment
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployed_sha="$(ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" '
+            set -eu
+            cd "$HOME/atlas-deploy"
+            if test -s .deployed-sha; then
+              cat .deployed-sha
+            elif test -s infra/production.env; then
+              sed -n "s/^ATLAS_IMAGE_TAG=//p" infra/production.env | tail -n 1
+            fi
+          ')"
+          if [[ -z "$deployed_sha" || "$deployed_sha" == latest ]]; then
+            exit 0
+          fi
+          if [[ ! "$deployed_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The current production image tag is not a commit SHA; refusing an unsafe deployment."
+            exit 1
+          fi
+          if ! git cat-file -e "$deployed_sha^{commit}" 2>/dev/null; then
+            echo "::error::The deployed commit is not present in repository history; refusing an unsafe deployment."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$deployed_sha" "$DEPLOY_SHA"; then
+            echo "::error::Refusing to deploy $DEPLOY_SHA over newer or divergent production commit $deployed_sha."
+            exit 1
+          fi
       - name: Upload versioned Compose manifest
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -51,13 +102,36 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
-          IMAGE_TAG: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
-            "cd atlas-deploy && export ATLAS_IMAGE_TAG='$IMAGE_TAG' && \
-             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml pull server ingress && \
-             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml up -d --no-build --wait && \
-             docker compose --env-file infra/production.env -f infra/docker-compose.production.yml ps && \
-             sed -i 's/^ATLAS_IMAGE_TAG=.*/ATLAS_IMAGE_TAG=$IMAGE_TAG/' infra/production.env"
+          ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" 'bash -se' -- "$DEPLOY_SHA" <<'REMOTE'
+          set -euo pipefail
+          image_tag="$1"
+          cd "$HOME/atlas-deploy"
+          export ATLAS_IMAGE_TAG="$image_tag"
+          compose=(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml)
+
+          "${compose[@]}" pull server ingress
+          "${compose[@]}" up -d --no-build --wait
+
+          for service in postgres server ingress; do
+            container_id="$("${compose[@]}" ps -q "$service")"
+            test -n "$container_id"
+            test "$(docker inspect --format '{{.State.Status}}' "$container_id")" = running
+            health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id")"
+            if [[ "$health" != none && "$health" != healthy ]]; then
+              echo "Container for $service is not healthy: $health" >&2
+              exit 1
+            fi
+          done
+
+          "${compose[@]}" ps
+          if grep -q '^ATLAS_IMAGE_TAG=' infra/production.env; then
+            sed -i "s/^ATLAS_IMAGE_TAG=.*/ATLAS_IMAGE_TAG=$image_tag/" infra/production.env
+          else
+            printf '\nATLAS_IMAGE_TAG=%s\n' "$image_tag" >> infra/production.env
+          fi
+          printf '%s\n' "$image_tag" > .deployed-sha.next
+          mv .deployed-sha.next .deployed-sha
+          REMOTE
