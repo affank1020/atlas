@@ -63,7 +63,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      # Use the runner's built-in Docker BuildKit; the container driver pulls
+      # moby/buildkit from Docker Hub and is vulnerable to rate limits/timeouts.
       - name: Log in to GHCR for main
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -82,8 +83,10 @@ jobs:
             ghcr.io/affank1020/atlas-server:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=atlas-server
-          cache-to: type=gha,mode=max,scope=atlas-server
+          # The built-in Docker driver does not support the GitHub Actions cache exporter.
+          cache-from: type=registry,ref=ghcr.io/affank1020/atlas-server:latest
+          cache-to: type=inline
+          provenance: false
       - name: Build web image (publish on main)
         uses: docker/build-push-action@v6
         with:
@@ -95,5 +98,6 @@ jobs:
             ghcr.io/affank1020/atlas-web:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=atlas-web
-          cache-to: type=gha,mode=max,scope=atlas-web
+          cache-from: type=registry,ref=ghcr.io/affank1020/atlas-web:latest
+          cache-to: type=inline
+          provenance: false
