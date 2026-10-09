@@ -1,0 +1,33 @@
+{$ATLAS_SITE_ADDRESS} {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+    }
+
+    route {
+        # Atlas Nodes authenticate themselves with a Server-issued Bearer credential.
+        # Keep these routes outside the human-facing Basic Auth layer.
+        @node path /node/connect /node/enrol
+        reverse_proxy @node server:3000
+
+        # Explicitly public portfolio delivery endpoints. The Contentful webhook has
+        # its own signature verification inside Atlas Server.
+        @public path /api/public/portfolio /api/media/* /integrations/contentful/webhook
+        reverse_proxy @public server:3000
+
+        # Temporary production ingress for the private Atlas UI/API/MCP surface.
+        # Replace this with first-class Atlas auth/OAuth before multi-user use.
+        basic_auth {
+            {$ATLAS_ADMIN_USER} {$ATLAS_ADMIN_PASSWORD_HASH}
+        }
+
+        @backend path /api/* /mcp /projects/* /health
+        reverse_proxy @backend server:3000
+
+        try_files {path} /index.html
+        file_server
+    }
+}

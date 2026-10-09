@@ -34,8 +34,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const port = Number(env.ATLAS_PORT ?? 3000);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('ATLAS_PORT must be an integer between 0 and 65535.');
     const host = env.ATLAS_HOST ?? '127.0.0.1';
-    if (!['127.0.0.1', 'localhost', '::1'].includes(host))
-        throw new Error('Remote Node transport currently requires a loopback-bound Atlas Server.');
+    const trustedIngress = env.ATLAS_TRUSTED_INGRESS === 'true';
+    if (!['127.0.0.1', 'localhost', '::1'].includes(host) && !trustedIngress)
+        throw new Error('Non-loopback Atlas Server binding requires ATLAS_TRUSTED_INGRESS=true and a reviewed private/reverse-proxy ingress.');
     return {
         databaseUrl, host, port,
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),

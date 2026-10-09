@@ -134,6 +134,8 @@ test('configuration validates listen port and captures independent execution/pro
     assert.deepEqual(config.unity.approvedCommands, ['inspect']);
     assert.equal(config.ai.baseUrl, 'http://local:11434');
     assert.throws(() => loadServerConfig({ DATABASE_URL: env.DATABASE_URL, ATLAS_PORT: 'NaN' }), /ATLAS_PORT/);
+    assert.throws(() => loadServerConfig({ DATABASE_URL: env.DATABASE_URL, ATLAS_HOST: '0.0.0.0' }), /ATLAS_TRUSTED_INGRESS/);
+    assert.equal(loadServerConfig({ DATABASE_URL: env.DATABASE_URL, ATLAS_HOST: '0.0.0.0', ATLAS_TRUSTED_INGRESS: 'true' }).host, '0.0.0.0');
     assert.throws(() => loadServerConfig({}), /DATABASE_URL/);
 });
 

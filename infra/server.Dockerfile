@@ -30,6 +30,7 @@ COPY --from=build /atlas/apps/server/dist apps/server/dist
 COPY --from=build /atlas/packages/protocol/dist packages/protocol/dist
 COPY --from=build /atlas/packages/view-runtime/dist packages/view-runtime/dist
 COPY apps/server/migrations apps/server/migrations
+COPY scripts/db.mjs scripts/db.mjs
 USER node
-WORKDIR /atlas/apps/server
-CMD ["node", "dist/server.js"]
+WORKDIR /atlas
+CMD ["sh", "-c", "node scripts/db.mjs migrate && exec node apps/server/dist/server.js"]

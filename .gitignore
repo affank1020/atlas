@@ -17,3 +17,4 @@ data/media/
 **/dist/
 **/*.tsbuildinfo
 apps/server/data/media/
+infra/production.env
