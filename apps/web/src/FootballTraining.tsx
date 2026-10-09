@@ -7,6 +7,14 @@ type Job = { id: string; drill: string; preset: string; state: string; mode: str
 type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string } };
+const drillInfo: Record<string, { title: string; description: string; diagram: string }> = {
+    movement_v1: { title: 'Movement', description: 'Navigate changing waypoints while learning control and orientation.', diagram: 'WAYPOINT' },
+    ball_control_v1: { title: 'Ball control', description: 'Approach and guide the ball into a target area using controlled touches.', diagram: 'CONTROL' },
+    shooting_v1: { title: 'Shooting', description: 'Position, approach and strike the ball towards goal.', diagram: 'GOAL' },
+    passing_v1: { title: 'Passing', description: 'Deliver the ball into a target zone. Currently a zone-based drill, not a teammate receiver.', diagram: 'TARGET' },
+    defending_v1: { title: 'Defending', description: 'Intercept a moving ball before it escapes. Currently no intelligent opponent.', diagram: 'INTERCEPT' },
+};
+const titleFor = (id: string) => drillInfo[id]?.title ?? id.replaceAll('_', ' ');
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
 const stateLabel = (value?: string) => (value ?? 'unknown').replaceAll('_', ' ');
 
@@ -71,8 +79,8 @@ export function FootballTraining() {
     };
     return <div className="football-app">
         <header className="football-header">
-            <div><span className="football-kicker">AI FOOTBALL / TRAINING</span><h1>Training control</h1>
-                <p>Local Unity ML-Agents experiments, controlled through the Atlas Node on your Mac.</p></div>
+            <div><span className="football-kicker">AI FOOTBALL / TRAINING</span><h1>Football research lab</h1>
+                <p>Headless training, policy artefacts and repeatable evaluation in one workspace.</p></div>
             <button className="football-button quiet" disabled={!!busy || loading} onClick={() => void act('refresh', async () => { await refresh(); setNotice('Training data refreshed.'); })}>↻ Refresh</button>
         </header>
         {error && <div role="alert" className="football-alert error">{error}<small>Ensure the AI Football Workspace is connected and the hosted Mac Node is running the updated football capability.</small></div>}
@@ -84,6 +92,47 @@ export function FootballTraining() {
             <div><small>Tracked jobs</small><strong>{jobs.length}</strong></div>
             <div><small>Indexed policies</small><strong>{policies.length}</strong></div>
         </div>
+        <section className="football-panel football-overview-panel">
+            <div className="football-panel-head"><div><span className="football-kicker">SKILL DEVELOPMENT</span><h2>Training drills</h2></div><span>{drills.length} scenarios</span></div>
+            <div className="football-card-grid">
+                {drills.map((drill, i) => <button type="button" key={drill.id} className={`football-drill-card ${selectedDrill === drill.id ? 'selected' : ''}`} onClick={() => setSelectedDrill(drill.id)}>
+                    <div className="football-card-top"><span className="football-card-number">{String(i + 1).padStart(2, '0')}</span><span className="football-card-tag">{drill.observation_size} obs · {drill.continuous_actions} actions</span></div>
+                    <svg className="football-mini-pitch" viewBox="0 0 240 110" role="img" aria-label={`Diagram of ${titleFor(drill.id)} practice`}>
+                        <rect x="7" y="7" width="226" height="96" rx="5" fill="none" stroke="currentColor" strokeOpacity=".23" strokeWidth="1.5"/>
+                        <path d="M120 7 V103" stroke="currentColor" strokeOpacity=".18"/><circle cx="120" cy="55" r="19" fill="none" stroke="currentColor" strokeOpacity=".18"/>
+                        <circle cx="48" cy="72" r="8" fill="#8eb0f4"/>
+                        <circle cx="72" cy="68" r="4" fill="#e6e9ed"/>
+                        <path d="M80 65 Q128 25 192 38" fill="none" stroke="#85baa5" strokeDasharray="5 5" strokeWidth="2.5"/>
+                        <path d="M183 34 L194 38 L185 46" fill="none" stroke="#85baa5" strokeWidth="2"/>
+                        <rect x="195" y="25" width="22" height="26" rx="2" fill="none" stroke="#85baa5" strokeWidth="2"/>
+                        <text x="120" y="95" fill="currentColor" fillOpacity=".45" fontSize="8" textAnchor="middle" letterSpacing="2">{drillInfo[drill.id]?.diagram ?? 'DRILL'}</text>
+                    </svg>
+                    <strong>{titleFor(drill.id)}</strong><p>{drillInfo[drill.id]?.description ?? drill.behavior}</p>
+                    <div className="football-card-foot"><span>{drill.behavior}</span><span>{selectedDrill === drill.id ? 'Selected ✓' : 'Select ↗'}</span></div>
+                </button>)}
+                {!loading && drills.length === 0 && <div className="football-empty">No drills returned by the connected Mac Node.</div>}
+            </div>
+        </section>
+        <section className="football-panel football-overview-panel">
+            <div className="football-panel-head"><div><span className="football-kicker">MODEL ARTEFACTS</span><h2>Policy library</h2></div><span>{policies.length} indexed</span></div>
+            <p className="football-muted">Exported ONNX policies remain linked to their original training runs. Select a model to inspect its artefacts and prepare an evaluation.</p>
+            <div className="football-policy-grid">
+                {policies.map(policy => <button type="button" key={policy.id} className={`football-policy-card ${selectedPolicy === policy.id ? 'selected' : ''}`} onClick={() => {setSelectedPolicy(policy.id);setEvalPlan(undefined);}}>
+                    <div className="football-card-top"><span className="football-card-tag">{titleFor(policy.drill)}</span><span className="football-artifact-type">ONNX</span></div>
+                    <div className="football-policy-glyph" aria-hidden="true">◇ <span>┄┄┄</span></div>
+                    <strong title={policy.id}>{policy.id}</strong><small title={policy.source_run_id}>Source · {policy.source_run_id}</small>
+                    <div className="football-card-foot"><span>{policy.artifacts.filter(a => a.final).length} final export(s)</span><span>{selectedPolicy === policy.id ? 'Selected ✓' : 'Inspect ↗'}</span></div>
+                </button>)}
+                {!loading && policies.length === 0 && <div className="football-empty">No indexed policies yet. Index a training run once it exports an ONNX model.</div>}
+            </div>
+            {currentPolicy && <div className="football-selected-policy">
+                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}</small></div>
+                <button className="football-button quiet" disabled={!!busy} onClick={() => void act('plan', async () => {
+                    setEvalPlan(await callTool('football_plan_evaluation', { policyId: currentPolicy.id, episodes: 100, seed: 123 }));
+                })}>Prepare 100-episode evaluation ↗</button>
+            </div>}
+            {evalPlan !== undefined && <pre className="football-log">{JSON.stringify(evalPlan,null,2)}</pre>}
+        </section>
         <div className="football-columns">
             <div className="football-main-column">
                 <section className="football-panel">
@@ -136,17 +185,6 @@ export function FootballTraining() {
                 </section>
             </div>
             <div className="football-side-column">
-                <section className="football-panel">
-                    <div className="football-panel-head"><div><span className="football-kicker">03 / ARTIFACTS</span><h2>Policy library</h2></div></div>
-                    {!policies.length && <p className="football-muted">No indexed policies yet. Index a run after an ONNX export becomes available.</p>}
-                    {policies.length > 0 && <select className="football-policy-select" value={selectedPolicy} onChange={e => { setSelectedPolicy(e.target.value); setEvalPlan(undefined); }}>{policies.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}</select>}
-                    {currentPolicy && <div className="football-policy"><p><strong>Drill</strong><span>{currentPolicy.drill}</span></p><p><strong>Role</strong><span>{currentPolicy.role || 'unassigned'}</span></p><p><strong>Exported artifacts</strong><span>{currentPolicy.artifacts.length}</span></p><p><strong>Evaluated</strong><span>{stateLabel(currentPolicy.evaluation)}</span></p>
-                        <button className="football-button quiet" disabled={!!busy} onClick={() => void act('plan', async () => {
-                            setEvalPlan(await callTool('football_plan_evaluation', { policyId: currentPolicy.id, episodes: 100, seed: 42 }));
-                        })}>Prepare evaluation plan</button>
-                        {evalPlan !== undefined && <pre className="football-log">{JSON.stringify(evalPlan, null, 2)}</pre>}
-                    </div>}
-                </section>
                 <section className="football-panel">
                     <div className="football-panel-head"><div><span className="football-kicker">WORKFLOW</span><h2>How it connects</h2></div></div>
                     <div className="football-flow"><p><strong>Atlas Web</strong><small>Launch and monitor experiments</small></p><span>↓</span><p><strong>Atlas Server + MCP</strong><small>Typed operations, project ownership and audit</small></p><span>↓</span><p><strong>Mac Node</strong><small>Executes the existing Python driver</small></p><span>↓</span><p><strong>Unity ML-Agents</strong><small>Standalone arenas, PPO checkpoints and results</small></p></div>
