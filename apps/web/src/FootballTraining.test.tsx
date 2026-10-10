@@ -34,6 +34,16 @@ test('lab navigates to runs, filters history, and loads logs', async () => {
     expect(await screen.findByText('Trainer connected')).toBeInTheDocument();
     expect(callTool).toHaveBeenCalledWith('football_get_job_logs', { runId: 'movement_v1_demo', lines: 120 });
 });
+test('clicking a run opens the control room and returns to the runs list', async () => {
+    render(<FootballTraining />);
+    await screen.findByText('2');
+    fireEvent.click(screen.getByRole('button', { name: /^Runs/ }));
+    fireEvent.click(screen.getByRole('button', { name: /movement_v1_demo.*Movement.*1 arena/i }));
+    expect(await screen.findByText('EXPERIMENT CONTROL ROOM')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '← All runs' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '← All runs' }));
+    expect(screen.getByRole('button', { name: 'View latest logs' })).toBeInTheDocument();
+});
 test('training launch confirms before running', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<FootballTraining />);

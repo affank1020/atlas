@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
+import { FootballRunControlRoom, FootballEvaluationControlRoom } from './FootballRunControlRoom';
 import './football-training.css';
 
 type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string };
@@ -38,7 +39,9 @@ export function FootballTraining() {
     const [policies, setPolicies] = useState<Policy[]>([]);
     const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
     const [viewers, setViewers] = useState<Viewer[]>([]);
-    const [screen, setScreen] = useState<Screen>('overview');
+    const [screen, setScreen] = useState<Screen>(() => new URLSearchParams(window.location.search).has('run') ? 'runs' : 'overview');
+    const [openRunId, setOpenRunId] = useState(() => new URLSearchParams(window.location.search).get('run') ?? '');
+    const [openEvaluationId, setOpenEvaluationId] = useState('');
     const [runFilter, setRunFilter] = useState<'active' | 'recent' | 'archive' | 'all'>('active');
     const [runSearch, setRunSearch] = useState('');
     const [filterDrill, setFilterDrill] = useState('');
@@ -111,7 +114,16 @@ export function FootballTraining() {
     const visiblePolicies = policies.filter(policy =>
         (!filterDrill || policy.drill === filterDrill) &&
         (policy.id + ' ' + policy.drill + ' ' + policy.source_run_id).toLowerCase().includes(policySearch.toLowerCase()));
-    const navigate = (to: Screen) => { setScreen(to); setError(''); setNotice(''); };
+    const openRun = (id: string) => {
+        setOpenRunId(id); setSelectedJob(id); setScreen('runs');
+        const url = new URL(window.location.href); url.searchParams.set('run', id);
+        window.history.replaceState(window.history.state, '', url);
+    };
+    const closeRun = () => {
+        setOpenRunId(''); const url = new URL(window.location.href);
+        url.searchParams.delete('run'); window.history.replaceState(window.history.state, '', url);
+    };
+    const navigate = (to: Screen) => { closeRun(); setOpenEvaluationId(''); setScreen(to); setError(''); setNotice(''); };
     const act = async (key: string, work: () => Promise<void>) => {
         setBusy(key); setError(''); setNotice('');
         try { await work(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -139,6 +151,30 @@ export function FootballTraining() {
             setViewerStatus(status); if (status.state === 'completed') await refresh();
         });
     };
+    useEffect(() => {
+        if (!evaluationLaunch?.ticket) return;
+        let disposed = false;
+        let fetching = false;
+        const poll = async () => {
+            if (fetching || disposed) return;
+            fetching = true;
+            try {
+                const status = await callTool<LaunchStatus>('football_get_evaluation_status', { runId: evaluationLaunch.ticket });
+                if (!disposed) {
+                    setEvaluationStatus(status);
+                    if (status.state === 'completed') {
+                        window.clearInterval(timer);
+                        await refresh();
+                    } else if (status.state === 'stopped_or_failed') window.clearInterval(timer);
+                }
+            } catch (e) {
+                if (!disposed) setError(e instanceof Error ? e.message : String(e));
+            } finally { fetching = false; }
+        };
+        const timer = window.setInterval(() => { if (!document.hidden) void poll(); }, 4000);
+        void poll();
+        return () => { disposed = true; window.clearInterval(timer); };
+    }, [evaluationLaunch?.ticket, refresh]);
     const checkEvaluation = () => {
         if (!evaluationLaunch) return;
         void act('evaluation_status', async () => {
@@ -285,7 +321,19 @@ export function FootballTraining() {
                         {launchStatus && <div className="football-receipt-details"><span>Status: {stateLabel(launchStatus.state)}</span><p>{launchStatus.note}</p>{launchStatus.run?.id && <small>Run: {launchStatus.run.id}</small>}{launchStatus.error && <pre>{launchStatus.error}</pre>}</div>}
                     </div>}
                 </section>}
-                {screen === 'runs' && <section className="football-panel">
+                {screen === 'runs' && openRunId && <FootballRunControlRoom runId={openRunId} policies={policies} evaluations={evaluations}
+                    onBack={closeRun} onWatch={id => launchViewer('live', id)}
+                    onStop={id => void act('stop', async () => {
+                        if (!window.confirm('Gracefully stop ' + id + '?')) return;
+                        await callTool('football_stop_training', { runId: id }); await refresh();
+                        setNotice('Stop requested. Confirm terminal state from trainer output.');
+                    })}
+                    onIndex={id => void act('index', async () => {
+                        await callTool('football_index_policy', { runId: id }); await refresh();
+                        setNotice('Policy artifacts indexed.');
+                    })}
+                    onEvaluate={id => { closeRun(); setSelectedPolicy(id); setScreen('evaluation'); }} />}
+                {screen === 'runs' && !openRunId && <section className="football-panel">
                     <div className="football-panel-head"><div><span className="football-kicker">02 / MONITOR</span><h2>Training jobs</h2></div><span>{jobs.length} total</span></div>
                     <div className="football-run-filters" role="group" aria-label="Run history filters">
                         {(['active', 'recent', 'archive', 'all'] as const).map(value => <button key={value} className={runFilter === value ? 'active' : ''} aria-pressed={runFilter === value} onClick={() => {setRunFilter(value);setLogs('');}}>
@@ -297,7 +345,7 @@ export function FootballTraining() {
                         <select aria-label="Filter runs by drill" value={filterDrill} onChange={e => setFilterDrill(e.target.value)}><option value="">All drills</option>{drills.map(d => <option key={d.id} value={d.id}>{titleFor(d.id)}</option>)}</select>
                     </div>
                     <div className="football-job-list">
-                        {filteredJobs.map(job => <button className={`football-job ${selectedJob === job.id ? 'active' : ''}`} key={job.id} onClick={() => { setSelectedJob(job.id); setLogs(''); }}>
+                        {filteredJobs.map(job => <button className={`football-job ${selectedJob === job.id ? 'active' : ''}`} key={job.id} onClick={() => { setLogs(''); openRun(job.id); }}>
                             <span><strong>{job.id}</strong><small>{titleFor(job.drill)} · {job.curriculum_stage_id ? `Stage ${job.curriculum_stage}: ${job.curriculum_stage_id.replaceAll('_', ' ')}` : job.preset} · {job.arenas} arena{job.arenas === 1 ? '' : 's'}</small></span>
                             <span className={`football-state ${job.state === 'running' ? 'active' : ''}`}>{stateLabel(job.state)}</span>
                         </button>)}
@@ -321,7 +369,9 @@ export function FootballTraining() {
             </div>
         </div>}
 
-        {screen === 'evaluation' && <div className="football-page-stack">
+        {screen === 'evaluation' && openEvaluationId && evaluations.find(item => item.id === openEvaluationId) &&
+            <FootballEvaluationControlRoom evaluation={evaluations.find(item => item.id === openEvaluationId)!} onBack={() => setOpenEvaluationId('')} />}
+        {screen === 'evaluation' && !openEvaluationId && <div className="football-page-stack">
             <section className="football-panel">
                 <div className="football-panel-head"><div><span className="football-kicker">MODEL ASSESSMENT</span><h2>Run evaluation</h2></div><span>Seeded inference</span></div>
                 <p className="football-muted">Evaluate an indexed final ONNX policy in Unity without altering its training run. Measurements are recorded only after evaluation completes.</p>
@@ -350,6 +400,7 @@ export function FootballTraining() {
                     <div><strong>Evaluation request</strong><small>Ticket {evaluationLaunch.ticket}</small></div>
                     <button className="football-button quiet" disabled={!!busy} onClick={checkEvaluation}>Check evaluation status</button>
                     {evaluationStatus && <div className="football-receipt-details"><strong>Status · {stateLabel(evaluationStatus.state)}</strong><p>{evaluationStatus.note}</p>
+                        {evaluationStatus.state === 'completed' && evaluationStatus.run?.id && evaluations.some(item => item.id === evaluationStatus.run?.id) && <button className="football-button primary" onClick={() => setOpenEvaluationId(evaluationStatus.run!.id!)}>Open evaluation control room →</button>}
                         {evaluationStatus.error && <pre>{evaluationStatus.error}</pre>}
                         {evaluationStatus.output && evaluationStatus.state !== 'completed' && <pre>{evaluationStatus.output}</pre>}
                     </div>}
@@ -362,6 +413,7 @@ export function FootballTraining() {
                         <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}</small></div>
                         <div><strong>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '%' : '—'}</strong><small>Success rate</small></div>
                         <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward{typeof item.contact_episodes === 'number' ? ` · real contact ${item.contact_episodes}/${item.episodes}` : ''}</small></div>
+                        <button className="football-button quiet" onClick={() => setOpenEvaluationId(item.id)}>Inspect →</button>
                     </div>)}
                     {!loading && !evaluations.length && <div className="football-empty">No completed evaluation results yet. Run a seeded evaluation to establish a baseline.</div>}
                 </div>
