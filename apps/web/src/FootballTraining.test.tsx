@@ -89,11 +89,13 @@ test('curriculum presets are discovered from the drill registry and launch with 
     const ballDrill = {
         id: 'ball_control_v1', behavior: 'BallControlDrill', scene: 'Assets/Scenes/BallControlDrill.unity',
         observation_size: 10, continuous_actions: 2,
-        configs: { smoke: 'smoke.yaml', full: 'full.yaml', approach: 'approach.yaml', first_touch: 'first_touch.yaml', dribble: 'dribble.yaml' },
+        configs: { smoke: 'smoke.yaml', full: 'full.yaml', approach: 'approach.yaml', approach_wide: 'approach_wide.yaml', first_touch: 'first_touch.yaml', dribble: 'dribble.yaml' },
         curriculum: { version: 1, mode: 'manual', stages: [
             { id: 'approach', preset: 'approach', stage: 1, title: 'Approach & contact', description: 'Touch a close ball.', metric: 'physical_contact_success_rate' },
             { id: 'first_touch', preset: 'first_touch', stage: 2, title: 'First touch', description: 'Move the ball.', metric: 'controlled_first_touch_success_rate' },
             { id: 'dribble', preset: 'dribble', stage: 3, title: 'Dribble', description: 'Keep control.', metric: 'controlled_dribble_success_rate' },
+        ], variants: [
+            { id: 'approach_wide', preset: 'approach_wide', stage: 1, title: 'Wide-angle approach', description: '30/70 narrow/wide starts.', metric: 'physical_contact_success_rate', training_spawn: 'wide_mix_v1' },
         ] },
     };
     vi.mocked(callTool).mockImplementation(async name => {
@@ -113,4 +115,10 @@ test('curriculum presets are discovered from the drill registry and launch with 
     fireEvent.click(screen.getByRole('button', { name: /Launch training/ }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_launch_training',
         { drill: 'ball_control_v1', preset: 'approach', arenas: 1, basePort: 5005, seed: 42 }));
+    fireEvent.click(screen.getByRole('button', { name: /Stage 1 experiment · Wide-angle approach/ }));
+    expect(screen.getByLabelText('Training preset')).toHaveValue('approach_wide');
+    expect(screen.getByText(/Training distribution: wide_mix_v1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Launch training/ }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_launch_training',
+        { drill: 'ball_control_v1', preset: 'approach_wide', arenas: 1, basePort: 5005, seed: 42 }));
 });

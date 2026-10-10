@@ -3,8 +3,8 @@ import { callTool } from './api';
 import { FootballRunControlRoom, FootballEvaluationControlRoom } from './FootballRunControlRoom';
 import './football-training.css';
 
-type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string };
-type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[] } };
+type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string };
+type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[]; variants?: CurriculumStage[] } };
 type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null };
 type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
@@ -100,8 +100,9 @@ export function FootballTraining() {
     // Preset labels and curriculum definitions come from the Mac's registry,
     // not from a second set of frontend hardcoded scenario settings.
     const selectedPreset = currentDrill?.configs[preset] ? preset : 'smoke';
-    const selectedStage = currentDrill?.curriculum?.stages.find(s => s.preset === selectedPreset);
-    const presetLabel = (value: string) => currentDrill?.curriculum?.stages.find(s => s.preset === value)?.title ??
+    const curriculumOptions = [...(currentDrill?.curriculum?.stages ?? []), ...(currentDrill?.curriculum?.variants ?? [])];
+    const selectedStage = curriculumOptions.find(s => s.preset === selectedPreset);
+    const presetLabel = (value: string) => curriculumOptions.find(s => s.preset === value)?.title ??
         (value === 'smoke' ? (currentDrill?.curriculum ? 'Smoke / short (legacy v1)' : 'Smoke / short') :
         value === 'full' ? (currentDrill?.curriculum ? 'Full (legacy v1)' : 'Full') : value.replaceAll('_', ' '));
     const running = useMemo(() => jobs.filter(j => j.state === 'running'), [jobs]);
@@ -307,8 +308,11 @@ export function FootballTraining() {
                             {currentDrill.curriculum.stages.map(stage => <button type="button" key={stage.id} className={selectedPreset === stage.preset ? 'selected' : ''} aria-pressed={selectedPreset === stage.preset} onClick={() => setPreset(stage.preset)}>
                                 <span>{stage.stage}. {stage.title}</span><small>{stage.description}</small>
                             </button>)}
+                            {(currentDrill.curriculum.variants ?? []).map(variant => <button type="button" key={variant.id} className={selectedPreset === variant.preset ? 'selected' : ''} aria-pressed={selectedPreset === variant.preset} onClick={() => setPreset(variant.preset)}>
+                                <span>Stage {variant.stage} experiment · {variant.title}</span><small>{variant.description}</small>
+                            </button>)}
                         </div>
-                        {selectedStage && <small className="football-muted">Measured outcome: {selectedStage.metric.replaceAll('_', ' ')} · {selectedStage.description}</small>}
+                        {selectedStage && <small className="football-muted">Measured outcome: {selectedStage.metric.replaceAll('_', ' ')} · {selectedStage.description}{selectedStage.training_spawn ? ' · Training distribution: ' + selectedStage.training_spawn : ''}</small>}
                     </div>}
                     <div className="football-actions">
                         <button className="football-button primary" disabled={!selectedDrill || !!busy || loading || !Number.isInteger(arenas) || arenas < 1 || arenas > 16 || !Number.isInteger(basePort) || basePort < 1024 || basePort > 65519 || !Number.isInteger(seed) || seed < 0} onClick={() => void act('launch', async () => {

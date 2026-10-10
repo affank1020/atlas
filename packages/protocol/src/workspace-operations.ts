@@ -32,7 +32,7 @@ export const workspaceOperationSchemas = {
         replayEpisode: z.number().int().min(0).max(10000).optional(),
         offset: z.number().int().min(0).max(10000).optional(),
         limit: z.number().int().min(1).max(200).optional(),
-        preset: z.enum(['smoke', 'full', 'approach', 'first_touch', 'dribble']).optional(),
+        preset: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         arenas: z.number().int().min(1).max(16).optional(),
         basePort: z.number().int().min(1024).max(65519).optional(),
         seed: z.number().int().min(0).max(2147483647).optional(),

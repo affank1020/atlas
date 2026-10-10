@@ -32,8 +32,12 @@ test('football commands execute only on the bound Unity Node and audit intent', 
     assert.equal(audits[1][0], 'application.football.completed');
     await apps.invoke('football_launch_training', { drill: 'ball_control_v1', preset: 'approach', arenas: 2, basePort: 5205, seed: 203 });
     assert.equal(invocations[1][2].preset, 'approach');
+    // Safe registry-defined variants should not require regenerating the MCP enum.
+    await apps.invoke('football_launch_training', { drill: 'ball_control_v1', preset: 'approach_wide', arenas: 2, basePort: 5270, seed: 919 });
+    assert.equal(invocations[2][2].preset, 'approach_wide');
     await assert.rejects(apps.invoke('football_launch_training', { drill: '../other.py' }));
-    assert.equal(invocations.length, 2);
+    await assert.rejects(apps.invoke('football_launch_training', { drill: 'ball_control_v1', preset: '../injection' }));
+    assert.equal(invocations.length, 3);
 });
 test('an unbound or unavailable Unity Workspace cannot be used for training', async () => {
     const absent = harness({ available: false });
