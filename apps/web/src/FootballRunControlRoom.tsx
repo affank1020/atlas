@@ -216,6 +216,7 @@ type EvaluationDetail = {
     episode_results: EpisodeDetail[];
 };
 const metricValue = (x: number | null | undefined, suffix = 'm') => x == null ? 'Not measured' : number(x, 2) + ' ' + suffix;
+const scenarioTitle = (version?: number) => version === 3 ? 'Scenario v3 · wide-angle holdout' : version === 2 ? 'Scenario v2 · centred' : version ? `Scenario v${version}` : 'Legacy scenario';
 
 export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluation: RoomEvaluation; onBack: () => void }) {
     const [detail, setDetail] = useState<EvaluationDetail | null>(null);
@@ -242,10 +243,13 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
             <div><button className="football-room-back" onClick={onBack}>← Evaluation history</button>
                 <span className="football-kicker">EVALUATION CONTROL ROOM</span>
                 <h2>{evaluation.drill.replaceAll('_', ' ')}</h2>
-                <p>{evaluation.id} · {detail?.evaluation_kind === 'baseline' ? 'Baseline ' + detail.baseline_mode : 'Policy ' + evaluation.policy_id}{detail?.scenario_version ? ' · Scenario v' + detail.scenario_version : ' · Legacy scenario'}</p>
+                <p>{evaluation.id} · {detail?.evaluation_kind === 'baseline' ? 'Baseline ' + detail.baseline_mode : 'Policy ' + evaluation.policy_id}{' · ' + scenarioTitle(detail?.scenario_version)}</p>
             </div>
             <span className="football-room-state done">Result recorded</span>
         </div>
+        {evaluation.drill === 'ball_control_v1' && <p className="football-room-footnote">{evaluation.curriculum_stage === 1
+            ? 'Stage 1 measures real player–ball contact, not a controlled first touch. A policy should beat forward-only and random baselines on an identical seed, runner and scenario before promotion. Centred v2 and wide-angle v3 results are not directly comparable.'
+            : 'Ball-control success depends on the recorded curriculum stage. Read the termination reasons and physical-contact diagnostics before interpreting the rate.'}</p>}
         <div className="football-room-metrics">
             <div><small>Episodes</small><strong>{number(evaluation.episodes)}</strong></div>
             <div><small>Success rate</small><strong>{evaluation.success_rate == null ? '—' : number(evaluation.success_rate * 100, 1) + '%'}</strong></div>

@@ -30,6 +30,7 @@ const drillInfo: Record<string, { title: string; description: string; diagram: s
     receiving_v1: { title: 'Receiving', description: 'Move into a seeded incoming pass and make a real physical reception. Uses a virtual scripted feed.', diagram: 'RECEIVE' },
 };
 const titleFor = (id: string) => drillInfo[id]?.title ?? id.replaceAll('_', ' ');
+const scenarioLabel = (version?: number) => version === 3 ? 'Scenario v3 · wide-angle holdout' : version === 2 ? 'Scenario v2 · centred' : version ? `Scenario v${version}` : 'Legacy scenario';
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
 const stateLabel = (value?: string) => (value ?? 'unknown').replaceAll('_', ' ');
 
@@ -376,7 +377,8 @@ export function FootballTraining() {
         {screen === 'evaluation' && !openEvaluationId && <div className="football-page-stack">
             <section className="football-panel">
                 <div className="football-panel-head"><div><span className="football-kicker">MODEL ASSESSMENT</span><h2>Run evaluation</h2></div><span>Seeded inference</span></div>
-                <p className="football-muted">Evaluate an indexed final ONNX policy in Unity without altering its training run. Measurements are recorded only after evaluation completes.</p>
+                <p className="football-muted">Evaluate an indexed final ONNX policy in Unity without altering its training run. Measurements are recorded only after evaluation completes. Stage-1 ball-control success means real contact, not controlled dribbling.</p>
+                <p className="football-muted">The current Stage-1 evaluation uses the wider scenario v3 ball spawns; older scenario v2 results were centred and are not directly comparable. Promotion requires beating simple controls on the same seed, scenario version and Unity runner.</p>
                 <div className="football-fields">
                     <label className="wide">Policy
                         <select value={selectedPolicy} onChange={e => {setSelectedPolicy(e.target.value);setEvalPlan(undefined);}} disabled={!policies.length}>
@@ -411,7 +413,7 @@ export function FootballTraining() {
             </section>
             <section className="football-panel">
                 <div className="football-panel-head"><div><span className="football-kicker">BASELINE CONTROLS</span><h2>Stage 1 control benchmarks</h2></div><span>Non-learning reference</span></div>
-                <p className="football-muted">Run zero-input, random, forward-only, or scripted ball-seeking control in the same Unity scene. Scenario v2 uses stable seed-and-episode placements for fair comparison. Replay requires Episodes = 1.</p>
+                <p className="football-muted">Run zero-input, random, forward-only, or scripted ball-seeking control in the same Unity scene. Stage-1 scenario v3 adds a wider range of left/right ball positions and retains deterministic seed-and-episode placements. Replay requires Episodes = 1.</p>
                 <div className="football-fields"><label>Controller<select aria-label="Baseline controller" value={baselineMode} onChange={e => setBaselineMode(e.target.value as typeof baselineMode)}>
                     <option value="zero">No input (negative control)</option><option value="random">Random input</option><option value="forward">Fixed forward throttle</option><option value="scripted">Scripted steering to ball</option>
                 </select></label></div>
@@ -426,7 +428,7 @@ export function FootballTraining() {
                 <div className="football-panel-head"><div><span className="football-kicker">MEASURED RESULTS</span><h2>Evaluation history</h2></div><span>{evaluations.length} completed</span></div>
                 <div className="football-results-list">
                     {evaluations.slice().reverse().map(item => <div className="football-result" key={item.id}>
-                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · Scenario v${item.scenario_version}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}</small></div>
+                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · ${scenarioLabel(item.scenario_version)}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}</small></div>
                         <div><strong>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '%' : '—'}</strong><small>Success rate</small></div>
                         <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward{typeof item.contact_episodes === 'number' ? ` · real contact ${item.contact_episodes}/${item.episodes}` : ''}</small></div>
                         <button className="football-button quiet" onClick={() => setOpenEvaluationId(item.id)}>Inspect →</button>
