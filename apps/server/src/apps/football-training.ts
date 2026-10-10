@@ -23,7 +23,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = action === 'launch_headless' || action === 'evaluate';
+        const start = ['launch_headless', 'evaluate', 'watch_policy', 'watch_live'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -61,6 +61,10 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_list_evaluations', 'List saved model evaluations.', {}, 'evaluations'),
             action('football_run_evaluation', 'Start seeded policy inference evaluation on connected Mac. Returns a receipt.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(123) }, 'evaluate'),
             action('football_get_evaluation_status', 'Inspect evaluation progress and completion receipt.', { runId }, 'evaluation_status'),
+            action('football_list_viewers', 'List local Mac viewer sessions, including live telemetry and policy playback.', {}, 'viewer_sessions'),
+            action('football_watch_live', 'Open a graphical viewer of telemetry from a running training job on the connected Mac; does not modify training.', { runId }, 'watch_live'),
+            action('football_open_policy_viewer', 'Open a selected indexed ONNX policy in a graphical Unity viewer on the connected Mac.', { policyId, arenas: integer.min(1).max(16).default(1), seed: integer.min(0).max(2147483647).default(42) }, 'watch_policy'),
+            action('football_get_viewer_launch_status', 'Inspect asynchronous Mac graphical viewer launch progress.', { runId }, 'viewer_launch_status'),
             action('football_plan_evaluation', 'Build a dry-run evaluation plan for an indexed policy; does not execute an evaluation.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(42) }, 'evaluation_plan'),
         ],
     };

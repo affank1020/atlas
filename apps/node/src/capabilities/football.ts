@@ -40,6 +40,9 @@ const argsFor = (x: Input): string[] => {
         case 'job_logs': return ['job-logs', '--run-id', x.runId!, '--lines', String(x.lines ?? 60)];
         case 'policies': return ['policies'];
         case 'evaluations': return ['evaluation-results'];
+        case 'viewer_sessions': return ['viewer-sessions'];
+        case 'watch_policy': return ['watch', '--policy', x.policyId!, '--arenas', String(x.arenas ?? 1), '--seed', String(x.seed ?? 42)];
+        case 'watch_live': return ['watch-live', '--run', x.runId!];
         case 'evaluate': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123)];
         case 'index_policy': return ['policies', '--index-run', x.runId!];
         case 'stop_job': return ['stop-job', '--run-id', x.runId!];
@@ -52,18 +55,19 @@ const argsFor = (x: Input): string[] => {
     }
 };
 function validateAction(x: Input) {
-    if (['job_logs', 'stop_job', 'index_policy'].includes(x.action) && !x.runId)
+    if (['job_logs', 'stop_job', 'index_policy', 'watch_live', 'viewer_launch_status'].includes(x.action) && !x.runId)
         throw new AtlasError('A run ID is required.', 'INVALID_ARGUMENT');
     if (x.action === 'launch_headless' && !x.drill)
         throw new AtlasError('A drill is required.', 'INVALID_ARGUMENT');
-    if (['evaluation_plan', 'evaluate'].includes(x.action) && !x.policyId)
+    if (['evaluation_plan', 'evaluate', 'watch_policy'].includes(x.action) && !x.policyId)
         throw new AtlasError('A policy ID is required.', 'INVALID_ARGUMENT');
 }
 function launchesDir(workspace: Workspace) { return path.join(workspace.rootPath, 'training-driver-runs', 'atlas-launches'); }
 function evalDir(workspace: Workspace) { return path.join(workspace.rootPath, 'training-driver-runs', 'atlas-evaluation-launches'); }
-function launchStatus(workspace: Workspace, ticket: string, type: 'training' | 'evaluation' = 'training') {
+function viewerDir(workspace: Workspace) { return path.join(workspace.rootPath, 'training-driver-runs', 'atlas-viewer-launches'); }
+function launchStatus(workspace: Workspace, ticket: string, type: 'training' | 'evaluation' | 'viewer' = 'training') {
     if (!RUN_ID.test(ticket)) throw new AtlasError('Invalid launch ticket.', 'INVALID_ARGUMENT');
-    const directory = type === 'evaluation' ? evalDir(workspace) : launchesDir(workspace);
+    const directory = type === 'evaluation' ? evalDir(workspace) : type === 'viewer' ? viewerDir(workspace) : launchesDir(workspace);
     const file = path.join(directory, ticket + '.json');
     if (!existsSync(file)) throw new AtlasError('Launch receipt not found.', 'NOT_FOUND');
     const receipt = JSON.parse(readFileSync(file, 'utf8'));
@@ -76,10 +80,10 @@ function launchStatus(workspace: Workspace, ticket: string, type: 'training' | '
     }
     let alive = false;
     try { process.kill(receipt.pid, 0); alive = true; } catch {}
-    return { ticket, state: run ? (type === 'evaluation' ? 'completed' : 'submitted') : alive ? 'launching' : 'stopped_or_failed',
+    return { ticket, state: run ? (type === 'training' ? 'submitted' : 'completed') : alive ? 'launching' : 'stopped_or_failed',
         startedAt: receipt.startedAt, drill: receipt.drill, run,
         output: stdout.slice(-5000), error: stderr.slice(-5000),
-        note: run ? 'Refresh training jobs for live trainer state.' : 'A launch request is not proof that a trainer has started.' };
+        note: run ? (type === 'viewer' ? 'Viewer launched on the connected Mac. Check viewer sessions for its process state.' : type === 'evaluation' ? 'Evaluation command completed. Refresh evaluations for measured results.' : 'Refresh training jobs for live trainer state.') : 'The command has not completed. Check output and error if it stops.' };
 }
 /**
  * Fixed-contract driver bridge, running only on the Node hosting the Unity Workspace.
@@ -91,8 +95,9 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
     const script = driverPath(workspace);
     if (x.action === 'launch_status') return launchStatus(workspace, x.runId!);
     if (x.action === 'evaluation_status') return launchStatus(workspace, x.runId!, 'evaluation');
-    if (x.action === 'launch_headless' || x.action === 'evaluate') {
-        const directory = x.action === 'evaluate' ? evalDir(workspace) : launchesDir(workspace);
+    if (x.action === 'viewer_launch_status') return launchStatus(workspace, x.runId!, 'viewer');
+    if (['launch_headless', 'evaluate', 'watch_policy', 'watch_live'].includes(x.action)) {
+        const directory = x.action === 'evaluate' ? evalDir(workspace) : ['watch_policy', 'watch_live'].includes(x.action) ? viewerDir(workspace) : launchesDir(workspace);
         mkdirSync(directory, { recursive: true, mode: 0o700 });
         const ticket = randomUUID();
         const outfile = openSync(path.join(directory, ticket + '.out'), 'wx', 0o600);
@@ -113,7 +118,7 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
         writeFileSync(path.join(directory, ticket + '.json'),
             JSON.stringify({ ticket, pid, drill: x.drill, policyId: x.policyId, startedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
         return { accepted: true, ticket, drill: x.drill, policyId: x.policyId, status: 'launching',
-            note: x.action === 'evaluate' ? 'Evaluation requested; poll the receipt until Unity finishes.' : 'Training launch requested; poll its receipt and training jobs.' };
+            note: x.action === 'evaluate' ? 'Evaluation requested; poll the receipt until Unity finishes.' : ['watch_policy', 'watch_live'].includes(x.action) ? 'Viewer launch requested on the connected Mac. Check the receipt and viewer sessions.' : 'Training launch requested; poll its receipt and training jobs.' };
     }
     try {
         const { stdout } = await execFileAsync('python3', [script, ...argsFor(x)], {
@@ -123,6 +128,7 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
         if (x.action === 'job_logs') return { runId: x.runId, text: boundedText(stdout) };
         const parsed = JSON.parse(stdout);
         if (x.action === 'jobs') return Array.isArray(parsed) ? parsed.map(publicJob) : [];
+        if (x.action === 'viewer_sessions') return Array.isArray(parsed) ? parsed.map((item: any) => ({ id: item.id, mode: item.mode ?? 'policy', policy_id: item.policy_id, source_run_id: item.source_run_id, checkpoint_step: item.checkpoint_step, drill: item.drill, arenas: item.arenas, started_at: item.started_at, state: item.state })) : [];
         if (x.action === 'policies') return Array.isArray(parsed) ? parsed.map(p => ({
             id: p.id, source_run_id: p.source_run_id, drill: p.drill, behavior: p.behavior,
             role: p.role, indexed_at: p.indexed_at, evaluation: p.evaluation,

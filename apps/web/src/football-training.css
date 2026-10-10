@@ -91,3 +91,42 @@
 .football-selected-policy strong{font-family:ui-monospace,SFMono-Regular,monospace;font-size:.78rem;overflow-wrap:anywhere}
 .football-selected-policy small{color:var(--text-muted);font-size:.71rem}
 @media(max-width:640px){.football-card-grid,.football-policy-grid{grid-template-columns:1fr}.football-overview-panel{margin-bottom:15px}}
+
+
+/* Section-based lab navigation */
+.football-navigation{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 23px;padding:6px;border:1px solid var(--border);border-radius:10px;background:var(--surface-elevated)}
+.football-navigation button{min-width:116px;flex:1;text-align:left;background:transparent;border:1px solid transparent;border-radius:7px;color:var(--text-secondary);padding:12px 13px;font:inherit;cursor:pointer;transition:background .14s,border-color .14s}
+.football-navigation button strong{display:block;font-size:.8rem;font-weight:650}
+.football-navigation button small{display:block;font-size:.67rem;color:var(--text-muted);margin-top:4px}
+.football-navigation button:hover{background:var(--surface-hover)}
+.football-navigation button.selected{background:var(--surface);border-color:var(--border-strong);color:var(--text-primary)}
+.football-welcome{border:1px solid var(--border);border-radius:10px;padding:24px;background:var(--surface-elevated);margin:0 0 20px}
+.football-welcome h2{font-size:1.32rem;margin:8px 0 6px}
+.football-welcome p{font-size:.84rem;line-height:1.6;color:var(--text-secondary);max-width:670px;margin:0}
+.football-page-stack{display:grid;grid-template-columns:1fr;gap:18px;max-width:1140px}
+.football-run-filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:15px}
+.football-run-filters button{background:transparent;border:1px solid var(--border);border-radius:7px;padding:8px 13px;font:inherit;font-size:.76rem;color:var(--text-secondary);cursor:pointer}
+.football-run-filters button.active{background:var(--surface-hover);border-color:var(--border-strong);color:var(--text-primary)}
+.football-search-controls{display:flex;gap:10px;margin-bottom:16px}
+.football-search-controls input,.football-search-controls select{font:inherit;font-size:.8rem;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:10px 12px;color:var(--text-primary);min-width:0}
+.football-search-controls input{flex:1}
+.football-search-controls select{max-width:220px;width:38%}
+.football-results-list{display:flex;flex-direction:column;gap:8px}
+.football-result{display:grid;grid-template-columns:minmax(0,2.5fr) minmax(95px,.6fr) minmax(95px,.6fr);gap:16px;align-items:center;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:7px}
+.football-result strong,.football-result small{display:block;overflow-wrap:anywhere}
+.football-result strong{font-size:.8rem;font-weight:600}
+.football-result small{font-size:.7rem;color:var(--text-muted);margin-top:4px}
+.football-job-list{max-height:650px;overflow:auto;overscroll-behavior:contain}
+.football-job:not(button){cursor:default}
+@media(max-width:760px){.football-navigation{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.football-navigation button{min-width:0}.football-search-controls{flex-direction:column}.football-search-controls select{max-width:none;width:100%}.football-result{grid-template-columns:minmax(0,1fr) 1fr;gap:12px}.football-result>div:first-child{grid-column:1/-1}}
+
+
+.football-columns{display:block;max-width:1140px}
+.football-overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:1140px}
+.football-overview-grid .football-panel{display:flex;flex-direction:column}
+.football-overview-grid .football-panel>.football-button{align-self:start;margin-top:auto}
+.football-overview-row{padding:12px 0;border-bottom:1px solid var(--border);min-width:0}
+.football-overview-row strong,.football-overview-row small{display:block;overflow-wrap:anywhere}
+.football-overview-row strong{font-size:.8rem}
+.football-overview-row small{font-size:.72rem;color:var(--text-muted);margin-top:4px}
+@media(max-width:800px){.football-overview-grid{grid-template-columns:1fr}}

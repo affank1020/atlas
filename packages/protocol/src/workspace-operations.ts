@@ -23,7 +23,7 @@ export const workspaceOperationSchemas = {
     // Only the Football Training Application exposes carefully scoped typed actions.
     football_control: z.object({
         ...scope,
-        action: z.enum(['drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluation_status', 'evaluations']),
+        action: z.enum(['drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluation_status', 'evaluations', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status']),
         drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
