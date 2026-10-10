@@ -3,13 +3,13 @@ import { callTool } from './api';
 import { FootballRunControlRoom, FootballEvaluationControlRoom } from './FootballRunControlRoom';
 import './football-training.css';
 
-type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string };
+type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string };
 type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[]; variants?: CurriculumStage[] } };
-type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null };
-type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string };
+type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null; observation_transform?: string };
+type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string; observation_transform?: string };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
-type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string };
+type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string; observation_transform?: string };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
 type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer';
 const screens: { id: Screen; label: string; note: string }[] = [
@@ -259,13 +259,13 @@ export function FootballTraining() {
                 {visiblePolicies.map(policy => <button type="button" key={policy.id} className={`football-policy-card ${selectedPolicy === policy.id ? 'selected' : ''}`} onClick={() => {setSelectedPolicy(policy.id);setEvalPlan(undefined);}}>
                     <div className="football-card-top"><span className="football-card-tag">{titleFor(policy.drill)}</span><span className="football-artifact-type">ONNX</span></div>
                     <div className="football-policy-glyph" aria-hidden="true">◇ <span>┄┄┄</span></div>
-                    <strong title={policy.id}>{policy.id}</strong><small title={policy.source_run_id}>Source · {policy.source_run_id}{jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage}` : ''}</small>
+                    <strong title={policy.id}>{policy.id}</strong>{policy.observation_transform === "mirror_left_v1" && <small className="football-muted">Symmetric left/right controller · mirror v1</small>}<small title={policy.source_run_id}>Source · {policy.source_run_id}{jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage}` : ''}</small>
                     <div className="football-card-foot"><span>{policy.artifacts.filter(a => a.final).length} final export(s)</span><span>{selectedPolicy === policy.id ? 'Selected ✓' : 'Inspect ↗'}</span></div>
                 </button>)}
                 {!loading && visiblePolicies.length === 0 && <div className="football-empty">No matching policies. Index a completed run to add a policy to the library.</div>}
             </div>
             {currentPolicy && <div className="football-selected-policy">
-                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}{jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage}` : ''}</small></div>
+                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}{currentPolicy.observation_transform === "mirror_left_v1" ? " · Mirror-left v1" : ""}{jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage}` : ''}</small></div>
                 <button className="football-button primary" disabled={!!busy} onClick={() => { setScreen('evaluation'); }}>Evaluate policy →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => { setScreen('viewer'); }}>Open policy viewer →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => void act('plan', async () => {
@@ -432,7 +432,7 @@ export function FootballTraining() {
                 <div className="football-panel-head"><div><span className="football-kicker">MEASURED RESULTS</span><h2>Evaluation history</h2></div><span>{evaluations.length} completed</span></div>
                 <div className="football-results-list">
                     {evaluations.slice().reverse().map(item => <div className="football-result" key={item.id}>
-                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · ${scenarioLabel(item.scenario_version)}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}</small></div>
+                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · ${scenarioLabel(item.scenario_version)}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}{item.observation_transform === "mirror_left_v1" ? " · Mirrored controller" : ""}</small></div>
                         <div><strong>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '%' : '—'}</strong><small>Success rate</small></div>
                         <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward{typeof item.contact_episodes === 'number' ? ` · real contact ${item.contact_episodes}/${item.episodes}` : ''}</small></div>
                         <button className="football-button quiet" onClick={() => setOpenEvaluationId(item.id)}>Inspect →</button>
