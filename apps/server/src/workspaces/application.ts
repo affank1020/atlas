@@ -5,6 +5,7 @@ import { AtlasError } from '../shared/errors.js';
 import type { NodeRouter } from '../nodes/router.js';
 import type { DevTaskResult } from './dev-tasks.js';
 import type { Workspace } from './model.js';
+import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 import { workspaceSchemas, type WorkspaceToolName } from './contracts.js';
 
 export class WorkspaceService {
@@ -39,9 +40,21 @@ export class WorkspaceService {
         }
         if (name === 'workspace_run_dev_task' && !Object.hasOwn(workspace.devTasks, x.task))
             throw new AtlasError('Development task is not configured on this Workspace.', 'TASK_UNAVAILABLE');
-        const invoke = () => this.runtime.execute(workspace, name, x);
-        const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked' } as Record<string, string>)[name];
-        const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed' } as Record<string, string>)[name];
+        const footballActions = {
+            football_train: 'launch_headless',
+            football_evaluate: 'evaluate',
+            football_training_status: 'jobs',
+            football_evaluation_status: 'evaluation_status',
+            football_stop: 'stop_job',
+        } as const;
+        const footballAction = footballActions[name as keyof typeof footballActions];
+        if (footballAction && (x.projectId !== 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7' || workspace.kind !== 'unity' || workspace.status !== 'active'))
+            throw new AtlasError('Football MCP actions require the active AI Football Unity Workspace.', 'WORKSPACE_UNAVAILABLE');
+        const nodeOperation = (footballAction ? 'football_control' : name) as WorkspaceOperation;
+        const nodeInput = footballAction ? { ...x, action: footballAction } : x;
+        const invoke = () => this.runtime.execute(workspace, nodeOperation, nodeInput);
+        const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
+        const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed', football_training_status: 'football.jobs_inspected', football_evaluation_status: 'football.evaluation_inspected' } as Record<string, string>)[name];
         if (inspection) {
             // One event per explicit tool call, never per internal file/adapter lookup.
             // Do not persist file contents, diffs, search text/results or command parameters.
@@ -67,7 +80,7 @@ export class WorkspaceService {
         try {
             // Resolve registry/capabilities before leasing a mutation connection. Otherwise
             // concurrent writers can exhaust the pool and deadlock on Node lookup.
-            const execute = await this.runtime.prepare(workspace, name, x);
+            const execute = await this.runtime.prepare(workspace, nodeOperation, nodeInput);
             db = await this.repository.connect();
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);

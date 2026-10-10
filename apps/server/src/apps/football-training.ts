@@ -23,7 +23,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = action === 'launch_headless';
+        const start = action === 'launch_headless' || action === 'evaluate';
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -58,6 +58,9 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_get_launch_status', 'Read the bounded receipt/log for a previously submitted training launch.', { runId }, 'launch_status'),
             action('football_stop_training', 'Request graceful stop of a verified running headless football training job.', { runId }, 'stop_job'),
             action('football_index_policy', 'Index exported ONNX policy artifacts from a completed football training run.', { runId }, 'index_policy'),
+            action('football_list_evaluations', 'List saved model evaluations.', {}, 'evaluations'),
+            action('football_run_evaluation', 'Start seeded policy inference evaluation on connected Mac. Returns a receipt.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(123) }, 'evaluate'),
+            action('football_get_evaluation_status', 'Inspect evaluation progress and completion receipt.', { runId }, 'evaluation_status'),
             action('football_plan_evaluation', 'Build a dry-run evaluation plan for an indexed policy; does not execute an evaluation.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(42) }, 'evaluation_plan'),
         ],
     };

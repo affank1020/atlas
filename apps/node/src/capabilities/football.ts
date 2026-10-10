@@ -39,6 +39,8 @@ const argsFor = (x: Input): string[] => {
         case 'jobs': return ['training-jobs'];
         case 'job_logs': return ['job-logs', '--run-id', x.runId!, '--lines', String(x.lines ?? 60)];
         case 'policies': return ['policies'];
+        case 'evaluations': return ['evaluation-results'];
+        case 'evaluate': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123)];
         case 'index_policy': return ['policies', '--index-run', x.runId!];
         case 'stop_job': return ['stop-job', '--run-id', x.runId!];
         case 'evaluation_plan': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 42), '--plan-only'];
@@ -54,23 +56,27 @@ function validateAction(x: Input) {
         throw new AtlasError('A run ID is required.', 'INVALID_ARGUMENT');
     if (x.action === 'launch_headless' && !x.drill)
         throw new AtlasError('A drill is required.', 'INVALID_ARGUMENT');
-    if (x.action === 'evaluation_plan' && !x.policyId)
+    if (['evaluation_plan', 'evaluate'].includes(x.action) && !x.policyId)
         throw new AtlasError('A policy ID is required.', 'INVALID_ARGUMENT');
 }
 function launchesDir(workspace: Workspace) { return path.join(workspace.rootPath, 'training-driver-runs', 'atlas-launches'); }
-function launchStatus(workspace: Workspace, ticket: string) {
+function evalDir(workspace: Workspace) { return path.join(workspace.rootPath, 'training-driver-runs', 'atlas-evaluation-launches'); }
+function launchStatus(workspace: Workspace, ticket: string, type: 'training' | 'evaluation' = 'training') {
     if (!RUN_ID.test(ticket)) throw new AtlasError('Invalid launch ticket.', 'INVALID_ARGUMENT');
-    const directory = launchesDir(workspace);
+    const directory = type === 'evaluation' ? evalDir(workspace) : launchesDir(workspace);
     const file = path.join(directory, ticket + '.json');
     if (!existsSync(file)) throw new AtlasError('Launch receipt not found.', 'NOT_FOUND');
     const receipt = JSON.parse(readFileSync(file, 'utf8'));
     const stdout = existsSync(path.join(directory, ticket + '.out')) ? boundedText(readFileSync(path.join(directory, ticket + '.out'), 'utf8')) : '';
     const stderr = existsSync(path.join(directory, ticket + '.err')) ? boundedText(readFileSync(path.join(directory, ticket + '.err'), 'utf8')) : '';
     let run: unknown;
-    try { run = JSON.parse(stdout); } catch {}
+    try { run = JSON.parse(stdout); } catch {
+        const boundary = stdout.lastIndexOf('\n{');
+        if (boundary >= 0) { try { run = JSON.parse(stdout.slice(boundary + 1)); } catch {} }
+    }
     let alive = false;
     try { process.kill(receipt.pid, 0); alive = true; } catch {}
-    return { ticket, state: run ? 'submitted' : alive ? 'launching' : 'stopped_or_failed',
+    return { ticket, state: run ? (type === 'evaluation' ? 'completed' : 'submitted') : alive ? 'launching' : 'stopped_or_failed',
         startedAt: receipt.startedAt, drill: receipt.drill, run,
         output: stdout.slice(-5000), error: stderr.slice(-5000),
         note: run ? 'Refresh training jobs for live trainer state.' : 'A launch request is not proof that a trainer has started.' };
@@ -84,8 +90,9 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
     validateAction(x);
     const script = driverPath(workspace);
     if (x.action === 'launch_status') return launchStatus(workspace, x.runId!);
-    if (x.action === 'launch_headless') {
-        const directory = launchesDir(workspace);
+    if (x.action === 'evaluation_status') return launchStatus(workspace, x.runId!, 'evaluation');
+    if (x.action === 'launch_headless' || x.action === 'evaluate') {
+        const directory = x.action === 'evaluate' ? evalDir(workspace) : launchesDir(workspace);
         mkdirSync(directory, { recursive: true, mode: 0o700 });
         const ticket = randomUUID();
         const outfile = openSync(path.join(directory, ticket + '.out'), 'wx', 0o600);
@@ -104,9 +111,9 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
             pid = child.pid;
         } finally { closeSync(outfile); closeSync(errfile); }
         writeFileSync(path.join(directory, ticket + '.json'),
-            JSON.stringify({ ticket, pid, drill: x.drill, startedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
-        return { accepted: true, ticket, drill: x.drill, status: 'launching',
-            note: 'A local driver launch was requested. Poll its receipt and training jobs; cached builds may take time.' };
+            JSON.stringify({ ticket, pid, drill: x.drill, policyId: x.policyId, startedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
+        return { accepted: true, ticket, drill: x.drill, policyId: x.policyId, status: 'launching',
+            note: x.action === 'evaluate' ? 'Evaluation requested; poll the receipt until Unity finishes.' : 'Training launch requested; poll its receipt and training jobs.' };
     }
     try {
         const { stdout } = await execFileAsync('python3', [script, ...argsFor(x)], {

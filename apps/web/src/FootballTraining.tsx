@@ -100,12 +100,12 @@ export function FootballTraining() {
                     <svg className="football-mini-pitch" viewBox="0 0 240 110" role="img" aria-label={`Diagram of ${titleFor(drill.id)} practice`}>
                         <rect x="7" y="7" width="226" height="96" rx="5" fill="none" stroke="currentColor" strokeOpacity=".23" strokeWidth="1.5"/>
                         <path d="M120 7 V103" stroke="currentColor" strokeOpacity=".18"/><circle cx="120" cy="55" r="19" fill="none" stroke="currentColor" strokeOpacity=".18"/>
-                        <circle cx="48" cy="72" r="8" fill="#8eb0f4"/>
-                        <circle cx="72" cy="68" r="4" fill="#e6e9ed"/>
-                        <path d="M80 65 Q128 25 192 38" fill="none" stroke="#85baa5" strokeDasharray="5 5" strokeWidth="2.5"/>
-                        <path d="M183 34 L194 38 L185 46" fill="none" stroke="#85baa5" strokeWidth="2"/>
-                        <rect x="195" y="25" width="22" height="26" rx="2" fill="none" stroke="#85baa5" strokeWidth="2"/>
-                        <text x="120" y="95" fill="currentColor" fillOpacity=".45" fontSize="8" textAnchor="middle" letterSpacing="2">{drillInfo[drill.id]?.diagram ?? 'DRILL'}</text>
+                        {drill.id === 'movement_v1' && <><circle cx="40" cy="76" r="8" fill="#8eb0f4"/><circle cx="190" cy="27" r="9" fill="none" stroke="#85baa5" strokeWidth="2"/><path d="M52 73 Q100 65 115 37 T181 29" fill="none" stroke="#85baa5" strokeDasharray="6 5" strokeWidth="2.5"/></>}
+                        {drill.id === 'ball_control_v1' && <><circle cx="49" cy="72" r="8" fill="#8eb0f4"/><circle cx="68" cy="65" r="4" fill="#e6e9ed"/><rect x="174" y="18" width="34" height="34" rx="4" fill="none" stroke="#85baa5" strokeWidth="2"/><path d="M71 65 Q101 79 116 54 T190 36" fill="none" stroke="#85baa5" strokeDasharray="5 5" strokeWidth="2.5"/></>}
+                        {drill.id === 'shooting_v1' && <><circle cx="48" cy="77" r="8" fill="#8eb0f4"/><circle cx="76" cy="65" r="4" fill="#e6e9ed"/><rect x="225" y="38" width="9" height="35" fill="none" stroke="#85baa5" strokeWidth="2"/><path d="M81 63 L221 54" fill="none" stroke="#85baa5" strokeWidth="2.5"/><path d="M211 49 L222 54 L211 60" fill="none" stroke="#85baa5" strokeWidth="2"/></>}
+                        {drill.id === 'passing_v1' && <><circle cx="38" cy="60" r="8" fill="#8eb0f4"/><circle cx="56" cy="56" r="4" fill="#e6e9ed"/><circle cx="181" cy="39" r="19" fill="none" stroke="#85baa5" strokeWidth="2" strokeDasharray="4 3"/><path d="M61 55 L159 42" fill="none" stroke="#85baa5" strokeWidth="2.5"/><path d="M151 37 L161 41 L153 48" fill="none" stroke="#85baa5" strokeWidth="2"/></>}
+                        {drill.id === 'defending_v1' && <><circle cx="75" cy="78" r="8" fill="#8eb0f4"/><circle cx="181" cy="27" r="4" fill="#e6e9ed"/><path d="M179 31 L95 84" fill="none" stroke="#e6e9ed" strokeDasharray="4 5" strokeWidth="2"/><path d="M80 72 L110 54" fill="none" stroke="#85baa5" strokeWidth="2.5"/><circle cx="115" cy="52" r="11" fill="none" stroke="#85baa5" strokeWidth="2"/></>}
+                        <text x="120" y="98" fill="currentColor" fillOpacity=".45" fontSize="8" textAnchor="middle" letterSpacing="2">{drillInfo[drill.id]?.diagram ?? 'DRILL'}</text>
                     </svg>
                     <strong>{titleFor(drill.id)}</strong><p>{drillInfo[drill.id]?.description ?? drill.behavior}</p>
                     <div className="football-card-foot"><span>{drill.behavior}</span><span>{selectedDrill === drill.id ? 'Selected ✓' : 'Select ↗'}</span></div>

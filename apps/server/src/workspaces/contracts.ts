@@ -18,6 +18,11 @@ export const workspaceSchemas = {
     update_workspace: z.object({ ...scope, ...client, name: name.optional() }).strict(),
     archive_workspace: z.object({ ...scope, ...client }).strict(),
     ...publicWorkspaceOperations,
+    football_train: workspaceOperationSchemas.football_control.omit({ action: true }).extend({ drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/) }).strict(),
+    football_evaluate: workspaceOperationSchemas.football_control.omit({ action: true }).extend({ policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/) }).strict(),
+    football_training_status: workspaceOperationSchemas.football_control.omit({ action: true }).strict(),
+    football_evaluation_status: workspaceOperationSchemas.football_control.omit({ action: true }).extend({ runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/) }).strict(),
+    football_stop: workspaceOperationSchemas.football_control.omit({ action: true }).extend({ runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/) }).strict(),
 
 };
 export type WorkspaceToolName = keyof typeof workspaceSchemas;
@@ -37,6 +42,11 @@ export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
     workspace_run_dev_task: 'Run one owner-configured development task on the Workspace Node, with bounded time/output and a structured result. No arbitrary shell.',
     workspace_git_status: 'Read Git branch and bounded changed-file summary; no Git writes.',
     workspace_git_diff: 'Read staged and unstaged diffs for safe current text files. Removed/protected files are omitted.',
+    football_train: 'Request headless football training on the bound AI Football Mac. Returns an asynchronous receipt.',
+    football_evaluate: 'Request seeded policy inference evaluation on the bound AI Football Mac. Returns an asynchronous receipt.',
+    football_training_status: 'List training runs in the bound AI Football workspace.',
+    football_evaluation_status: 'Poll the asynchronous status of a football evaluation request.',
+    football_stop: 'Request a graceful stop of one verified football training run.',
     unity_status: 'Check optional Unity CLI and project-scoped Editor/Pipeline connectivity.',
     unity_list_commands: 'Discover this Editor’s MCP commands and schemas, with local approval flags.',
     unity_run_command: 'Invoke a discovered, locally approved Unity command with structured parameters. No shell or evaluation escape.',

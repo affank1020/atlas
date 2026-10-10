@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { footballTrainingApplication, FootballTrainingService, FOOTBALL_PROJECT_ID } from '../apps/server/src/apps/football-training.js';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
+import { workspaceSchemas } from '../apps/server/src/workspaces/contracts.js';
 
 const workspace = { id: '861c6a57-2259-400a-9d03-20bc72942b11', projectId: FOOTBALL_PROJECT_ID, kind: 'unity', status: 'active', nodeId: '330f7fa0-2aba-47ed-b33f-2933c29a43ac' };
 function harness({ available = true, fail = false } = {}) {
@@ -38,4 +39,30 @@ test('an unbound or unavailable Unity Workspace cannot be used for training', as
     const failed = harness({ fail: true });
     await assert.rejects(failed.apps.invoke('football_launch_training', { drill: 'movement_v1' }), /Node unavailable/);
     assert.equal(failed.audits[failed.audits.length - 1][0], 'application.football.failed');
+});
+
+
+test('football MCP tools accept only typed, workspace-scoped requests', () => {
+    const scope = { projectId: FOOTBALL_PROJECT_ID, workspaceId: workspace.id };
+    for (const name of ['football_train', 'football_evaluate', 'football_training_status', 'football_evaluation_status', 'football_stop'] as const)
+        assert.ok(Object.hasOwn(workspaceSchemas, name), name);
+    assert.equal(workspaceSchemas.football_train.safeParse({ ...scope, drill: 'passing_v1', arenas: 2 }).success, true);
+    assert.equal(workspaceSchemas.football_train.safeParse({ ...scope, drill: '../evil' }).success, false);
+    assert.equal(workspaceSchemas.football_train.safeParse({ ...scope, drill: 'passing_v1', command: 'rm -rf' }).success, false);
+    assert.equal(workspaceSchemas.football_evaluate.safeParse({ ...scope, policyId: 'policy_defending_v1_test', episodes: 100, seed: 123 }).success, true);
+    assert.equal(workspaceSchemas.football_evaluate.safeParse({ ...scope, policyId: '../../bad' }).success, false);
+    assert.equal(workspaceSchemas.football_stop.safeParse({ ...scope }).success, false);
+    assert.equal(workspaceSchemas.football_evaluation_status.safeParse({ ...scope }).success, false);
+    assert.equal((workspaceSchemas as any).football_control, undefined);
+});
+test('football evaluation is exposed through the Application typed tool registry', async () => {
+    const { apps, invocations, audits } = harness();
+    assert.ok(apps.hasTool('football_run_evaluation'));
+    assert.ok(apps.hasTool('football_get_evaluation_status'));
+    assert.ok(apps.hasTool('football_list_evaluations'));
+    assert.ok(apps.hasTool('football_index_policy'));
+    await apps.invoke('football_run_evaluation', { policyId: 'policy_passing_v1_test', episodes: 100, seed: 123 });
+    assert.equal(invocations[0][1], 'football_control');
+    assert.equal(invocations[0][2].action, 'evaluate');
+    assert.equal(audits[0][0], 'application.football.requested');
 });
