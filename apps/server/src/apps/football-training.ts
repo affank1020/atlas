@@ -24,7 +24,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['launch_headless', 'evaluate', 'watch_policy', 'watch_live'].includes(action);
+        const start = ['launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -61,7 +61,8 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_index_policy', 'Index exported ONNX policy artifacts from a completed football training run.', { runId }, 'index_policy'),
             action('football_list_evaluations', 'List saved model evaluations.', {}, 'evaluations'),
             action('football_get_evaluation_detail', 'Read bounded measured per-episode evaluation diagnostics and summary for a completed evaluation.', { evaluationId, offset: integer.min(0).max(10000).default(0), limit: integer.min(1).max(200).default(100) }, 'evaluation_detail'),
-            action('football_run_evaluation', 'Start seeded policy inference evaluation on connected Mac. Returns a receipt.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(123) }, 'evaluate'),
+            action('football_run_evaluation', 'Start seeded policy inference evaluation on connected Mac. Returns a receipt.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(123), replayEpisode: integer.min(0).max(10000).optional() }, 'evaluate'),
+            action('football_run_baseline_evaluation', 'Run zero/random/forward/scripted Stage-1 controller in the same Unity physics harness, with reproducible scenarios.', { baselineMode: z.enum(['zero', 'random', 'forward', 'scripted']), episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(123), replayEpisode: integer.min(0).max(10000).optional() }, 'evaluate_baseline'),
             action('football_get_evaluation_status', 'Inspect evaluation progress and completion receipt.', { runId }, 'evaluation_status'),
             action('football_list_viewers', 'List local Mac viewer sessions, including live telemetry and policy playback.', {}, 'viewer_sessions'),
             action('football_watch_live', 'Open a graphical viewer of telemetry from a running training job on the connected Mac; does not modify training.', { runId }, 'watch_live'),

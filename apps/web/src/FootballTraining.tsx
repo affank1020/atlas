@@ -9,7 +9,7 @@ type Job = { id: string; drill: string; preset: string; state: string; mode: str
 type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
-type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number };
+type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
 type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer';
 const screens: { id: Screen; label: string; note: string }[] = [
@@ -63,6 +63,8 @@ export function FootballTraining() {
     const [selectedPolicy, setSelectedPolicy] = useState('');
     const [logs, setLogs] = useState('');
     const [evalPlan, setEvalPlan] = useState<unknown>();
+    const [baselineMode, setBaselineMode] = useState<'zero' | 'random' | 'forward' | 'scripted'>('forward');
+    const [replayEpisode, setReplayEpisode] = useState(0);
     const [launch, setLaunch] = useState<Launch>();
     const [launchStatus, setLaunchStatus] = useState<LaunchStatus>();
     const [busy, setBusy] = useState('');
@@ -383,12 +385,13 @@ export function FootballTraining() {
                     </label>
                     <label>Episodes<input type="number" min={1} max={10000} value={episodes} onChange={e => setEpisodes(Number(e.target.value))} /></label>
                     <label>Seed<input type="number" min={0} max={2147483647} value={evalSeed} onChange={e => setEvalSeed(Number(e.target.value))} /></label>
+                    <label>Replay episode (optional)<input type="number" min={0} max={10000} value={replayEpisode} onChange={e => setReplayEpisode(Number(e.target.value))} title="0 runs the full seed suite; positive values replay exactly one saved scenario" /></label>
                 </div>
                 <div className="football-actions">
-                    <button className="football-button primary" disabled={!!busy || !currentPolicy || !Number.isInteger(episodes) || episodes < 1 || episodes > 10000 || !Number.isInteger(evalSeed) || evalSeed < 0}
+                    <button className="football-button primary" disabled={!!busy || !currentPolicy || !Number.isInteger(episodes) || episodes < 1 || episodes > 10000 || !Number.isInteger(evalSeed) || evalSeed < 0 || (replayEpisode > 0 && episodes !== 1)}
                         onClick={() => void act('evaluate', async () => {
                             if (!window.confirm('Run ' + episodes + ' seeded evaluation episodes for ' + currentPolicy!.id + ' on your Mac?')) return;
-                            const result = await callTool<Launch>('football_run_evaluation', { policyId: currentPolicy!.id, episodes, seed: evalSeed });
+                            const result = await callTool<Launch>('football_run_evaluation', { policyId: currentPolicy!.id, episodes, seed: evalSeed, replayEpisode });
                             setEvaluationLaunch(result); setEvaluationStatus(undefined); setNotice('Evaluation requested. Check its receipt until the Unity evaluation finishes.');
                         })}>Run evaluation ↗</button>
                     <button className="football-button quiet" disabled={!!busy || !currentPolicy} onClick={() => void act('plan', async () => {
@@ -407,10 +410,23 @@ export function FootballTraining() {
                 </div>}
             </section>
             <section className="football-panel">
+                <div className="football-panel-head"><div><span className="football-kicker">BASELINE CONTROLS</span><h2>Stage 1 control benchmarks</h2></div><span>Non-learning reference</span></div>
+                <p className="football-muted">Run zero-input, random, forward-only, or scripted ball-seeking control in the same Unity scene. Scenario v2 uses stable seed-and-episode placements for fair comparison. Replay requires Episodes = 1.</p>
+                <div className="football-fields"><label>Controller<select aria-label="Baseline controller" value={baselineMode} onChange={e => setBaselineMode(e.target.value as typeof baselineMode)}>
+                    <option value="zero">No input (negative control)</option><option value="random">Random input</option><option value="forward">Fixed forward throttle</option><option value="scripted">Scripted steering to ball</option>
+                </select></label></div>
+                <div className="football-actions"><button className="football-button quiet" disabled={!!busy || !Number.isInteger(episodes) || episodes < 1 || episodes > 10000 || !Number.isInteger(evalSeed) || evalSeed < 0 || (replayEpisode > 0 && episodes !== 1)}
+                    onClick={() => void act('baseline', async () => {
+                        if (!window.confirm('Run ' + episodes + ' Stage-1 ' + baselineMode + ' baseline episodes on your Mac?')) return;
+                        const result = await callTool<Launch>('football_run_baseline_evaluation', { baselineMode, episodes, seed: evalSeed, replayEpisode });
+                        setEvaluationLaunch(result); setEvaluationStatus(undefined); setNotice('Baseline evaluation requested. Its results will appear in evaluation history.');
+                    })}>Run Stage-1 baseline ↗</button></div>
+            </section>
+            <section className="football-panel">
                 <div className="football-panel-head"><div><span className="football-kicker">MEASURED RESULTS</span><h2>Evaluation history</h2></div><span>{evaluations.length} completed</span></div>
                 <div className="football-results-list">
                     {evaluations.slice().reverse().map(item => <div className="football-result" key={item.id}>
-                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}</small></div>
+                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · Scenario v${item.scenario_version}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}</small></div>
                         <div><strong>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '%' : '—'}</strong><small>Success rate</small></div>
                         <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward{typeof item.contact_episodes === 'number' ? ` · real contact ${item.contact_episodes}/${item.episodes}` : ''}</small></div>
                         <button className="football-button quiet" onClick={() => setOpenEvaluationId(item.id)}>Inspect →</button>

@@ -7,6 +7,16 @@ M3: Training/inference orchestration and monitoring. Multi-arena/headless/viewer
 M4: General shared-policy architecture with a unified input/output contract, task conditioning, skill transfer, specialist fine-tuning and forgetting tests.
 M5: Small-sided multi-agent games, with passing, receiving, cooperation, roles and 2v2/3v3.
 
+## M2.A progress, new results (2026-10-10)
+
+The existing 100k Stage-1 policy made 291/300 real contacts across deterministic scenario-v2 seeds 515/616/717 with the fixed physics-time motor (99/96/96 per 100 episodes). Saved evaluations use runner 3abf45089615fa58327a. This provisionally clears the per-seed >=80% threshold. The earlier 108/300 result was on a different input-timing implementation and random scenario source; do not portray the numerical difference as a clean policy A/B test.
+
+Investigated inconsistent actions: PlayerController sampled/resolved external inputs in Update, whereas physics consumed them in FixedUpdate. During accelerated headless inference, duplicate evaluations with the same saved policy/scenario IDs diverged (1 vs 2 contacts out of 12), motivating resolving External actions in FixedUpdate and clearing cached inputs at reset. New runner compiled successfully and dramatically improved physical-contact success.
+
+New local FYP work: zero/random/forward/scripted HeuristicOnly controllers, deterministic per-episode scenario IDs, episode replay, measured Unity spawn/bearing and standard evaluation records. New Atlas work: bounded baseline launch tool, evaluation UI baseline controls, scenario ID and spawn columns, runner-key-safe result comparison, compact stdout receipts and fixed large evaluation receipt parsing. Runtime baseline runs and deployed UI confirmation remain PENDING, since the updated Atlas web/server and Mac Node must be deployed/restarted.
+
+Next gate: execute each baseline against identical scenario-v2 seeds and identical runner hash, repeat the trained policy to quantify stochasticity, then freeze Stage-1 champion. Afterward implement Stage-2 policy warm-start/lineage and approach retention. Do not initiate large new training before this.
+
 ## M2 remaining — implementation order
 
 1. Stage 1 diagnostic trust. Instrument start player–ball distance, closest player–ball distance, time to first physical contact, episode duration and termination reason. Expose bounded per-episode details via Atlas and mark older measurements absent. Regression-test with a fresh Unity evaluation. Compare against random/no-op and simple scripted baselines.

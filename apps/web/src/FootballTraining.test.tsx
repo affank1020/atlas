@@ -59,12 +59,22 @@ test('evaluation and viewer commands use typed policy and run operations', async
     await screen.findByText('2');
     fireEvent.click(screen.getByRole('button', { name: /^Evaluation/ }));
     fireEvent.click(screen.getByRole('button', { name: /Run evaluation/ }));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_run_evaluation', { policyId: policy.id, episodes: 100, seed: 123 }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_run_evaluation', { policyId: policy.id, episodes: 100, seed: 123, replayEpisode: 0 }));
     fireEvent.click(screen.getByRole('button', { name: /^Watch/ }));
     fireEvent.click(screen.getByRole('button', { name: /Watch live on Mac/ }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_watch_live', { runId: activeJob.id }));
     fireEvent.click(screen.getByRole('button', { name: /Open policy viewer/ }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_open_policy_viewer', { policyId: policy.id, arenas: 1, seed: 42 }));
+});
+test('Stage 1 baseline evaluation is launched through the typed controller action', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<FootballTraining />);
+    await screen.findByText('2');
+    fireEvent.click(screen.getByRole('button', { name: /^Evaluation/ }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Baseline controller' }), { target: { value: 'forward' } });
+    fireEvent.click(screen.getByRole('button', { name: /Run Stage-1 baseline/ }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_run_baseline_evaluation',
+        { baselineMode: 'forward', episodes: 100, seed: 123, replayEpisode: 0 }));
 });
 test('offline Node errors stay visible without fake metrics', async () => {
     vi.mocked(callTool).mockRejectedValue(new Error('Workspace host Node is offline.'));

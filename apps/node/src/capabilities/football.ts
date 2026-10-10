@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { AtlasError } from '@atlas/protocol/errors';
@@ -46,7 +46,8 @@ const argsFor = (x: Input): string[] => {
         case 'viewer_sessions': return ['viewer-sessions'];
         case 'watch_policy': return ['watch', '--policy', x.policyId!, '--arenas', String(x.arenas ?? 1), '--seed', String(x.seed ?? 42)];
         case 'watch_live': return ['watch-live', '--run', x.runId!];
-        case 'evaluate': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123)];
+        case 'evaluate': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123), ...(x.replayEpisode ? ['--episode-index', String(x.replayEpisode)] : [])];
+        case 'evaluate_baseline': return ['evaluate-baseline', '--mode', x.baselineMode!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123), ...(x.replayEpisode ? ['--episode-index', String(x.replayEpisode)] : [])];
         case 'index_policy': return ['policies', '--index-run', x.runId!];
         case 'stop_job': return ['stop-job', '--run-id', x.runId!];
         case 'evaluation_plan': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 42), '--plan-only'];
@@ -60,6 +61,10 @@ const argsFor = (x: Input): string[] => {
 function validateAction(x: Input) {
     if (['job_logs', 'stop_job', 'index_policy', 'watch_live', 'viewer_launch_status'].includes(x.action) && !x.runId)
         throw new AtlasError('A run ID is required.', 'INVALID_ARGUMENT');
+    if (x.action === 'evaluate_baseline' && !x.baselineMode)
+        throw new AtlasError('A baseline controller is required.', 'INVALID_ARGUMENT');
+    if (x.replayEpisode && (!['evaluate', 'evaluate_baseline'].includes(x.action) || (x.episodes ?? 100) !== 1))
+        throw new AtlasError('Scenario replay requires a one-episode evaluation.', 'INVALID_ARGUMENT');
     if (x.action === 'evaluation_detail' && !x.evaluationId)
         throw new AtlasError('An evaluation ID is required.', 'INVALID_ARGUMENT');
     if (x.action === 'launch_headless' && !x.drill)
@@ -76,12 +81,17 @@ function launchStatus(workspace: Workspace, ticket: string, type: 'training' | '
     const file = path.join(directory, ticket + '.json');
     if (!existsSync(file)) throw new AtlasError('Launch receipt not found.', 'NOT_FOUND');
     const receipt = JSON.parse(readFileSync(file, 'utf8'));
-    const stdout = existsSync(path.join(directory, ticket + '.out')) ? boundedText(readFileSync(path.join(directory, ticket + '.out'), 'utf8')) : '';
+    const outputFile = path.join(directory, ticket + '.out');
+    // Parse the complete small/medium receipt before bounding displayed text.
+    // A 100-episode report can exceed 64 KiB; truncating before JSON.parse
+    // incorrectly classified successful evaluations as failed.
+    const fullOutput = existsSync(outputFile) && statSync(outputFile).size <= 8 * 1024 * 1024 ? readFileSync(outputFile, 'utf8') : '';
+    const stdout = boundedText(fullOutput);
     const stderr = existsSync(path.join(directory, ticket + '.err')) ? boundedText(readFileSync(path.join(directory, ticket + '.err'), 'utf8')) : '';
     let run: unknown;
-    try { run = JSON.parse(stdout); } catch {
-        const boundary = stdout.lastIndexOf('\n{');
-        if (boundary >= 0) { try { run = JSON.parse(stdout.slice(boundary + 1)); } catch {} }
+    try { run = JSON.parse(fullOutput); } catch {
+        const boundary = fullOutput.lastIndexOf('\n{');
+        if (boundary >= 0) { try { run = JSON.parse(fullOutput.slice(boundary + 1)); } catch {} }
     }
     let alive = false;
     try { process.kill(receipt.pid, 0); alive = true; } catch {}
@@ -101,8 +111,8 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
     if (x.action === 'launch_status') return launchStatus(workspace, x.runId!);
     if (x.action === 'evaluation_status') return launchStatus(workspace, x.runId!, 'evaluation');
     if (x.action === 'viewer_launch_status') return launchStatus(workspace, x.runId!, 'viewer');
-    if (['launch_headless', 'evaluate', 'watch_policy', 'watch_live'].includes(x.action)) {
-        const directory = x.action === 'evaluate' ? evalDir(workspace) : ['watch_policy', 'watch_live'].includes(x.action) ? viewerDir(workspace) : launchesDir(workspace);
+    if (['launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(x.action)) {
+        const directory = ['evaluate', 'evaluate_baseline'].includes(x.action) ? evalDir(workspace) : ['watch_policy', 'watch_live'].includes(x.action) ? viewerDir(workspace) : launchesDir(workspace);
         mkdirSync(directory, { recursive: true, mode: 0o700 });
         const ticket = randomUUID();
         const outfile = openSync(path.join(directory, ticket + '.out'), 'wx', 0o600);
@@ -123,7 +133,7 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
         writeFileSync(path.join(directory, ticket + '.json'),
             JSON.stringify({ ticket, pid, drill: x.drill, policyId: x.policyId, startedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
         return { accepted: true, ticket, drill: x.drill, policyId: x.policyId, status: 'launching',
-            note: x.action === 'evaluate' ? 'Evaluation requested; poll the receipt until Unity finishes.' : ['watch_policy', 'watch_live'].includes(x.action) ? 'Viewer launch requested on the connected Mac. Check the receipt and viewer sessions.' : 'Training launch requested; poll its receipt and training jobs.' };
+            note: ['evaluate', 'evaluate_baseline'].includes(x.action) ? 'Evaluation requested; poll the receipt until Unity finishes.' : ['watch_policy', 'watch_live'].includes(x.action) ? 'Viewer launch requested on the connected Mac. Check the receipt and viewer sessions.' : 'Training launch requested; poll its receipt and training jobs.' };
     }
     try {
         const { stdout } = await execFileAsync('python3', [script, ...argsFor(x)], {

@@ -75,3 +75,14 @@ test('football evaluation is exposed through the Application typed tool registry
     assert.equal(invocations[0][2].action, 'evaluate');
     assert.equal(audits[0][0], 'application.football.requested');
 });
+test('baseline evaluations have typed controllers and a bounded replay index', async () => {
+    const { apps, invocations, audits } = harness();
+    assert.ok(apps.hasTool('football_run_baseline_evaluation'));
+    await apps.invoke('football_run_baseline_evaluation', { baselineMode: 'forward', seed: 515, episodes: 20 });
+    assert.equal(invocations[0][2].action, 'evaluate_baseline');
+    assert.equal(invocations[0][2].baselineMode, 'forward');
+    assert.equal(audits[0][0], 'application.football.requested');
+    await assert.rejects(apps.invoke('football_run_baseline_evaluation', { baselineMode: '../script', episodes: 20, seed: 515 }));
+    await assert.rejects(apps.invoke('football_run_baseline_evaluation', { baselineMode: 'random', episodes: 100, seed: 515, replayEpisode: 20001 }));
+});
+

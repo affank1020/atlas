@@ -201,12 +201,13 @@ export function FootballRunControlRoom({ runId, onBack, onWatch, onStop, onIndex
 
 type EpisodeDetail = {
     index: number; success: boolean; reward?: number | null;
-    ball_control?: { has_contact?: boolean; termination_reason?: string;
+    ball_control?: { has_contact?: boolean; termination_reason?: string; scenario_id?: string; scenario_version?: number; scenario_ball_local_x_m?: number | null; scenario_ball_local_z_m?: number | null; start_relative_bearing_degrees?: number | null;
         start_player_ball_distance_m?: number | null; min_player_ball_distance_m?: number | null;
         time_to_first_contact_s?: number | null; episode_duration_s?: number | null; };
 };
 type EvaluationDetail = {
-    id: string; diagnostics_version: number;
+    id: string; diagnostics_version: number; scenario_version?: number;
+    evaluation_kind?: string; baseline_mode?: string;
     summary: { physical_contact_episodes: number | null; termination_reasons: Record<string, number>;
         mean_start_distance_m: number | null; mean_min_distance_m: number | null;
         mean_time_to_contact_s: number | null; mean_episode_duration_s: number | null;
@@ -241,7 +242,7 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
             <div><button className="football-room-back" onClick={onBack}>← Evaluation history</button>
                 <span className="football-kicker">EVALUATION CONTROL ROOM</span>
                 <h2>{evaluation.drill.replaceAll('_', ' ')}</h2>
-                <p>{evaluation.id} · policy {evaluation.policy_id}</p>
+                <p>{evaluation.id} · {detail?.evaluation_kind === 'baseline' ? 'Baseline ' + detail.baseline_mode : 'Policy ' + evaluation.policy_id}{detail?.scenario_version ? ' · Scenario v' + detail.scenario_version : ' · Legacy scenario'}</p>
             </div>
             <span className="football-room-state done">Result recorded</span>
         </div>
@@ -296,8 +297,10 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
                 <span className="football-room-note">The filter applies only to the displayed page.</span>
             </div>
             <div className="football-room-episodes"><table>
-                <thead><tr><th>Episode</th><th>Outcome</th><th>Reason</th><th>Start</th><th>Nearest</th><th>Contact time</th><th>Reward</th></tr></thead>
-                <tbody>{rows.map(e => <tr key={e.index}><td>#{e.index}</td><td>{e.success ? 'Success' : 'Failed'}</td>
+                <thead><tr><th>Episode</th><th>Scenario ID</th><th>Ball spawn (x,z)</th><th>Bearing</th><th>Outcome</th><th>Reason</th><th>Start</th><th>Nearest</th><th>Contact time</th><th>Reward</th></tr></thead>
+                <tbody>{rows.map(e => <tr key={e.index}><td>#{e.index}</td><td className="football-room-hash">{e.ball_control?.scenario_id ?? 'Legacy / unknown'}</td>
+                    <td>{e.ball_control?.scenario_ball_local_x_m == null || e.ball_control?.scenario_ball_local_z_m == null ? '—' : number(e.ball_control.scenario_ball_local_x_m, 2) + ', ' + number(e.ball_control.scenario_ball_local_z_m, 2)}</td>
+                    <td>{e.ball_control?.start_relative_bearing_degrees == null ? '—' : number(e.ball_control.start_relative_bearing_degrees, 1) + '°'}</td><td>{e.success ? 'Success' : 'Failed'}</td>
                     <td>{e.ball_control?.termination_reason?.replaceAll('_', ' ') ?? '—'}</td>
                     <td>{metricValue(e.ball_control?.start_player_ball_distance_m)}</td>
                     <td>{metricValue(e.ball_control?.min_player_ball_distance_m)}</td>
@@ -311,6 +314,6 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
                 <button className="football-button quiet" disabled={loadingDetail || !detail?.pagination?.has_more} onClick={() => setPage(p => p + 1)}>Next →</button>
             </div>
         </section>
-        <p className="football-room-footnote">Evaluation metrics come from frozen-policy Unity episodes, not PPO training reward. Live episode streaming and policy comparisons remain future work.</p>
+        <p className="football-room-footnote">Evaluation metrics come from seeded Unity physics episodes, not PPO training reward. Scenario version and episode identity must match for fair controller comparisons. Legacy records cannot be assumed equivalent. Live episode streaming remains future work.</p>
     </main>;
 }
