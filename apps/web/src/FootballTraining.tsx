@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
 import './football-training.css';
 
-type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string> };
-type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string };
+type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string };
+type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[] } };
+type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null };
 type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
-type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number };
+type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
 type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer';
 const screens: { id: Screen; label: string; note: string }[] = [
@@ -25,6 +26,7 @@ const drillInfo: Record<string, { title: string; description: string; diagram: s
     shooting_v1: { title: 'Shooting', description: 'Position, approach and strike the ball towards goal.', diagram: 'GOAL' },
     passing_v1: { title: 'Passing', description: 'Deliver the ball into a target zone. Currently a zone-based drill, not a teammate receiver.', diagram: 'TARGET' },
     defending_v1: { title: 'Defending', description: 'Intercept a moving ball before it escapes. Currently no intelligent opponent.', diagram: 'INTERCEPT' },
+    receiving_v1: { title: 'Receiving', description: 'Move into a seeded incoming pass and make a real physical reception. Uses a virtual scripted feed.', diagram: 'RECEIVE' },
 };
 const titleFor = (id: string) => drillInfo[id]?.title ?? id.replaceAll('_', ' ');
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
@@ -50,7 +52,7 @@ export function FootballTraining() {
     const [viewerLaunch, setViewerLaunch] = useState<Launch>();
     const [viewerStatus, setViewerStatus] = useState<LaunchStatus>();
     const [selectedDrill, setSelectedDrill] = useState('');
-    const [preset, setPreset] = useState<'smoke' | 'full'>('smoke');
+    const [preset, setPreset] = useState('smoke');
     const [arenas, setArenas] = useState(1);
     const [basePort, setBasePort] = useState(5005);
     const [seed, setSeed] = useState(42);
@@ -89,6 +91,13 @@ export function FootballTraining() {
     const currentJob = jobs.find(j => j.id === selectedJob);
     const currentPolicy = policies.find(p => p.id === selectedPolicy);
     const currentDrill = drills.find(d => d.id === selectedDrill);
+    // Preset labels and curriculum definitions come from the Mac's registry,
+    // not from a second set of frontend hardcoded scenario settings.
+    const selectedPreset = currentDrill?.configs[preset] ? preset : 'smoke';
+    const selectedStage = currentDrill?.curriculum?.stages.find(s => s.preset === selectedPreset);
+    const presetLabel = (value: string) => currentDrill?.curriculum?.stages.find(s => s.preset === value)?.title ??
+        (value === 'smoke' ? (currentDrill?.curriculum ? 'Smoke / short (legacy v1)' : 'Smoke / short') :
+        value === 'full' ? (currentDrill?.curriculum ? 'Full (legacy v1)' : 'Full') : value.replaceAll('_', ' '));
     const running = useMemo(() => jobs.filter(j => j.state === 'running'), [jobs]);
     const recentCutoff = Date.now() - 7 * 86400_000;
     const filteredJobs = jobs.filter(job => {
@@ -188,9 +197,11 @@ export function FootballTraining() {
                         {drill.id === 'shooting_v1' && <><circle cx="48" cy="77" r="8" fill="#8eb0f4"/><circle cx="76" cy="65" r="4" fill="#e6e9ed"/><rect x="225" y="38" width="9" height="35" fill="none" stroke="#85baa5" strokeWidth="2"/><path d="M81 63 L221 54" fill="none" stroke="#85baa5" strokeWidth="2.5"/><path d="M211 49 L222 54 L211 60" fill="none" stroke="#85baa5" strokeWidth="2"/></>}
                         {drill.id === 'passing_v1' && <><circle cx="38" cy="60" r="8" fill="#8eb0f4"/><circle cx="56" cy="56" r="4" fill="#e6e9ed"/><circle cx="181" cy="39" r="19" fill="none" stroke="#85baa5" strokeWidth="2" strokeDasharray="4 3"/><path d="M61 55 L159 42" fill="none" stroke="#85baa5" strokeWidth="2.5"/><path d="M151 37 L161 41 L153 48" fill="none" stroke="#85baa5" strokeWidth="2"/></>}
                         {drill.id === 'defending_v1' && <><circle cx="75" cy="78" r="8" fill="#8eb0f4"/><circle cx="181" cy="27" r="4" fill="#e6e9ed"/><path d="M179 31 L95 84" fill="none" stroke="#e6e9ed" strokeDasharray="4 5" strokeWidth="2"/><path d="M80 72 L110 54" fill="none" stroke="#85baa5" strokeWidth="2.5"/><circle cx="115" cy="52" r="11" fill="none" stroke="#85baa5" strokeWidth="2"/></>}
+                        {drill.id === 'receiving_v1' && <><circle cx="92" cy="72" r="8" fill="#8eb0f4"/><circle cx="190" cy="37" r="4.5" fill="#e6e9ed"/><circle cx="111" cy="67" r="16" fill="none" stroke="#85baa5" strokeWidth="2"/><path d="M188 37 Q156 42 115 63" fill="none" stroke="#e6e9ed" strokeDasharray="5 4" strokeWidth="2.5"/><path d="M99 72 L112 67" fill="none" stroke="#85baa5" strokeWidth="2.5"/></>}
                         <text x="120" y="98" fill="currentColor" fillOpacity=".45" fontSize="8" textAnchor="middle" letterSpacing="2">{drillInfo[drill.id]?.diagram ?? 'DRILL'}</text>
                     </svg>
                     <strong>{titleFor(drill.id)}</strong><p>{drillInfo[drill.id]?.description ?? drill.behavior}</p>
+                    {drill.curriculum && <small className="football-muted">{drill.curriculum.stages.length} selectable curriculum stages · manual</small>}
                     <div className="football-card-foot"><span>{drill.behavior}</span><span>{selectedDrill === drill.id ? 'Selected ✓' : 'Select ↗'}</span></div>
                 </button>)}
                 {!loading && drills.length === 0 && <div className="football-empty">No drills returned by the connected Mac Node.</div>}
@@ -208,13 +219,13 @@ export function FootballTraining() {
                 {visiblePolicies.map(policy => <button type="button" key={policy.id} className={`football-policy-card ${selectedPolicy === policy.id ? 'selected' : ''}`} onClick={() => {setSelectedPolicy(policy.id);setEvalPlan(undefined);}}>
                     <div className="football-card-top"><span className="football-card-tag">{titleFor(policy.drill)}</span><span className="football-artifact-type">ONNX</span></div>
                     <div className="football-policy-glyph" aria-hidden="true">◇ <span>┄┄┄</span></div>
-                    <strong title={policy.id}>{policy.id}</strong><small title={policy.source_run_id}>Source · {policy.source_run_id}</small>
+                    <strong title={policy.id}>{policy.id}</strong><small title={policy.source_run_id}>Source · {policy.source_run_id}{jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage}` : ''}</small>
                     <div className="football-card-foot"><span>{policy.artifacts.filter(a => a.final).length} final export(s)</span><span>{selectedPolicy === policy.id ? 'Selected ✓' : 'Inspect ↗'}</span></div>
                 </button>)}
                 {!loading && visiblePolicies.length === 0 && <div className="football-empty">No matching policies. Index a completed run to add a policy to the library.</div>}
             </div>
             {currentPolicy && <div className="football-selected-policy">
-                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}</small></div>
+                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}{jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage}` : ''}</small></div>
                 <button className="football-button primary" disabled={!!busy} onClick={() => { setScreen('evaluation'); }}>Evaluate policy →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => { setScreen('viewer'); }}>Open policy viewer →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => void act('plan', async () => {
@@ -241,17 +252,29 @@ export function FootballTraining() {
                     <div className="football-panel-head"><div><span className="football-kicker">01 / TRAIN</span><h2>Launch a headless run</h2></div></div>
                     <p className="football-muted">Choose the drill and a PPO preset. A launch request can take time to build a Unity runner; an accepted request isn't proof training has started.</p>
                     <div className="football-fields">
-                        <label className="wide">Drill<select value={selectedDrill} onChange={e => setSelectedDrill(e.target.value)} disabled={!drills.length}>{drills.map(d => <option key={d.id} value={d.id}>{d.id} · {d.behavior}</option>)}</select></label>
-                        <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke'|'full')}><option value="smoke">Smoke / short</option><option value="full">Full</option></select></label>
+                        <label className="wide">Drill<select value={selectedDrill} onChange={e => { setSelectedDrill(e.target.value); setPreset('smoke'); }} disabled={!drills.length}>{drills.map(d => <option key={d.id} value={d.id}>{titleFor(d.id)} · {d.behavior}</option>)}</select></label>
+                        <label>Training preset<select aria-label="Training preset" value={selectedPreset} onChange={e => setPreset(e.target.value)}>
+                            {Object.keys(currentDrill?.configs ?? {}).map(key => <option key={key} value={key}>{presetLabel(key)}</option>)}
+                        </select></label>
                         <label>Arenas<input type="number" min={1} max={16} value={arenas} onChange={e => setArenas(Number(e.target.value))} /></label>
                         <label>Base port<input type="number" min={1024} max={65519} value={basePort} onChange={e => setBasePort(Number(e.target.value))} /></label>
                         <label>Seed<input type="number" min={0} max={2147483647} value={seed} onChange={e => setSeed(Number(e.target.value))} /></label>
                     </div>
                     {currentDrill && <div className="football-contract"><span>Scene: {currentDrill.scene}</span><span>{currentDrill.observation_size} observations</span><span>{currentDrill.continuous_actions} actions</span></div>}
+                    {currentDrill?.curriculum && <div className="football-curriculum" aria-label="Curriculum stages">
+                        <strong>Ball-control curriculum <small>Manual stages · v{currentDrill.curriculum.version}</small></strong>
+                        <p className="football-muted">Choose a stage with the training preset above. Each stage is a separately recorded training run; automatic promotion and checkpoint transfer are not enabled yet.</p>
+                        <div className="football-curriculum-stages">
+                            {currentDrill.curriculum.stages.map(stage => <button type="button" key={stage.id} className={selectedPreset === stage.preset ? 'selected' : ''} aria-pressed={selectedPreset === stage.preset} onClick={() => setPreset(stage.preset)}>
+                                <span>{stage.stage}. {stage.title}</span><small>{stage.description}</small>
+                            </button>)}
+                        </div>
+                        {selectedStage && <small className="football-muted">Measured outcome: {selectedStage.metric.replaceAll('_', ' ')} · {selectedStage.description}</small>}
+                    </div>}
                     <div className="football-actions">
                         <button className="football-button primary" disabled={!selectedDrill || !!busy || loading || !Number.isInteger(arenas) || arenas < 1 || arenas > 16 || !Number.isInteger(basePort) || basePort < 1024 || basePort > 65519 || !Number.isInteger(seed) || seed < 0} onClick={() => void act('launch', async () => {
-                            if (!window.confirm(`Request a ${preset} training run for ${selectedDrill} (${arenas} arena${arenas === 1 ? '' : 's'}) on your Mac?`)) return;
-                            const result = await callTool<Launch>('football_launch_training', { drill: selectedDrill, preset, arenas, basePort, seed });
+                            if (!window.confirm(`Request a ${selectedPreset} training run for ${selectedDrill} (${arenas} arena${arenas === 1 ? '' : 's'}) on your Mac?`)) return;
+                            const result = await callTool<Launch>('football_launch_training', { drill: selectedDrill, preset: selectedPreset, arenas, basePort, seed });
                             setLaunch(result); setLaunchStatus(undefined); setNotice('Launch requested. Check the receipt for build or trainer progress.');
                         })}>{busy === 'launch' ? 'Submitting…' : 'Launch training ↗'}</button>
                         <span className="football-muted">Uses the cached standalone Unity training runner where available.</span>
@@ -275,12 +298,12 @@ export function FootballTraining() {
                     </div>
                     <div className="football-job-list">
                         {filteredJobs.map(job => <button className={`football-job ${selectedJob === job.id ? 'active' : ''}`} key={job.id} onClick={() => { setSelectedJob(job.id); setLogs(''); }}>
-                            <span><strong>{job.id}</strong><small>{job.drill} · {job.preset} · {job.arenas} arena{job.arenas === 1 ? '' : 's'}</small></span>
+                            <span><strong>{job.id}</strong><small>{titleFor(job.drill)} · {job.curriculum_stage_id ? `Stage ${job.curriculum_stage}: ${job.curriculum_stage_id.replaceAll('_', ' ')}` : job.preset} · {job.arenas} arena{job.arenas === 1 ? '' : 's'}</small></span>
                             <span className={`football-state ${job.state === 'running' ? 'active' : ''}`}>{stateLabel(job.state)}</span>
                         </button>)}
                         {!loading && !filteredJobs.length && <div className="football-empty">No matching runs in this section. Change the filter or open the archive; no runs are deleted.</div>}
                     </div>
-                    {currentJob && filteredJobs.some(job => job.id === currentJob.id) && <div className="football-inspector"><h3>{currentJob.id}</h3><p className="football-muted">Started {date(currentJob.started_at)} · port {currentJob.base_port} · seed {currentJob.seed}</p>
+                    {currentJob && filteredJobs.some(job => job.id === currentJob.id) && <div className="football-inspector"><h3>{currentJob.id}</h3><p className="football-muted">Started {date(currentJob.started_at)} · port {currentJob.base_port} · seed {currentJob.seed}{currentJob.curriculum_stage ? ` · Stage ${currentJob.curriculum_stage} (${currentJob.curriculum_stage_id})` : ''}</p>
                         <div className="football-actions"><button className="football-button quiet" disabled={!!busy} onClick={() => void loadLogs(currentJob.id)}>{busy === 'logs' ? 'Loading…' : 'View latest logs'}</button>
                         <button className="football-button primary" disabled={!!busy || currentJob.state !== 'running'} onClick={() => launchViewer('live', currentJob.id)}>Watch live ↗</button>
                         <button className="football-button danger" disabled={!!busy || currentJob.state !== 'running'} onClick={() => void act('stop', async () => {
@@ -336,9 +359,9 @@ export function FootballTraining() {
                 <div className="football-panel-head"><div><span className="football-kicker">MEASURED RESULTS</span><h2>Evaluation history</h2></div><span>{evaluations.length} completed</span></div>
                 <div className="football-results-list">
                     {evaluations.slice().reverse().map(item => <div className="football-result" key={item.id}>
-                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}</small></div>
+                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}</small></div>
                         <div><strong>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '%' : '—'}</strong><small>Success rate</small></div>
-                        <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward</small></div>
+                        <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward{typeof item.contact_episodes === 'number' ? ` · real contact ${item.contact_episodes}/${item.episodes}` : ''}</small></div>
                     </div>)}
                     {!loading && !evaluations.length && <div className="football-empty">No completed evaluation results yet. Run a seeded evaluation to establish a baseline.</div>}
                 </div>

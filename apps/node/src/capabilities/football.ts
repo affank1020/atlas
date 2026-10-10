@@ -23,6 +23,8 @@ const publicJob = (j: any) => ({
     mode: j.mode, arenas: j.arenas, base_port: j.base_port, seed: j.seed,
     behavior: j.behavior, started_at: j.started_at, source_scene: j.source_scene,
     config_sha256: j.config_sha256,
+    curriculum_stage: j.curriculum_stage ?? 0,
+    curriculum_stage_id: j.curriculum_stage_id ?? null,
 });
 function driverPath(workspace: Workspace) {
     if (workspace.kind !== 'unity' || workspace.status !== 'active')

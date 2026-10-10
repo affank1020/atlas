@@ -30,8 +30,10 @@ test('football commands execute only on the bound Unity Node and audit intent', 
     assert.deepEqual(invocations[0][2], { projectId: FOOTBALL_PROJECT_ID, workspaceId: workspace.id, action: 'launch_headless', drill: 'movement_v1', preset: 'smoke', arenas: 2, basePort: 5005, seed: 42 });
     assert.equal(audits[0][0], 'application.football.requested');
     assert.equal(audits[1][0], 'application.football.completed');
+    await apps.invoke('football_launch_training', { drill: 'ball_control_v1', preset: 'approach', arenas: 2, basePort: 5205, seed: 203 });
+    assert.equal(invocations[1][2].preset, 'approach');
     await assert.rejects(apps.invoke('football_launch_training', { drill: '../other.py' }));
-    assert.equal(invocations.length, 1);
+    assert.equal(invocations.length, 2);
 });
 test('an unbound or unavailable Unity Workspace cannot be used for training', async () => {
     const absent = harness({ available: false });

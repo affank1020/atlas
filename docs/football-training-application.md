@@ -65,3 +65,13 @@ copy or modify the driver source.
 `npm test` runs server, protocol, registry and web tests. Use the isolated
 Docker-backed PostgreSQL container specified by `infra/docker-compose.yml`
 for integration tests.
+
+## M2 ball-control manual stages (2026-10-10)
+
+The ball-control catalogue is now registry-driven for the first **manual** curriculum slice. The `ball_control_v1` drill advertises `approach`, `first_touch` and `dribble` via `curriculum.stages` and three named PPO preset config paths; `smoke` and `full` remain available as legacy stage-0 baselines. Other drills remain unchanged.
+
+The Train screen renders stage cards, objectives and the measured success metric from the registry, and sends a selected typed preset through the same `football_launch_training` action. The Mac Node's job listing forwards the recorded stage ID/number; run inspector and evaluation history label results by stage. For ball control, evaluation history also shows actual-physics-contact episode counts when recorded. Receiving is listed in the catalogue with its own description and illustration.
+
+This **does not** claim automatic curriculum advancement, chained PPO checkpoint transfer, or live progress thresholds. Each selection currently starts a separately trained policy. It also **does not** configure distinct stages for other drills. The backend accepts a small allow-listed preset enum and the driver rejects a named stage not declared in the chosen drill's registry.
+
+Deployment requires Server and Web release plus an updated/restarted Mac Node. A local `npm run build` or `npm test` alone does not update the hosted application. Integration acceptance still requires selecting an `approach` preset in the deployed UI, confirming the launch receipt, inspecting the saved job's stage and measuring seeded stage-1 physical-contact success.

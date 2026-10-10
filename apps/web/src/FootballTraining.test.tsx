@@ -63,3 +63,34 @@ test('offline Node errors stay visible without fake metrics', async () => {
     expect(screen.getByText('Running jobs')).toBeInTheDocument();
     expect(screen.queryByText('movement_v1_demo')).not.toBeInTheDocument();
 });
+
+test('curriculum presets are discovered from the drill registry and launch with the selected stage', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const ballDrill = {
+        id: 'ball_control_v1', behavior: 'BallControlDrill', scene: 'Assets/Scenes/BallControlDrill.unity',
+        observation_size: 10, continuous_actions: 2,
+        configs: { smoke: 'smoke.yaml', full: 'full.yaml', approach: 'approach.yaml', first_touch: 'first_touch.yaml', dribble: 'dribble.yaml' },
+        curriculum: { version: 1, mode: 'manual', stages: [
+            { id: 'approach', preset: 'approach', stage: 1, title: 'Approach & contact', description: 'Touch a close ball.', metric: 'physical_contact_success_rate' },
+            { id: 'first_touch', preset: 'first_touch', stage: 2, title: 'First touch', description: 'Move the ball.', metric: 'controlled_first_touch_success_rate' },
+            { id: 'dribble', preset: 'dribble', stage: 3, title: 'Dribble', description: 'Keep control.', metric: 'controlled_dribble_success_rate' },
+        ] },
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_list_drills') return [drills[0], ballDrill] as never;
+        if (name === 'football_list_jobs') return [activeJob] as never;
+        if (name === 'football_list_policies') return [policy] as never;
+        if (name === 'football_list_evaluations' || name === 'football_list_viewers') return [] as never;
+        return { accepted: true, ticket: 'stage_demo', status: 'launching' } as never;
+    });
+    render(<FootballTraining />);
+    await screen.findByText('2');
+    fireEvent.click(screen.getByRole('button', { name: /^Train/ }));
+    fireEvent.change(screen.getByLabelText('Drill'), { target: { value: 'ball_control_v1' } });
+    expect(screen.getByText(/Manual stages · v1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /1\. Approach & contact/ }));
+    expect(screen.getByLabelText('Training preset')).toHaveValue('approach');
+    fireEvent.click(screen.getByRole('button', { name: /Launch training/ }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_launch_training',
+        { drill: 'ball_control_v1', preset: 'approach', arenas: 1, basePort: 5005, seed: 42 }));
+});

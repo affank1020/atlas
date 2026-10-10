@@ -27,7 +27,7 @@ export const workspaceOperationSchemas = {
         drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
-        preset: z.enum(['smoke', 'full']).optional(),
+        preset: z.enum(['smoke', 'full', 'approach', 'first_touch', 'dribble']).optional(),
         arenas: z.number().int().min(1).max(16).optional(),
         basePort: z.number().int().min(1024).max(65519).optional(),
         seed: z.number().int().min(0).max(2147483647).optional(),

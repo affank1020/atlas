@@ -130,3 +130,17 @@
 .football-overview-row strong{font-size:.8rem}
 .football-overview-row small{font-size:.72rem;color:var(--text-muted);margin-top:4px}
 @media(max-width:800px){.football-overview-grid{grid-template-columns:1fr}}
+
+/* M2 curriculum controls — populated from the drill registry. */
+.football-curriculum{margin-top:15px;padding:16px;border:1px solid var(--border);border-radius:9px;background:var(--surface-elevated);display:flex;flex-direction:column;gap:11px}
+.football-curriculum>strong{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:.83rem}
+.football-curriculum>strong small{font-size:.69rem;color:var(--text-muted);font-weight:450}
+.football-curriculum .football-muted{font-size:.74rem;line-height:1.55;margin:0}
+.football-curriculum-stages{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.football-curriculum-stages button{font:inherit;text-align:left;padding:12px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border);border-radius:7px;cursor:pointer;min-width:0}
+.football-curriculum-stages button:hover{background:var(--surface-hover)}
+.football-curriculum-stages button.selected{border-color:var(--border-strong);box-shadow:inset 0 0 0 1px var(--border-strong)}
+.football-curriculum-stages span,.football-curriculum-stages small{display:block}
+.football-curriculum-stages span{font-weight:650;font-size:.76rem}
+.football-curriculum-stages small{color:var(--text-muted);font-size:.69rem;margin-top:7px;line-height:1.5}
+@media(max-width:760px){.football-curriculum-stages{grid-template-columns:1fr}}
