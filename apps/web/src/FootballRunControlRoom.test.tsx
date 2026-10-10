@@ -53,11 +53,42 @@ test('incomplete terminal evidence is not labelled successful', async () => {
     expect(await screen.findByText('Inactive — reason unknown')).toBeInTheDocument();
     expect(screen.queryByText('Likely completed')).not.toBeInTheDocument();
 });
-test('evaluation detail displays actual saved values and does not invent live progress', async () => {
+test('evaluation detail keeps saved summary when diagnostics are unavailable', async () => {
+    vi.mocked(callTool).mockRejectedValue(new Error('Node needs update'));
     render(<FootballEvaluationControlRoom evaluation={{
         id:'eval_test', policy_id: 'policy_test', drill: 'ball_control_v1', episodes: 100, seed: 515,
         success_rate: .13, contact_episodes: 13, mean_reward: -.2, curriculum_stage: 1,
     }} onBack={vi.fn()} />);
     await waitFor(() => expect(screen.getByText('13.0%')).toBeInTheDocument());
-    expect(screen.getByText('Episode-by-episode live progress is not yet emitted by the current evaluator.', { exact: false })).toBeInTheDocument();
+    expect(await screen.findByText('Could not load detailed diagnostics:', { exact: false })).toBeInTheDocument();
 });
+test('evaluation diagnostics show real measured contact distances and preserve missing times for failed episodes', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_get_evaluation_detail') return {
+            id: 'eval_v2', diagnostics_version: 2, episodes: 2, seed: 515,
+            pagination: { offset: 0, limit: 100, total: 2, has_more: false },
+            summary: {
+                physical_contact_episodes: 1, termination_reasons: { physical_contact: 1, timeout: 1 },
+                mean_start_distance_m: 2.2, mean_min_distance_m: 0.71,
+                mean_time_to_contact_s: 1.5, mean_episode_duration_s: 7,
+                closest_approach_buckets: { under_0_5_m: 1, '0_5_to_1_m': 0, '1_to_2_m': 1, over_2_m: 0 },
+            },
+            episode_results: [
+                { index: 1, success: true, reward: 1.11, ball_control: { has_contact: true, termination_reason: 'physical_contact', start_player_ball_distance_m: 2.3, min_player_ball_distance_m: .4, time_to_first_contact_s: 1.5 } },
+                { index: 2, success: false, reward: -.5, ball_control: { has_contact: false, termination_reason: 'timeout', start_player_ball_distance_m: 2.1, min_player_ball_distance_m: 1.02, time_to_first_contact_s: null } },
+            ],
+        } as never;
+        return [] as never;
+    });
+    render(<FootballEvaluationControlRoom evaluation={{
+        id:'eval_v2', policy_id:'policy_test', drill:'ball_control_v1',
+        episodes:2, seed:515, success_rate:.5, mean_reward:.305,
+        contact_episodes:1, curriculum_stage:1,
+    }} onBack={vi.fn()} />);
+    expect(await screen.findByText('Physics diagnostics v2')).toBeInTheDocument();
+    expect(screen.getByText('Mean nearest')).toBeInTheDocument();
+    expect(screen.getAllByText('Not measured').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('physical contact').length).toBeGreaterThan(0);
+    expect(callTool).toHaveBeenCalledWith('football_get_evaluation_detail', { evaluationId: 'eval_v2', offset: 0, limit: 100 });
+});
+

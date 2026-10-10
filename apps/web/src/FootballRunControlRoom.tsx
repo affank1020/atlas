@@ -199,7 +199,43 @@ export function FootballRunControlRoom({ runId, onBack, onWatch, onStop, onIndex
     </main>;
 }
 
+type EpisodeDetail = {
+    index: number; success: boolean; reward?: number | null;
+    ball_control?: { has_contact?: boolean; termination_reason?: string;
+        start_player_ball_distance_m?: number | null; min_player_ball_distance_m?: number | null;
+        time_to_first_contact_s?: number | null; episode_duration_s?: number | null; };
+};
+type EvaluationDetail = {
+    id: string; diagnostics_version: number;
+    summary: { physical_contact_episodes: number | null; termination_reasons: Record<string, number>;
+        mean_start_distance_m: number | null; mean_min_distance_m: number | null;
+        mean_time_to_contact_s: number | null; mean_episode_duration_s: number | null;
+        closest_approach_buckets: Record<string, number> | null; };
+    pagination: { offset: number; total: number; has_more: boolean };
+    episode_results: EpisodeDetail[];
+};
+const metricValue = (x: number | null | undefined, suffix = 'm') => x == null ? 'Not measured' : number(x, 2) + ' ' + suffix;
+
 export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluation: RoomEvaluation; onBack: () => void }) {
+    const [detail, setDetail] = useState<EvaluationDetail | null>(null);
+    const [page, setPage] = useState(0);
+    const [filter, setFilter] = useState('all');
+    const [loadingDetail, setLoadingDetail] = useState(true);
+    const [error, setError] = useState('');
+    const pageSize = 100;
+    useEffect(() => {
+        let current = true;
+        setLoadingDetail(true); setError('');
+        void callTool<EvaluationDetail>('football_get_evaluation_detail', { evaluationId: evaluation.id, offset: page * pageSize, limit: pageSize })
+            .then(data => { if (current) setDetail(data); })
+            .catch(e => { if (current) { setDetail(null); setError(e instanceof Error ? e.message : String(e)); } })
+            .finally(() => { if (current) setLoadingDetail(false); });
+        return () => { current = false; };
+    }, [evaluation.id, page]);
+    const summary = detail?.summary;
+    const reasons = Object.entries(summary?.termination_reasons ?? {}).sort((a, b) => b[1] - a[1]);
+    const buckets = summary?.closest_approach_buckets;
+    const rows = (detail?.episode_results ?? []).filter(e => filter === 'all' || (filter === 'success' ? e.success : !e.success));
     return <main className="football-room">
         <div className="football-room-heading">
             <div><button className="football-room-back" onClick={onBack}>← Evaluation history</button>
@@ -211,20 +247,70 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
         </div>
         <div className="football-room-metrics">
             <div><small>Episodes</small><strong>{number(evaluation.episodes)}</strong></div>
-            <div><small>Success rate</small><strong>{number(evaluation.success_rate === undefined ? undefined : evaluation.success_rate * 100, 1)}%</strong></div>
+            <div><small>Success rate</small><strong>{evaluation.success_rate == null ? '—' : number(evaluation.success_rate * 100, 1) + '%'}</strong></div>
             <div><small>Mean reward</small><strong>{number(evaluation.mean_reward, 3)}</strong></div>
-            <div><small>Physical contact episodes</small><strong>{number(evaluation.contact_episodes)} <em>/ {number(evaluation.episodes)}</em></strong></div>
-            <div><small>Controlled progress</small><strong>{number(evaluation.controlled_progress_mean_m, 3)} m</strong></div>
+            <div><small>Physical contacts</small><strong>{number(summary?.physical_contact_episodes ?? evaluation.contact_episodes)} <em>/ {number(evaluation.episodes)}</em></strong></div>
+            <div><small>Mean contact time</small><strong>{metricValue(summary?.mean_time_to_contact_s, 's')}</strong></div>
+        </div>
+        {error && <div className="football-alert error" role="alert">Could not load detailed diagnostics: {error}. This requires the updated Atlas Server and Mac Node.</div>}
+        {loadingDetail && <p className="football-muted" role="status">Loading measured episode diagnostics…</p>}
+        <div className="football-room-grid">
+            <section className="football-room-panel">
+                <header><h3>Contact & approach</h3><span>{detail?.diagnostics_version === 2 ? 'Physics diagnostics v2' : 'Legacy measurements'}</span></header>
+                {detail?.diagnostics_version === 2 ? <>
+                    <dl className="football-room-details">
+                        <dt>Mean start</dt><dd>{metricValue(summary?.mean_start_distance_m)}</dd>
+                        <dt>Mean nearest</dt><dd>{metricValue(summary?.mean_min_distance_m)}</dd>
+                        <dt>Contact time</dt><dd>{metricValue(summary?.mean_time_to_contact_s, 's')} (contacts only)</dd>
+                        <dt>Duration</dt><dd>{metricValue(summary?.mean_episode_duration_s, 's')}</dd>
+                    </dl>
+                    <h4 className="football-room-subheading">Nearest player–ball distance (all episodes)</h4>
+                    {Object.entries({
+                        under_0_5_m: 'Under 0.5m', '0_5_to_1_m': '0.5–1m',
+                        '1_to_2_m': '1–2m', over_2_m: 'Over 2m',
+                    }).map(([key, title]) => {
+                        const count = buckets?.[key] ?? 0;
+                        return <div key={key} className="football-room-bar"><span>{title}</span>
+                            <div><i style={{ width: String(count * 100 / Math.max(1, evaluation.episodes)) + '%' }} /></div><strong>{count}</strong></div>;
+                    })}
+                    <p className="football-room-note">Distance alone does not establish contact; successful contact is counted only on the ball physics event.</p>
+                </> : <p className="football-room-note">Starting distance, nearest player–ball distance and time to contact were not recorded in older evaluations. Re-evaluate the frozen policy on the updated runner; missing measurements are not zeros.</p>}
+            </section>
+            <section className="football-room-panel">
+                <header><h3>Outcome reasons</h3><span>Recorded Unity outcomes</span></header>
+                {reasons.map(([reason, count]) =>
+                    <div className="football-room-bar" key={reason}><span>{reason.replaceAll('_', ' ')}</span>
+                        <div><i style={{ width: String(100 * count / Math.max(1, evaluation.episodes)) + '%' }} /></div><strong>{count}</strong></div>)}
+                {!reasons.length && <p className="football-room-empty">Outcome breakdown unavailable.</p>}
+                <dl className="football-room-details"><dt>Seed</dt><dd>{evaluation.seed}</dd>
+                    <dt>Stage</dt><dd>{evaluation.curriculum_stage || 'Legacy baseline'}</dd>
+                    <dt>Policy</dt><dd className="football-room-hash">{evaluation.policy_id}</dd></dl>
+            </section>
         </div>
         <section className="football-room-panel">
-            <header><h3>Evaluation record</h3><span>Seeded inference · final results</span></header>
-            <dl className="football-room-details">
-                <dt>Seed</dt><dd>{evaluation.seed}</dd>
-                <dt>Curriculum stage</dt><dd>{evaluation.curriculum_stage || 'Legacy baseline'}</dd>
-                <dt>Policy ID</dt><dd className="football-room-hash">{evaluation.policy_id}</dd>
-                <dt>Result ID</dt><dd className="football-room-hash">{evaluation.id}</dd>
-            </dl>
-            <p className="football-room-note">Episode-by-episode live progress is not yet emitted by the current evaluator. This page displays its saved measured result, not inferred intermediate values.</p>
+            <header><h3>Episode explorer</h3><span>Saved inference results</span></header>
+            <div className="football-room-log-controls">
+                <label>Show <select aria-label="Filter evaluation episodes" value={filter} onChange={e => setFilter(e.target.value)}>
+                    <option value="all">All on this page</option><option value="success">Successes</option><option value="failed">Failures</option>
+                </select></label>
+                <span className="football-room-note">The filter applies only to the displayed page.</span>
+            </div>
+            <div className="football-room-episodes"><table>
+                <thead><tr><th>Episode</th><th>Outcome</th><th>Reason</th><th>Start</th><th>Nearest</th><th>Contact time</th><th>Reward</th></tr></thead>
+                <tbody>{rows.map(e => <tr key={e.index}><td>#{e.index}</td><td>{e.success ? 'Success' : 'Failed'}</td>
+                    <td>{e.ball_control?.termination_reason?.replaceAll('_', ' ') ?? '—'}</td>
+                    <td>{metricValue(e.ball_control?.start_player_ball_distance_m)}</td>
+                    <td>{metricValue(e.ball_control?.min_player_ball_distance_m)}</td>
+                    <td>{metricValue(e.ball_control?.time_to_first_contact_s, 's')}</td>
+                    <td>{number(e.reward ?? undefined, 3)}</td>
+                </tr>)}</tbody>
+            </table></div>
+            <div className="football-room-pagination">
+                <button className="football-button quiet" disabled={loadingDetail || page === 0} onClick={() => setPage(p => p - 1)}>← Previous</button>
+                <span>Page {page + 1} / {Math.max(1, Math.ceil((detail?.pagination?.total ?? evaluation.episodes) / pageSize))}</span>
+                <button className="football-button quiet" disabled={loadingDetail || !detail?.pagination?.has_more} onClick={() => setPage(p => p + 1)}>Next →</button>
+            </div>
         </section>
+        <p className="football-room-footnote">Evaluation metrics come from frozen-policy Unity episodes, not PPO training reward. Live episode streaming and policy comparisons remain future work.</p>
     </main>;
 }

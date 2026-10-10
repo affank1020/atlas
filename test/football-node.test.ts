@@ -17,6 +17,9 @@ test('Node football bridge rejects unvalidated CLI arguments and unbound driver 
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-football-'));
     try {
         await assert.rejects(footballControl(workspace(root), { ...input, action: 'jobs', command: 'rm -rf /' }));
+        await assert.rejects(footballControl(workspace(root), { ...input, action: 'evaluation_detail', evaluationId: '../etc/passwd' }));
+        await assert.rejects(footballControl(workspace(root), { ...input, action: 'evaluation_detail', evaluationId: 'eval_valid', offset: -1 }));
+        await assert.rejects(footballControl(workspace(root), { ...input, action: 'evaluation_detail', evaluationId: 'eval_valid', limit: 201 }));
         await assert.rejects(footballControl(workspace(root), { ...input, action: 'launch_headless', drill: '../escape' }));
         await assert.rejects(footballControl(workspace(root), { ...input, action: 'jobs' }), (e: any) => e.code === 'DRIVER_UNAVAILABLE');
         const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'atlas-football-script-'));

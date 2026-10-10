@@ -66,6 +66,14 @@ copy or modify the driver source.
 Docker-backed PostgreSQL container specified by `infra/docker-compose.yml`
 for integration tests.
 
+## M2 Evaluation Diagnostics V2 (2026-10-10, local implementation)
+
+The bounded, read-only action football_get_evaluation_detail takes a validated evaluationId, offset (0-10000) and limit (1-200). The Mac Python driver reads saved completed evaluation records and returns aggregate physics outcomes plus paginated episode measurements. Unity Ball Control reports start player-ball distance, minimum player-ball distance, first physical-contact time, episode duration and termination reason. Contact time exists only when actual physical contact occurred; old reports correctly return missing, not zero.
+
+The Evaluation Control Room displays reason counts, closest-approach bands, measured distance/time averages and a page-filtered episode explorer. This is **not** live evaluation streaming and does **not** mutate the evaluation. Other drills and pre-V2 evaluations continue to show their historical results without fabricating measurements.
+
+Requires a web/server deployment and a rebuilt/restarted Mac Node; the Unity runner recompiles when C# source hash changes. Validate both new and historical evaluation IDs through the new action after deployment. Tracked M2 exit gates and future General Policy/Evaluation Suite/Comparison Lab design are recorded in docs/football-policy-evaluation-roadmap.md.
+
 ## M2 ball-control manual stages (2026-10-10)
 
 The ball-control catalogue is now registry-driven for the first **manual** curriculum slice. The `ball_control_v1` drill advertises `approach`, `first_touch` and `dribble` via `curriculum.stages` and three named PPO preset config paths; `smoke` and `full` remain available as legacy stage-0 baselines. Other drills remain unchanged.

@@ -63,6 +63,13 @@ test('football evaluation is exposed through the Application typed tool registry
     assert.ok(apps.hasTool('football_get_evaluation_status'));
     assert.ok(apps.hasTool('football_list_evaluations'));
     assert.ok(apps.hasTool('football_index_policy'));
+    assert.ok(apps.hasTool('football_get_evaluation_detail'));
+    await apps.invoke('football_get_evaluation_detail', { evaluationId: 'eval_20261010_110312_43efdc', offset: 0, limit: 100 });
+    assert.deepEqual(invocations[0][2], { projectId: FOOTBALL_PROJECT_ID, workspaceId: workspace.id, action: 'evaluation_detail', evaluationId: 'eval_20261010_110312_43efdc', offset: 0, limit: 100 });
+    await assert.rejects(apps.invoke('football_get_evaluation_detail', { evaluationId: '../bad' }));
+    await assert.rejects(apps.invoke('football_get_evaluation_detail', { evaluationId: 'eval_20261010_110312_43efdc', limit: 99999 }));
+    invocations.length = 0;
+    audits.length = 0;
     await apps.invoke('football_run_evaluation', { policyId: 'policy_passing_v1_test', episodes: 100, seed: 123 });
     assert.equal(invocations[0][1], 'football_control');
     assert.equal(invocations[0][2].action, 'evaluate');

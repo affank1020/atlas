@@ -9,6 +9,7 @@ import type { ApplicationDefinition, ApplicationTool } from './registry.js';
 export const FOOTBALL_PROJECT_ID = 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7';
 const runId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const policyId = z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
+const evaluationId = z.string().regex(/^eval_[A-Za-z0-9_]{1,74}$/);
 const drill = runId;
 const integer = z.number().int();
 
@@ -59,6 +60,7 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_stop_training', 'Request graceful stop of a verified running headless football training job.', { runId }, 'stop_job'),
             action('football_index_policy', 'Index exported ONNX policy artifacts from a completed football training run.', { runId }, 'index_policy'),
             action('football_list_evaluations', 'List saved model evaluations.', {}, 'evaluations'),
+            action('football_get_evaluation_detail', 'Read bounded measured per-episode evaluation diagnostics and summary for a completed evaluation.', { evaluationId, offset: integer.min(0).max(10000).default(0), limit: integer.min(1).max(200).default(100) }, 'evaluation_detail'),
             action('football_run_evaluation', 'Start seeded policy inference evaluation on connected Mac. Returns a receipt.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(123) }, 'evaluate'),
             action('football_get_evaluation_status', 'Inspect evaluation progress and completion receipt.', { runId }, 'evaluation_status'),
             action('football_list_viewers', 'List local Mac viewer sessions, including live telemetry and policy playback.', {}, 'viewer_sessions'),

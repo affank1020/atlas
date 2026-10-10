@@ -42,6 +42,7 @@ const argsFor = (x: Input): string[] => {
         case 'job_logs': return ['job-logs', '--run-id', x.runId!, '--lines', String(x.lines ?? 60)];
         case 'policies': return ['policies'];
         case 'evaluations': return ['evaluation-results'];
+        case 'evaluation_detail': return ['evaluation-detail', '--evaluation-id', x.evaluationId!, '--offset', String(x.offset ?? 0), '--limit', String(x.limit ?? 100)];
         case 'viewer_sessions': return ['viewer-sessions'];
         case 'watch_policy': return ['watch', '--policy', x.policyId!, '--arenas', String(x.arenas ?? 1), '--seed', String(x.seed ?? 42)];
         case 'watch_live': return ['watch-live', '--run', x.runId!];
@@ -59,6 +60,8 @@ const argsFor = (x: Input): string[] => {
 function validateAction(x: Input) {
     if (['job_logs', 'stop_job', 'index_policy', 'watch_live', 'viewer_launch_status'].includes(x.action) && !x.runId)
         throw new AtlasError('A run ID is required.', 'INVALID_ARGUMENT');
+    if (x.action === 'evaluation_detail' && !x.evaluationId)
+        throw new AtlasError('An evaluation ID is required.', 'INVALID_ARGUMENT');
     if (x.action === 'launch_headless' && !x.drill)
         throw new AtlasError('A drill is required.', 'INVALID_ARGUMENT');
     if (['evaluation_plan', 'evaluate', 'watch_policy'].includes(x.action) && !x.policyId)

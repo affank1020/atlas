@@ -46,5 +46,18 @@
 .football-room-timeline>div span{color:var(--text-secondary)}
 .football-room-timeline>div code{color:var(--text-muted);font-size:.7rem}
 .football-room-timeline>p{font-size:.76rem;color:var(--text-muted)}
+.football-room-subheading{font-size:.76rem;margin:18px 0 12px;color:var(--text-secondary)}
+.football-room-bar{display:grid;grid-template-columns:minmax(85px,1fr) minmax(60px,1.5fr) 38px;align-items:center;gap:12px;margin:12px 0;font-size:.72rem;color:var(--text-secondary);text-transform:capitalize}
+.football-room-bar>div{height:7px;border-radius:4px;overflow:hidden;background:var(--surface-hover)}
+.football-room-bar i{display:block;height:100%;background:var(--text-secondary);border-radius:4px}
+.football-room-bar strong{text-align:right;color:var(--text-primary);font-variant-numeric:tabular-nums}
+.football-room-episodes{max-width:100%;max-height:470px;overflow:auto;border:1px solid var(--border);border-radius:6px}
+.football-room-episodes table{border-collapse:collapse;width:100%;min-width:730px;font-size:.71rem;text-align:left}
+.football-room-episodes th{position:sticky;top:0;background:var(--surface-elevated);z-index:1;color:var(--text-muted);font-weight:650}
+.football-room-episodes th,.football-room-episodes td{padding:10px 12px;border-bottom:1px solid var(--border)}
+.football-room-episodes td{color:var(--text-secondary);font-variant-numeric:tabular-nums}
+.football-room-pagination{display:flex;gap:12px;align-items:center;justify-content:flex-end;margin-top:14px;color:var(--text-muted);font-size:.72rem}
+.football-room-log-controls select{border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text-primary);padding:8px;font:inherit;font-size:.73rem}
+
 @media(max-width:1100px){.football-room-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.football-room-grid{grid-template-columns:1fr}}
 @media(max-width:660px){.football-room-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.football-room-heading h2{font-size:1.22rem}.football-room-meta span:last-child{margin-left:0}.football-room-panel{padding:14px}.football-room-details{grid-template-columns:1fr;gap:4px}.football-room-details dd{margin-bottom:8px}.football-room-console{max-height:340px}}
