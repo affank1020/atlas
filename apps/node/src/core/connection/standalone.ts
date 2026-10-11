@@ -46,7 +46,9 @@ export class StandaloneNode extends EventEmitter {
             if (!this.errorReported) { this.errorReported = true; this.emit('connectionError', error.message.slice(0, 200)); }
             // Close drives one bounded reconnect path. Never log credentials.
         });
-        socket.on('close', (_code, reason) => {
+        socket.on('close', (code, reason) => {
+            // Diagnostics only: never emit the credential or the full server URL.
+            this.emit('socketClosed', code, String(reason).slice(0, 120));
             if (!this.registered && reason.length && !this.errorReported) { this.errorReported = true; this.emit('connectionError', String(reason).slice(0, 200)); }
             clearTimeout(this.registrationTimer);
             if (this.socket !== socket) return;

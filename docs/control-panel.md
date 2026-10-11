@@ -81,6 +81,28 @@ accepted as legacy aliases for `server` and `web`.
 Atlas Web is at <http://127.0.0.1:5173>. The tunnel's own diagnostics are at
 <http://127.0.0.1:8080/ui>.
 
+## Native macOS menu-bar UI
+
+On macOS 13 or later, run `./atlasctl ui` from the Atlas repository.
+It builds `.build/Atlas Node.app` and opens the menu-bar utility. The UI delegates
+Start, Stop, Restart and LaunchAgent installation to `atlasctl` rather than
+running a second process supervisor. No Node credentials are read by the UI.
+
+The control window shows local process/launchd state, actual Node connection
+state, last connection transition and bounded logs. The Node publishes a
+credential-free heartbeat at
+`~/Library/Application Support/Atlas/node-status.json`.
+An absent or stale heartbeat is **unverified**, never treated as connected.
+To enable diagnostics for an already running older Node, choose a safe time
+to build and restart it with `./atlasctl restart` (it can interrupt Node work).
+`./atlasctl status --json` is the corresponding read-only machine interface.
+WebSocket close codes are recorded so deploy/network/process issues are easier
+to distinguish. The app is local-built with Swift Command Line Tools and is
+not code-signed or notarised.
+
+Use `./atlasctl launchd install` for login startup and process crash recovery.
+Do not start a second supervisor under the same Node ID; a later connection
+replaces an earlier one.
 ## Requirements
 
 - Docker Desktop for PostgreSQL

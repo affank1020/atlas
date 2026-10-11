@@ -29,6 +29,7 @@ const launchdPlist = join(launchdDirectory, `${launchdLabel}.plist`);
 const launchdLogDirectory = join(controlHome, "Library/Logs/Atlas");
 const launchdStdout = join(launchdLogDirectory, "node.log");
 const launchdStderr = join(launchdLogDirectory, "node-error.log");
+const nodeStatusFile = join(controlHome, "Library/Application Support/Atlas/node-status.json");
 const launchdDomain = `gui/${process.getuid?.() ?? userInfo().uid}`;
 const launchdTarget = `${launchdDomain}/${launchdLabel}`;
 
@@ -477,6 +478,41 @@ function stateText(state) {
   return `${colors.dim}STOPPED ${colors.reset}`;
 }
 
+function localConnectionStatus() {
+  try {
+    const report = JSON.parse(readFileSync(nodeStatusFile, "utf8"));
+    if (!Number.isInteger(report.pid) || !["connecting", "connected", "reconnecting", "stopping"].includes(report.state))
+      return { state: "unknown", detail: "Invalid local status file" };
+    const ageMs = Date.now() - Date.parse(report.updatedAt);
+    if (!Number.isFinite(ageMs) || ageMs < -10_000 || ageMs > 30_000)
+      return { state: "unknown", detail: "Node heartbeat is stale", changedAt: report.changedAt };
+    try { process.kill(report.pid, 0); }
+    catch { return { state: "unknown", detail: "Previous Node process is not running", changedAt: report.changedAt }; }
+    return {
+      state: report.state,
+      detail: typeof report.detail === "string" ? report.detail.slice(0, 160) : "",
+      pid: report.pid,
+      changedAt: report.changedAt,
+      updatedAt: report.updatedAt,
+    };
+  } catch {
+    return { state: "unknown", detail: "No local connection diagnostics yet (restart the updated Node)" };
+  }
+}
+
+async function printJsonStatus() {
+  console.log(JSON.stringify({
+    hosted: await hostedNodeState(),
+    local: await localNodeState(),
+    launchd: launchdState(),
+    connection: localConnectionStatus(),
+    unmanagedNodeCount: externalNodeProcesses().length,
+    target: nodeTarget() ?? "unknown",
+    webUrl: hostedWebUrl(),
+    logs: [paths("node-hosted").log, launchdStdout, launchdStderr],
+  }));
+}
+
 async function printStatus() {
   console.log(`${colors.bold}Atlas Control${colors.reset}\n`);
   for (const name of ["postgres", "server"]) {
@@ -787,6 +823,8 @@ Usage:
   ./atlasctl dev down [--all]  Stop local dev services without stopping a hosted Node
   ./atlasctl dev restart       Restart the local development stack
   ./atlasctl status            Show local service status (Docker only needed for dev)
+  ./atlasctl status --json     Machine-readable Node and connection status
+  ./atlasctl ui               Build and open the native Mac menu-bar UI
   ./atlasctl start <service>   Start one service
   ./atlasctl stop <service>    Stop one managed service
   ./atlasctl logs [service]    Show the latest managed logs
@@ -909,7 +947,19 @@ switch (command) {
       default: console.error("Usage: ./atlasctl dev [up|down|restart|status|open] [--ask|--all]"); process.exitCode = 2;
     }
     break;
-  case "status": await printStatus(); break;
+  case "status":
+    if (argument === "--json") await printJsonStatus();
+    else if (!argument) await printStatus();
+    else { console.error("Usage: ./atlasctl status [--json]"); process.exitCode = 2; }
+    break;
+  case "ui": {
+    if (controlPlatform !== "darwin") {
+      console.error("Atlas Node UI requires macOS."); process.exitCode = 1; break;
+    }
+    const result = spawnSync("/bin/bash", [join(atlasDir, "scripts/build-node-ui.sh")], { cwd: atlasDir, stdio: "inherit" });
+    if (result.status !== 0) process.exitCode = result.status ?? 1;
+    break;
+  }
   case "launchd":
     switch (argument || "status") {
       case "install": if (!await installLaunchd()) process.exitCode = 1; break;

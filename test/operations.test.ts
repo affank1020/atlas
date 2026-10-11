@@ -219,6 +219,31 @@ test("launchd install creates a credential-free user LaunchAgent and preserves c
   assert.equal(existsSync(join(item.nodeDirectory, ".env.node")), true);
 });
 
+test("machine-readable Node diagnostics are bounded and never expose credentials", t => {
+  const item = fixture("hosted");
+  t.after(() => rmSync(item.root, { recursive: true, force: true }));
+  const result = item.run(["status", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.target, "hosted");
+  assert.equal(status.connection.state, "unknown");
+  assert.equal(typeof status.hosted.state, "string");
+  assert.equal(typeof status.launchd.installed, "boolean");
+  assert.equal(status.unmanagedNodeCount, 0);
+  assert.ok(status.logs.every((path: string) => path.endsWith(".log")));
+  assert.doesNotMatch(result.stdout, /ATLAS_NODE_CREDENTIAL|test-node-credential|Bearer /);
+});
+
+test("native Mac companion has valid shell launcher and uses atlasctl instead of a second supervisor", () => {
+  const launcher = spawnSync("bash", ["-n", "scripts/build-node-ui.sh"], { encoding: "utf8" });
+  assert.equal(launcher.status, 0, launcher.stderr);
+  const source = readFileSync("scripts/atlas-node-ui.swift", "utf8");
+  assert.match(source, /MenuBarExtra/);
+  assert.match(source, /status", "--json"/);
+  assert.match(source, /command\(\["logs", "node"\]/);
+  assert.doesNotMatch(source, /ATLAS_NODE_CREDENTIAL/);
+});
+
 test("invalid local flags and commands return usage errors, while VPS exit status is preserved", t => {
   for (const argv of [["up", "--ask"], ["down", "--all"]]) {
     const result = spawnSync(process.execPath, [controlScript, ...argv], { encoding: "utf8" });

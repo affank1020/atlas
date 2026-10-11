@@ -28,6 +28,7 @@ const publicJob = (j: any) => ({
     training_spawn: j.training_spawn ?? 'none',
     observation_transform: j.observation_transform ?? 'none',
     stage1_reward_mode: j.stage1_reward_mode ?? 'none',
+    stage2_reward_mode: j.stage2_reward_mode ?? 'none',
     parent_policy_id: j.parent_policy_id ?? null,
     transfer: j.transfer ? { parent_run_id: j.transfer.parent_run_id, parent_checkpoint_step: j.transfer.parent_checkpoint_step, parent_checkpoint_sha256: j.transfer.parent_checkpoint_sha256, parent_onnx_sha256: j.transfer.parent_onnx_sha256 } : null,
 });
@@ -156,6 +157,7 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
             role: p.role, indexed_at: p.indexed_at, evaluation: p.evaluation,
             observation_transform: p.observation_transform ?? 'none',
             stage1_reward_mode: p.stage1_reward_mode ?? 'none',
+            stage2_reward_mode: p.stage2_reward_mode ?? 'none',
             parent_policy_id: p.parent_policy_id ?? null,
             transfer: p.transfer ? { parent_run_id: p.transfer.parent_run_id, parent_checkpoint_step: p.transfer.parent_checkpoint_step, parent_checkpoint_sha256: p.transfer.parent_checkpoint_sha256 } : null,
             artifacts: Array.isArray(p.artifacts) ? p.artifacts.map((a: any) => ({ path: a.path, final: a.final, size_bytes: a.size_bytes })) : [],

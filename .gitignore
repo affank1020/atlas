@@ -8,6 +8,9 @@ data/*.json
 !data/.gitkeep
 data/media/
 
+# Native macOS Node UI build output
+/.build/
+
 # Local configuration and build caches anywhere in the workspace
 **/.env
 **/.env.*
