@@ -30,6 +30,7 @@ export const workspaceOperationSchemas = {
         evaluationId: z.string().regex(/^eval_[A-Za-z0-9_]{1,74}$/).optional(),
         baselineMode: z.enum(['zero', 'random', 'forward', 'scripted']).optional(),
         replayEpisode: z.number().int().min(0).max(10000).optional(),
+        evaluationStage: z.union([z.literal(1), z.literal(2)]).optional(), // Cross-stage retention or zero-shot First Touch benchmark
         offset: z.number().int().min(0).max(10000).optional(),
         limit: z.number().int().min(1).max(200).optional(),
         preset: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),

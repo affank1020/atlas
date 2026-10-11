@@ -25,6 +25,11 @@ const publicJob = (j: any) => ({
     config_sha256: j.config_sha256,
     curriculum_stage: j.curriculum_stage ?? 0,
     curriculum_stage_id: j.curriculum_stage_id ?? null,
+    training_spawn: j.training_spawn ?? 'none',
+    observation_transform: j.observation_transform ?? 'none',
+    stage1_reward_mode: j.stage1_reward_mode ?? 'none',
+    parent_policy_id: j.parent_policy_id ?? null,
+    transfer: j.transfer ? { parent_run_id: j.transfer.parent_run_id, parent_checkpoint_step: j.transfer.parent_checkpoint_step, parent_checkpoint_sha256: j.transfer.parent_checkpoint_sha256, parent_onnx_sha256: j.transfer.parent_onnx_sha256 } : null,
 });
 function driverPath(workspace: Workspace) {
     if (workspace.kind !== 'unity' || workspace.status !== 'active')
@@ -46,7 +51,7 @@ const argsFor = (x: Input): string[] => {
         case 'viewer_sessions': return ['viewer-sessions'];
         case 'watch_policy': return ['watch', '--policy', x.policyId!, '--arenas', String(x.arenas ?? 1), '--seed', String(x.seed ?? 42)];
         case 'watch_live': return ['watch-live', '--run', x.runId!];
-        case 'evaluate': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123), ...(x.replayEpisode ? ['--episode-index', String(x.replayEpisode)] : [])];
+        case 'evaluate': return ['evaluate', '--policy', x.policyId!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123), ...(x.replayEpisode ? ['--episode-index', String(x.replayEpisode)] : []), ...(x.evaluationStage ? ['--evaluation-stage', String(x.evaluationStage)] : [])];
         case 'evaluate_baseline': return ['evaluate-baseline', '--mode', x.baselineMode!, '--episodes', String(x.episodes ?? 100), '--seed', String(x.seed ?? 123), ...(x.replayEpisode ? ['--episode-index', String(x.replayEpisode)] : [])];
         case 'index_policy': return ['policies', '--index-run', x.runId!];
         case 'stop_job': return ['stop-job', '--run-id', x.runId!];
@@ -65,6 +70,8 @@ function validateAction(x: Input) {
         throw new AtlasError('A baseline controller is required.', 'INVALID_ARGUMENT');
     if (x.replayEpisode && (!['evaluate', 'evaluate_baseline'].includes(x.action) || (x.episodes ?? 100) !== 1))
         throw new AtlasError('Scenario replay requires a one-episode evaluation.', 'INVALID_ARGUMENT');
+    if (x.evaluationStage !== undefined && x.action !== 'evaluate')
+        throw new AtlasError('Stage override is only supported for policy evaluation.', 'INVALID_ARGUMENT');
     if (x.action === 'evaluation_detail' && !x.evaluationId)
         throw new AtlasError('An evaluation ID is required.', 'INVALID_ARGUMENT');
     if (x.action === 'launch_headless' && !x.drill)
@@ -147,6 +154,10 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
         if (x.action === 'policies') return Array.isArray(parsed) ? parsed.map(p => ({
             id: p.id, source_run_id: p.source_run_id, drill: p.drill, behavior: p.behavior,
             role: p.role, indexed_at: p.indexed_at, evaluation: p.evaluation,
+            observation_transform: p.observation_transform ?? 'none',
+            stage1_reward_mode: p.stage1_reward_mode ?? 'none',
+            parent_policy_id: p.parent_policy_id ?? null,
+            transfer: p.transfer ? { parent_run_id: p.transfer.parent_run_id, parent_checkpoint_step: p.transfer.parent_checkpoint_step, parent_checkpoint_sha256: p.transfer.parent_checkpoint_sha256 } : null,
             artifacts: Array.isArray(p.artifacts) ? p.artifacts.map((a: any) => ({ path: a.path, final: a.final, size_bytes: a.size_bytes })) : [],
         })) : [];
         return parsed;

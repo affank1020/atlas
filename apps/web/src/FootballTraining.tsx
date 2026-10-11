@@ -3,13 +3,13 @@ import { callTool } from './api';
 import { FootballRunControlRoom, FootballEvaluationControlRoom } from './FootballRunControlRoom';
 import './football-training.css';
 
-type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string };
+type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string; reward_mode?: string; parent_policy_id?: string };
 type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[]; variants?: CurriculumStage[] } };
-type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null; observation_transform?: string };
-type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string; observation_transform?: string };
+type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null; observation_transform?: string; stage1_reward_mode?: string; parent_policy_id?: string | null; transfer?: { parent_checkpoint_step?: number; parent_checkpoint_sha256?: string } | null };
+type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string; observation_transform?: string; stage1_reward_mode?: string; parent_policy_id?: string | null; transfer?: { parent_checkpoint_step?: number } | null };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
-type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string; observation_transform?: string };
+type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string; observation_transform?: string; evaluation_purpose?: 'primary_stage' | 'approach_retention' | 'first_touch_zero_shot'; source_training_stage?: number };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
 type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer';
 const screens: { id: Screen; label: string; note: string }[] = [
@@ -49,6 +49,7 @@ export function FootballTraining() {
     const [policySearch, setPolicySearch] = useState('');
     const [episodes, setEpisodes] = useState(100);
     const [evalSeed, setEvalSeed] = useState(123);
+    const [evaluationMode, setEvaluationMode] = useState<'primary' | 'stage1_retention' | 'stage2_zero_shot'>('primary');
     const [viewerArenas, setViewerArenas] = useState(1);
     const [viewerSeed, setViewerSeed] = useState(42);
     const [evaluationLaunch, setEvaluationLaunch] = useState<Launch>();
@@ -259,13 +260,13 @@ export function FootballTraining() {
                 {visiblePolicies.map(policy => <button type="button" key={policy.id} className={`football-policy-card ${selectedPolicy === policy.id ? 'selected' : ''}`} onClick={() => {setSelectedPolicy(policy.id);setEvalPlan(undefined);}}>
                     <div className="football-card-top"><span className="football-card-tag">{titleFor(policy.drill)}</span><span className="football-artifact-type">ONNX</span></div>
                     <div className="football-policy-glyph" aria-hidden="true">◇ <span>┄┄┄</span></div>
-                    <strong title={policy.id}>{policy.id}</strong>{policy.observation_transform === "mirror_left_v1" && <small className="football-muted">Symmetric left/right controller · mirror v1</small>}<small title={policy.source_run_id}>Source · {policy.source_run_id}{jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage}` : ''}</small>
+                    <strong title={policy.id}>{policy.id}</strong>{policy.observation_transform === "mirror_left_v1" && <small className="football-muted">Symmetric left/right controller · mirror v1</small>}{(policy.stage1_reward_mode === "heading_delta_far_v1" || jobs.find(job => job.id === policy.source_run_id)?.stage1_reward_mode === "heading_delta_far_v1") && <small className="football-muted">Heading-progress reward · off-axis starts</small>}{policy.parent_policy_id && <small className="football-muted" title={policy.parent_policy_id}>Stage-2 transfer · initialised from {policy.parent_policy_id}</small>}<small title={policy.source_run_id}>Source · {policy.source_run_id}{jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === policy.source_run_id)?.curriculum_stage}` : ''}</small>
                     <div className="football-card-foot"><span>{policy.artifacts.filter(a => a.final).length} final export(s)</span><span>{selectedPolicy === policy.id ? 'Selected ✓' : 'Inspect ↗'}</span></div>
                 </button>)}
                 {!loading && visiblePolicies.length === 0 && <div className="football-empty">No matching policies. Index a completed run to add a policy to the library.</div>}
             </div>
             {currentPolicy && <div className="football-selected-policy">
-                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}{currentPolicy.observation_transform === "mirror_left_v1" ? " · Mirror-left v1" : ""}{jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage}` : ''}</small></div>
+                <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}{currentPolicy.observation_transform === "mirror_left_v1" ? " · Mirror-left v1" : ""}{currentPolicy.stage1_reward_mode === "heading_delta_far_v1" ? " · Heading-progress reward" : ""}{currentPolicy.parent_policy_id ? " · Parent: " + currentPolicy.parent_policy_id : ""}{jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage}` : ''}</small></div>
                 <button className="football-button primary" disabled={!!busy} onClick={() => { setScreen('evaluation'); }}>Evaluate policy →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => { setScreen('viewer'); }}>Open policy viewer →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => void act('plan', async () => {
@@ -312,7 +313,7 @@ export function FootballTraining() {
                                 <span>Stage {variant.stage} experiment · {variant.title}</span><small>{variant.description}</small>
                             </button>)}
                         </div>
-                        {selectedStage && <small className="football-muted">Measured outcome: {selectedStage.metric.replaceAll('_', ' ')} · {selectedStage.description}{selectedStage.training_spawn ? ' · Training distribution: ' + selectedStage.training_spawn : ''}</small>}
+                        {selectedStage && <small className="football-muted">Measured outcome: {selectedStage.metric.replaceAll('_', ' ')} · {selectedStage.description}{selectedStage.training_spawn ? ' · Training distribution: ' + selectedStage.training_spawn : ''}{selectedStage.reward_mode === 'heading_delta_far_v1' ? ' · Reward: off-axis heading progress (signed delta)' : ''}{selectedStage.parent_policy_id ? ' · Transfer parent: ' + selectedStage.parent_policy_id : ''}</small>}
                     </div>}
                     <div className="football-actions">
                         <button className="football-button primary" disabled={!selectedDrill || !!busy || loading || !Number.isInteger(arenas) || arenas < 1 || arenas > 16 || !Number.isInteger(basePort) || basePort < 1024 || basePort > 65519 || !Number.isInteger(seed) || seed < 0} onClick={() => void act('launch', async () => {
@@ -358,7 +359,7 @@ export function FootballTraining() {
                         </button>)}
                         {!loading && !filteredJobs.length && <div className="football-empty">No matching runs in this section. Change the filter or open the archive; no runs are deleted.</div>}
                     </div>
-                    {currentJob && filteredJobs.some(job => job.id === currentJob.id) && <div className="football-inspector"><h3>{currentJob.id}</h3><p className="football-muted">Started {date(currentJob.started_at)} · port {currentJob.base_port} · seed {currentJob.seed}{currentJob.curriculum_stage ? ` · Stage ${currentJob.curriculum_stage} (${currentJob.curriculum_stage_id})` : ''}</p>
+                    {currentJob && filteredJobs.some(job => job.id === currentJob.id) && <div className="football-inspector"><h3>{currentJob.id}</h3><p className="football-muted">Started {date(currentJob.started_at)} · port {currentJob.base_port} · seed {currentJob.seed}{currentJob.curriculum_stage ? ` · Stage ${currentJob.curriculum_stage} (${currentJob.curriculum_stage_id})` : ''}{currentJob.stage1_reward_mode === 'heading_delta_far_v1' ? ' · Heading-progress reward' : ''}{currentJob.parent_policy_id ? ' · Parent policy: ' + currentJob.parent_policy_id : ''}{currentJob.transfer?.parent_checkpoint_step ? ' · Checkpoint step ' + currentJob.transfer.parent_checkpoint_step : ''}</p>
                         <div className="football-actions"><button className="football-button quiet" disabled={!!busy} onClick={() => void loadLogs(currentJob.id)}>{busy === 'logs' ? 'Loading…' : 'View latest logs'}</button>
                         <button className="football-button primary" disabled={!!busy || currentJob.state !== 'running'} onClick={() => launchViewer('live', currentJob.id)}>Watch live ↗</button>
                         <button className="football-button danger" disabled={!!busy || currentJob.state !== 'running'} onClick={() => void act('stop', async () => {
@@ -392,12 +393,15 @@ export function FootballTraining() {
                     <label>Episodes<input type="number" min={1} max={10000} value={episodes} onChange={e => setEpisodes(Number(e.target.value))} /></label>
                     <label>Seed<input type="number" min={0} max={2147483647} value={evalSeed} onChange={e => setEvalSeed(Number(e.target.value))} /></label>
                     <label>Replay episode (optional)<input type="number" min={0} max={10000} value={replayEpisode} onChange={e => setReplayEpisode(Number(e.target.value))} title="0 runs the full seed suite; positive values replay exactly one saved scenario" /></label>
+                    {currentPolicy?.drill === 'ball_control_v1' && jobs.some(job => job.id === currentPolicy.source_run_id && [1,2].includes(job.curriculum_stage ?? 0)) && <label>Evaluation objective<select aria-label="Evaluation objective" value={evaluationMode} onChange={e => setEvaluationMode(e.target.value as 'primary' | 'stage1_retention' | 'stage2_zero_shot')}><option value="primary">Trained stage (normal)</option>{jobs.some(job => job.id === currentPolicy.source_run_id && job.curriculum_stage === 2) && <option value="stage1_retention">Stage 1 · approach retention</option>}{jobs.some(job => job.id === currentPolicy.source_run_id && job.curriculum_stage === 1) && <option value="stage2_zero_shot">Stage 2 · zero-shot First Touch baseline</option>}</select></label>}
                 </div>
                 <div className="football-actions">
                     <button className="football-button primary" disabled={!!busy || !currentPolicy || !Number.isInteger(episodes) || episodes < 1 || episodes > 10000 || !Number.isInteger(evalSeed) || evalSeed < 0 || (replayEpisode > 0 && episodes !== 1)}
                         onClick={() => void act('evaluate', async () => {
-                            if (!window.confirm('Run ' + episodes + ' seeded evaluation episodes for ' + currentPolicy!.id + ' on your Mac?')) return;
-                            const result = await callTool<Launch>('football_run_evaluation', { policyId: currentPolicy!.id, episodes, seed: evalSeed, replayEpisode });
+                            if (!window.confirm('Run ' + episodes + ' seeded ' + (evaluationMode === 'stage1_retention' ? 'Stage-1 retention' : evaluationMode === 'stage2_zero_shot' ? 'Stage-2 zero-shot' : 'primary-stage') + ' evaluation episodes for ' + currentPolicy!.id + ' on your Mac?')) return;
+                            const originStage = jobs.find(job => job.id === currentPolicy!.source_run_id)?.curriculum_stage;
+                            const evaluationStage = currentPolicy?.drill === 'ball_control_v1' && ((originStage === 2 && evaluationMode === 'stage1_retention') || (originStage === 1 && evaluationMode === 'stage2_zero_shot')) ? (evaluationMode === 'stage1_retention' ? 1 : 2) : undefined;
+                            const result = await callTool<Launch>('football_run_evaluation', { policyId: currentPolicy!.id, episodes, seed: evalSeed, replayEpisode, ...(evaluationStage ? { evaluationStage } : {}) });
                             setEvaluationLaunch(result); setEvaluationStatus(undefined); setNotice('Evaluation requested. Check its receipt until the Unity evaluation finishes.');
                         })}>Run evaluation ↗</button>
                     <button className="football-button quiet" disabled={!!busy || !currentPolicy} onClick={() => void act('plan', async () => {
@@ -432,7 +436,7 @@ export function FootballTraining() {
                 <div className="football-panel-head"><div><span className="football-kicker">MEASURED RESULTS</span><h2>Evaluation history</h2></div><span>{evaluations.length} completed</span></div>
                 <div className="football-results-list">
                     {evaluations.slice().reverse().map(item => <div className="football-result" key={item.id}>
-                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · ${scenarioLabel(item.scenario_version)}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}{item.observation_transform === "mirror_left_v1" ? " · Mirrored controller" : ""}</small></div>
+                        <div><strong>{item.policy_id}</strong><small>{item.id} · {titleFor(item.drill)} · {item.episodes} episodes · seed {item.seed}{item.curriculum_stage ? ` · Stage ${item.curriculum_stage}` : ''}{item.scenario_version ? ` · ${scenarioLabel(item.scenario_version)}` : ''}{item.baseline_mode ? ` · Baseline ${item.baseline_mode}` : ''}{item.evaluation_purpose === "approach_retention" ? " · Stage-1 retention" : item.evaluation_purpose === "first_touch_zero_shot" ? " · Stage-2 zero-shot" : ""}{item.observation_transform === "mirror_left_v1" ? " · Mirrored controller" : ""}</small></div>
                         <div><strong>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '%' : '—'}</strong><small>Success rate</small></div>
                         <div><strong>{typeof item.mean_reward === 'number' ? item.mean_reward.toFixed(3) : '—'}</strong><small>Mean reward{typeof item.contact_episodes === 'number' ? ` · real contact ${item.contact_episodes}/${item.episodes}` : ''}</small></div>
                         <button className="football-button quiet" onClick={() => setOpenEvaluationId(item.id)}>Inspect →</button>
