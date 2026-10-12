@@ -92,3 +92,41 @@ test('evaluation diagnostics show real measured contact distances and preserve m
     expect(callTool).toHaveBeenCalledWith('football_get_evaluation_detail', { evaluationId: 'eval_v2', offset: 0, limit: 100 });
 });
 
+test('Stage 3 v4 evaluation exposes sustained control evidence without interpreting missing values as zero', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_get_evaluation_detail') return {
+            id: 'eval_stage3', diagnostics_version: 3, scenario_version: 4,
+            pagination: { offset: 0, limit: 100, total: 1, has_more: false },
+            summary: {
+                physical_contact_episodes: 1, termination_reasons: { controlled_target: 1 },
+                mean_start_distance_m: 5.2, mean_min_distance_m: 0.4,
+                mean_time_to_contact_s: 1.0, mean_episode_duration_s: 7,
+                mean_controlled_forward_progress_m: 2.8, mean_net_forward_progress_m: 3.8,
+                mean_controlled_duration_s: 1.9, mean_longest_control_streak_s: 1.4,
+                mean_uncontrolled_duration_s: 0.6,
+                closest_approach_buckets: { under_0_5_m: 1, '0_5_to_1_m': 0, '1_to_2_m': 0, over_2_m: 0 },
+            },
+            episode_results: [
+                { index: 1, success: true, reward: 1.3, ball_control: {
+                    has_contact: true, scenario_id: 'ball-control-v4:stage3:seed515:episode1',
+                    termination_reason: 'controlled_target', controlled_forward_progress_m: 2.8,
+                    longest_control_streak_s: 1.4,
+                } },
+            ],
+        } as never;
+        return [] as never;
+    });
+    render(<FootballEvaluationControlRoom evaluation={{
+        id: 'eval_stage3', policy_id: 'policy_dribble', drill: 'ball_control_v1',
+        episodes: 1, seed: 515, success_rate: 1, mean_reward: 1.3,
+        curriculum_stage: 3,
+    }} onBack={vi.fn()} />);
+    expect(await screen.findByText('Sustained dribble evidence')).toBeInTheDocument();
+    expect(screen.getByText('Scenario v4 · sustained-dribble scoring', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Mean controlled forward')).toBeInTheDocument();
+    expect(screen.getByText('Mean longest control streak')).toBeInTheDocument();
+    expect(screen.getAllByText('2.80 m').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1.40 s').length).toBeGreaterThan(0);
+    expect(screen.getByText('Physics diagnostics v3')).toBeInTheDocument();
+});
+

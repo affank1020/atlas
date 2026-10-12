@@ -206,7 +206,10 @@ type EpisodeDetail = {
     index: number; success: boolean; reward?: number | null;
     ball_control?: { has_contact?: boolean; termination_reason?: string; scenario_id?: string; scenario_version?: number; scenario_ball_local_x_m?: number | null; scenario_ball_local_z_m?: number | null; start_relative_bearing_degrees?: number | null;
         start_player_ball_distance_m?: number | null; min_player_ball_distance_m?: number | null;
-        time_to_first_contact_s?: number | null; episode_duration_s?: number | null; };
+        time_to_first_contact_s?: number | null; episode_duration_s?: number | null;
+        controlled_forward_progress_m?: number | null; net_forward_progress_m?: number | null;
+        controlled_duration_s?: number | null; longest_control_streak_s?: number | null;
+        uncontrolled_duration_s?: number | null; last_contact_age_s?: number | null; };
 };
 type EvaluationDetail = {
     id: string; diagnostics_version: number; scenario_version?: number;
@@ -214,12 +217,15 @@ type EvaluationDetail = {
     summary: { physical_contact_episodes: number | null; termination_reasons: Record<string, number>;
         mean_start_distance_m: number | null; mean_min_distance_m: number | null;
         mean_time_to_contact_s: number | null; mean_episode_duration_s: number | null;
+        mean_controlled_forward_progress_m?: number | null; mean_net_forward_progress_m?: number | null;
+        mean_controlled_duration_s?: number | null; mean_longest_control_streak_s?: number | null;
+        mean_uncontrolled_duration_s?: number | null;
         closest_approach_buckets: Record<string, number> | null; };
     pagination: { offset: number; total: number; has_more: boolean };
     episode_results: EpisodeDetail[];
 };
 const metricValue = (x: number | null | undefined, suffix = 'm') => x == null ? 'Not measured' : number(x, 2) + ' ' + suffix;
-const scenarioTitle = (version?: number) => version === 3 ? 'Scenario v3 · wide-angle holdout' : version === 2 ? 'Scenario v2 · centred' : version ? `Scenario v${version}` : 'Legacy scenario';
+const scenarioTitle = (version?: number) => version === 4 ? 'Scenario v4 · sustained-dribble scoring' : version === 3 ? 'Scenario v3 · wide-angle holdout' : version === 2 ? 'Scenario v2 · centred' : version ? `Scenario v${version}` : 'Legacy scenario';
 
 export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluation: RoomEvaluation; onBack: () => void }) {
     const [detail, setDetail] = useState<EvaluationDetail | null>(null);
@@ -252,7 +258,9 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
         </div>
         {evaluation.drill === 'ball_control_v1' && <p className="football-room-footnote">{evaluation.curriculum_stage === 1
             ? 'Stage 1 measures real player–ball contact, not a controlled first touch. A policy should beat forward-only and random baselines on an identical seed, runner and scenario before promotion. Centred v2 and wide-angle v3 results are not directly comparable.'
-            : 'Ball-control success depends on the recorded curriculum stage. Read the termination reasons and physical-contact diagnostics before interpreting the rate.'}</p>}
+            : evaluation.curriculum_stage === 3
+                ? 'Stage 3 requires actual ball contact, sustained possession, signed controlled forward progress and possession at the target. Its scoring scenario is v4; compare only identical seeds, scenarios and runner builds.'
+                : 'Ball-control success depends on the recorded curriculum stage. Read the termination reasons and physical-contact diagnostics before interpreting the rate.'}</p>}
         <div className="football-room-metrics">
             <div><small>Episodes</small><strong>{number(evaluation.episodes)}</strong></div>
             <div><small>Success rate</small><strong>{evaluation.success_rate == null ? '—' : number(evaluation.success_rate * 100, 1) + '%'}</strong></div>
@@ -264,8 +272,8 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
         {loadingDetail && <p className="football-muted" role="status">Loading measured episode diagnostics…</p>}
         <div className="football-room-grid">
             <section className="football-room-panel">
-                <header><h3>Contact & approach</h3><span>{detail?.diagnostics_version === 2 ? 'Physics diagnostics v2' : 'Legacy measurements'}</span></header>
-                {detail?.diagnostics_version === 2 ? <>
+                <header><h3>Contact & approach</h3><span>{(detail?.diagnostics_version ?? 0) >= 2 ? 'Physics diagnostics v' + detail?.diagnostics_version : 'Legacy measurements'}</span></header>
+                {(detail?.diagnostics_version ?? 0) >= 2 ? <>
                     <dl className="football-room-details">
                         <dt>Mean start</dt><dd>{metricValue(summary?.mean_start_distance_m)}</dd>
                         <dt>Mean nearest</dt><dd>{metricValue(summary?.mean_min_distance_m)}</dd>
@@ -295,6 +303,17 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
                     <dt>Policy</dt><dd className="football-room-hash">{evaluation.policy_id}</dd></dl>
             </section>
         </div>
+        {evaluation.drill === 'ball_control_v1' && evaluation.curriculum_stage === 3 && <section className="football-room-panel">
+            <header><h3>Sustained dribble evidence</h3><span>Stage 3 · physical control gate</span></header>
+            <p className="football-room-note">A success needs physical contact, 2.5m of signed forward progress while in control, 3m net forward travel since contact, 1.5s cumulative control, an uninterrupted 1s control streak and control at the target. Reward alone does not prove dribbling.</p>
+            {(detail?.diagnostics_version ?? 0) >= 3 ? <dl className="football-room-details">
+                <dt>Mean controlled forward</dt><dd>{metricValue(summary?.mean_controlled_forward_progress_m)}</dd>
+                <dt>Mean net forward</dt><dd>{metricValue(summary?.mean_net_forward_progress_m)}</dd>
+                <dt>Mean time in control</dt><dd>{metricValue(summary?.mean_controlled_duration_s, 's')}</dd>
+                <dt>Mean longest control streak</dt><dd>{metricValue(summary?.mean_longest_control_streak_s, 's')}</dd>
+                <dt>Mean time out of control</dt><dd>{metricValue(summary?.mean_uncontrolled_duration_s, 's')}</dd>
+            </dl> : <p className="football-room-note">Sustained-control measurements have not been recorded for this evaluation. Do not interpret missing fields as zero; evaluate with the updated Stage-3 runner.</p>}
+        </section>}
         <section className="football-room-panel">
             <header><h3>Episode explorer</h3><span>Saved inference results</span></header>
             <div className="football-room-log-controls">
@@ -304,7 +323,7 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
                 <span className="football-room-note">The filter applies only to the displayed page.</span>
             </div>
             <div className="football-room-episodes"><table>
-                <thead><tr><th>Episode</th><th>Scenario ID</th><th>Ball spawn (x,z)</th><th>Bearing</th><th>Outcome</th><th>Reason</th><th>Start</th><th>Nearest</th><th>Contact time</th><th>Reward</th></tr></thead>
+                <thead><tr><th>Episode</th><th>Scenario ID</th><th>Ball spawn (x,z)</th><th>Bearing</th><th>Outcome</th><th>Reason</th><th>Start</th><th>Nearest</th><th>Contact time</th>{evaluation.curriculum_stage === 3 && <><th>Controlled forward</th><th>Control streak</th></>}<th>Reward</th></tr></thead>
                 <tbody>{rows.map(e => <tr key={e.index}><td>#{e.index}</td><td className="football-room-hash">{e.ball_control?.scenario_id ?? 'Legacy / unknown'}</td>
                     <td>{e.ball_control?.scenario_ball_local_x_m == null || e.ball_control?.scenario_ball_local_z_m == null ? '—' : number(e.ball_control.scenario_ball_local_x_m, 2) + ', ' + number(e.ball_control.scenario_ball_local_z_m, 2)}</td>
                     <td>{e.ball_control?.start_relative_bearing_degrees == null ? '—' : number(e.ball_control.start_relative_bearing_degrees, 1) + '°'}</td><td>{e.success ? 'Success' : 'Failed'}</td>
@@ -312,6 +331,10 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
                     <td>{metricValue(e.ball_control?.start_player_ball_distance_m)}</td>
                     <td>{metricValue(e.ball_control?.min_player_ball_distance_m)}</td>
                     <td>{metricValue(e.ball_control?.time_to_first_contact_s, 's')}</td>
+                    {evaluation.curriculum_stage === 3 && <>
+                        <td>{metricValue(e.ball_control?.controlled_forward_progress_m)}</td>
+                        <td>{metricValue(e.ball_control?.longest_control_streak_s, 's')}</td>
+                    </>}
                     <td>{number(e.reward ?? undefined, 3)}</td>
                 </tr>)}</tbody>
             </table></div>

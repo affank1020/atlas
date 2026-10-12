@@ -19,12 +19,13 @@ import { composeServer, startBackgroundWork } from './server/composition.js';
 import { loadServerConfig } from './server/config.js';
 import { createHttpTransport } from './api/http/index.js';
 import { createMcpTransport } from './api/mcp/index.js';
+import { SessionService } from './server/sessions.js';
 
 export function createAtlasMcpServer(catalog: AtlasCatalog, fabric: FabricServices,
     askAtlas = createAskAtlas(catalog, new RetrievalService(fabric.search, fabric.context, fabric.authority)),
     askPortfolio = new AskPortfolioService(createAskAtlas(catalog, new RetrievalService(fabric.search, fabric.context, fabric.authority), { projectIds: [PORTFOLIO_PROJECT_ID], sourceTypes: [PORTFOLIO_SOURCE_TYPE], retrievalMode: 'direct' })),
     contentful = new ContentfulPortfolioIntegration(fabric.repository), portfolio?: PortfolioService, media?: PortfolioMediaService) {
-    const services = { nodes: { call: (name: import("./nodes/contracts.js").NodeToolName, input: unknown) => workspacesFor(catalog).runtime.nodes.call(name, input) }, catalog, views: catalog.views, workspaces: { call: (name: WorkspaceToolName, input: unknown) => workspacesFor(catalog).call(name, input) }, retrieval: new RetrievalService(fabric.search, fabric.context, fabric.authority), askAtlas, askPortfolio, contentful, portfolio, media, applications: new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(new FootballTrainingService(catalog, workspacesFor(catalog).repository, workspacesFor(catalog).runtime))]) };
+    const services = { sessions: new SessionService((catalog.store as AtlasStore).pool), nodes: { call: (name: import("./nodes/contracts.js").NodeToolName, input: unknown) => workspacesFor(catalog).runtime.nodes.call(name, input) }, catalog, views: catalog.views, workspaces: { call: (name: WorkspaceToolName, input: unknown) => workspacesFor(catalog).call(name, input) }, retrieval: new RetrievalService(fabric.search, fabric.context, fabric.authority), askAtlas, askPortfolio, contentful, portfolio, media, applications: new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(new FootballTrainingService(catalog, workspacesFor(catalog).repository, workspacesFor(catalog).runtime))]) };
     return createMcpTransport({ ...services, dispatch: createDispatcher(services) });
 }
 export function createAtlasHttpServer(options: { databaseUrl?: string; nodeExecution?: 'local' | 'remote' } = {}) {

@@ -96,7 +96,7 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         await server.connect(a); await client.connect(b);
         const { tools } = await client.listTools();
         const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
-        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2].includes(tool.name) && !tool.name.startsWith('football_') && !tool.name.startsWith('sessions_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
         const create = stable.find(item => item.name === 'create_workspace');
         if (create) delete (create.inputSchema as any).properties.nodeId;
         const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));

@@ -1,4 +1,5 @@
 import { Nodes } from './Nodes';
+import { Sessions } from './Sessions';
 import { Modal } from "./Dialog";
 import { AppShell, ProjectNav, type ProjectSection } from "./AppShell";
 import { ProjectOverview, ViewContainer } from "./ProjectOverview";
@@ -14,7 +15,7 @@ import { Portfolio } from "./Portfolio";
 import { ProjectApplications, ApplicationWindow } from "./Applications";
 import type { AtlasRecord, AtlasStatus, AuditEvent, FieldDefinition, FilterOperator, Page, Project, RecordFilter, SortSpec, Store, View } from "./types";
 
-type Route = { page: "nodes" | "overview" | "projects" | "activity" | "ask-atlas" | "ask-portfolio" | "portfolio" | "fabric" } | { page: "project"; projectId: string; section: ProjectSection } | { page: "store"; projectId: string; storeId: string; tab: "records" | "schema" | "audit" | "query" | "bulk" } | { page: "view"; projectId: string; viewId: string } | { page: "application"; projectId: string; slug: string };
+type Route = { page: "sessions" | "nodes" | "overview" | "projects" | "activity" | "ask-atlas" | "ask-portfolio" | "portfolio" | "fabric" } | { page: "project"; projectId: string; section: ProjectSection } | { page: "store"; projectId: string; storeId: string; tab: "records" | "schema" | "audit" | "query" | "bulk" } | { page: "view"; projectId: string; viewId: string } | { page: "application"; projectId: string; slug: string };
 const EMPTY_PAGE: Page<AtlasRecord> = { items: [], total: 0, limit: 25, offset: 0 };
 const TYPES = ["string", "number", "boolean", "date", "datetime", "enum", "array", "object"] as const;
 const OPS: FilterOperator[] = ["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"];
@@ -26,6 +27,7 @@ function parseRoute(): Route {
     if (parts[0] === "projects" && parts[1] && parts[2] === "applications" && parts[3]) return { page: "application", projectId: parts[1], slug: parts[3] };
     if (parts[0] === "projects" && parts[1]) return { page: "project", projectId: parts[1], section: (["data", "views", "applications", "workspaces", "activity", "settings"].includes(parts[2]) ? parts[2] : "overview") as ProjectSection };
     if (parts[0] === "projects") return { page: "projects" };
+    if (parts[0] === "sessions") return { page: "sessions" };
     if (parts[0] === "nodes") return { page: "nodes" };
     if (parts[0] === "activity") return { page: "activity" };
     if (parts[0] === "fabric") return { page: "fabric" };
@@ -57,7 +59,7 @@ function App() {
     useEffect(() => { const change = () => setRoute(parseRoute()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
     const askPage = route.page === "ask-atlas" || route.page === "ask-portfolio";
     if (route.page === "application") return <ApplicationWindow projectId={route.projectId} slug={route.slug} />;
-    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === "overview" && <Overview />}{route.page === "projects" && <Projects />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "activity" && <Activity />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Portfolio />}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
+    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === "overview" && <Overview />}{route.page === "projects" && <Projects />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "sessions" && <Sessions />}{route.page === "activity" && <Activity />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Portfolio />}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
 }
 
 function Overview() {

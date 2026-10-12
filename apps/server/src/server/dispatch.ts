@@ -1,5 +1,6 @@
 import { nodeSchemas, type NodeToolName } from '../nodes/contracts.js';
 import type { NodeService } from '../nodes/service.js';
+import { sessionSchemas, type SessionToolName, type SessionService } from './sessions.js';
 import { AtlasError } from '../shared/errors.js';
 import type { CoreService } from '../core/service.js';
 import type { ViewService } from '../views/service.js';
@@ -15,6 +16,7 @@ import type { ApplicationRegistry } from '../apps/registry.js';
 export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
+    sessions: Pick<SessionService,'call'>;
     views: ViewService;
     workspaces: Pick<WorkspaceService, "call">;
     retrieval: RetrievalService;
@@ -30,6 +32,7 @@ export type TransportServices = ApplicationServices & { dispatch(name: string, i
 export function createDispatcher(services: ApplicationServices) {
     const { catalog, views, workspaces, retrieval, askAtlas, applications } = services;
     return async (name: string, input: any = {}): Promise<unknown> => {
+        if (Object.hasOwn(sessionSchemas, name)) return services.sessions.call(name as SessionToolName,input);
         if (Object.hasOwn(nodeSchemas, name)) {
             if (!services.nodes) throw new AtlasError("Node registry is unavailable.", "NODE_UNAVAILABLE");
             return services.nodes.call(name as NodeToolName, input);

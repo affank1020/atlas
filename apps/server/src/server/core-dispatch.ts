@@ -1,6 +1,7 @@
 import { AuditService } from "../core/audit.js";
 import { ActivityService } from "../activity/service.js";
 import { workspaceSchemas, type WorkspaceToolName } from "../workspaces/contracts.js";
+import { sessionSchemas } from "./sessions.js";
 import type { WorkspaceService } from "../workspaces/application.js";
 import type { ViewService } from "../views/service.js";
 import type { CoreService } from "../core/service.js";
@@ -9,6 +10,7 @@ import { AtlasError } from "../shared/errors.js";
 export const atlasToolNames = [
     "list_nodes", "get_node",
     ...Object.keys(workspaceSchemas) as WorkspaceToolName[],
+    ...Object.keys(sessionSchemas),
     "get_atlas_status", "list_projects", "get_project", "create_project", "update_project", "archive_project",
     "list_stores", "get_store", "create_store", "update_store", "update_store_schema", "archive_store",
     "create_record", "get_record", "update_record", "archive_record", "bulk_records", "list_records", "query_records",
