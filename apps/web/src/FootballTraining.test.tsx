@@ -122,3 +122,22 @@ test('curriculum presets are discovered from the drill registry and launch with 
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_launch_training',
         { drill: 'ball_control_v1', preset: 'approach_wide', arenas: 1, basePort: 5005, seed: 42 }));
 });
+
+test('resources and queued lifecycle are real driver fields and prebuilding stays separate', async () => {
+    const original = vi.mocked(callTool).getMockImplementation()!;
+    vi.mocked(callTool).mockImplementation(async (name, args) => {
+        if (name === 'football_training_resources') return { settings: { max_jobs: 2, max_workers: 2, cpu_slots: 8, memory_budget_mib: 12288 }, host: { load_1min: 2.2, reclaimable_memory_mib: 16000 }, active_jobs: 1, active_workers: 1, queued_jobs: 1, recommendation: 'Measured capacity', dispatcher_stale: false } as never;
+        if (name === 'football_list_jobs') return [{ ...activeJob, phase: 'advancing', health: { average_steps_per_second: 550, tree_cpu_percent: 130, tree_rss_mib: 650 } }, { ...archivedJob, id: 'queued_specialist', state: 'queued', phase: 'queued', queue_reason: 'Job budget reached' }] as never;
+        return original(name, args);
+    });
+    render(<FootballTraining />);
+    expect(await screen.findByText(/1 \/ 2 independent jobs/)).toBeInTheDocument();
+    expect(screen.getByText(/Active aggregate throughput: 550 steps/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Runs/ }));
+    expect(screen.getByText('queued_specialist')).toBeInTheDocument();
+    expect(screen.getByText('queued')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Train/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Prebuild selected drill' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_prebuild_training', { drill: 'movement_v1' }));
+    expect(callTool).not.toHaveBeenCalledWith('football_launch_training', expect.anything());
+});

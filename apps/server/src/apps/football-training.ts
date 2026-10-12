@@ -24,7 +24,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(action);
+        const start = ['prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -52,10 +52,14 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         name: 'Football Training', description: 'Run and inspect Unity ML-Agents training, logs and policies on your connected Mac.',
         tools: [
             action('football_list_drills', 'List available football training drills and trainer contracts.', {}, 'drills'),
+            action('football_prebuild_training', 'Build and verify a cached Unity player while training is idle. Poll the launch receipt. Never launches PPO.', { drill }, 'prebuild_training'),
+            action('football_training_resources', 'Read owner-configured admission budgets, host usage and queue health.', {}, 'training_resources'),
+            action('football_recover_queue', 'Restart the durable queue dispatcher; its kernel lock prevents duplicate dispatch.', {}, 'recover_queue'),
+            action('football_resume_training', 'Resume a verified checkpoint using its original immutable config, player and training environment.', { runId, basePort: integer.min(1024).max(65535).optional() }, 'resume_training'),
             action('football_list_jobs', 'Read active and past headless football training jobs.', {}, 'jobs'),
             action('football_get_job_logs', 'Read bounded trainer logs for one headless training job.', { runId, lines: integer.min(1).max(200).optional() }, 'job_logs'),
             action('football_list_policies', 'List indexed exported football policies.', {}, 'policies'),
-            action('football_launch_training', 'Request one headless football training job on the connected Mac (may require an initial cached Unity build). Returns a launch receipt, not trainer success.', { drill, preset: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).default('smoke'), arenas: integer.min(1).max(16).default(1), basePort: integer.min(1024).max(65519).default(5005), seed: integer.min(0).max(2147483647).default(42) }, 'launch_headless'),
+            action('football_launch_training', 'Queue an independent policy on the Mac using a prebuilt player and resource admission. Multiple arenas share that one policy. Returns a receipt, not trainer success.', { drill, preset: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).default('smoke'), arenas: integer.min(1).max(65535).default(1), basePort: integer.min(1024).max(65535).default(5005), seed: integer.min(0).max(2147483647).default(42) }, 'launch_headless'),
             action('football_get_launch_status', 'Read the bounded receipt/log for a previously submitted training launch.', { runId }, 'launch_status'),
             action('football_stop_training', 'Request graceful stop of a verified running headless football training job.', { runId }, 'stop_job'),
             action('football_index_policy', 'Index exported ONNX policy artifacts from a completed football training run.', { runId }, 'index_policy'),

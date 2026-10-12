@@ -23,6 +23,23 @@ const publicJob = (j: any) => ({
     mode: j.mode, arenas: j.arenas, base_port: j.base_port, seed: j.seed,
     behavior: j.behavior, started_at: j.started_at, source_scene: j.source_scene,
     config_sha256: j.config_sha256,
+    phase: j.phase, queue_reason: j.queue_reason,
+    build_fingerprint: j.build_fingerprint, binary_sha256: j.binary_sha256,
+    build_seconds: j.build_cache?.build_seconds,
+    live_telemetry: j.resource_settings?.live_telemetry,
+    health: j.health ? {
+        checkpoint_count: j.health.checkpoint_count, resume_supported: j.health.resume_supported,
+        steps: j.health.steps, training_elapsed_seconds: j.health.training_elapsed_seconds,
+        average_steps_per_second: j.health.average_steps_per_second,
+        trainer_cpu_percent: j.health.trainer_cpu_percent, trainer_rss_mib: j.health.trainer_rss_mib,
+        tree_cpu_percent: j.health.tree_cpu_percent, tree_rss_mib: j.health.tree_rss_mib,
+        worker_heartbeat_age_seconds: j.health.worker_heartbeat_age_seconds, worker_heartbeats: j.health.worker_heartbeats,
+        unity_workers: j.health.unity_workers, process_count: j.health.process_count,
+        host_load_1min: j.health.host_load_1min, logical_cpus: j.health.logical_cpus,
+        unity_connected: j.health.unity_connected, final_onnx_exported: j.health.final_onnx_exported,
+        exit_code: j.health.exit_code, model_sha256: j.health.model_sha256,
+        failure_diagnostics: typeof j.health.failure_diagnostics === 'string' ? j.health.failure_diagnostics.slice(-2000) : null,
+    } : undefined,
     curriculum_stage: j.curriculum_stage ?? 0,
     curriculum_stage_id: j.curriculum_stage_id ?? null,
     training_spawn: j.training_spawn ?? 'none',
@@ -43,6 +60,10 @@ function driverPath(workspace: Workspace) {
 }
 const argsFor = (x: Input): string[] => {
     switch (x.action) {
+        case 'prebuild_training': return ['build-training', '--drill', x.drill!];
+        case 'training_resources': return ['training-resources'];
+        case 'recover_queue': return ['recover-queue'];
+        case 'resume_training': return ['resume-job', '--run-id', x.runId!, ...(x.basePort !== undefined ? ['--base-port', String(x.basePort)] : [])];
         case 'drills': return ['drills'];
         case 'jobs': return ['training-jobs'];
         case 'job_logs': return ['job-logs', '--run-id', x.runId!, '--lines', String(x.lines ?? 60)];
@@ -65,7 +86,7 @@ const argsFor = (x: Input): string[] => {
     }
 };
 function validateAction(x: Input) {
-    if (['job_logs', 'stop_job', 'index_policy', 'watch_live', 'viewer_launch_status'].includes(x.action) && !x.runId)
+    if (['job_logs', 'stop_job', 'index_policy', 'watch_live', 'viewer_launch_status', 'resume_training'].includes(x.action) && !x.runId)
         throw new AtlasError('A run ID is required.', 'INVALID_ARGUMENT');
     if (x.action === 'evaluate_baseline' && !x.baselineMode)
         throw new AtlasError('A baseline controller is required.', 'INVALID_ARGUMENT');
@@ -75,7 +96,7 @@ function validateAction(x: Input) {
         throw new AtlasError('Stage override is only supported for policy evaluation.', 'INVALID_ARGUMENT');
     if (x.action === 'evaluation_detail' && !x.evaluationId)
         throw new AtlasError('An evaluation ID is required.', 'INVALID_ARGUMENT');
-    if (x.action === 'launch_headless' && !x.drill)
+    if (['launch_headless', 'prebuild_training'].includes(x.action) && !x.drill)
         throw new AtlasError('A drill is required.', 'INVALID_ARGUMENT');
     if (['evaluation_plan', 'evaluate', 'watch_policy'].includes(x.action) && !x.policyId)
         throw new AtlasError('A policy ID is required.', 'INVALID_ARGUMENT');
@@ -119,7 +140,7 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
     if (x.action === 'launch_status') return launchStatus(workspace, x.runId!);
     if (x.action === 'evaluation_status') return launchStatus(workspace, x.runId!, 'evaluation');
     if (x.action === 'viewer_launch_status') return launchStatus(workspace, x.runId!, 'viewer');
-    if (['launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(x.action)) {
+    if (['prebuild_training', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(x.action)) {
         const directory = ['evaluate', 'evaluate_baseline'].includes(x.action) ? evalDir(workspace) : ['watch_policy', 'watch_live'].includes(x.action) ? viewerDir(workspace) : launchesDir(workspace);
         mkdirSync(directory, { recursive: true, mode: 0o700 });
         const ticket = randomUUID();

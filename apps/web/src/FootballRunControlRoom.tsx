@@ -3,6 +3,7 @@ import { callTool } from './api';
 import './football-control-room.css';
 
 export type RoomJob = {
+    phase?: string; queue_reason?: string; build_fingerprint?: string; live_telemetry?: boolean; health?: { average_steps_per_second?: number; tree_cpu_percent?: number; tree_rss_mib?: number; failure_diagnostics?: string; model_sha256?: string };
     id: string; drill: string; preset: string; state: string; arenas: number;
     seed: number; base_port: number; started_at: string; curriculum_stage?: number;
     curriculum_stage_id?: string | null; config_sha256?: string;
@@ -38,6 +39,7 @@ export function parseFootballTrainingLog(text: string): ParsedLog {
 }
 
 function Completion({ job, log }: { job: RoomJob; log: ParsedLog }) {
+    if (job.phase) return <span className={"football-room-state " + (job.state === 'running' ? 'online' : '')}>{job.phase}</span>;
     if (job.state === 'running') return <span className="football-room-state online">Running</span>;
     const lastStep = Math.max(0, ...log.samples.map(s => s.step), ...log.checkpoints.map(c => c.step ?? 0));
     if (log.budget && lastStep >= log.budget && log.finalModel) {
@@ -135,9 +137,9 @@ export function FootballRunControlRoom({ runId, onBack, onWatch, onStop, onIndex
             </div>
             <div className="football-room-actions">
                 {job && <Completion job={job} log={parsed} />}
-                <button className="football-button quiet" disabled={job?.state !== 'running'} onClick={() => onWatch(runId)}>Watch on Mac ↗</button>
-                {job?.state === 'running' && <button className="football-button danger" onClick={() => onStop(runId)}>Stop run</button>}
-                {job?.state !== 'running' && <button className="football-button quiet" onClick={() => onIndex(runId)}>Index policy</button>}
+                <button className="football-button quiet" disabled={job?.state !== 'running' || job.live_telemetry === false} onClick={() => onWatch(runId)}>Watch on Mac ↗</button>
+                {(job?.state === 'running' || job?.phase === 'queued') && <button className="football-button danger" onClick={() => onStop(runId)}>Stop run</button>}
+                {job?.state !== 'running' && job?.phase !== 'queued' && <button className="football-button quiet" onClick={() => onIndex(runId)}>Index policy</button>}
             </div>
         </div>
         {error && <div className="football-alert error" role="alert">Unable to refresh live data: {error}. Last available data is retained.</div>}
@@ -178,6 +180,7 @@ export function FootballRunControlRoom({ runId, onBack, onWatch, onStop, onIndex
                     <button className={activeTab === 'logs' ? 'selected' : ''} onClick={() => setActiveTab('logs')}>Trainer console</button>
                     <button className={activeTab === 'checkpoints' ? 'selected' : ''} onClick={() => setActiveTab('checkpoints')}>Checkpoint timeline ({parsed.checkpoints.length})</button>
                 </div>
+                {job && <p>Throughput {number(job.health?.average_steps_per_second, 1)} steps/s · CPU {number(job.health?.tree_cpu_percent, 1)}% · RSS {number(job.health?.tree_rss_mib, 1)} MiB · Build {job.build_fingerprint ?? 'legacy'}{job.queue_reason ? ' · ' + job.queue_reason : ''}{job.health?.failure_diagnostics ? ' · ' + job.health.failure_diagnostics : ''}</p>}
                 <span>{job?.state === 'running' ? 'Auto-refresh every 3.5s' : 'Historical logs · refreshes every 3.5s'}</span>
             </header>
             {activeTab === 'logs' ? <>

@@ -90,3 +90,19 @@ test('baseline evaluations have typed controllers and a bounded replay index', a
     await assert.rejects(apps.invoke('football_run_baseline_evaluation', { baselineMode: 'random', episodes: 100, seed: 515, replayEpisode: 20001 }));
 });
 
+
+test('scheduler operations are registered, typed and audited through the bound Node', async () => {
+    const { apps, invocations, audits } = harness();
+    for (const [tool, input, operation] of [
+        ['football_prebuild_training', { drill: 'movement_v1' }, 'prebuild_training'],
+        ['football_training_resources', {}, 'training_resources'],
+        ['football_recover_queue', {}, 'recover_queue'],
+        ['football_resume_training', { runId: 'stopped_run', basePort: 65535 }, 'resume_training'],
+    ] as const) {
+        assert.ok(apps.hasTool(tool));
+        await apps.invoke(tool, input);
+        assert.equal(invocations.at(-1)[2].action, operation);
+    }
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 3);
+    await assert.rejects(apps.invoke('football_resume_training', { runId: '../escape' }));
+});

@@ -63,3 +63,19 @@ test('Node bridge reads launch receipts without requiring a running Unity or Pyt
         await assert.rejects(footballControl(workspace(root), { ...input, action: 'launch_status', runId: '../config' }));
     } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('Node serializes scheduler health and provenance without leaking launch environment', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-football-health-'));
+    try {
+        const job = { id: 'x', phase: 'advancing', state: 'running', health: { steps: 10000, average_steps_per_second: 550, tree_rss_mib: 640, tree_cpu_percent: 130, worker_heartbeat_age_seconds: 0.2 }, build_fingerprint: 'abc', environment: { secret: 'private' }, build_cache: { inputs: { private: 'path' }, build_seconds: 12 } };
+        await writeFile(path.join(root, 'football_driver.py'), 'print(' + JSON.stringify(JSON.stringify([job])) + ')\n');
+        const jobs: any = await footballControl(workspace(root), { ...input, action: 'jobs' });
+        assert.equal(jobs[0].phase, 'advancing');
+        assert.equal(jobs[0].health.average_steps_per_second, 550);
+        assert.equal(jobs[0].health.worker_heartbeat_age_seconds, 0.2);
+        assert.equal(jobs[0].build_fingerprint, 'abc');
+        assert.equal(jobs[0].environment, undefined);
+        assert.equal(jobs[0].build_cache, undefined);
+        await assert.rejects(footballControl(workspace(root), { ...input, action: 'prebuild_training' }), (e: any) => e.code === 'INVALID_ARGUMENT');
+    } finally { await rm(root, { recursive: true, force: true }); }
+});

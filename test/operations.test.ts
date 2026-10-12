@@ -191,6 +191,7 @@ test("launchd install creates a credential-free user LaunchAgent and preserves c
   const contents = readFileSync(plist, "utf8");
   assert.match(contents, /<key>RunAtLoad<\/key>\s*<true\/>/);
   assert.match(contents, /<key>SuccessfulExit<\/key>\s*<false\/>/);
+  assert.match(contents, /<key>ProcessType<\/key>\s*<string>Standard<\/string>/);
   assert.ok(contents.includes(process.execPath));
   assert.match(contents, /dist\/platforms\/desktop\/main\.js/);
   assert.match(contents, /ATLAS_NODE_ENV_FILE/);

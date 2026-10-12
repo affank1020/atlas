@@ -23,7 +23,7 @@ export const workspaceOperationSchemas = {
     // Only the Football Training Application exposes carefully scoped typed actions.
     football_control: z.object({
         ...scope,
-        action: z.enum(['drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status']),
+        action: z.enum(['prebuild_training', 'training_resources', 'recover_queue', 'resume_training', 'drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status']),
         drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
@@ -34,8 +34,8 @@ export const workspaceOperationSchemas = {
         offset: z.number().int().min(0).max(10000).optional(),
         limit: z.number().int().min(1).max(200).optional(),
         preset: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
-        arenas: z.number().int().min(1).max(16).optional(),
-        basePort: z.number().int().min(1024).max(65519).optional(),
+        arenas: z.number().int().min(1).max(65535).optional(),
+        basePort: z.number().int().min(1024).max(65535).optional(),
         seed: z.number().int().min(0).max(2147483647).optional(),
         episodes: z.number().int().min(1).max(10000).optional(),
         lines: z.number().int().min(1).max(200).optional(),

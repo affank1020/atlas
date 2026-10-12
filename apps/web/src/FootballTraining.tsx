@@ -5,7 +5,7 @@ import './football-training.css';
 
 type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string; reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string };
 type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[]; variants?: CurriculumStage[] } };
-type Job = { id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null; observation_transform?: string; stage1_reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string | null; transfer?: { parent_checkpoint_step?: number; parent_checkpoint_sha256?: string } | null };
+type Job = { phase?: string; queue_reason?: string; build_fingerprint?: string; live_telemetry?: boolean; health?: { resume_supported?: boolean; steps?: number; average_steps_per_second?: number; tree_cpu_percent?: number; tree_rss_mib?: number; unity_workers?: number }; id: string; drill: string; preset: string; state: string; mode: string; arenas: number; base_port: number; seed: number; started_at: string; curriculum_stage?: number; curriculum_stage_id?: string | null; observation_transform?: string; stage1_reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string | null; transfer?: { parent_checkpoint_step?: number; parent_checkpoint_sha256?: string } | null };
 type Policy = { id: string; drill: string; role: string; source_run_id: string; artifacts: { path: string; final: boolean }[]; indexed_at: string; evaluation: string; observation_transform?: string; stage1_reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string | null; transfer?: { parent_checkpoint_step?: number } | null };
 type Launch = { accepted: boolean; ticket: string; drill: string; status: string; note: string };
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
@@ -32,10 +32,14 @@ const drillInfo: Record<string, { title: string; description: string; diagram: s
 const titleFor = (id: string) => drillInfo[id]?.title ?? id.replaceAll('_', ' ');
 const scenarioLabel = (version?: number) => version === 3 ? 'Scenario v3 · wide-angle holdout' : version === 2 ? 'Scenario v2 · centred' : version ? `Scenario v${version}` : 'Legacy scenario';
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
+const activeJob = (job: Job) => job.state === 'running' || job.phase === 'queued';
+type Resources = { build?: { phase: string; drill: string; error?: string; elapsed_seconds?: number }; settings: { max_jobs: number; max_workers: number; cpu_slots: number; memory_budget_mib: number }; host: { load_1min?: number; reclaimable_memory_mib?: number }; active_jobs: number; active_workers: number; queued_jobs: number; dispatcher_stale: boolean; recommendation: string };
+const measured = (n?: number, suffix = '') => typeof n === 'number' ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) + suffix : '—';
 const stateLabel = (value?: string) => (value ?? 'unknown').replaceAll('_', ' ');
 
 export function FootballTraining() {
     const [drills, setDrills] = useState<Drill[]>([]);
+    const [resources, setResources] = useState<Resources>();
     const [jobs, setJobs] = useState<Job[]>([]);
     const [policies, setPolicies] = useState<Policy[]>([]);
     const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
@@ -74,13 +78,15 @@ export function FootballTraining() {
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const refresh = useCallback(async () => {
-        const [d, j, p, e, v] = await Promise.all([
+        const [d, j, p, e, v, r] = await Promise.all([
             callTool<Drill[]>('football_list_drills'),
             callTool<Job[]>('football_list_jobs'),
             callTool<Policy[]>('football_list_policies'),
             callTool<Evaluation[]>('football_list_evaluations'),
             callTool<Viewer[]>('football_list_viewers'),
+            callTool<Resources>('football_training_resources'),
         ]);
+        setResources(r);
         setDrills(d); setJobs([...j].sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? '')));
         setPolicies(p);
         setEvaluations(e); setViewers(v);
@@ -94,6 +100,10 @@ export function FootballTraining() {
         setLoading(true);
         void refresh().catch(e => { if (current) setError(e instanceof Error ? e.message : String(e)); }).finally(() => { if (current) setLoading(false); });
         return () => { current = false; };
+    }, [refresh]);
+    useEffect(() => {
+        const timer = window.setInterval(() => { void refresh().catch(e => setError('Refresh failed; last snapshot retained: ' + (e instanceof Error ? e.message : String(e)))); }, 5000);
+        return () => window.clearInterval(timer);
     }, [refresh]);
     const currentJob = jobs.find(j => j.id === selectedJob);
     const currentPolicy = policies.find(p => p.id === selectedPolicy);
@@ -109,7 +119,7 @@ export function FootballTraining() {
     const running = useMemo(() => jobs.filter(j => j.state === 'running'), [jobs]);
     const recentCutoff = Date.now() - 7 * 86400_000;
     const filteredJobs = jobs.filter(job => {
-        const isActive = job.state === 'running';
+        const isActive = activeJob(job);
         const isRecent = !!job.started_at && Date.parse(job.started_at) >= recentCutoff;
         const sectionMatch = runFilter === 'all' || (runFilter === 'active' && isActive) ||
             (runFilter === 'recent' && isRecent) || (runFilter === 'archive' && !isActive && !isRecent);
@@ -209,6 +219,15 @@ export function FootballTraining() {
                 <strong>{item.label}</strong><small>{item.note}</small>
             </button>)}
         </nav>
+        {(screen === 'overview' || screen === 'runs' || screen === 'train') && resources?.settings && <section className="football-panel" aria-label="Training resources">
+            <h2>Concurrency and throughput</h2>
+            {resources.build && <p>Build: {resources.build.drill} · {resources.build.phase} · {measured(resources.build.elapsed_seconds, 's')}{resources.build.error ? ' · ' + resources.build.error : ''}</p>}
+            <p>{resources.active_jobs} / {resources.settings.max_jobs} independent jobs · {resources.active_workers} / {resources.settings.max_workers} Unity workers · {resources.queued_jobs} queued</p>
+            <p>Active aggregate throughput: {measured(running.some(j => typeof j.health?.average_steps_per_second === 'number') ? running.reduce((sum, j) => sum + (j.health?.average_steps_per_second ?? 0), 0) : undefined, ' steps/s')} (sum of reported training averages)</p>
+            <p>Load: {measured(resources.host?.load_1min)} · Reclaimable memory: {measured(resources.host?.reclaimable_memory_mib, ' MiB')} · Budget: {resources.settings.cpu_slots} CPU slots / {resources.settings.memory_budget_mib} MiB</p>
+            <small>{resources.recommendation} Host memory is an estimate; unknown measurements show —.</small>
+            {resources.dispatcher_stale && <button className="football-button quiet" onClick={() => void act('recover', async () => { await callTool('football_recover_queue'); await refresh(); })}>Recover queue dispatcher</button>}
+        </section>}
         {screen === 'overview' && <div className="football-welcome">
             <span className="football-kicker">RESEARCH WORKSPACE</span>
             <h2>Training pipeline</h2>
@@ -277,7 +296,7 @@ export function FootballTraining() {
         </section>}
         {screen === 'overview' && <div className="football-overview-grid">
             <section className="football-panel"><div className="football-panel-head"><div><span className="football-kicker">NOW RUNNING</span><h2>Active experiments</h2></div><span>{running.length}</span></div>
-                {running.slice(0, 5).map(job => <div className="football-overview-row" key={job.id}><strong>{job.id}</strong><small>{titleFor(job.drill)} · {job.arenas} arena(s)</small></div>)}
+                {jobs.filter(activeJob).map(job => <div className="football-overview-row" key={job.id}><strong>{job.id}</strong><small>{titleFor(job.drill)} · {job.arenas} arena(s)</small></div>)}
                 {!running.length && <p className="football-muted">No training is currently running.</p>}
                 <button className="football-button quiet" onClick={() => navigate('runs')}>View run history →</button>
             </section>
@@ -291,14 +310,14 @@ export function FootballTraining() {
             <div className="football-main-column">
                 {screen === 'train' && <section className="football-panel">
                     <div className="football-panel-head"><div><span className="football-kicker">01 / TRAIN</span><h2>Launch a headless run</h2></div></div>
-                    <p className="football-muted">Choose the drill and a PPO preset. A launch request can take time to build a Unity runner; an accepted request isn't proof training has started.</p>
+                    <p className="football-muted">Prebuild the selected drill while training is idle, then queue a PPO run. Jobs wait for resource admission. Multiple arenas share one policy; separate runs train independent policies.</p>
                     <div className="football-fields">
                         <label className="wide">Drill<select value={selectedDrill} onChange={e => { setSelectedDrill(e.target.value); setPreset('smoke'); }} disabled={!drills.length}>{drills.map(d => <option key={d.id} value={d.id}>{titleFor(d.id)} · {d.behavior}</option>)}</select></label>
                         <label>Training preset<select aria-label="Training preset" value={selectedPreset} onChange={e => setPreset(e.target.value)}>
                             {Object.keys(currentDrill?.configs ?? {}).map(key => <option key={key} value={key}>{presetLabel(key)}</option>)}
                         </select></label>
-                        <label>Arenas<input type="number" min={1} max={16} value={arenas} onChange={e => setArenas(Number(e.target.value))} /></label>
-                        <label>Base port<input type="number" min={1024} max={65519} value={basePort} onChange={e => setBasePort(Number(e.target.value))} /></label>
+                        <label>Arenas<input type="number" min={1} max={resources?.settings?.max_workers ?? 1} value={arenas} onChange={e => setArenas(Number(e.target.value))} /></label>
+                        <label>Base port<input type="number" min={1024} max={65535} value={basePort} onChange={e => setBasePort(Number(e.target.value))} /></label>
                         <label>Seed<input type="number" min={0} max={2147483647} value={seed} onChange={e => setSeed(Number(e.target.value))} /></label>
                     </div>
                     {currentDrill && <div className="football-contract"><span>Scene: {currentDrill.scene}</span><span>{currentDrill.observation_size} observations</span><span>{currentDrill.continuous_actions} actions</span></div>}
@@ -316,12 +335,15 @@ export function FootballTraining() {
                         {selectedStage && <small className="football-muted">Measured outcome: {selectedStage.metric.replaceAll('_', ' ')} · {selectedStage.description}{selectedStage.training_spawn ? ' · Training distribution: ' + selectedStage.training_spawn : ''}{selectedStage.reward_mode === 'heading_delta_far_v1' ? ' · Reward: off-axis heading progress (signed delta)' : ''}{selectedStage.stage2_reward_mode === 'lateral_delta_offcentre_v1' ? ' · Reward: controlled ball movement toward centreline' : ''}{selectedStage.parent_policy_id ? ' · Transfer parent: ' + selectedStage.parent_policy_id : ''}</small>}
                     </div>}
                     <div className="football-actions">
-                        <button className="football-button primary" disabled={!selectedDrill || !!busy || loading || !Number.isInteger(arenas) || arenas < 1 || arenas > 16 || !Number.isInteger(basePort) || basePort < 1024 || basePort > 65519 || !Number.isInteger(seed) || seed < 0} onClick={() => void act('launch', async () => {
+                        <button className="football-button primary" disabled={!selectedDrill || !!busy || loading || !Number.isInteger(arenas) || arenas < 1 || (arenas > (resources?.settings?.max_workers ?? 1)) || !Number.isInteger(basePort) || basePort < 1024 || basePort + arenas > 65536 || !Number.isInteger(seed) || seed < 0} onClick={() => void act('launch', async () => {
                             if (!window.confirm(`Request a ${selectedPreset} training run for ${selectedDrill} (${arenas} arena${arenas === 1 ? '' : 's'}) on your Mac?`)) return;
                             const result = await callTool<Launch>('football_launch_training', { drill: selectedDrill, preset: selectedPreset, arenas, basePort, seed });
                             setLaunch(result); setLaunchStatus(undefined); setNotice('Launch requested. Check the receipt for build or trainer progress.');
                         })}>{busy === 'launch' ? 'Submitting…' : 'Launch training ↗'}</button>
-                        <span className="football-muted">Uses the cached standalone Unity training runner where available.</span>
+                        <button className="football-button quiet" disabled={!!busy || !selectedDrill} onClick={() => void act('prebuild', async () => {
+                            const result = await callTool<Launch>('football_prebuild_training', { drill: selectedDrill }); setLaunch(result); setLaunchStatus(undefined); setNotice('Prebuild requested. Check the receipt; training remains separate.');
+                        })}>Prebuild selected drill</button>
+                        <span className="football-muted">Uses a verified cached player; a stale cache must be prebuilt first.</span>
                     </div>
                     {launch && <div className="football-receipt">
                         <div><strong>Latest launch · {launch.drill}</strong><small>Ticket {launch.ticket}</small></div>
@@ -354,20 +376,23 @@ export function FootballTraining() {
                     </div>
                     <div className="football-job-list">
                         {filteredJobs.map(job => <button className={`football-job ${selectedJob === job.id ? 'active' : ''}`} key={job.id} onClick={() => { setLogs(''); openRun(job.id); }}>
-                            <span><strong>{job.id}</strong><small>{titleFor(job.drill)} · {job.curriculum_stage_id ? `Stage ${job.curriculum_stage}: ${job.curriculum_stage_id.replaceAll('_', ' ')}` : job.preset} · {job.arenas} arena{job.arenas === 1 ? '' : 's'}</small></span>
-                            <span className={`football-state ${job.state === 'running' ? 'active' : ''}`}>{stateLabel(job.state)}</span>
+                            <span><strong>{job.id}</strong><small>{titleFor(job.drill)} · {job.curriculum_stage_id ? `Stage ${job.curriculum_stage}: ${job.curriculum_stage_id.replaceAll('_', ' ')}` : job.preset} · {job.arenas} arena{job.arenas === 1 ? '' : 's'}</small><small>{measured(job.health?.average_steps_per_second, ' steps/s')} · CPU {measured(job.health?.tree_cpu_percent, '%')} · RSS {measured(job.health?.tree_rss_mib, ' MiB')} · {job.build_fingerprint ?? 'Legacy build'}{job.queue_reason ? ' · ' + job.queue_reason : ''}</small></span>
+                            <span className={`football-state ${job.state === 'running' ? 'active' : ''}`}>{stateLabel(job.phase ?? job.state)}</span>
                         </button>)}
                         {!loading && !filteredJobs.length && <div className="football-empty">No matching runs in this section. Change the filter or open the archive; no runs are deleted.</div>}
                     </div>
                     {currentJob && filteredJobs.some(job => job.id === currentJob.id) && <div className="football-inspector"><h3>{currentJob.id}</h3><p className="football-muted">Started {date(currentJob.started_at)} · port {currentJob.base_port} · seed {currentJob.seed}{currentJob.curriculum_stage ? ` · Stage ${currentJob.curriculum_stage} (${currentJob.curriculum_stage_id})` : ''}{currentJob.stage1_reward_mode === 'heading_delta_far_v1' ? ' · Heading-progress reward' : ''}{currentJob.stage2_reward_mode === 'lateral_delta_offcentre_v1' ? ' · Lateral-control reward' : ''}{currentJob.parent_policy_id ? ' · Parent policy: ' + currentJob.parent_policy_id : ''}{currentJob.transfer?.parent_checkpoint_step ? ' · Checkpoint step ' + currentJob.transfer.parent_checkpoint_step : ''}</p>
                         <div className="football-actions"><button className="football-button quiet" disabled={!!busy} onClick={() => void loadLogs(currentJob.id)}>{busy === 'logs' ? 'Loading…' : 'View latest logs'}</button>
-                        <button className="football-button primary" disabled={!!busy || currentJob.state !== 'running'} onClick={() => launchViewer('live', currentJob.id)}>Watch live ↗</button>
-                        <button className="football-button danger" disabled={!!busy || currentJob.state !== 'running'} onClick={() => void act('stop', async () => {
+                        <button className="football-button primary" disabled={!!busy || currentJob.state !== 'running' || currentJob.live_telemetry === false} onClick={() => launchViewer('live', currentJob.id)}>Watch live ↗</button>
+                        <button className="football-button danger" disabled={!!busy || !activeJob(currentJob)} onClick={() => void act('stop', async () => {
                             if (!window.confirm(`Request a graceful stop for ${currentJob.id}? A checkpoint might be written before exit.`)) return;
                             await callTool('football_stop_training', { runId: currentJob.id });
                             setNotice('Stop signal sent. Refresh jobs and inspect the trainer log before treating the run as stopped.'); await refresh();
                         })}>Stop run</button>
-                        <button className="football-button quiet" disabled={!!busy || currentJob.state === 'running'} onClick={() => void act('index', async () => {
+                        <button className="football-button quiet" disabled={!!busy || currentJob.state === 'running' || !currentJob.health?.resume_supported || !['failed', 'stopped'].includes(currentJob.phase ?? '')} onClick={() => void act('resume', async () => {
+                            const result = await callTool<Launch>('football_resume_training', { runId: currentJob.id }); setLaunch(result); setLaunchStatus(undefined); setNotice('Resume requested with original config and checkpoint.'); await refresh();
+                        })}>Resume checkpoint</button>
+                        <button className="football-button quiet" disabled={!!busy || currentJob.state === 'running'} onClick={() => void act('index' , async () => {
                             await callTool('football_index_policy', { runId: currentJob.id });
                             setNotice('Policy artifacts indexed.'); await refresh();
                         })}>Index policy</button></div>
