@@ -24,7 +24,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live'].includes(action);
+        const start = ['prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -46,7 +46,7 @@ export class FootballTrainingService {
 
 export function footballTrainingApplication(service: Pick<FootballTrainingService, 'call'>): ApplicationDefinition {
     const action = (name: string, description: string, inputSchema: ApplicationTool['inputSchema'], operation: string): ApplicationTool =>
-        ({ name, description, inputSchema, invoke: x => service.call(operation, x) });
+        ({ name, description, inputSchema, invoke: x => service.call(operation, z.object(inputSchema).strict().parse(x)) });
     return {
         type: 'football-training', slug: 'football-training', projectId: FOOTBALL_PROJECT_ID,
         name: 'Football Training', description: 'Run and inspect Unity ML-Agents training, logs and policies on your connected Mac.',
@@ -73,6 +73,10 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_open_policy_viewer', 'Open a selected indexed ONNX policy in a graphical Unity viewer on the connected Mac.', { policyId, arenas: integer.min(1).max(16).default(1), seed: integer.min(0).max(2147483647).default(42) }, 'watch_policy'),
             action('football_get_viewer_launch_status', 'Inspect asynchronous Mac graphical viewer launch progress.', { runId }, 'viewer_launch_status'),
             action('football_plan_evaluation', 'Build a dry-run evaluation plan for an indexed policy; does not execute an evaluation.', { policyId, episodes: integer.min(1).max(10000).default(100), seed: integer.min(0).max(2147483647).default(42) }, 'evaluation_plan'),
+            action('football_validation_status', 'Read recent Mac validation receipts and permissions.', {}, 'validation_status'),
+            action('football_validate_python', 'Run a fixed Python regression suite on the Mac and store evidence.', {}, 'validation_python'),
+            action('football_validate_editor_gates', 'Run four fixed Unity Editor predicate gates if locally approved and Editor idle.', {}, 'validation_editor'),
+            action('football_validate_physics_smoke', 'Run opt-in Play Mode shared Rigidbody collision and goal smoke; not an agent evaluation.', {}, 'validation_physics'),
         ],
     };
 }

@@ -22,6 +22,21 @@ test('football is attached only to the FYP project and registers typed MCP actio
     assert.ok(apps.hasTool('football_launch_training'));
     assert.ok(apps.hasTool('football_get_job_logs'));
 });
+test('validation actions are fixed, routed to the same bound Node, and audited', async () => {
+    const { apps, invocations, audits } = harness();
+    for (const name of ['football_validation_status', 'football_validate_python', 'football_validate_editor_gates', 'football_validate_physics_smoke']) {
+        assert.ok(apps.hasTool(name));
+        await apps.invoke(name, {});
+    }
+    assert.deepEqual(invocations.map(item => item[2].action),
+        ['validation_status', 'validation_python', 'validation_editor', 'validation_physics']);
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 3);
+    // The Application registry strips undeclared fields before dispatch.
+    await apps.invoke('football_validate_python', { command: 'arbitrary' });
+    assert.deepEqual(invocations[4][2], { projectId: FOOTBALL_PROJECT_ID, workspaceId: workspace.id, action: 'validation_python' });
+    assert.equal(invocations.length, 5);
+});
+
 test('football commands execute only on the bound Unity Node and audit intent', async () => {
     const { apps, invocations, audits } = harness();
     assert.deepEqual(await apps.invoke('football_launch_training', { drill: 'movement_v1', preset: 'smoke', arenas: 2, basePort: 5005, seed: 42 }), { ok: true });

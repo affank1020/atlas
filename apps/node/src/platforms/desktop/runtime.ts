@@ -3,6 +3,7 @@ import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
 import { UnityAdapter } from '../../capabilities/unity/unity.js';
 import { footballControl } from '../../capabilities/football.js';
+import { footballValidation } from '../../capabilities/football-validation.js';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 import type { NodeCapability } from '@atlas/protocol/node-model';
@@ -44,7 +45,10 @@ export class LocalNodeRuntime implements NodeRuntime {
                 case 'unity_status': return adapter ? adapter.status(workspace) : { available: false, state: 'no_adapter' };
                 case 'unity_list_commands': return adapter ? adapter.capabilities(workspace) : { available: false, state: 'no_adapter', commands: [] };
                 case 'unity_run_command': if (!adapter) throw new AtlasError('Workspace has no available Unity adapter.', 'ADAPTER_UNAVAILABLE'); return adapter.invoke(workspace, x.command, x.parameters);
-                case 'football_control': return footballControl(workspace, x);
+                case 'football_control':
+                    if (['validation_status', 'validation_python', 'validation_editor', 'validation_physics'].includes(x.action))
+                        return footballValidation(workspace, x.action, adapter);
+                    return footballControl(workspace, x);
             }
     }
 }

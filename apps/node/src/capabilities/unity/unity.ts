@@ -50,6 +50,17 @@ export class UnityCliConnection implements UnityConnection {
 }
 // Local operator approval is mandatory. Even an approved general evaluator is never exposed.
 const dangerous = /(?:eval|shell|python|script|terminal|execute|process|run.*code|install.*package|package.*install)/i;
+const allowedFootballMenus = new Set([
+    'Football/Drills/Test Stage-3 Control Gate',
+    'Football/Drills/Test Shooting v2 Gates',
+    'Football/Drills/Test Receiving v2 Control Gate',
+    'Football/Drills/Test Defending V2 Physical Gate',
+    'Football/Drills/Run Physical Collision Smoke (Play Mode)',
+]);
+function menuScopeAllowed(workspace: Workspace) {
+    return workspace.kind === 'unity' && workspace.status === 'active' &&
+        workspace.projectId === 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7';
+}
 export class UnityAdapter implements WorkspaceAdapter {
     constructor(readonly files: WorkspaceFiles, readonly connection: UnityConnection = new UnityCliConnection(), readonly approved = loadUnityConfig().approvedCommands) {}
     private async packageVersion(workspace: Workspace) {
@@ -69,11 +80,13 @@ export class UnityAdapter implements WorkspaceAdapter {
         if (!status.available) return { ...status, commands: [] };
         try {
             const commands = await this.connection.tools(workspace.rootPath);
-            return { ...status, commands: commands.map(command => ({ ...command, approved: this.approved.includes(command.name) && !dangerous.test(command.name) })) };
+            return { ...status, commands: commands.map(command => ({ ...command, approved: this.approved.includes(command.name) && !dangerous.test(command.name) && (command.name !== 'menu' || menuScopeAllowed(workspace)) })) };
         } catch { return { ...status, available: false, state: 'discovery_failed', commands: [] }; }
     }
     async invoke(workspace: Workspace, command: string, parameters: Record<string, unknown>) {
         if (!this.approved.includes(command) || dangerous.test(command)) throw new AtlasError('Unity command is not approved by the local operator.', 'WORKSPACE_DENIED');
+        if (command === 'menu' && (!menuScopeAllowed(workspace) || typeof parameters.path !== 'string' || !allowedFootballMenus.has(parameters.path)))
+            throw new AtlasError('Only fixed, owner-approved football validation menus may be invoked remotely.', 'WORKSPACE_DENIED');
         const capabilities = await this.capabilities(workspace);
         if (!capabilities.available) throw new AtlasError('Unity Editor/Pipeline is unavailable.', 'ADAPTER_UNAVAILABLE');
         if (!capabilities.commands.some(x => x.name === command && x.approved)) throw new AtlasError('Command is not exposed by this Editor.', 'INVALID_COMMAND');

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
 import { FootballRunControlRoom, FootballEvaluationControlRoom } from './FootballRunControlRoom';
+import { FootballValidation } from './FootballValidation';
 import './football-training.css';
 
 type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string; reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string };
@@ -11,13 +12,14 @@ type Launch = { accepted: boolean; ticket: string; drill: string; status: string
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
 type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string; observation_transform?: string; evaluation_purpose?: 'primary_stage' | 'approach_retention' | 'first_touch_zero_shot'; source_training_stage?: number };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
-type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer';
+type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer' | 'validation';
 const screens: { id: Screen; label: string; note: string }[] = [
     { id: 'overview', label: 'Overview', note: 'Lab activity' },
     { id: 'drills', label: 'Drills', note: 'Skill catalogue' },
     { id: 'train', label: 'Train', note: 'New experiment' },
     { id: 'runs', label: 'Runs', note: 'Monitor & archive' },
     { id: 'evaluation', label: 'Evaluation', note: 'Benchmark policies' },
+    { id: 'validation', label: 'Validation', note: 'Run test gates' },
     { id: 'policies', label: 'Policies', note: 'Model library' },
     { id: 'viewer', label: 'Watch', note: 'Visual playback' },
 ];
@@ -219,6 +221,7 @@ export function FootballTraining() {
                 <strong>{item.label}</strong><small>{item.note}</small>
             </button>)}
         </nav>
+        {screen === 'validation' && <FootballValidation />}
         {(screen === 'overview' || screen === 'runs' || screen === 'train') && resources?.settings && <section className="football-panel" aria-label="Training resources">
             <h2>Concurrency and throughput</h2>
             {resources.build && <p>Build: {resources.build.drill} · {resources.build.phase} · {measured(resources.build.elapsed_seconds, 's')}{resources.build.error ? ' · ' + resources.build.error : ''}</p>}

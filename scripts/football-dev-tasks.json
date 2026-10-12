@@ -1,0 +1,15 @@
+{
+  "football_pytests": {
+    "executable": "python3",
+    "args": [
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-v"
+    ],
+    "passEnvironment": [],
+    "timeoutMs": 180000
+  }
+}
