@@ -12,8 +12,9 @@ type Launch = { accepted: boolean; ticket: string; drill: string; status: string
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
 type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string; observation_transform?: string; evaluation_purpose?: 'primary_stage' | 'approach_retention' | 'first_touch_zero_shot'; source_training_stage?: number };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
-type Screen = 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer' | 'validation';
+type Screen = 'generalist' | 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer' | 'validation';
 const screens: { id: Screen; label: string; note: string }[] = [
+    { id: 'generalist', label: 'Generalist', note: 'M2 roadmap & capabilities' },
     { id: 'overview', label: 'Overview', note: 'Lab activity' },
     { id: 'drills', label: 'Drills', note: 'Skill catalogue' },
     { id: 'train', label: 'Train', note: 'New experiment' },
@@ -46,7 +47,7 @@ export function FootballTraining() {
     const [policies, setPolicies] = useState<Policy[]>([]);
     const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
     const [viewers, setViewers] = useState<Viewer[]>([]);
-    const [screen, setScreen] = useState<Screen>(() => new URLSearchParams(window.location.search).has('run') ? 'runs' : 'overview');
+    const [screen, setScreen] = useState<Screen>(() => new URLSearchParams(window.location.search).has('run') ? 'runs' : 'generalist');
     const [openRunId, setOpenRunId] = useState(() => new URLSearchParams(window.location.search).get('run') ?? '');
     const [openEvaluationId, setOpenEvaluationId] = useState('');
     const [runFilter, setRunFilter] = useState<'active' | 'recent' | 'archive' | 'all'>('active');
@@ -221,6 +222,39 @@ export function FootballTraining() {
                 <strong>{item.label}</strong><small>{item.note}</small>
             </button>)}
         </nav>
+        {screen === 'generalist' && <section className="football-panel" aria-label="Generalist programme">
+            <span className="football-kicker">M2 / GENERALIST-FIRST REDESIGN</span>
+            <h2>FootballPolicy V1 — one learner, progressively broader football</h2>
+            <p>New programme proposed 14 October 2026. This is an architectural migration, not an already-trained generalist. Existing run and policy totals belong to legacy specialist experiments until a versioned generalist checkpoint is produced and validated.</p>
+            <div className="football-stats">
+                <div><small>Generalist checkpoints validated</small><strong>0</strong></div>
+                <div><small>Curriculum phase</small><strong>R0</strong></div>
+                <div><small>Graduated generalist skills</small><strong>0 / 6</strong></div>
+            </div>
+            <h3>How the player learns</h3>
+            <p>The same policy and physical player interface must be used across every scenario. Difficulty increases within each stage, while previously learned scenarios stay in the training mix. Advancement requires held-out evaluation, observable rollouts and retention checks; running PPO alone does not count as graduation.</p>
+            <ol>
+                <li><strong>R0–R2 · Migration:</strong> archive specialist experiments, freeze agent contracts, implement a shared scenario/curriculum system and verify correct Watch playback.</li>
+                <li><strong>S0 · Approach and contact:</strong> navigate and reliably make legal, controlled contact.</li>
+                <li><strong>S1 · Possession and dribbling:</strong> retain the ball while advancing and turning.</li>
+                <li><strong>S2 · Directional kicking:</strong> learn intentional power, angle and shooting.</li>
+                <li><strong>S3 · Passing and receiving:</strong> accurate delivery and controlled reception.</li>
+                <li><strong>S4 · Hybrid decisions:</strong> choose to carry, pass or shoot based on football outcomes, without a prescribed action label.</li>
+                <li><strong>S5 · Opposition:</strong> make decisions under pressure and learn basic defensive responses.</li>
+            </ol>
+            <h3>Proposed observation contract · awaiting Unity verification</h3>
+            <p>Self position/orientation/velocity; ball-relative position and velocity; pitch and goals; fixed masked teammate/opponent slots; game context; physical and kick readiness state. Prefer agent-local vectors and no drill-specific answer labels. Exact dimensions, ordering and normalisation must be generated from the versioned Unity contract, not hardcoded here.</p>
+            <h3>Proposed action contract · awaiting Unity verification</h3>
+            <p>Move X, move Y, turn, kick trigger, kick power and kick angle. These six proposed continuous controls must retain identical physical meaning throughout training. The final contract will show exact ranges and semantics from Unity once implemented.</p>
+            <h3>What counts as proof?</h3>
+            <p>Every promoted checkpoint needs seeded held-out metrics, a watchable correctly reconstructed scenario, comparison with simple baselines and regression tests for earlier skills. The generalist's evidence, rather than the number of historical policies, will determine progress.</p>
+            <div className="football-actions">
+                <button className="football-button primary" onClick={() => navigate('drills')}>Inspect current legacy drills →</button>
+                <button className="football-button quiet" onClick={() => navigate('runs')}>Runs and live feed →</button>
+                <button className="football-button quiet" onClick={() => navigate('evaluation')}>Evaluation →</button>
+                <button className="football-button quiet" onClick={() => navigate('viewer')}>Watch policies →</button>
+            </div>
+        </section>}
         {screen === 'validation' && <FootballValidation />}
         {(screen === 'overview' || screen === 'runs' || screen === 'train') && resources?.settings && <section className="football-panel" aria-label="Training resources">
             <h2>Concurrency and throughput</h2>
