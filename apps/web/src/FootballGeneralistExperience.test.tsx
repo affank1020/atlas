@@ -148,3 +148,33 @@ test('allows safe backfill packaging for exported generalist ONNX without anothe
         'football_generalist_package', { runId: 'finished-100k' }));
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_train')).toBe(false);
 });
+
+test('Watch receipt shows player logging evidence without claiming a visible window', async () => {
+    const ticket = 'ef456628-8eed-4579-af11-bc7248c745d8';
+    vi.mocked(callTool).mockImplementation(async (name) => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_policies') return [{
+            id: 'generalist-check', status: 'unevaluated', behavior: 'FootballGeneralistV2',
+            compatible_metadata: true, onnx_available: true, bundle_available: true,
+        }] as never;
+        if (name === 'football_generalist_watch') return {
+            ticket, action: 'generalist_watch', status: 'launching', accepted: true,
+        } as never;
+        if (name === 'football_generalist_status') return {
+            ticket, action: 'generalist_watch', status: 'running',
+            viewer: { state: 'player_logging', launch_method: 'launchservices',
+                launcher_alive: true, player_log_detected: true,
+                note: 'Unity wrote a player log; this does not prove a window is visible.',
+                log_tail: '[UnityMemory] Player startup' },
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Unity player' }));
+    expect(await screen.findByText('Viewer: Unity player is logging')).toBeInTheDocument();
+    expect(screen.getByText(/does not prove a window is visible/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Unity player log (last 4 KB)'));
+    expect(screen.getByText('[UnityMemory] Player startup')).toBeInTheDocument();
+});

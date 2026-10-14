@@ -7,7 +7,7 @@ import './football-generalist-experience.css';
 
 type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string };
 type Policy = { id: string; behavior: string; status: string; source: string; compatible_metadata: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
-type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; started_at?: string; output?: string; error?: string; note?: string; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number> } };
+type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; started_at?: string; output?: string; error?: string; note?: string; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number> }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
 type Tab = 'home' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
 
@@ -184,7 +184,7 @@ export function FootballGeneralistExperience() {
         </section>}
         {(tab === 'evaluate' || tab === 'watch') && <section className="fg-panel">
             <h2>{tab === 'watch' ? 'Watch a generalist policy' : 'Evaluate a generalist policy'}</h2>
-            <p className="fg-muted">{tab === 'watch' ? 'Open a graphical Unity inference session on the connected Mac.' : 'Run seeded inference against the selected generalist scenario.'} Only explicitly indexed policies with a model and bundle are selectable.</p>
+            <p className="fg-muted">{tab === 'watch' ? 'Open a separate, windowed Unity player on the connected Mac (not the Unity Editor).' : 'Run seeded inference against the selected generalist scenario.'} Only explicitly indexed policies with a model and bundle are selectable.</p>
             <div className="fg-form">
                 <label>Policy<select value={selectedPolicy} onChange={e => setSelectedPolicy(e.target.value)}>
                     <option value="">Choose policy</option>{runnablePolicies.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}</select></label>
@@ -194,7 +194,7 @@ export function FootballGeneralistExperience() {
             </div>
             {currentPolicy && <button className="fg-record-link" onClick={() => setDetail({ kind: 'policy', id: currentPolicy.id })}>View {currentPolicy.id} profile →</button>}
             {currentPolicy && !runnablePolicies.includes(currentPolicy) && <p role="alert">This policy is not executable with the current generalist metadata.</p>}
-            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !runnablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity viewer' : 'Run evaluation'}</button>
+            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !runnablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
                 {tab === 'evaluate' && <button type="button" className="fg-button" disabled={!!busy} onClick={() => void doAction('baseline', 'football_generalist_baseline', { scenario, seed: evaluationSeed, episodes })}>Run baseline</button>}</div>
             {tab === 'evaluate' && <><h3>Saved evaluations</h3>{activity.filter(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action)).map(item =>
                 <button key={item.ticket} className="fg-record-link" onClick={() => setDetail({ kind: 'evaluation', id: item.ticket })}>{item.scenario ?? '—'} · {item.status} · {item.ticket} →</button>)}
@@ -222,6 +222,14 @@ export function FootballGeneralistExperience() {
             {ticket.action === 'generalist_train' && ticket.result?.run_id && <button className="fg-record-link" onClick={() => { setTab('runs'); setDetail({ kind: 'run', id: ticket.result!.run_id! }); }}>Open training run →</button>}
             {['generalist_evaluate', 'generalist_baseline'].includes(ticket.action) && <button className="fg-record-link" onClick={() => { setTab('evaluate'); setDetail({ kind: 'evaluation', id: ticket.ticket }); }}>Open evaluation details →</button>}
             <p className="fg-muted">{ticket.ticket}</p>{ticket.result && <pre className="fg-output">{JSON.stringify(ticket.result, null, 2)}</pre>}{ticket.output && <pre className="fg-output">{ticket.output}</pre>}{ticket.error && <pre className="fg-error fg-output">{ticket.error}</pre>}
+            {ticket.action === 'generalist_watch' && <div className="fg-stack">
+                <div className="fg-details">
+                    <span>Viewer: {ticket.viewer?.state === 'player_logging' ? 'Unity player is logging' : ticket.viewer?.state === 'launch_failed' ? 'Launch failed' : ticket.viewer?.state === 'closed' ? 'Player closed' : 'Launch not yet verified'}</span>
+                    <span>Launch method: {ticket.viewer?.launch_method ?? 'Pending'}</span>
+                </div>
+                <p className="fg-muted">{ticket.viewer?.note ?? 'The standalone player is separate from the Unity Editor. A launch receipt does not confirm a visible window.'}</p>
+                {ticket.viewer?.log_tail && <details><summary>Unity player log (last 4 KB)</summary><pre className="fg-output">{ticket.viewer.log_tail}</pre></details>}
+            </div>}
             <p className="fg-muted">A launch receipt is not training or evaluation success.</p></section>}
         {activity.length > 0 && <section className="fg-panel"><div className="fg-panel-title"><h2>Inference activity</h2><span>{activity.length} receipts</span></div>
             {activity.slice(0, 12).map(item => <div className="fg-list-row" key={item.ticket}><strong>{item.action.replace('generalist_', '')}</strong><span>{item.scenario ?? '—'}</span>{['generalist_evaluate', 'generalist_baseline'].includes(item.action) ? <button className="fg-link" onClick={() => setDetail({ kind: 'evaluation', id: item.ticket })}>{item.status} →</button> : <small>{item.status}</small>}</div>)}</section>}

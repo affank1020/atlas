@@ -147,3 +147,55 @@ test('generalist policy packaging is only offered for a completed export and exp
             runId: '../invalid' }));
     } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('Watch receipts distinguish LaunchServices request from player activity without claiming window visibility', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-viewer-'));
+    try {
+        const dir = path.join(root, 'training-driver-runs', 'atlas-generalist-operations');
+        await mkdir(dir, { recursive: true });
+        const ticket = '75ed74ef-a004-4299-8f2f-ad47389cd39b';
+        const output = path.join(dir, ticket + '.result.json');
+        const data = { ticket, action: 'generalist_watch', pid: process.pid,
+            started_at: new Date().toISOString(), output };
+        await writeFile(path.join(dir, ticket + '.json'), JSON.stringify(data));
+        await writeFile(output + '.launch.json', JSON.stringify({
+            command: ['open', '-n', '-W', '-a', '/tmp/generalist.app', '--args', '-generalist-mode', 'watch'],
+        }));
+        const before = await footballControl(ws(root), { ...input, action: 'generalist_status',
+            runId: ticket }) as any;
+        assert.equal(before.viewer.launch_method, 'launchservices');
+        assert.equal(before.viewer.state, 'launching_unverified');
+        assert.equal(before.viewer.player_log_detected, false);
+        await writeFile(output + '.player.log', '[UnityMemory] Started standalone Unity player\\n');
+        const after = await footballControl(ws(root), { ...input, action: 'generalist_status',
+            runId: ticket }) as any;
+        assert.equal(after.status, 'running');
+        assert.equal(after.viewer.state, 'player_logging');
+        assert.equal(after.viewer.player_log_detected, true);
+        assert.match(after.viewer.note, /does not prove a window is visible/);
+        assert.match(after.viewer.log_tail, /Started standalone/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Watch receipts reject false visibility from unrelated files or exited launcher', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-viewer-'));
+    try {
+        const dir = path.join(root, 'training-driver-runs', 'atlas-generalist-operations');
+        await mkdir(dir, { recursive: true });
+        const ticket = '75ed74ef-a004-4299-8f2f-ad47389cd39c';
+        const output = path.join(dir, ticket + '.result.json');
+        await writeFile(path.join(dir, ticket + '.json'), JSON.stringify({
+            ticket, action: 'generalist_watch', pid: -1, output, started_at: new Date().toISOString(),
+        }));
+        await writeFile(output + '.player.log', '[UnityMemory] startup\\n');
+        const closed = await footballControl(ws(root), { ...input, action: 'generalist_status',
+            runId: ticket }) as any;
+        assert.equal(closed.viewer.state, 'closed');
+        assert.equal(closed.viewer.launcher_alive, false);
+        await writeFile(path.join(dir, ticket + '.err'), 'subprocess.CalledProcessError: failed to open app');
+        const failed = await footballControl(ws(root), { ...input, action: 'generalist_status',
+            runId: ticket }) as any;
+        assert.equal(failed.viewer.state, 'launch_failed');
+        assert.equal(failed.status, 'failed_or_stopped');
+    } finally { await rm(root, { recursive: true, force: true }); }
+});

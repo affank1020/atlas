@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
@@ -112,7 +112,9 @@ function receipt(workspace: Workspace, id: string) {
     const output = existsSync(name + '.out') ? readFileSync(name + '.out', 'utf8').slice(-4000) : '';
     const error = existsSync(name + '.err') ? readFileSync(name + '.err', 'utf8').slice(-4000) : '';
     let alive = false;
-    try { process.kill(item.pid, 0); alive = true; } catch {}
+    if (Number.isSafeInteger(item.pid) && item.pid > 1) {
+        try { process.kill(item.pid, 0); alive = true; } catch {}
+    }
     let result: any;
     if (item.action === 'generalist_train') {
         // Only the bridge's explicit completion receipt can establish training command success.
@@ -136,6 +138,53 @@ function receipt(workspace: Workspace, id: string) {
                         ? measured.filter((ep: any) => ep.success).length / measured.length : null };
             }
         } catch {}
+    }
+    if (item.action === 'generalist_watch') {
+        // Viewer receipts may outlive the Unity window. A live Python wrapper
+        // proves neither a running player nor a visible macOS window.
+        const fileName = typeof item.output === 'string' ? path.basename(item.output) : '';
+        const safeOutput = /^[a-f0-9-]{36}\.result\.json$/.test(fileName) &&
+            item.output === path.join(dir, fileName);
+        const playerLog = safeOutput ? path.join(dir, fileName + '.player.log') : null;
+        const launchFile = safeOutput ? path.join(dir, fileName + '.launch.json') : null;
+        let launchMethod: 'launchservices' | 'direct' | 'unknown' = 'unknown';
+        if (launchFile && existsSync(launchFile)) {
+            try {
+                const launchReceipt = readJson(launchFile);
+                const command = launchReceipt.command;
+                if (Array.isArray(command) && command[0] === 'open' && command.includes('-n') &&
+                    command.includes('-a')) launchMethod = 'launchservices';
+                else if (Array.isArray(command)) launchMethod = 'direct';
+            } catch {}
+        }
+        let playerLogText = '';
+        try {
+            if (playerLog && existsSync(playerLog) && !lstatSync(playerLog).isSymbolicLink() &&
+                statSync(playerLog).isFile()) {
+                const size = statSync(playerLog).size;
+                const fd = openSync(playerLog, 'r');
+                try {
+                    const buffer = Buffer.alloc(Math.min(size, 4096));
+                    readSync(fd, buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+                    playerLogText = buffer.toString('utf8');
+                } finally { closeSync(fd); }
+            }
+        } catch {}
+        const playerLogged = playerLogText.trim().length > 0;
+        const failed = /Traceback \(most recent call last\)|subprocess\.CalledProcessError|open:.*(error|failed)/i.test(error + '\n' + output);
+        const status = alive ? 'running' : failed ? 'failed_or_stopped' :
+            playerLogged ? 'closed' : 'unverified_exit';
+        return { ...item, status, result, output, error,
+            viewer: {
+                launcher_alive: alive, player_log_detected: playerLogged,
+                launch_method: launchMethod,
+                state: alive ? (playerLogged ? 'player_logging' : 'launching_unverified') :
+                    failed ? 'launch_failed' : playerLogged ? 'closed' : 'unknown',
+                log_tail: playerLogText,
+                note: playerLogged
+                    ? 'Unity wrote a player log; this does not prove a window is visible.'
+                    : 'No Unity player log observed; a live launcher alone does not prove the viewer opened.',
+            } };
     }
     const status = alive ? 'running' : result ? 'completed' : error.trim() ? 'failed_or_stopped' : 'unverified_exit';
     return { ...item, status, result, output, error };

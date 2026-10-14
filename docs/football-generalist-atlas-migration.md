@@ -23,7 +23,17 @@ The first-party Football application route now mounts `FootballGeneralistExperie
 - Unity `generalist_contract_tests` exercises the V2 ABI, scenario and promotion invariants.
 
 ## Limits / follow-up
-- Existing training CLI exports do not automatically package a runnable generalist Unity inference bundle. The UI exposes unregistered ONNX checkpoints without inventing a promotion or building a wrapper.
+- **Policy packaging is automatic for newly completed PPO runs:** after ONNX export, the canonical `football_generalist.py train` CLI builds a Unity `ModelAsset` AssetBundle in an isolated copy, stamps hash/provenance metadata in `policy.json`, and writes `policy-packaging.json` with `registered` or `failed`. A successful PPO run remains completed even if packaging fails, with the failure surfaced separately.
+- **Historical backfill:** `football_generalist.py package --output training-driver-runs/<run-directory>` or Football → Runs → `Package policy` calls the same idempotent packager without repeating PPO. Until the packaging command has actually completed, the existing 100k checkpoints stay unregistered; policy selectors intentionally remain empty.
+- A generated ONNX model is **registered for evaluation**, not automatically promoted as a competent policy; promotion requires held-out success and retention checks. The new Generalist Editor build method compiles in an isolated player build, but an actual ONNX→AssetBundle integration run and held-out inference are still required.
 - Externally launched process health cannot be inferred reliably from the run file alone. Future work can add a durable trainer heartbeat and immutable completion receipt.
 - The existing specialist implementation remains in the source tree to preserve archive data and regression test coverage; it is not the launched Football application.
 - These local workspace changes are not automatically committed or deployed. Deploy Atlas Server, Node and Web together, and update the connected Unity bridge before launching a generalist run.
+
+## Standalone Watch + Unity Editor coexistence (2026-10-14)
+- Watch uses macOS LaunchServices: `open -n -W -a <isolated GeneralistRunner.app> --args ...`. It does **not** open the Unity Editor, change Editor scenes/Play Mode, or rebuild a runner per Watch request. Evaluation stays headless. Unity Python tests cover both command contracts.
+- Watch receipt polling now exposes **launcher_alive**, **launch_method**, **player_log_detected**, bounded **player log tail**, and **viewer.state** (`launching_unverified`, `player_logging`, `closed`, `launch_failed` or `unknown`). Validated tests reject invalid PIDs and won't claim a visible GUI solely from a live launch process or player-log text.
+- The Watch UI calls the standalone window a **Unity player** and shows launch diagnostics under Latest operation. OS-level window visibility is *not* asserted: `player_logging` is evidence Unity ran, not that the window came to the foreground.
+- **Live acceptance check still needed:** with the existing Unity Editor open/connected, click Watch → Open Unity player; ensure the standalone window appears alongside the Editor and close only the player; the Editor should remain connected. If no visible window appears, inspect Latest operation viewer state/player log and the signed-in macOS GUI session before changing policy/training.
+- Local Node/Server/Web services must load rebuilt code (and public web deployment must serve the new bundle). Merely building `dist` is not proof that active services restarted. Do not start extra PPO training to test this.
+- Validation: Unity `generalist_contract_tests` 22 passed; Atlas `npm test` 164 backend / 87 web plus native Node UI; Atlas `npm run build` passed.
