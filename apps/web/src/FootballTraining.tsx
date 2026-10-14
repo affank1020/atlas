@@ -96,6 +96,8 @@ export function FootballTraining() {
         setResources(r);
         try {
             const manifest = await callTool<GeneralistManifest>('football_generalist_manifest');
+            if (!manifest?.available || !manifest.contract?.observations?.fields || !manifest.contract?.actions?.channels || !manifest.scenarios?.scenarios || !manifest.curriculum?.stages || !manifest.fingerprints?.contract_sha256)
+                throw new Error('Connected Node returned an incomplete generalist metadata contract.');
             setGeneralistManifest(manifest);
             setGeneralistManifestError('');
         } catch (cause) {

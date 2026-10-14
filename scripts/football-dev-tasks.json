@@ -11,5 +11,29 @@
     ],
     "passEnvironment": [],
     "timeoutMs": 180000
+  },
+  "generalist_contract_tests": {
+    "executable": "python3",
+    "args": ["-m", "unittest", "discover", "-s", "tests", "-p", "test*generalist*.py", "-v"],
+    "passEnvironment": [],
+    "timeoutMs": 180000
+  },
+  "generalist_handshake": {
+    "executable": "/Users/affankhan/AI Football/.venv-mlagents/bin/python",
+    "args": ["validation/generalist/verify_training_handshake.py"],
+    "passEnvironment": [],
+    "timeoutMs": 180000
+  },
+  "generalist_manifest": {
+    "executable": "python3",
+    "args": ["football_generalist.py", "manifest", "--output", "validation/generalist/atlas-contract-manifest.json"],
+    "passEnvironment": [],
+    "timeoutMs": 120000
+  },
+  "generalist_isolated_build": {
+    "executable": "python3",
+    "args": ["tools/build_generalist.py", "--copy", "/tmp/atlas-football-generalist-build-20261014", "--app", "/tmp/atlas-football-generalist-build-20261014.app"],
+    "passEnvironment": [],
+    "timeoutMs": 600000
   }
 }

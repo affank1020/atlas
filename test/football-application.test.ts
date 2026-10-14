@@ -121,3 +121,12 @@ test('scheduler operations are registered, typed and audited through the bound N
     assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 3);
     await assert.rejects(apps.invoke('football_resume_training', { runId: '../escape' }));
 });
+
+test('generalist metadata is read-only and routed through the FYP workspace', async () => {
+    const { apps, invocations, audits } = harness();
+    assert.ok(apps.hasTool('football_generalist_manifest'));
+    await apps.invoke('football_generalist_manifest', {});
+    assert.equal(invocations[0][1], 'football_control');
+    assert.equal(invocations[0][2].action, 'generalist_manifest');
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 0);
+});

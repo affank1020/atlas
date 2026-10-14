@@ -177,6 +177,7 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
         if (x.action === 'viewer_sessions') return Array.isArray(parsed) ? parsed.map((item: any) => ({ id: item.id, mode: item.mode ?? 'policy', policy_id: item.policy_id, source_run_id: item.source_run_id, checkpoint_step: item.checkpoint_step, drill: item.drill, arenas: item.arenas, started_at: item.started_at, state: item.state })) : [];
         if (x.action === 'policies') return Array.isArray(parsed) ? parsed.map(p => ({
             id: p.id, source_run_id: p.source_run_id, drill: p.drill, behavior: p.behavior,
+            family: p.family, contract_version: p.contract_version, contract_sha256: p.contract_sha256, scenario_sha256: p.scenario_sha256, promotion_status: p.promotion_status,
             role: p.role, indexed_at: p.indexed_at, evaluation: p.evaluation,
             observation_transform: p.observation_transform ?? 'none',
             stage1_reward_mode: p.stage1_reward_mode ?? 'none',

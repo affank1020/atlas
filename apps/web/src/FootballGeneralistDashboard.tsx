@@ -18,6 +18,9 @@ type Policy = {
     indexed_at: string;
     behavior?: string;
     contract_version?: string;
+    family?: string;
+    contract_sha256?: string;
+    scenario_sha256?: string;
     promotion_status?: string;
     evaluation?: string;
 };
@@ -43,7 +46,7 @@ type Props = {
     onOpenRun: (id: string) => void;
 };
 
-const isGeneralist = (record: { contract_version?: string }) => record.contract_version === 'football-generalist-v1';
+const isGeneralist = (record: { family?: string; contract_version?: string }) => record.family === 'generalist' && record.contract_version === 'football-generalist-v2';
 const isPromoted = (policy: Policy) => policy.promotion_status === 'validated' || policy.promotion_status === 'promoted';
 const date = (value?: string) => value && !Number.isNaN(Date.parse(value)) ? new Date(value).toLocaleString() : 'Unknown date';
 const short = (name: string) => name.replaceAll('_', ' ');
@@ -51,9 +54,9 @@ const short = (name: string) => name.replaceAll('_', ' ');
 export function FootballGeneralistDashboard({ policies, drills, jobs, evaluations, manifest, manifestError, onNavigate, onOpenRun }: Props) {
     // Fail closed: behavior names and filename patterns alone never prove ABI compatibility.
     const generalist = policies.filter(isGeneralist);
-    const verified = generalist.filter(isPromoted);
+    const verified = generalist.filter(p => isPromoted(p) && !!manifest && p.contract_sha256 === manifest.fingerprints.contract_sha256 && p.scenario_sha256 === manifest.fingerprints.scenario_sha256);
     const latest = [...verified].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
-    const pending = [...generalist.filter(p => !isPromoted(p))].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
+    const pending = [...generalist.filter(p => !verified.includes(p))].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
     const activeJobs = jobs.filter(j => j.state === 'running' || j.phase === 'queued');
     const recentJobs = [...jobs].sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0,4);
     const recentEvaluations = [...evaluations].slice(-4).reverse();

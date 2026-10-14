@@ -79,3 +79,26 @@ test('Node serializes scheduler health and provenance without leaking launch env
         await assert.rejects(footballControl(workspace(root), { ...input, action: 'prebuild_training' }), (e: any) => e.code === 'INVALID_ARGUMENT');
     } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('generalist manifest is read-only and fails closed for missing or tampered metadata', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-'));
+    try {
+        const contractDir = path.join(root, 'ml-agents/config');
+        const scenarioDir = path.join(root, 'Assets/Resources/Generalist');
+        await mkdir(contractDir, { recursive: true });
+        await mkdir(scenarioDir, { recursive: true });
+        const contract = path.join(contractDir, 'football_generalist_v2_contract.json');
+        const scenarios = path.join(scenarioDir, 'scenarios.json');
+        const curriculum = path.join(contractDir, 'generalist_curriculum.json');
+        await assert.rejects(footballControl(workspace(root), { ...input, action: 'generalist_manifest' }), (e: any) => e.code === 'DRIVER_UNAVAILABLE');
+        await writeFile(contract, JSON.stringify({ contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2', observations: { size: 54, fields: [] }, actions: { continuous: 5, channels: [] } }));
+        await writeFile(scenarios, JSON.stringify({ sceneVersion: 's2', physicsVersion: 'p2', scenarios: [] }));
+        await writeFile(curriculum, JSON.stringify({ stages: [] }));
+        const payload: any = await footballControl(workspace(root), { ...input, action: 'generalist_manifest' });
+        assert.equal(payload.contract.observations.size, 54);
+        assert.equal(payload.provenance, 'working_tree_metadata_not_policy_validation');
+        assert.match(payload.fingerprints.contract_sha256, /^[a-f0-9]{64}$/);
+        await writeFile(contract, JSON.stringify({ contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2', observations: { size: 55, fields: [] }, actions: { continuous: 5, channels: [] } }));
+        await assert.rejects(footballControl(workspace(root), { ...input, action: 'generalist_manifest' }), (e: any) => e.code === 'DRIVER_UNAVAILABLE');
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
