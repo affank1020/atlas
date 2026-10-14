@@ -71,11 +71,11 @@ jobs:
             console.log("Atlas server DB host:", u.hostname,
                         "port:", u.port || "5432",
                         "database:", u.pathname.slice(1));
-          '
+          ' </dev/null
           "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 \
-            -U atlas -d atlas -c "SELECT current_database() AS db, count(*) AS workspace_count, count(*) FILTER (WHERE id = '\''961d0046-eb49-446d-835e-00bec3e46059'\''::uuid) AS requested_workspace_count FROM workspaces;"
+            -U atlas -d atlas_import -c "SELECT current_database() AS db, count(*) AS workspace_count, count(*) FILTER (WHERE id = '\''961d0046-eb49-446d-835e-00bec3e46059'\''::uuid) AS requested_workspace_count FROM workspaces;" </dev/null
           "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 \
-            -U atlas -d atlas -v "tasks=$tasks" <<'SQL'
+            -U atlas -d atlas_import -v "tasks=$tasks" <<'SQL'
           BEGIN;
           CREATE TEMP TABLE football_tasks_input AS SELECT :'tasks'::jsonb AS tasks;
           DO $guard$
@@ -101,6 +101,15 @@ jobs:
           UPDATE workspaces SET dev_tasks = (SELECT tasks FROM football_tasks_input),
                                 updated_at = now()
           WHERE id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid;
+          DO $verify$
+          BEGIN
+            IF (SELECT count(*) FROM workspaces w
+                CROSS JOIN LATERAL jsonb_object_keys(w.dev_tasks) k
+                WHERE w.id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid) <> 5 THEN
+              RAISE EXCEPTION 'Expected five configured dev tasks; rolling back';
+            END IF;
+          END
+          $verify$;
           COMMIT;
           SELECT jsonb_object_keys(dev_tasks) AS enabled_task
           FROM workspaces WHERE id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid;
