@@ -21,9 +21,21 @@ beforeEach(() => {
     });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+async function openOverview() {
+    fireEvent.click(screen.getByRole('button', { name: /^Overview/ }));
+    await screen.findByText('Running jobs');
+    await screen.findByText('2');
+}
+
+test('generalist roadmap is the default view', async () => {
+    render(<FootballTraining />);
+    expect(screen.getByRole('region', { name: 'Generalist programme' })).toBeInTheDocument();
+    expect(screen.getByText(/FootballPolicy V1/)).toBeInTheDocument();
+});
 test('lab navigates to runs, filters history, and loads logs', async () => {
     render(<FootballTraining />);
-    expect(await screen.findByText('2')).toBeInTheDocument();
+    await openOverview();
     fireEvent.click(screen.getByRole('button', { name: /^Runs/ }));
     expect(screen.getAllByText('movement_v1_demo').length).toBeGreaterThan(0);
     expect(screen.queryByText('movement_v1_old')).not.toBeInTheDocument();
@@ -36,7 +48,7 @@ test('lab navigates to runs, filters history, and loads logs', async () => {
 });
 test('clicking a run opens the control room and returns to the runs list', async () => {
     render(<FootballTraining />);
-    await screen.findByText('2');
+    await openOverview();
     fireEvent.click(screen.getByRole('button', { name: /^Runs/ }));
     fireEvent.click(screen.getByRole('button', { name: /movement_v1_demo.*Movement.*1 arena/i }));
     expect(await screen.findByText('EXPERIMENT CONTROL ROOM')).toBeInTheDocument();
@@ -47,7 +59,7 @@ test('clicking a run opens the control room and returns to the runs list', async
 test('training launch confirms before running', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<FootballTraining />);
-    await screen.findByText('2');
+    await openOverview();
     fireEvent.click(screen.getByRole('button', { name: /^Train/ }));
     fireEvent.click(screen.getByRole('button', { name: /Launch training/ }));
     expect(confirm).toHaveBeenCalled();
@@ -56,7 +68,7 @@ test('training launch confirms before running', async () => {
 test('evaluation and viewer commands use typed policy and run operations', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<FootballTraining />);
-    await screen.findByText('2');
+    await openOverview();
     fireEvent.click(screen.getByRole('button', { name: /^Evaluation/ }));
     fireEvent.click(screen.getByRole('button', { name: /Run evaluation/ }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_run_evaluation', { policyId: policy.id, episodes: 100, seed: 123, replayEpisode: 0 }));
@@ -69,7 +81,7 @@ test('evaluation and viewer commands use typed policy and run operations', async
 test('Stage 1 baseline evaluation is launched through the typed controller action', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<FootballTraining />);
-    await screen.findByText('2');
+    await openOverview();
     fireEvent.click(screen.getByRole('button', { name: /^Evaluation/ }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Baseline controller' }), { target: { value: 'forward' } });
     fireEvent.click(screen.getByRole('button', { name: /Run Stage-1 baseline/ }));
@@ -80,6 +92,7 @@ test('offline Node errors stay visible without fake metrics', async () => {
     vi.mocked(callTool).mockRejectedValue(new Error('Workspace host Node is offline.'));
     render(<FootballTraining />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Workspace host Node is offline');
+    fireEvent.click(screen.getByRole('button', { name: /^Overview/ }));
     expect(screen.getByText('Running jobs')).toBeInTheDocument();
     expect(screen.queryByText('movement_v1_demo')).not.toBeInTheDocument();
 });
@@ -106,7 +119,7 @@ test('curriculum presets are discovered from the drill registry and launch with 
         return { accepted: true, ticket: 'stage_demo', status: 'launching' } as never;
     });
     render(<FootballTraining />);
-    await screen.findByText('2');
+    await openOverview();
     fireEvent.click(screen.getByRole('button', { name: /^Train/ }));
     fireEvent.change(screen.getByLabelText('Drill'), { target: { value: 'ball_control_v1' } });
     expect(screen.getByText(/Manual stages · v1/)).toBeInTheDocument();
@@ -131,6 +144,7 @@ test('resources and queued lifecycle are real driver fields and prebuilding stay
         return original(name, args);
     });
     render(<FootballTraining />);
+    fireEvent.click(screen.getByRole('button', { name: /^Overview/ }));
     expect(await screen.findByText(/1 \/ 2 independent jobs/)).toBeInTheDocument();
     expect(screen.getByText(/Active aggregate throughput: 550 steps/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Runs/ }));
