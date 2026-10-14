@@ -1,0 +1,98 @@
+name: Configure AI Football Tasks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-production
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate task manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          tasks = json.loads(Path("scripts/football-dev-tasks.json").read_text())
+          assert isinstance(tasks, dict) and 0 < len(tasks) <= 16
+          assert all(isinstance(t.get("executable"), str)
+                     and isinstance(t.get("args"), list)
+                     and isinstance(t.get("timeoutMs"), int)
+                     and 100 <= t["timeoutMs"] <= 600000 for t in tasks.values())
+          print("Validated task definitions:", ", ".join(sorted(tasks)))
+          PY
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          test -n "$VPS_HOST" && test -n "$VPS_USER"
+          install -d -m 700 "$HOME/.ssh"
+          (umask 077; printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519")
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Register owner-approved tasks in production
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          scp -o StrictHostKeyChecking=yes scripts/football-dev-tasks.json \
+            "$VPS_USER@$VPS_HOST:atlas-deploy/infra/football-dev-tasks.json"
+          ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd "$HOME/atlas-deploy"
+          test -s infra/production.env
+          test -s infra/football-dev-tasks.json
+          compose=(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml)
+          tasks="$(cat infra/football-dev-tasks.json)"
+          "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 \
+            -U atlas -d atlas -v "tasks=$tasks" <<'SQL'
+          BEGIN;
+          CREATE TEMP TABLE football_tasks_input AS SELECT :'tasks'::jsonb AS tasks;
+          DO $guard$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM workspaces
+              WHERE id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid
+                AND project_id = 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7'::uuid
+                AND archived_at IS NULL
+            ) THEN
+              RAISE EXCEPTION 'Active AI Football workspace not found; no changes made';
+            END IF;
+          END
+          $guard$;
+          INSERT INTO audit_events
+            (id, client, operation, project_id, workspace_id, before_state, after_state, created_at)
+          SELECT gen_random_uuid(), 'atlas-production-admin', 'workspace.dev_tasks_configured',
+                 project_id, id,
+                 jsonb_build_object('tasks', ARRAY(SELECT jsonb_object_keys(dev_tasks))),
+                 jsonb_build_object('tasks', ARRAY(SELECT jsonb_object_keys((SELECT tasks FROM football_tasks_input)))),
+                 now()
+          FROM workspaces WHERE id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid;
+          UPDATE workspaces SET dev_tasks = (SELECT tasks FROM football_tasks_input),
+                                updated_at = now()
+          WHERE id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid;
+          COMMIT;
+          SELECT jsonb_object_keys(dev_tasks) AS enabled_task
+          FROM workspaces WHERE id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid;
+          SQL
+          REMOTE
