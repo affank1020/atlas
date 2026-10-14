@@ -20,14 +20,14 @@ const props = { drills: [], jobs: [], evaluations: [], onNavigate: vi.fn(), onOp
 
 test('missing manifest and legacy entries do not claim generalist progress', () => {
     render(<FootballGeneralistDashboard {...props} policies={[legacy, ambiguous]} />);
-    expect(screen.getByText('Not established')).toBeInTheDocument();
-    expect(screen.getByText('Generalist scenario contract not connected.')).toBeInTheDocument();
-    expect(screen.getByText('Unity generalist metadata unavailable')).toBeInTheDocument();
+    expect(screen.getByText('NO VERIFIED CHECKPOINT')).toBeInTheDocument();
+    expect(screen.getByText('Node metadata unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Contract unavailable')).toBeInTheDocument();
 });
 
 test('candidate cannot be promoted without provenance-matching manifest', () => {
     render(<FootballGeneralistDashboard {...props} policies={[legacy, candidate, promoted]} />);
-    expect(screen.getByText('Not established')).toBeInTheDocument();
+    expect(screen.getByText('NO VERIFIED CHECKPOINT')).toBeInTheDocument();
 });
 
 test('actual Unity metadata drives observations actions stages and scenario cards', () => {
@@ -35,15 +35,15 @@ test('actual Unity metadata drives observations actions stages and scenario card
     expect(screen.getByText('football-generalist-v2')).toBeInTheDocument();
     expect(screen.getByText('54')).toBeInTheDocument();
     expect(screen.getByText('First contact')).toBeInTheDocument();
-    expect(screen.getByText('Make physical contact')).toBeInTheDocument();
-    expect(screen.getByText('Implemented in Unity · not graduated')).toBeInTheDocument();
-    expect(screen.getByText('Not established')).toBeInTheDocument();
+    expect(screen.getByText('s0-contact-easy-v1')).toBeInTheDocument();
+    expect(screen.getByText('BUILT')).toBeInTheDocument();
+    expect(screen.getByText('NO VERIFIED CHECKPOINT')).toBeInTheDocument();
 });
 
 test('explicit promotion with matching fingerprints appears without promoting candidates', () => {
     render(<FootballGeneralistDashboard {...props} policies={[legacy, candidate, promoted]} manifest={manifest} />);
-    expect(screen.getAllByText('promoted').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Promotion recorded/)).toBeInTheDocument();
+    expect(screen.getByText('CHECKPOINT READY')).toBeInTheDocument();
+    expect(screen.getByText('CHECKPOINT: promoted')).toBeInTheDocument();
 });
 
 test('run opens existing control room and Watch remains accessible', () => {
@@ -51,6 +51,6 @@ test('run opens existing control room and Watch remains accessible', () => {
     render(<FootballGeneralistDashboard {...props} onNavigate={onNavigate} onOpenRun={onOpenRun} policies={[legacy]} jobs={[{id:'run_12',drill:'movement_v1',state:'running',started_at:'2026-10-14T00:00:00Z'}]} />);
     fireEvent.click(screen.getByRole('button', {name:/run_12/}));
     expect(onOpenRun).toHaveBeenCalledWith('run_12');
-    fireEvent.click(screen.getByRole('button', {name:'Open policy Watch →'}));
+    fireEvent.click(screen.getByRole('button', {name:'WATCH'}));
     expect(onNavigate).toHaveBeenCalledWith('viewer');
 });

@@ -16,15 +16,15 @@ type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: st
 type GeneralistManifest = import('./FootballGeneralistDashboard').GeneralistManifest;
 type Screen = 'generalist' | 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer' | 'validation';
 const screens: { id: Screen; label: string; note: string }[] = [
-    { id: 'generalist', label: 'Generalist', note: 'M2 roadmap & capabilities' },
-    { id: 'overview', label: 'Overview', note: 'Lab activity' },
-    { id: 'drills', label: 'Drills', note: 'Skill catalogue' },
-    { id: 'train', label: 'Train', note: 'New experiment' },
-    { id: 'runs', label: 'Runs', note: 'Monitor & archive' },
-    { id: 'evaluation', label: 'Evaluation', note: 'Benchmark policies' },
-    { id: 'validation', label: 'Validation', note: 'Run test gates' },
-    { id: 'policies', label: 'Policies', note: 'Model library' },
-    { id: 'viewer', label: 'Watch', note: 'Visual playback' },
+    { id: 'generalist', label: 'Home', note: '' },
+    { id: 'overview', label: 'Overview', note: '' },
+    { id: 'drills', label: 'Drills', note: '' },
+    { id: 'train', label: 'Train', note: '' },
+    { id: 'runs', label: 'Runs', note: '' },
+    { id: 'evaluation', label: 'Evaluation', note: '' },
+    { id: 'validation', label: 'Tests', note: '' },
+    { id: 'policies', label: 'Policies', note: '' },
+    { id: 'viewer', label: 'Watch', note: '' },
 ];
 const drillInfo: Record<string, { title: string; description: string; diagram: string }> = {
     movement_v1: { title: 'Movement', description: 'Navigate changing waypoints while learning control and orientation.', diagram: 'WAYPOINT' },
@@ -224,17 +224,14 @@ export function FootballTraining() {
     };
     return <div className="football-app">
         <header className="football-header">
-            <div><span className="football-kicker">AI FOOTBALL / LAB</span><h1>Football Training</h1>
-                <p>Train, evaluate and inspect your Unity football agents from one research workspace.</p></div>
+            <div><span className="football-kicker">AI FOOTBALL</span><h1>Training</h1></div>
             <button className="football-button quiet" disabled={!!busy || loading} onClick={() => void act('refresh', async () => { await refresh(); setNotice('Training data refreshed.'); })}>↻ Refresh</button>
         </header>
         {error && <div role="alert" className="football-alert error">{error}<small>Ensure the AI Football Workspace is connected and the hosted Mac Node is running the updated football capability.</small></div>}
         {notice && <div role="status" className="football-alert">{notice}</div>}
         {loading && <p role="status" className="football-muted">Connecting to the AI Football Workspace…</p>}
         <nav className="football-navigation" aria-label="Football Training sections">
-            {screens.map(item => <button type="button" key={item.id} className={screen === item.id ? 'selected' : ''} aria-current={screen === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}>
-                <strong>{item.label}</strong><small>{item.note}</small>
-            </button>)}
+            {screens.map(item => <button type="button" key={item.id} className={screen === item.id ? 'selected' : ''} aria-current={screen === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}
         </nav>
         {screen === 'generalist' && <FootballGeneralistDashboard policies={policies} drills={drills} jobs={jobs} evaluations={evaluations} manifest={generalistManifest} manifestError={generalistManifestError} onNavigate={navigate} onOpenRun={openRun} />}
         {screen === 'validation' && <FootballValidation />}

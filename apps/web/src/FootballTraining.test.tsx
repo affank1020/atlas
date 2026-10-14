@@ -31,7 +31,7 @@ async function openOverview() {
 test('generalist roadmap is the default view', async () => {
     render(<FootballTraining />);
     expect(screen.getByRole('region', { name: 'Generalist programme' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'The generalist' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Training', level: 2 })).toBeInTheDocument();
 });
 test('lab navigates to runs, filters history, and loads logs', async () => {
     render(<FootballTraining />);
