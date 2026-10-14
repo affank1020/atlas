@@ -205,3 +205,33 @@ test('shows externally launched evaluation progress without a saved per-episode 
     expect(screen.getByText('physical_contact')).toBeInTheDocument();
     expect(screen.getByText(/Individual episode records are not available yet/)).toBeInTheDocument();
 });
+
+test('S1 continuation requires a checkpoint and forwards the exact source run', async () => {
+    vi.mocked(callTool).mockImplementation(async (name) => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') return [{
+            id: 'proven-s0', family: 'generalist', scenario: 'mix',
+            contract_sha256: 'a', initialization_available: true, state: 'completed',
+        }] as never;
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_train') return {
+            accepted: true, ticket: 'f99de0da-adcc-4ec5-a8db-99539550aab9',
+            action: 'generalist_train', status: 'launching',
+        } as never;
+        return [] as never;
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<FootballGeneralistExperience />);
+    await screen.findByRole('button', { name: 'Train' });
+    fireEvent.click(screen.getByRole('button', { name: 'Train' }));
+    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 's1_rehearsal' } });
+    expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeDisabled();
+    expect(screen.getByText('Select a recorded S0 checkpoint before S1 continuation.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Initial weights'), { target: { value: 'proven-s0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Launch generalist training' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_train', {
+        scenario: 's1_rehearsal', preset: 'smoke', seed: 42, arenas: 1,
+        basePort: 5605, initializeFromRunId: 'proven-s0',
+    }));
+    vi.mocked(window.confirm).mockRestore();
+});

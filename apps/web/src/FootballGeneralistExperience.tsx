@@ -5,7 +5,7 @@ import type { GeneralistManifest } from './FootballGeneralistDashboard';
 import './football-training.css';
 import './football-generalist-experience.css';
 
-type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string };
+type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string; initialization_available?: boolean; initialization?: { source_run_id?: string; checkpoint_sha256?: string } | null };
 type Policy = { id: string; behavior: string; status: string; source: string; compatible_metadata: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
@@ -33,6 +33,7 @@ export function FootballGeneralistExperience() {
     const [loading, setLoading] = useState(true);
     const [scenario, setScenario] = useState('mix');
     const [preset, setPreset] = useState<'smoke' | 'pilot_100k'>('smoke');
+    const [initializeFromRunId, setInitializeFromRunId] = useState('');
     const [seed, setSeed] = useState(42);
     const [workers, setWorkers] = useState(1);
     const [basePort, setBasePort] = useState(5605);
@@ -81,7 +82,11 @@ export function FootballGeneralistExperience() {
     const progressLabel = (item: Receipt) => item.result?.episodes == null ? 'No outcomes yet' :
         item.result.episodes + (item.requested_episodes != null ? ' / ' + item.requested_episodes : '') +
         ' episodes · ' + Object.entries(item.result.outcomes ?? {}).map(([name, count]) => count + ' ' + name.replaceAll('_', ' ')).join(', ');
-    const scenarioOptions = useMemo(() => [{ id: 'mix', name: 'Mixed scenarios' }, ...scenarios.map(s => ({ id: s.id, name: s.name }))], [scenarios]);
+    const scenarioOptions = useMemo(() => [{ id: 'mix', name: 'S0 mixed scenarios' },
+        { id: 's1_rehearsal', name: 'S1 dribbling + S0 rehearsal (75/25 episodes)' },
+        ...scenarios.map(s => ({ id: s.id, name: s.name }))], [scenarios]);
+    const initializationRuns = runs.filter(r => r.initialization_available &&
+        r.contract_sha256 === manifest?.fingerprints?.contract_sha256);
     const doAction = async (key: string, tool: string, input: Record<string, unknown>) => {
         setBusy(key); setError(''); setNotice('');
         try {
@@ -155,23 +160,28 @@ export function FootballGeneralistExperience() {
             </section>
         </div>}
         {tab === 'train' && <section className="fg-panel">
-            <h2>New training run</h2><p className="fg-muted">Starts one PPO policy; parallel environments collect experience for that same policy. An isolated Unity build is prepared by the launch bridge.</p>
+            <h2>New training run</h2><p className="fg-muted">Starts a new PPO learner. S1 rehearsal samples 75% dribbling and 25% S0 contact episodes; it requires a compatible recorded checkpoint as the initial weights, not a resume of the old run.</p>
             <div className="fg-form">
                 <label>Scenario<select value={scenario} onChange={e => setScenario(e.target.value)}>{scenarioOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
                 <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_100k">Pilot · 100k steps</option></select></label>
+                <label>Initial weights<select aria-label="Initial weights" value={initializeFromRunId} onChange={e => setInitializeFromRunId(e.target.value)}>
+                    <option value="">Start with random weights</option>
+                    {initializationRuns.map(r => <option key={r.id} value={r.id}>{r.id} · {r.scenario ?? 'Generalist'}</option>)}
+                </select></label>
                 <label>Training seed<input type="number" value={seed} min={0} onChange={e => setSeed(Number(e.target.value))}/></label>
                 <label>Parallel environments<input type="number" value={workers} min={1} max={16} onChange={e => setWorkers(Number(e.target.value))}/></label>
                 <label>Base port<input type="number" value={basePort} min={1024} max={65519} onChange={e => setBasePort(Number(e.target.value))}/></label>
             </div>
-            <button className="fg-button primary" disabled={!!busy || !manifest || manifest.curriculum.held_out_seeds?.includes(seed)} onClick={() => {
-                if (window.confirm('Start one generalist PPO training run on the connected Mac?')) void doAction('train', 'football_generalist_train', { scenario, preset, seed, arenas: workers, basePort });
+            <button className="fg-button primary" disabled={!!busy || !manifest || manifest.curriculum.held_out_seeds?.includes(seed) || (scenario === 's1_rehearsal' && !initializeFromRunId)} onClick={() => {
+                if (window.confirm('Start one generalist PPO training run on the connected Mac?')) void doAction('train', 'football_generalist_train', { scenario, preset, seed, arenas: workers, basePort, ...(initializeFromRunId ? { initializeFromRunId } : {}) });
             }}>{busy === 'train' ? 'Starting…' : 'Launch generalist training'}</button>
+            {scenario === 's1_rehearsal' && !initializeFromRunId && <p role="alert">Select a recorded S0 checkpoint before S1 continuation.</p>}
             {manifest?.curriculum.held_out_seeds?.includes(seed) && <p role="alert">This seed is reserved for held-out evaluation.</p>}
         </section>}
         {tab === 'runs' && <section className="fg-panel"><div className="fg-panel-title"><h2>Training runs</h2><span>{runs.length} discovered</span></div>
             <p className="fg-muted">Includes runs started from the terminal. A discovered receipt does not establish successful completion.</p>
             {runs.map(r => <div className="fg-run" key={r.id}><div className="fg-panel-title"><button className="fg-record-link" onClick={() => setDetail({ kind: 'run', id: r.id })}>{r.id} →</button><small>{r.state}</small></div>
-                <div className="fg-details"><span>Scenario: {r.scenario ?? '—'}</span><span>Seed: {r.seed ?? '—'}</span><span>Environments: {r.num_envs ?? '—'}</span><span>ONNX checkpoints: {r.checkpoints ?? 0}</span><span>Recorded: {when(r.started_at)}</span></div>
+                <div className="fg-details"><span>Scenario: {r.scenario ?? '—'}</span><span>Seed: {r.seed ?? '—'}</span><span>Environments: {r.num_envs ?? '—'}</span><span>ONNX checkpoints: {r.checkpoints ?? 0}</span><span>Recorded: {when(r.started_at)}</span>{r.initialization?.source_run_id && <span>Initialised from: {r.initialization.source_run_id}</span>}</div>
                 <div className="fg-actions">
                     <small className="fg-muted">Policy: {r.packaging?.status ?? 'not_registered'}{r.packaging?.policy_id ? ' · ' + r.packaging.policy_id : ''}</small>
                     {r.packaging?.status !== 'registered' && (r.checkpoint_files ?? []).some(file => file.endsWith('/FootballGeneralistV2.onnx')) &&

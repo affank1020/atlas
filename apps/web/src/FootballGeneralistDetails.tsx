@@ -7,6 +7,9 @@ export type GeneralistRun = {
     output_dir?: string; binary?: string; contract_sha256?: string;
     scenario_sha256?: string; implementation_sha256?: string;
     checkpoints?: number; checkpoint_files?: string[];
+    training_config?: string | null;
+    initialization?: { source_run_id?: string; source_scenario_sha256?: string;
+        source_implementation_sha256?: string; checkpoint_sha256?: string } | null;
 };
 export type GeneralistPolicy = {
     id: string; behavior: string; status: string; source: string; compatible_metadata: boolean;
@@ -130,6 +133,10 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
                     <dt>Environments</dt><dd>{pretty(run.num_envs ?? run.arenas)}</dd>
                     <dt>First recorded</dt><dd>{fmt(run.started_at)}</dd>
                     <dt>Output directory</dt><dd>{run.output_dir ?? '—'}</dd>
+                    {run.training_config && <><dt>Training YAML</dt><dd>{run.training_config}</dd></>}
+                    {run.initialization && <><dt>Initial weights from</dt><dd>{run.initialization.source_run_id}</dd>
+                        <dt>Source checkpoint SHA-256</dt><dd>{run.initialization.checkpoint_sha256 ?? '—'}</dd>
+                        <dt>Source scenario SHA-256</dt><dd>{run.initialization.source_scenario_sha256 ?? '—'}</dd></>}
                     <dt>Contract hash</dt><dd>{run.contract_sha256 ?? '—'}</dd>
                     <dt>Scenario hash</dt><dd>{run.scenario_sha256 ?? '—'}</dd>
                     <dt>Implementation hash</dt><dd>{run.implementation_sha256 ?? '—'}</dd>

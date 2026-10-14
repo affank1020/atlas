@@ -45,6 +45,21 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'bogus', preset: 'smoke', seed: 42 }), (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'mix', preset: 'smoke', seed: 515 }), (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'mix', preset: 'smoke', seed: 42 }));
+        // S1 must never silently start from random weights.
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
+            scenario: 's1_rehearsal', preset: 'smoke', seed: 42 }),
+            (e: any) => e.code === 'INVALID_ARGUMENT');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
+            scenario: 's1_rehearsal', preset: 'smoke', seed: 42, initializeFromRunId: '../outside' }));
+        const source = path.join(root, 'training-driver-runs', 'old-s0');
+        await mkdir(path.join(source, 'old-s0', 'FootballGeneralistV2'), { recursive: true });
+        await writeFile(path.join(source, 'generalist-run.json'), JSON.stringify({
+            family: 'generalist', mode: 'train', run_id: 'old-s0', contract_sha256: 'wrong-abi',
+        }));
+        await writeFile(path.join(source, 'old-s0', 'FootballGeneralistV2', 'checkpoint.pt'), 'checkpoint');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
+            scenario: 's1_rehearsal', preset: 'smoke', seed: 42, initializeFromRunId: 'old-s0' }),
+            (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_status', runId: '../secret' }));
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch', policyId: 'legacy-policy', scenario: 'mix' }));
     } finally { await rm(root, { recursive: true, force: true }); }

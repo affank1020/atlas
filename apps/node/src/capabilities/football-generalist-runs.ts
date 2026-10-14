@@ -96,6 +96,15 @@ export function listGeneralistRuns(workspace: Workspace) {
                     num_envs: receipt.num_envs, contract_sha256: receipt.contract_sha256,
                     scenario_sha256: receipt.scenario_sha256, implementation_sha256: receipt.implementation_sha256,
                     binary: receipt.binary, packaging, output_dir: path.relative(workspace.rootPath, dir),
+                    initialization: receipt.initialization ?? null,
+                    training_config: receipt.training_config ?? null,
+                    initialization_available: (() => {
+                        const pt = path.join(dir, name, 'FootballGeneralistV2', 'checkpoint.pt');
+                        try {
+                            return !lstatSync(pt).isSymbolicLink() && statSync(pt).isFile() &&
+                                realpathSync(pt).startsWith(realpathSync(workspace.rootPath) + path.sep);
+                        } catch { return false; }
+                    })(),
                     started_at: statSync(full).birthtime.toISOString(),
                     state: states.get(name) ?? 'unknown', // External runs remain unknown without a verified Atlas launch receipt.
                     ...checkpointInventory(workspace, dir, name),

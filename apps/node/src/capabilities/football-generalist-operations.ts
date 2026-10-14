@@ -7,7 +7,7 @@ import type { Workspace } from '@atlas/protocol/workspace';
 import { generalistManifest } from './football-generalist.js';
 import { generalistRunDetail, listGeneralistRuns } from './football-generalist-runs.js';
 
-type Args = { action: string; runId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
+type Args = { action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const env = () => Object.fromEntries(['PATH','HOME','TMPDIR','LANG','USER','LOGNAME'].filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
 
@@ -276,14 +276,30 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         return { requested: true, ticket: item.ticket, status: 'interrupt_requested' };
     }
     const manifest = generalistManifest(workspace);
-    const scenarios = new Set(['mix', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
+    const scenarios = new Set(['mix', 's1_rehearsal', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
     const scenario = x.scenario ?? 'mix';
     if (!scenarios.has(scenario)) throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
+        const sourceId = x.initializeFromRunId;
+        if (scenario === 's1_rehearsal' && !sourceId)
+            throw new AtlasError('S1 rehearsal requires a recorded S0 checkpoint.', 'INVALID_ARGUMENT');
+        if (sourceId) {
+            if (!idPattern.test(sourceId)) throw new AtlasError('Invalid source run ID.', 'INVALID_ARGUMENT');
+            const source = listGeneralistRuns(workspace).find(run => run.id === sourceId);
+            if (!source || source.contract_sha256 !== manifest.fingerprints.contract_sha256)
+                throw new AtlasError('Source run does not exist or has a different policy ABI.', 'INVALID_ARGUMENT');
+            const checkpoint = path.join(workspace.rootPath, String(source.output_dir), sourceId,
+                manifest.contract.behavior, 'checkpoint.pt');
+            safeFile(workspace, checkpoint);
+        }
         const script = safeFile(workspace, path.join(workspace.rootPath, 'atlas_generalist_launch.py'));
         const runId = 'atlas-generalist-' + randomUUID().replaceAll('-', '').slice(0, 12);
-        return launch(workspace, x.action, [script, '--run-id', runId, '--scenario', scenario, '--preset', x.preset ?? 'smoke', '--seed', String(x.seed ?? 42), '--base-port', String(x.basePort ?? 5605), '--arenas', String(x.arenas ?? 1)], { run_id: runId, scenario, preset: x.preset ?? 'smoke' });
+        const cmd = [script, '--run-id', runId, '--scenario', scenario, '--preset', x.preset ?? 'smoke',
+            '--seed', String(x.seed ?? 42), '--base-port', String(x.basePort ?? 5605), '--arenas', String(x.arenas ?? 1),
+            ...(sourceId ? ['--initialize-from-run', sourceId] : [])];
+        return launch(workspace, x.action, cmd, { run_id: runId, scenario, preset: x.preset ?? 'smoke',
+            initialization_source_run_id: sourceId ?? null });
     }
     const script = safeFile(workspace, path.join(workspace.rootPath, 'football_generalist.py'));
     const ticket = randomUUID();
