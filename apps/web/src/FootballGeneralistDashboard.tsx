@@ -1,5 +1,16 @@
-import type { ReactNode } from 'react';
-
+export type GeneralistManifest = {
+    available: boolean;
+    source: string;
+    contract: {
+        contract_id: string; behavior: string; status?: string;
+        observations: { size: number; reference_frame?: string; fields: { name: string; indices: number[] }[] };
+        actions: { continuous: number; channels: { index: number; name: string; range: number[]; activation?: string; mapping?: string }[] };
+    };
+    scenarios: { sceneVersion: string; physicsVersion: string; scenarios: { id: string; name: string; stage: number; objective: string; physicalDifficulty: number; decisionComplexity: number; weight: number; targetRepresentation: string; episodeSeconds: number }[] };
+    curriculum: { stages: { id: string; name: string; implemented: boolean }[]; promotion?: { minimum_held_out_episodes: number; minimum_success_rate: number; maximum_retention_drop: number; automatic_promotion_enabled: boolean }; current_checkpoint?: string | null };
+    fingerprints: { contract_sha256: string; scenario_sha256: string; curriculum_sha256: string };
+    provenance: string;
+};
 type Policy = {
     id: string;
     drill: string;
@@ -10,139 +21,182 @@ type Policy = {
     promotion_status?: string;
     evaluation?: string;
 };
-type Drill = { id: string; observation_size: number; continuous_actions: number; behavior: string };
-type Evaluation = { policy_id: string; success_rate?: number; episodes?: number; drill?: string };
+type Drill = {
+    id: string;
+    behavior: string;
+    scene: string;
+    observation_size: number;
+    continuous_actions: number;
+    contract_version?: string;
+    curriculum?: { stages?: Array<{ id: string; title: string; description: string; metric: string }> };
+};
+type Job = { id: string; drill: string; state: string; started_at: string; phase?: string; health?: { steps?: number; average_steps_per_second?: number } };
+type Evaluation = { id?: string; policy_id: string; success_rate?: number; episodes?: number; drill?: string; seed?: number };
 type Props = {
     policies: Policy[];
     drills: Drill[];
+    jobs: Job[];
     evaluations: Evaluation[];
+    manifest?: GeneralistManifest | null;
+    manifestError?: string;
     onNavigate: (screen: 'drills' | 'runs' | 'evaluation' | 'viewer' | 'policies') => void;
+    onOpenRun: (id: string) => void;
 };
 
-const stages = [
-    { id: 'S0', label: 'Movement & contact', purpose: 'Navigate to the ball and make genuine physical contact.', proof: 'Seeded held-out contact rate, physical contact events, watched rollout', visual: 'Waypoint, ball and contact target' },
-    { id: 'S1', label: 'Possession & dribbling', purpose: 'Carry the ball, turn and retain control.', proof: 'Controlled distance, duration, route completion and retention', visual: 'Dribble route and directional arrows' },
-    { id: 'S2', label: 'Finishing', purpose: 'Choose kick power and angle to score deliberately.', proof: 'Legal kicks, goals, accuracy and no-contact failure accounting', visual: 'Goalposts, goal line and target zone' },
-    { id: 'S3', label: 'Passing & receiving', purpose: 'Deliver and control the ball using teammates.', proof: 'Controlled receptions and pass completion across moving starts', visual: 'Receiver, passing lane and interception zone' },
-    { id: 'S4', label: 'Football decisions', purpose: 'Choose when to carry, pass or shoot.', proof: 'Held-out choice scenarios against simple action-selection baselines', visual: 'Multiple opportunities and their consequences' },
-    { id: 'S5', label: 'Opposition', purpose: 'Adapt control and decisions to defenders.', proof: 'Outcomes against held-out scripted and adaptive opposition', visual: 'Pillar dummies and recognisable defenders' },
-] as const;
+const isGeneralist = (record: { contract_version?: string }) => record.contract_version === 'football-generalist-v1';
+const isPromoted = (policy: Policy) => policy.promotion_status === 'validated' || policy.promotion_status === 'promoted';
+const date = (value?: string) => value && !Number.isNaN(Date.parse(value)) ? new Date(value).toLocaleString() : 'Unknown date';
+const short = (name: string) => name.replaceAll('_', ' ');
 
-const roadmap = [
-    { id: 'R0', title: 'Audit & preserve', detail: 'Inventory old checkpoints, manifests, dirty Unity assets and Watch limitations.' },
-    { id: 'R1', title: 'Canonical agent', detail: 'Freeze one observation/action signature and verify Unity physics and resets.' },
-    { id: 'R2', title: 'Shared scenarios', detail: 'Introduce seeded curricula, marked arenas, HUD, walls and training/Watch parity.' },
-    { id: 'R3', title: 'Ball mastery', detail: 'Train one generalist on S0/S1 with retention checks.' },
-    { id: 'R4', title: 'Kicking & distribution', detail: 'Expand the same policy through S2/S3 while rehearsing prior scenarios.' },
-    { id: 'R5', title: 'Decision learning', detail: 'Test football choices in mixed S4 scenarios.' },
-    { id: 'R6', title: 'Opposition & evidence', detail: 'Add S5 and validate the complete competence and retention suite.' },
-] as const;
-
-// Exact ABI details must ultimately be read from a validated, Unity-exported contract.
-// Deliberately do not claim that these candidate values are physically validated.
-const candidateObservations = [
-    { name: 'Self motion', indices: '0–2', description: 'Local velocity (x,z) and angular velocity' },
-    { name: 'Ball', indices: '3–6', description: 'Relative position and locally rotated ball velocity' },
-    { name: 'Goals', indices: '7–10', description: 'Own and opponent goal centres; absent values currently zero-filled' },
-    { name: 'Pitch boundaries', indices: '11–14', description: 'Local arena boundary distances' },
-    { name: 'Kick physics', indices: '15–16', description: 'Fresh contact and legal-kick opportunity' },
-    { name: 'Teammates', indices: '17–26', description: 'Two masked player slots (position and velocity)' },
-    { name: 'Opponents', indices: '27–36', description: 'Two masked player slots (position and velocity)' },
-];
-const candidateActions = [
-    { name: 'Throttle', range: '−1…1', meaning: 'Forward/reverse motor input' },
-    { name: 'Steering', range: '−1…1', meaning: 'Yaw authority through existing motor' },
-    { name: 'Kick trigger', range: '−1…1', meaning: 'Attempt kick above the physical threshold' },
-    { name: 'Kick power', range: '−1…1', meaning: 'Variable impulse, candidate 4–16' },
-    { name: 'Kick angle', range: '−1…1', meaning: 'Candidate aim offset ±20°' },
-];
-const isGeneralist = (p: Policy) =>
-    p.contract_version === 'football-generalist-v1' ||
-    p.behavior === 'FootballGeneralistV1';
-const isPromoted = (p: Policy) => p.promotion_status === 'validated' || p.promotion_status === 'promoted';
-
-function Tile({ children, label }: { children: ReactNode; label: string }) {
-    return <div className="football-generalist-tile"><small>{label}</small><strong>{children}</strong></div>;
-}
-
-export function FootballGeneralistDashboard({ policies, drills, evaluations, onNavigate }: Props) {
+export function FootballGeneralistDashboard({ policies, drills, jobs, evaluations, manifest, manifestError, onNavigate, onOpenRun }: Props) {
+    // Fail closed: behavior names and filename patterns alone never prove ABI compatibility.
     const generalist = policies.filter(isGeneralist);
     const verified = generalist.filter(isPromoted);
-    const current = [...verified].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
-    const candidate = [...generalist].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
-    const evidence = current && evaluations.filter(e => e.policy_id === current.id);
-    const legacyCount = policies.length - generalist.length;
-    return <section className="football-generalist" aria-label="Generalist programme">
-        <section className="football-panel football-generalist-hero">
-            <span className="football-kicker">M2 / THE GENERALIST PROGRAMME / FootballPolicy V1</span>
-            <div className="football-generalist-hero-grid">
-                <div>
-                    <h2>One footballer. One policy. An expanding curriculum.</h2>
-                    <p>The same agent learns movement, ball control, kicking and football decisions. Every new stage keeps earlier tasks in the training mix. Progress is earned with held-out results and watchable behaviour, not completed training jobs.</p>
-                    <p className="football-generalist-state"><strong>{current ? 'Verified generalist checkpoint' : 'Architecture migration · no validated generalist checkpoint'}</strong></p>
-                    {current ? <p>Current: <code>{current.id}</code> · from <code>{current.source_run_id}</code></p> :
-                        candidate ? <p>Latest unpromoted candidate: <code>{candidate.id}</code>. This is not yet evidence of skill mastery.</p> :
-                        <p>Legacy policies remain accessible in Policies and Watch. No specialist checkpoint is counted as generalist competence.</p>}
+    const latest = [...verified].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
+    const pending = [...generalist.filter(p => !isPromoted(p))].sort((a, b) => b.indexed_at.localeCompare(a.indexed_at))[0];
+    const activeJobs = jobs.filter(j => j.state === 'running' || j.phase === 'queued');
+    const recentJobs = [...jobs].sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0,4);
+    const recentEvaluations = [...evaluations].slice(-4).reverse();
+    const liveScenarios = drills.filter(isGeneralist);
+    const legacyPolicyCount = policies.length - generalist.length;
+
+    return <section className="football-lab-home" aria-label="Generalist programme">
+        <header className="football-lab-intro">
+            <div>
+                <span className="football-kicker">FOOTBALL / RESEARCH LAB</span>
+                <h2>The generalist</h2>
+                <p>One policy learning progressively broader football situations. Training activity is not evidence of ability; capability is demonstrated through comparable evaluations and replay.</p>
+            </div>
+            <div className="football-lab-status" aria-live="polite">
+                <small>Canonical checkpoint</small>
+                <strong>{latest ? latest.id : 'Not established'}</strong>
+                <span>{latest ? 'Promotion recorded — inspect supporting evaluation' : 'No contract-verified, promoted generalist in the policy index'}</span>
+            </div>
+        </header>
+
+        <div className="football-lab-primary">
+            <section className="football-panel football-lab-research">
+                <div className="football-lab-section-heading">
+                    <div><span className="football-kicker">CURRENT STATE</span><h3>Evidence before progress</h3></div>
+                    <button className="football-button quiet" onClick={() => onNavigate('evaluation')}>Evaluation history →</button>
                 </div>
-                <div className="football-generalist-metrics">
-                    <Tile label="Validated generalist checkpoints">{verified.length}</Tile>
-                    <Tile label="Generalist candidates">{generalist.length - verified.length}</Tile>
-                    <Tile label="Legacy policies retained">{legacyCount}</Tile>
-                    <Tile label="Legacy drill definitions">{drills.length}</Tile>
+                {latest ?
+                    <div className="football-lab-record">
+                        <span className="football-lab-record-key">Validated policy</span>
+                        <strong>{latest.id}</strong>
+                        <small>Source run: {latest.source_run_id} · Indexed {date(latest.indexed_at)}</small>
+                        <p>Promotion status is recorded in the policy index. Confirm held-out scenario results and Watch replay before drawing performance conclusions.</p>
+                    </div> :
+                    <div className="football-lab-empty">
+                        <strong>Generalist performance is not yet measurable in Atlas.</strong>
+                        <p>There is no promoted policy with an explicit, matching contract version. The existing specialist experiments remain accessible but are not counted as generalist skill mastery.</p>
+                        {pending && <p>Most recent unpromoted candidate: <code>{pending.id}</code></p>}
+                    </div>
+                }
+                <div className="football-lab-facts">
+                    <div><span>Contract-identified candidates</span><strong>{generalist.length}</strong></div>
+                    <div><span>Promoted checkpoints</span><strong>{verified.length}</strong></div>
+                    <div><span>Historical specialist policies</span><strong>{legacyPolicyCount}</strong></div>
                 </div>
+            </section>
+
+            <section className="football-panel football-lab-activity">
+                <div className="football-lab-section-heading">
+                    <div><span className="football-kicker">OPERATIONS</span><h3>Training activity</h3></div>
+                    <button className="football-button quiet" onClick={() => onNavigate('runs')}>All runs →</button>
+                </div>
+                <p className="football-lab-subtitle">{activeJobs.length} running or queued · {jobs.length} recorded runs</p>
+                {recentJobs.length === 0 ? <p className="football-muted">No runs reported by the connected training node.</p> :
+                    <div className="football-lab-record-list">
+                        {recentJobs.map(job => <button key={job.id} className="football-lab-record-row" onClick={() => onOpenRun(job.id)}>
+                            <span><strong>{job.id}</strong><small>{short(job.drill)} · {date(job.started_at)}</small></span>
+                            <span className="football-lab-record-state">{job.phase === 'queued' ? 'Queued' : short(job.state)}</span>
+                        </button>)}
+                    </div>}
+                <button className="football-button quiet" onClick={() => onNavigate('viewer')}>Open policy Watch →</button>
+            </section>
+        </div>
+
+        <div className="football-lab-secondary">
+            <section className="football-panel">
+                <div className="football-lab-section-heading">
+                    <div><span className="football-kicker">SCENARIOS</span><h3>Training contract</h3></div>
+                    <button className="football-button quiet" onClick={() => onNavigate('drills')}>Browse drills →</button>
+                </div>
+                {liveScenarios.length ? <div className="football-lab-record-list">{liveScenarios.map(drill =>
+                    <div className="football-lab-contract-row" key={drill.id}>
+                        <strong>{short(drill.id)}</strong><small>{drill.observation_size} observations · {drill.continuous_actions} continuous actions</small>
+                        <span>{drill.curriculum?.stages?.map(s => s.title).join(' · ') || 'Scenario stage metadata unavailable'}</span>
+                    </div>)}</div> :
+                    <div className="football-lab-empty">
+                        <strong>Generalist scenario contract not connected.</strong>
+                        <p>Atlas currently receives the legacy drill registry. It will show generalist scenarios here only when the training node publishes explicit contract-version metadata. No observation list or stage-completion claim is fabricated.</p>
+                    </div>}
+            </section>
+            <section className="football-panel">
+                <div className="football-lab-section-heading">
+                    <div><span className="football-kicker">MEASUREMENTS</span><h3>Recent evaluations</h3></div>
+                    <button className="football-button quiet" onClick={() => onNavigate('evaluation')}>All results →</button>
+                </div>
+                {recentEvaluations.length ? <div className="football-lab-record-list">{recentEvaluations.map((item, i) =>
+                    <div className="football-lab-contract-row" key={item.id || item.policy_id + i}>
+                        <strong>{item.policy_id}</strong><small>{item.drill ? short(item.drill) + ' · ' : ''}{item.episodes ?? 'Unknown'} episodes · seed {item.seed ?? 'unknown'}</small>
+                        <span>{typeof item.success_rate === 'number' ? (item.success_rate * 100).toFixed(1) + '% measured success' : 'Success rate unavailable'} · {generalist.some(p => p.id === item.policy_id) ? 'Generalist candidate' : 'Historical specialist'}</span>
+                    </div>)}</div> :
+                    <p className="football-muted">No completed evaluation records available.</p>}
+            </section>
+        </div>
+
+        <section className="football-panel football-lab-curriculum">
+            <div className="football-lab-section-heading">
+                <div><span className="football-kicker">CANONICAL UNITY SOURCE</span><h3>Agent interface and curriculum</h3></div>
+                {manifest && <small className="football-lab-fingerprint" title={manifest.fingerprints.contract_sha256}>Contract SHA {manifest.fingerprints.contract_sha256.slice(0, 12)}</small>}
             </div>
-            <div className="football-actions">
-                <button type="button" className="football-button primary" onClick={() => onNavigate('policies')}>Inspect policy library →</button>
-                <button type="button" className="football-button quiet" onClick={() => onNavigate('viewer')}>Watch a policy →</button>
-                <button type="button" className="football-button quiet" onClick={() => onNavigate('runs')}>Live runs →</button>
-                <button type="button" className="football-button quiet" onClick={() => onNavigate('evaluation')}>Evaluation →</button>
-            </div>
-            <p className="football-generalist-note">Contract metadata and promotion status are required before the UI can certify a generalist. Historical policies with a matching name alone are not promoted.</p>
+            {!manifest ? <div className="football-lab-empty">
+                <strong>Unity generalist metadata unavailable</strong>
+                <p>{manifestError ? 'The Mac Node could not return the current generalist manifest: ' + manifestError : 'The generalist manifest has not been reported by the connected Mac Node.'} Existing runs, evaluation and historical policies remain available.</p>
+            </div> : <>
+                <div className="football-lab-source-meta">
+                    <span><strong>{manifest.contract.contract_id}</strong><small>Policy contract · {manifest.contract.status || 'Status unavailable'}</small></span>
+                    <span><strong>{manifest.contract.observations.size}</strong><small>Vector observations</small></span>
+                    <span><strong>{manifest.contract.actions.continuous}</strong><small>Continuous actions</small></span>
+                    <span><strong>{manifest.scenarios.scenarios.length}</strong><small>Defined scenarios</small></span>
+                </div>
+                <div className="football-lab-interfaces">
+                    <div>
+                        <h4>Observations</h4>
+                        <p className="football-muted">{manifest.contract.observations.reference_frame || 'Reference frame unavailable'}</p>
+                        <div className="football-lab-contract-table">
+                            {manifest.contract.observations.fields.map(f => <div key={f.name}><code>{f.indices.length > 1 ? f.indices[0] + '–' + f.indices[f.indices.length - 1] : f.indices[0]}</code><span>{f.name.replaceAll('.', ' / ').replaceAll('_', ' ')}</span></div>)}
+                        </div>
+                    </div>
+                    <div>
+                        <h4>Actions</h4>
+                        <div className="football-lab-contract-table">
+                            {manifest.contract.actions.channels.map(c => <div key={c.index}><code>{c.index}</code><span><strong>{c.name.replaceAll('_',' ')}</strong><small>{c.range.join(' to ')}{c.mapping ? ' · ' + c.mapping : ''}{c.activation ? ' · ' + c.activation : ''}</small></span></div>)}
+                        </div>
+                    </div>
+                </div>
+                <div className="football-lab-curriculum">
+                    <h4>Curriculum</h4>
+                    <div className="football-lab-curriculum-list">{manifest.curriculum.stages.map(stage => <div key={stage.id}>
+                        <code>{stage.id}</code><strong>{stage.name}</strong><small>{stage.implemented ? 'Implemented in Unity · not graduated' : 'Planned'}</small>
+                    </div>)}</div>
+                    <p className="football-muted">Current checkpoint: {manifest.curriculum.current_checkpoint || 'None recorded'} · Automatic promotion: {manifest.curriculum.promotion?.automatic_promotion_enabled ? 'enabled' : 'disabled'}. Implemented does not mean learned.</p>
+                    <h4>Defined training scenarios</h4>
+                    <div className="football-lab-scenarios">{manifest.scenarios.scenarios.map(s => <article key={s.id}>
+                        <span className="football-kicker">{manifest.curriculum.stages.find(k => k.id === 'S' + s.stage)?.name || 'Stage ' + s.stage}</span>
+                        <strong>{s.name}</strong><p>{s.objective}</p>
+                        <small>Difficulty {s.physicalDifficulty} · decision complexity {s.decisionComplexity} · mixture weight {(s.weight * 100).toFixed(0)}% · {s.episodeSeconds}s limit</small>
+                    </article>)}</div>
+                </div>
+                <p className="football-lab-manifest-note">Source: {manifest.source} · Scene {manifest.scenarios.sceneVersion} · Physics {manifest.scenarios.physicsVersion}. Source-file fingerprints are for inspection; they do not certify a compiled runner or policy competence.</p>
+            </>}
         </section>
-        <section className="football-panel">
-            <span className="football-kicker">RESEARCH ROADMAP</span>
-            <h2>Implementation milestones</h2>
-            <p className="football-muted">These milestones are planned requirements, not automatically inferred completion statuses. Code and Unity verification must substantiate each gate.</p>
-            <div className="football-generalist-roadmap">
-                {roadmap.map((item, i) => <article key={item.id} className="football-generalist-roadmap-card">
-                    <span className="football-generalist-step">{item.id}</span>
-                    <div><strong>{item.title}</strong><p>{item.detail}</p></div>
-                    <small>{i <= 1 ? 'Implementation in progress' : 'Planned'}</small>
-                </article>)}
-            </div>
-        </section>
-        <section className="football-panel">
-            <span className="football-kicker">CURRICULUM DESIGN</span>
-            <h2>Skill acquisition and graduation</h2>
-            <p>Difficulty changes <strong>within</strong> a stage; task complexity grows <strong>between</strong> stages. We mix previously learned scenarios into later training, then test skill retention before promotion. Nothing in this roadmap counts as graduated until verified.</p>
-            <div className="football-generalist-stage-grid">
-                {stages.map(stage => <article key={stage.id} className="football-generalist-stage">
-                    <span className="football-generalist-step">{stage.id}</span>
-                    <div><h3>{stage.label}</h3><p>{stage.purpose}</p><dl><dt>What you should see</dt><dd>{stage.visual}</dd><dt>Required evidence</dt><dd>{stage.proof}</dd></dl></div>
-                </article>)}
-            </div>
-        </section>
-        <section className="football-panel">
-            <span className="football-kicker">AGENT CONTRACT · CANDIDATE ONLY</span>
-            <h2>What the player can observe and do</h2>
-            <p>The Unity R1 candidate defines <strong>37 vector observations</strong> and <strong>5 continuous actions</strong>. This is a development reference, <strong>not a validated runtime contract</strong>. Atlas must ultimately import the exact Unity-exported manifest and reject mismatches.</p>
-            <div className="football-generalist-contract-grid">
-                <div><h3>Observation groups</h3><table><thead><tr><th>Indices</th><th>Signal</th><th>Meaning</th></tr></thead><tbody>
-                    {candidateObservations.map(o => <tr key={o.name}><td>{o.indices}</td><td>{o.name}</td><td>{o.description}</td></tr>)}
-                </tbody></table></div>
-                <div><h3>Action channels</h3><table><thead><tr><th>Action</th><th>Range</th><th>Physical meaning</th></tr></thead><tbody>
-                    {candidateActions.map(a => <tr key={a.name}><td>{a.name}</td><td>{a.range}</td><td>{a.meaning}</td></tr>)}
-                </tbody></table></div>
-            </div>
-            <p className="football-generalist-note">Known open gates: goal masks, roster ordering, episode reset sequencing, C# compile and physical actuation. The six-action draft was superseded after inspection of the throttle/steering motor.</p>
-        </section>
-        <section className="football-panel">
-            <span className="football-kicker">PROOF, NOT PROXY METRICS</span>
-            <h2>Generalist development evidence</h2>
-            {current && evidence && evidence.length > 0 ? <p>There are {evidence.length} recorded evaluation entries for the current checkpoint. Inspect individual runs for seeded scenario comparability and retention evidence before interpreting success rates.</p> :
-                <p>No promoted generalist evaluation suite is available yet. Old specialist success rates, PPO rewards and checkpoint counts are not transferable proof of this policy's ability.</p>}
-            <p>Required promotion record: versioned checkpoint and scenario, deterministic held-out seeds, measured physical outcomes, simple baselines, a reproducible Watch rollout, and regression checks on older skills.</p>
-            <button type="button" className="football-button quiet" onClick={() => onNavigate('evaluation')}>Open measured evaluation history →</button>
-        </section>
+        <footer className="football-lab-footer">
+            <strong>Architecture migration</strong>
+            <p>The M2 programme is moving to a single shared policy and curriculum. This workspace reports what the connected services actually know; the detailed roadmap and observation/action definitions must arrive through a versioned Unity contract before being represented as live state.</p>
+            <button className="football-button quiet" onClick={() => onNavigate('policies')}>Inspect historical policies →</button>
+        </footer>
     </section>;
 }

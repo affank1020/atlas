@@ -13,6 +13,7 @@ type Launch = { accepted: boolean; ticket: string; drill: string; status: string
 type LaunchStatus = { ticket: string; state: string; output: string; error: string; note: string; run?: { id?: string; state?: string } };
 type Evaluation = { id: string; policy_id: string; drill: string; seed: number; episodes: number; success_rate: number; mean_reward: number; curriculum_stage?: number; contact_episodes?: number; controlled_progress_mean_m?: number; scenario_version?: number; evaluation_kind?: string; baseline_mode?: string; observation_transform?: string; evaluation_purpose?: 'primary_stage' | 'approach_retention' | 'first_touch_zero_shot'; source_training_stage?: number };
 type Viewer = { id: string; mode: string; policy_id?: string; source_run_id?: string; drill?: string; arenas?: number; state: string; started_at: string };
+type GeneralistManifest = import('./FootballGeneralistDashboard').GeneralistManifest;
 type Screen = 'generalist' | 'overview' | 'drills' | 'train' | 'runs' | 'evaluation' | 'policies' | 'viewer' | 'validation';
 const screens: { id: Screen; label: string; note: string }[] = [
     { id: 'generalist', label: 'Generalist', note: 'M2 roadmap & capabilities' },
@@ -43,6 +44,8 @@ const stateLabel = (value?: string) => (value ?? 'unknown').replaceAll('_', ' ')
 
 export function FootballTraining() {
     const [drills, setDrills] = useState<Drill[]>([]);
+    const [generalistManifest, setGeneralistManifest] = useState<GeneralistManifest | null>(null);
+    const [generalistManifestError, setGeneralistManifestError] = useState('');
     const [resources, setResources] = useState<Resources>();
     const [jobs, setJobs] = useState<Job[]>([]);
     const [policies, setPolicies] = useState<Policy[]>([]);
@@ -91,6 +94,14 @@ export function FootballTraining() {
             callTool<Resources>('football_training_resources'),
         ]);
         setResources(r);
+        try {
+            const manifest = await callTool<GeneralistManifest>('football_generalist_manifest');
+            setGeneralistManifest(manifest);
+            setGeneralistManifestError('');
+        } catch (cause) {
+            setGeneralistManifest(null);
+            setGeneralistManifestError(cause instanceof Error ? cause.message : String(cause));
+        }
         setDrills(d); setJobs([...j].sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? '')));
         setPolicies(p);
         setEvaluations(e); setViewers(v);
@@ -223,7 +234,7 @@ export function FootballTraining() {
                 <strong>{item.label}</strong><small>{item.note}</small>
             </button>)}
         </nav>
-        {screen === 'generalist' && <FootballGeneralistDashboard policies={policies} drills={drills} evaluations={evaluations} onNavigate={navigate} />}
+        {screen === 'generalist' && <FootballGeneralistDashboard policies={policies} drills={drills} jobs={jobs} evaluations={evaluations} manifest={generalistManifest} manifestError={generalistManifestError} onNavigate={navigate} onOpenRun={openRun} />}
         {screen === 'validation' && <FootballValidation />}
         {(screen === 'overview' || screen === 'runs' || screen === 'train') && resources?.settings && <section className="football-panel" aria-label="Training resources">
             <h2>Concurrency and throughput</h2>

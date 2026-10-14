@@ -4,6 +4,7 @@ import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, re
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { AtlasError } from '@atlas/protocol/errors';
+import { generalistManifest } from './football-generalist.js';
 import { workspaceOperationSchemas } from '@atlas/protocol/workspace-operations';
 import type { Workspace } from '@atlas/protocol/workspace';
 
@@ -136,6 +137,7 @@ function launchStatus(workspace: Workspace, ticket: string, type: 'training' | '
 export async function footballControl(workspace: Workspace, raw: unknown): Promise<unknown> {
     const x = workspaceOperationSchemas.football_control.parse(raw);
     validateAction(x);
+    if (x.action === 'generalist_manifest') return generalistManifest(workspace);
     const script = driverPath(workspace);
     if (x.action === 'launch_status') return launchStatus(workspace, x.runId!);
     if (x.action === 'evaluation_status') return launchStatus(workspace, x.runId!, 'evaluation');
