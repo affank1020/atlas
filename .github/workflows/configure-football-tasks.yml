@@ -64,6 +64,16 @@ jobs:
           test -s infra/football-dev-tasks.json
           compose=(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml)
           tasks="$(cat infra/football-dev-tasks.json)"
+          # Read-only diagnostic: the server may use a different database than
+          # the postgres Compose service. Never print the connection URL.
+          "${compose[@]}" exec -T server node -e '
+            const u = new URL(process.env.DATABASE_URL);
+            console.log("Atlas server DB host:", u.hostname,
+                        "port:", u.port || "5432",
+                        "database:", u.pathname.slice(1));
+          '
+          "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 \
+            -U atlas -d atlas -c "SELECT current_database() AS db, count(*) AS workspace_count, count(*) FILTER (WHERE id = '\''961d0046-eb49-446d-835e-00bec3e46059'\''::uuid) AS requested_workspace_count FROM workspaces;"
           "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 \
             -U atlas -d atlas -v "tasks=$tasks" <<'SQL'
           BEGIN;
