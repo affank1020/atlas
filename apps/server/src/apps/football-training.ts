@@ -24,7 +24,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
+        const start = ['generalist_stop', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -53,6 +53,14 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         tools: [
             action('football_generalist_manifest', 'Read versioned generalist policy contract, curriculum and scenario definitions from the connected Unity workspace. Read-only; no build or training.', {}, 'generalist_manifest'),
             action('football_generalist_runs', 'Discover canonical generalist training receipts, including runs launched outside Atlas. Unknown state is not treated as success.', {}, 'generalist_runs'),
+            action('football_generalist_policies', 'Discover only explicitly registered generalist policy metadata; no inferred compatibility.', {}, 'generalist_policies'),
+            action('football_generalist_activity', 'Read generalist evaluation, baseline and watch receipts.', {}, 'generalist_activity'),
+            action('football_generalist_status', 'Inspect a generalist operation receipt.', { runId: z.string().uuid() }, 'generalist_status'),
+            action('football_generalist_stop', 'Request a graceful interrupt of an Atlas-owned generalist training process group.', { runId: z.string().uuid() }, 'generalist_stop'),
+            action('football_generalist_train', 'Start one generalist PPO learner with an allowlisted scenario and preset.', { scenario: drill, preset: z.enum(['smoke', 'pilot_100k']), seed: integer.min(0).max(2147483647), arenas: integer.min(1).max(16), basePort: integer.min(1024).max(65519) }, 'generalist_train'),
+            action('football_generalist_evaluate', 'Evaluate a compatible provenance-checked generalist policy.', { policyId: runId, scenario: drill, seed: integer.min(0).max(2147483647), episodes: integer.min(1).max(10000) }, 'generalist_evaluate'),
+            action('football_generalist_baseline', 'Evaluate the scripted generalist baseline with a stamped Unity runner.', { scenario: drill, seed: integer.min(0).max(2147483647), episodes: integer.min(1).max(10000) }, 'generalist_baseline'),
+            action('football_generalist_watch', 'Open a compatible provenance-checked generalist policy in Unity.', { policyId: runId, scenario: drill, seed: integer.min(0).max(2147483647), arenas: integer.min(1).max(16) }, 'generalist_watch'),
             action('football_list_drills', 'List available football training drills and trainer contracts.', {}, 'drills'),
             action('football_prebuild_training', 'Build and verify a cached Unity player while training is idle. Poll the launch receipt. Never launches PPO.', { drill }, 'prebuild_training'),
             action('football_training_resources', 'Read owner-configured admission budgets, host usage and queue health.', {}, 'training_resources'),

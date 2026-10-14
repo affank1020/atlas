@@ -7,7 +7,7 @@ export type GeneralistManifest = {
         actions: { continuous: number; channels: { index: number; name: string; range: number[]; activation?: string; mapping?: string }[] };
     };
     scenarios: { sceneVersion: string; physicsVersion: string; scenarios: { id: string; name: string; stage: number; objective: string; physicalDifficulty: number; decisionComplexity: number; weight: number; targetRepresentation: string; episodeSeconds: number }[] };
-    curriculum: { stages: { id: string; name: string; implemented: boolean }[]; promotion?: { minimum_held_out_episodes: number; minimum_success_rate: number; maximum_retention_drop: number; automatic_promotion_enabled: boolean }; current_checkpoint?: string | null };
+    curriculum: { held_out_seeds?: number[]; stages: { id: string; name: string; implemented: boolean }[]; promotion?: { minimum_held_out_episodes: number; minimum_success_rate: number; maximum_retention_drop: number; automatic_promotion_enabled: boolean }; current_checkpoint?: string | null };
     fingerprints: { contract_sha256: string; scenario_sha256: string; curriculum_sha256: string };
     provenance: string;
 };

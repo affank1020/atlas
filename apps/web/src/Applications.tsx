@@ -1,7 +1,7 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { callTool } from './api';
 import { Portfolio } from './Portfolio';
-import { FootballTraining } from './FootballTraining';
+import { FootballGeneralistExperience } from './FootballGeneralistExperience';
 import './applications.css';
 
 export type ApplicationManifest = {
@@ -16,7 +16,7 @@ export type ApplicationManifest = {
 // which Applications are attached to each Project.
 const applicationComponents: Record<string, ComponentType> = {
     portfolio: Portfolio,
-    'football-training': FootballTraining,
+    'football-training': FootballGeneralistExperience,
 };
 
 export function ProjectApplications({ projectId }: { projectId: string }) {

@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { AtlasError } from '@atlas/protocol/errors';
 import { generalistManifest } from './football-generalist.js';
 import { listGeneralistRuns } from './football-generalist-runs.js';
+import { generalistOperation } from './football-generalist-operations.js';
 import { workspaceOperationSchemas } from '@atlas/protocol/workspace-operations';
 import type { Workspace } from '@atlas/protocol/workspace';
 
@@ -139,7 +140,8 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
     const x = workspaceOperationSchemas.football_control.parse(raw);
     validateAction(x);
     if (x.action === 'generalist_manifest') return generalistManifest(workspace);
-    if (x.action === 'generalist_runs') return listGeneralistRuns(workspace);
+    if (x.action.startsWith('generalist_')) return generalistOperation(workspace, x);
+    // The legacy driver is retained only for historical specialist workflows.
     const script = driverPath(workspace);
     if (x.action === 'launch_status') return launchStatus(workspace, x.runId!);
     if (x.action === 'evaluation_status') return launchStatus(workspace, x.runId!, 'evaluation');
