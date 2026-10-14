@@ -45,7 +45,10 @@ const metric = (label: string, value: string) => <div className="fg-detail-metri
 const percent = (value?: number | null) => typeof value === 'number' ? num(100 * value) + '%' : 'Not measured';
 const samplesFromLog = (text: string) => {
     const samples: Array<{ step: number; reward: number; seconds: number }> = [];
-    const pattern = /Step:\s*([\d,]+)[^\n]*?Time Elapsed:\s*([\d,.]+)[^\n]*?Mean Reward:\s*(-?[\d.]+)/g;
+    // ML-Agents ends its summary with "Mean Reward: 0.348. Std of Reward: ...".
+    // A greedy [\\d.] capture includes the sentence-ending dot ("0.348."),
+    // which Number() turns into NaN and silently hides all live measurements.
+    const pattern = /Step:\s*([\d,]+)[^\n]*?Time Elapsed:\s*([\d,.]+)[^\n]*?Mean Reward:\s*(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)/g;
     for (const match of text.matchAll(pattern)) {
         const step = Number(match[1].replaceAll(',', ''));
         const seconds = Number(match[2].replaceAll(',', ''));
@@ -98,6 +101,10 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
     const latest = useCheckpoint ? checkpointLatest : logLatest;
     const recordedSteps = Math.max(logLatest?.step ?? 0, detail?.checkpoint_steps ?? 0);
     const hasRecordedSteps = logLatest != null || detail?.checkpoint_steps != null;
+    // ML-Agents writes configuration.yaml and training_status.json only on shutdown;
+    // while training, the authoritative budget is printed in the trainer startup log.
+    const loggedBudget = /(?:^|\n)\s*max_steps:\s*(\d+)\b/.exec(logText);
+    const budget = detail?.training_budget_steps ?? (loggedBudget ? Number(loggedBudget[1]) : null);
     const samples = logSamples.length > 1 ? logSamples : checkpointSamples.map(sample => ({ ...sample, seconds: 0 }));
     const lines = logText.split('\n').filter(line => line.toLowerCase().includes(filter.toLowerCase())).join('\n');
     const linkedPolicies = policies.filter(p => p.source_run_id === runId ||
@@ -113,15 +120,15 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
         {!detail && !error && <p role="status">Loading training diagnostics…</p>}
         {run && <>
             <div className="fg-detail-metrics">
-                {metric('Recorded steps', num(hasRecordedSteps ? recordedSteps : null, 0) + (detail.training_budget_steps ? ' / ' + num(detail.training_budget_steps, 0) : ''))}
+                {metric('Recorded steps', num(hasRecordedSteps ? recordedSteps : null, 0) + (budget ? ' / ' + num(budget, 0) : ''))}
                 {metric(useCheckpoint ? 'Checkpoint reward' : 'Latest mean reward', num(latest?.reward, 3))}
                 {metric('Training elapsed', logLatest ? num(logLatest.seconds) + ' s' : '—')}
                 {metric('ONNX checkpoints', num(run.checkpoints, 0))}
             </div>
-            {detail.training_budget_steps != null && hasRecordedSteps && <div className="fg-progress" role="progressbar"
-                aria-label="Training step progress" aria-valuemin={0} aria-valuemax={detail.training_budget_steps}
-                aria-valuenow={Math.min(recordedSteps, detail.training_budget_steps)}>
-                <div style={{ width: Math.min(100, Math.max(0, recordedSteps / detail.training_budget_steps * 100)) + '%' }} />
+            {budget != null && budget > 0 && hasRecordedSteps && <div className="fg-progress" role="progressbar"
+                aria-label="Training step progress" aria-valuemin={0} aria-valuemax={budget}
+                aria-valuenow={Math.min(recordedSteps, budget)}>
+                <div style={{ width: Math.min(100, Math.max(0, recordedSteps / budget * 100)) + '%' }} />
             </div>}
             <div className="fg-detail-columns">
                 <section className="fg-panel"><h3>Reward history</h3><RewardHistory samples={samples} />

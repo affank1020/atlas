@@ -68,6 +68,40 @@ test('opens generalist run inspection and keeps an honest no-log state', async (
     expect(screen.getByRole('button', { name: 'external-s0 →' })).toBeInTheDocument();
 });
 
+
+test('live trainer summaries populate steps, graph and budget before checkpoint status is saved', async () => {
+    const runId = 'atlas-generalist-fecb1e8442a2';
+    const logs = [
+        '[INFO] Hyperparameters for behavior name FootballGeneralistV2:',
+        '\tmax_steps:\t100000',
+        '[INFO] FootballGeneralistV2. Step: 5000. Time Elapsed: 12.557 s. Mean Reward: 0.062. Std of Reward: 0.882. Training.',
+        '[INFO] FootballGeneralistV2. Step: 10000. Time Elapsed: 21.838 s. Mean Reward: -0.015. Std of Reward: 0.883. Training.',
+        '[INFO] FootballGeneralistV2. Step: 15000. Time Elapsed: 31.011 s. Mean Reward: 0.302. Std of Reward: 0.913. Training.',
+    ].join('\n');
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') return [{
+            id: runId, family: 'generalist', state: 'running', scenario: 's1_rehearsal',
+        }] as never;
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_run_detail') return {
+            run: { id: runId, family: 'generalist', state: 'running', checkpoints: 0 },
+            logs, errors: '', log_source: 'Atlas training launch', log_note: 'Live output',
+            checkpoint_steps: null, checkpoint_samples: [], training_status: null, training_budget_steps: null,
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(await screen.findByRole('button', { name: runId + ' →' }));
+    expect(await screen.findByText('15,000 / 100,000')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Training step progress' }))
+        .toHaveAttribute('aria-valuenow', '15000');
+    expect(screen.getByText('Latest mean reward')).toBeInTheDocument();
+    expect(screen.getAllByText('0.302').length).toBeGreaterThan(0);
+    expect(screen.getByRole('img', { name: 'Recorded mean training reward history' })).toBeInTheDocument();
+    expect(screen.getByText('3 logged samples')).toBeInTheDocument();
+});
+
 test('older generalist run recovers progress and rewards from saved ML-Agents checkpoints', async () => {
     vi.mocked(callTool).mockImplementation(async (name) => {
         if (name === 'football_generalist_manifest') return contract as never;
