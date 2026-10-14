@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS build
+FROM node:22-bookworm-slim AS build
 WORKDIR /atlas
 
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
@@ -14,6 +14,6 @@ COPY packages/view-runtime/tsconfig.json packages/view-runtime/tsconfig.json
 COPY apps/web apps/web
 RUN npm run build:web
 
-FROM public.ecr.aws/docker/library/caddy:2-alpine
+FROM caddy:2-alpine
 COPY infra/Caddyfile.production /etc/caddy/Caddyfile
 COPY --from=build /atlas/apps/web/dist /srv

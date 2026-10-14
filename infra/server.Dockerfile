@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS build
+FROM node:22-bookworm-slim AS build
 WORKDIR /atlas
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/package.json
@@ -15,7 +15,7 @@ COPY apps/server/src apps/server/src
 COPY apps/server/tsconfig.json apps/server/tsconfig.json
 RUN npm run build:server
 
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim
+FROM node:22-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /atlas
 COPY package.json package-lock.json ./
