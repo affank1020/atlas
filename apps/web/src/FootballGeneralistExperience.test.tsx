@@ -68,6 +68,34 @@ test('opens generalist run inspection and keeps an honest no-log state', async (
     expect(screen.getByRole('button', { name: 'external-s0 →' })).toBeInTheDocument();
 });
 
+test('older generalist run recovers progress and rewards from saved ML-Agents checkpoints', async () => {
+    vi.mocked(callTool).mockImplementation(async (name) => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') return [{ id: 'older-run', family: 'generalist', state: 'unknown',
+            checkpoints: 2 }] as never;
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_run_detail') return {
+            run: { id: 'older-run', family: 'generalist', state: 'unknown', checkpoints: 2,
+                checkpoint_files: ['checkpoint-1.onnx', 'checkpoint-2.onnx'] },
+            logs: '', errors: '', log_source: null, log_note: 'No trainer console available',
+            ticket: null, training_status: {}, training_budget_steps: 100000,
+            checkpoint_steps: 100003, checkpoint_samples: [
+                { step: 39994, reward: 1.08 }, { step: 99997, reward: 1.17 },
+                { step: 100003, reward: 1.1695 },
+            ],
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(await screen.findByRole('button', { name: 'older-run →' }));
+    expect(await screen.findByText('100,003 / 100,000')).toBeInTheDocument();
+    expect(screen.getByText('Checkpoint reward')).toBeInTheDocument();
+    expect(screen.getByText(/Saved ML-Agents checkpoint rewards/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Training step progress' })).toHaveAttribute('aria-valuenow', '100000');
+    fireEvent.click(screen.getByRole('button', { name: 'Checkpoints (2)' }));
+    expect(screen.getByText('checkpoint-1.onnx')).toBeInTheDocument();
+});
+
 test('policy profile links to recorded evaluations and preselects Watch', async () => {
     const ticket = '75ed74ef-a004-4299-8f2f-ad47389cd39a';
     vi.mocked(callTool).mockImplementation(async (name) => {

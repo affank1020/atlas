@@ -35,6 +35,27 @@ function launchStates(workspace: Workspace): Map<string, string> {
     }
     return states;
 }
+/** ML-Agents stores interim ONNX exports in <run>/<behavior>/, with a final
+ *  export in <run>/. Walk only those two known levels; never follow symlinks. */
+function checkpointInventory(workspace: Workspace, directory: string, runId: string) {
+    const files: string[] = [];
+    const root = realpathSync(workspace.rootPath);
+    const runDir = path.join(directory, runId);
+    for (const candidateDir of [runDir, path.join(runDir, 'FootballGeneralistV2')]) {
+        try {
+            if (lstatSync(candidateDir).isSymbolicLink() || !statSync(candidateDir).isDirectory()) continue;
+            if (!realpathSync(candidateDir).startsWith(root + path.sep)) continue;
+            for (const entry of readdirSync(candidateDir, { withFileTypes: true }).slice(0, 1000)) {
+                if (!entry.isFile() || !entry.name.endsWith('.onnx')) continue;
+                const file = path.join(candidateDir, entry.name);
+                if (lstatSync(file).isSymbolicLink() || !realpathSync(file).startsWith(root + path.sep)) continue;
+                files.push(path.relative(workspace.rootPath, file));
+            }
+        } catch { /* Missing or inaccessible ML-Agents output is not an error. */ }
+    }
+    return { checkpoints: files.length, checkpoint_files: files.sort() };
+}
+
 /** Discover generalist experiments without relying on the legacy trainer index. */
 export function listGeneralistRuns(workspace: Workspace) {
     const root = path.join(workspace.rootPath, 'training-driver-runs');
@@ -77,9 +98,7 @@ export function listGeneralistRuns(workspace: Workspace) {
                     binary: receipt.binary, packaging, output_dir: path.relative(workspace.rootPath, dir),
                     started_at: statSync(full).birthtime.toISOString(),
                     state: states.get(name) ?? 'unknown', // External runs remain unknown without a verified Atlas launch receipt.
-                    checkpoints: existsSync(path.join(dir, name)) ? readdirSync(path.join(dir, name)).filter(file => file.endsWith('.onnx')).length : 0,
-                    checkpoint_files: existsSync(path.join(dir, name)) ? readdirSync(path.join(dir, name))
-                        .filter(file => file.endsWith('.onnx')).map(file => path.relative(workspace.rootPath, path.join(dir, name, file))) : [],
+                    ...checkpointInventory(workspace, dir, name),
                 });
             } catch { /* malformed or inaccessible receipts are ignored */ }
         }
@@ -136,11 +155,38 @@ export function generalistRunDetail(workspace: Workspace, runId: string) {
         if (existsSync(statusFile) && !lstatSync(statusFile).isSymbolicLink() && statSync(statusFile).size < 256 * 1024)
             trainingStatus = JSON.parse(readFileSync(statusFile, 'utf8'));
     } catch {}
+    // Historical and terminal-launched runs may have no captured stdout. The
+    // ML-Agents status file independently persists observed steps and rewards.
+    // Only use explicitly recorded measurements; never infer full completion
+    // merely because a run has an exported policy or a planned step budget.
+    const checkpointSamples: Array<{ step: number; reward: number }> = [];
+    let checkpointSteps: number | null = null;
+    if (trainingStatus && typeof trainingStatus === 'object' && !Array.isArray(trainingStatus)) {
+        const behavior = (trainingStatus as Record<string, unknown>).FootballGeneralistV2;
+        if (behavior && typeof behavior === 'object' && !Array.isArray(behavior)) {
+            const data = behavior as { checkpoints?: unknown; final_checkpoint?: unknown };
+            const records = [
+                ...(Array.isArray(data.checkpoints) ? data.checkpoints.slice(-300) : []),
+                data.final_checkpoint,
+            ];
+            for (const record of records) {
+                if (!record || typeof record !== 'object') continue;
+                const { steps, reward } = record as { steps?: unknown; reward?: unknown };
+                if (typeof steps !== 'number' || !Number.isSafeInteger(steps) || steps < 0) continue;
+                checkpointSteps = Math.max(checkpointSteps ?? 0, steps);
+                if (typeof reward === 'number' && Number.isFinite(reward))
+                    checkpointSamples.push({ step: steps, reward });
+            }
+        }
+    }
+    const uniqueSamples = [...new Map(checkpointSamples.map(sample => [sample.step, sample])).values()]
+        .sort((a, b) => a.step - b.step);
     const savedConfiguration = tail(path.join(directory, runId, 'configuration.yaml'), 128 * 1024);
     const budgetMatch = /(?:^|\n)\s*max_steps:\s*(\d+)/.exec(savedConfiguration);
     const parsedBudget = budgetMatch ? Number(budgetMatch[1]) : null;
     const training_budget_steps = parsedBudget != null && Number.isSafeInteger(parsedBudget) && parsedBudget > 0 ? parsedBudget : null;
     return { run, ticket, logs, errors, log_source: logSource, training_status: trainingStatus, training_budget_steps,
+        checkpoint_steps: checkpointSteps, checkpoint_samples: uniqueSamples,
         log_note: logSource ? 'Last 64 KiB per stream; refreshed on demand.' :
-            'No saved text trainer log is available for this run. Terminal-launched runs may not capture stdout.' };
+            'No saved trainer console log. Steps and rewards are recovered from ML-Agents checkpoint records when available.' };
 }

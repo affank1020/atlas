@@ -22,6 +22,7 @@ export type GeneralistActivity = {
 type RunDetail = {
     run: GeneralistRun; ticket: string | null; logs: string; errors: string;
     log_source: string | null; log_note: string; training_status: unknown; training_budget_steps?: number | null;
+    checkpoint_steps?: number | null; checkpoint_samples?: Array<{ step: number; reward: number }>;
 };
 type Episode = Record<string, unknown>;
 type EvaluationDetail = {
@@ -84,8 +85,17 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
     }, [runId]);
     const run = detail?.run;
     const logText = [detail?.logs ?? '', detail?.errors ? '\n[stderr]\n' + detail.errors : ''].join('');
-    const samples = useMemo(() => samplesFromLog(logText), [logText]);
-    const latest = samples.at(-1);
+    const logSamples = useMemo(() => samplesFromLog(logText), [logText]);
+    const checkpointSamples = detail?.checkpoint_samples ?? [];
+    // ML-Agents records checkpoint progress even when no console was captured.
+    // Prefer the newest observed step; don't mistake the configured budget for progress.
+    const logLatest = logSamples.at(-1);
+    const checkpointLatest = checkpointSamples.at(-1);
+    const useCheckpoint = checkpointLatest != null && (!logLatest || checkpointLatest.step > logLatest.step);
+    const latest = useCheckpoint ? checkpointLatest : logLatest;
+    const recordedSteps = Math.max(logLatest?.step ?? 0, detail?.checkpoint_steps ?? 0);
+    const hasRecordedSteps = logLatest != null || detail?.checkpoint_steps != null;
+    const samples = logSamples.length > 1 ? logSamples : checkpointSamples.map(sample => ({ ...sample, seconds: 0 }));
     const lines = logText.split('\n').filter(line => line.toLowerCase().includes(filter.toLowerCase())).join('\n');
     const linkedPolicies = policies.filter(p => p.source_run_id === runId ||
         (run?.output_dir && p.source.startsWith(run.output_dir + '/')));
@@ -100,19 +110,19 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
         {!detail && !error && <p role="status">Loading training diagnostics…</p>}
         {run && <>
             <div className="fg-detail-metrics">
-                {metric('Recorded steps', num(latest?.step, 0) + (detail.training_budget_steps ? ' / ' + num(detail.training_budget_steps, 0) : ''))}
-                {metric('Latest mean reward', num(latest?.reward, 3))}
-                {metric('Training elapsed', latest ? num(latest.seconds) + ' s' : '—')}
+                {metric('Recorded steps', num(hasRecordedSteps ? recordedSteps : null, 0) + (detail.training_budget_steps ? ' / ' + num(detail.training_budget_steps, 0) : ''))}
+                {metric(useCheckpoint ? 'Checkpoint reward' : 'Latest mean reward', num(latest?.reward, 3))}
+                {metric('Training elapsed', logLatest ? num(logLatest.seconds) + ' s' : '—')}
                 {metric('ONNX checkpoints', num(run.checkpoints, 0))}
             </div>
-            {detail.training_budget_steps != null && latest?.step != null && <div className="fg-progress" role="progressbar"
+            {detail.training_budget_steps != null && hasRecordedSteps && <div className="fg-progress" role="progressbar"
                 aria-label="Training step progress" aria-valuemin={0} aria-valuemax={detail.training_budget_steps}
-                aria-valuenow={Math.min(latest.step, detail.training_budget_steps)}>
-                <div style={{ width: Math.min(100, Math.max(0, latest.step / detail.training_budget_steps * 100)) + '%' }} />
+                aria-valuenow={Math.min(recordedSteps, detail.training_budget_steps)}>
+                <div style={{ width: Math.min(100, Math.max(0, recordedSteps / detail.training_budget_steps * 100)) + '%' }} />
             </div>}
             <div className="fg-detail-columns">
                 <section className="fg-panel"><h3>Reward history</h3><RewardHistory samples={samples} />
-                    <small className="fg-muted">PPO summary rewards are not evaluation success metrics.</small></section>
+                    <small className="fg-muted">{logSamples.length > 1 ? 'Trainer summary rewards' : 'Saved ML-Agents checkpoint rewards'} — not evaluation success metrics.</small></section>
                 <section className="fg-panel"><h3>Run configuration</h3><dl className="fg-detail-list">
                     <dt>Scenario</dt><dd>{run.scenario ?? '—'}</dd>
                     <dt>Preset</dt><dd>{run.preset ?? '—'}</dd>

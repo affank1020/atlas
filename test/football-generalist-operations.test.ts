@@ -62,7 +62,7 @@ test('generalist run detail safely provides saved checkpoints and reports missin
         const detail = await footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: 'run-detail-42' }) as any;
         assert.equal(detail.run.id, 'run-detail-42');
         assert.equal(detail.log_source, null);
-        assert.match(detail.log_note, /No saved text trainer log/);
+        assert.match(detail.log_note, /No saved trainer console log/);
         const operations = path.join(root, 'training-driver-runs', 'atlas-generalist-operations');
         await mkdir(operations, { recursive: true });
         const ticket = '5d2504cd-c985-4b5e-a5f7-31cc84fd245a';
@@ -79,6 +79,20 @@ test('generalist run detail safely provides saved checkpoints and reports missin
         assert.match(live.logs, /Step: 1500/);
         assert.equal(live.ticket, ticket);
         assert.equal(live.training_budget_steps, 100000);
+        // Terminal-launched runs retain ML-Agents checkpoint progress even without stdout.
+        await mkdir(path.join(dir, 'run-detail-42', 'FootballGeneralistV2'), { recursive: true });
+        await mkdir(path.join(dir, 'run-detail-42', 'run_logs'), { recursive: true });
+        await writeFile(path.join(dir, 'run-detail-42', 'FootballGeneralistV2', 'FootballGeneralistV2-2050.onnx'), 'model');
+        await writeFile(path.join(dir, 'run-detail-42', 'FootballGeneralistV2.onnx'), 'final model');
+        await writeFile(path.join(dir, 'run-detail-42', 'run_logs', 'training_status.json'), JSON.stringify({
+            FootballGeneralistV2: { checkpoints: [{ steps: 1500, reward: 0.5 }],
+                final_checkpoint: { steps: 2050, reward: 0.6 } },
+        }));
+        const recovered = await footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: 'run-detail-42' }) as any;
+        assert.equal(recovered.checkpoint_steps, 2050);
+        assert.deepEqual(recovered.checkpoint_samples, [{ step: 1500, reward: 0.5 }, { step: 2050, reward: 0.6 }]);
+        assert.equal(recovered.run.checkpoints, 2);
+        assert.equal(recovered.run.checkpoint_files.length, 2);
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: '../bad' }));
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: 'missing' }));
     } finally { await rm(root, { recursive: true, force: true }); }
