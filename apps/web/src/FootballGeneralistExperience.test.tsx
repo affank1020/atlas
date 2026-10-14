@@ -178,3 +178,30 @@ test('Watch receipt shows player logging evidence without claiming a visible win
     fireEvent.click(screen.getByText('Unity player log (last 4 KB)'));
     expect(screen.getByText('[UnityMemory] Player startup')).toBeInTheDocument();
 });
+
+test('shows externally launched evaluation progress without a saved per-episode report', async () => {
+    const ticket = 'da35acfe-5c55-4ed7-b86c-5052c779faa7';
+    const operation = {
+        ticket, action: 'generalist_evaluate', status: 'running', scenario: 's0-contact-easy-v1',
+        policy_id: 'generalist-run', requested_episodes: 100,
+        result: { episodes: 25, outcomes: { physical_contact: 25 }, success_rate: null },
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs' || name === 'football_generalist_policies') return [] as never;
+        if (name === 'football_generalist_activity') return [operation] as never;
+        if (name === 'football_generalist_evaluation_detail') return {
+            operation, summary: null, episodes: [], pagination: { offset: 0, total: 0, has_more: false },
+            note: 'Report is not yet saved.',
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    expect(await screen.findByText('25 / 100 episodes · 25 physical contact')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 's0-contact-easy-v1 →' }));
+    expect(await screen.findByRole('progressbar', { name: 'Evaluation episode progress' }))
+        .toHaveAttribute('aria-valuenow', '25');
+    expect(screen.getByText('25 / 100 episodes observed')).toBeInTheDocument();
+    expect(screen.getByText('physical_contact')).toBeInTheDocument();
+    expect(screen.getByText(/Individual episode records are not available yet/)).toBeInTheDocument();
+});

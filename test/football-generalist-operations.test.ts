@@ -121,6 +121,30 @@ test('generalist evaluation detail paginates actual results and preserves outcom
         assert.deepEqual(result.summary.outcomes, { contact: 2, timeout: 1 });
         assert.equal(result.episodes[0].index, 1);
         assert.equal(result.pagination.has_more, true);
+        // Recover a historical run whose receipt UUID and result-file UUID differ.
+        const olderTicket = '75ed74ef-a004-4299-8f2f-ad47389cd39c';
+        const olderResult = path.join(dir, '75ed74ef-a004-4299-8f2f-ad47389cd39d.result.json');
+        await writeFile(path.join(dir, olderTicket + '.json'), JSON.stringify({
+            ticket: olderTicket, pid: -1, action: 'generalist_evaluate', output: olderResult,
+            started_at: new Date().toISOString(),
+        }));
+        await writeFile(olderResult, JSON.stringify({ contract: 'football-generalist-v2', episodes: [
+            { index: 0, outcome: 'physical_contact' }, { index: 1, outcome: 'physical_contact' },
+        ] }));
+        const recovered = await footballControl(ws(root), { ...input,
+            action: 'generalist_evaluation_detail', runId: olderTicket }) as any;
+        assert.equal(recovered.summary.total, 2);
+        assert.deepEqual(recovered.summary.outcomes, { physical_contact: 2 });
+        assert.equal(recovered.summary.success_rate, null);
+        // Never read a result file outside the private operations directory.
+        const unsafeTicket = '75ed74ef-a004-4299-8f2f-ad47389cd39e';
+        await writeFile(path.join(dir, unsafeTicket + '.json'), JSON.stringify({
+            ticket: unsafeTicket, pid: -1, action: 'generalist_evaluate',
+            output: path.join(root, 'external.result.json'),
+        }));
+        const unsafe = await footballControl(ws(root), { ...input,
+            action: 'generalist_evaluation_detail', runId: unsafeTicket }) as any;
+        assert.equal(unsafe.summary, null);
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_evaluation_detail', runId: '../bad' }));
     } finally { await rm(root, { recursive: true, force: true }); }
 });

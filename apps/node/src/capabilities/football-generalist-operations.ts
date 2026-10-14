@@ -87,9 +87,8 @@ function taskDir(workspace: Workspace) {
     mkdirSync(root, { recursive: true, mode: 0o700 });
     return root;
 }
-function launch(workspace: Workspace, action: string, command: string[], fields: Record<string, unknown>) {
+function launch(workspace: Workspace, action: string, command: string[], fields: Record<string, unknown>, ticket = randomUUID()) {
     const directory = taskDir(workspace);
-    const ticket = randomUUID();
     const out = openSync(path.join(directory, ticket + '.out'), 'wx', 0o600);
     const err = openSync(path.join(directory, ticket + '.err'), 'wx', 0o600);
     let pid: number | undefined;
@@ -209,7 +208,15 @@ function generalistEvaluationDetail(workspace: Workspace, id: string, offset: nu
     const operation = receipt(workspace, id);
     if (!['generalist_evaluate', 'generalist_baseline'].includes(operation.action))
         throw new AtlasError('This receipt is not a generalist evaluation.', 'INVALID_ARGUMENT');
-    const file = path.join(taskDir(workspace), id + '.result.json');
+    // Older launches generated the result-file UUID separately from the receipt ticket.
+    // Trust only a UUID-named file directly within our private operations directory.
+    const directory = taskDir(workspace);
+    // The public receipt's `output` is stdout, not the stored result-file path.
+    const metadata = readJson(path.join(directory, id + '.json'));
+    const recordedOutput = typeof metadata.output === 'string' ? path.resolve(metadata.output) : '';
+    const file = recordedOutput && path.dirname(recordedOutput) === path.resolve(directory) &&
+        /^[a-f0-9-]{36}\.result\.json$/.test(path.basename(recordedOutput))
+        ? recordedOutput : path.join(directory, id + '.result.json');
     if (!existsSync(file)) return { operation, summary: null, episodes: [], pagination: { offset, total: 0, has_more: false },
         note: 'No completed evaluation result was saved for this operation.' };
     if (lstatSync(file).isSymbolicLink() || statSync(file).size > 4 * 1024 * 1024)
@@ -312,5 +319,6 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         binary = candidateBinary;
     }
     cmd.push(action, '--binary', binary, ...args);
-    return launch(workspace, x.action, cmd, { scenario, policy_id: x.policyId ?? null, output });
+    return launch(workspace, x.action, cmd, { scenario, policy_id: x.policyId ?? null, output,
+        ...(action !== 'watch' ? { requested_episodes: x.episodes ?? 10 } : {}) }, ticket);
 }

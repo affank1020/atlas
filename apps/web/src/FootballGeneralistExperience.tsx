@@ -7,7 +7,7 @@ import './football-generalist-experience.css';
 
 type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string };
 type Policy = { id: string; behavior: string; status: string; source: string; compatible_metadata: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
-type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; started_at?: string; output?: string; error?: string; note?: string; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number> }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
+type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
 type Tab = 'home' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
 
@@ -76,6 +76,11 @@ export function FootballGeneralistExperience() {
     const scenarios = manifest?.scenarios.scenarios ?? [];
     const runnablePolicies = policies.filter(p => p.compatible_metadata && p.bundle_available && p.onnx_available);
     const currentPolicy = policies.find(p => p.id === selectedPolicy);
+    // Discovered receipts include evaluations started through ChatGPT or another Atlas client.
+    const evaluations = activity.filter(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action));
+    const progressLabel = (item: Receipt) => item.result?.episodes == null ? 'No outcomes yet' :
+        item.result.episodes + (item.requested_episodes != null ? ' / ' + item.requested_episodes : '') +
+        ' episodes · ' + Object.entries(item.result.outcomes ?? {}).map(([name, count]) => count + ' ' + name.replaceAll('_', ' ')).join(', ');
     const scenarioOptions = useMemo(() => [{ id: 'mix', name: 'Mixed scenarios' }, ...scenarios.map(s => ({ id: s.id, name: s.name }))], [scenarios]);
     const doAction = async (key: string, tool: string, input: Record<string, unknown>) => {
         setBusy(key); setError(''); setNotice('');
@@ -140,6 +145,14 @@ export function FootballGeneralistExperience() {
                 {runs.slice(0, 5).map(r => <div className="fg-list-row" key={r.id}><button className="fg-record-link" onClick={() => setDetail({ kind: 'run', id: r.id })}>{r.id} →</button><span>{r.scenario ?? '—'}</span><small>{r.state}</small></div>)}
                 {!runs.length && <p className="fg-muted">No generalist training receipts found.</p>}
             </section>
+            <section className="fg-panel"><div className="fg-panel-title"><h2>Evaluations</h2><button type="button" className="fg-link" onClick={() => setTab('evaluate')}>View all</button></div>
+                <p className="fg-muted">Includes evaluations launched through Atlas tools or other clients. Updates every 10 seconds.</p>
+                {evaluations.slice(0, 5).map(item => <div className="fg-list-row" key={item.ticket}>
+                    <button className="fg-record-link" onClick={() => setDetail({ kind: 'evaluation', id: item.ticket })}>{item.scenario ?? 'Generalist'} →</button>
+                    <span>{progressLabel(item)}</span><small>{item.status}</small>
+                </div>)}
+                {!evaluations.length && <p className="fg-muted">No generalist evaluation receipts found.</p>}
+            </section>
         </div>}
         {tab === 'train' && <section className="fg-panel">
             <h2>New training run</h2><p className="fg-muted">Starts one PPO policy; parallel environments collect experience for that same policy. An isolated Unity build is prepared by the launch bridge.</p>
@@ -196,9 +209,10 @@ export function FootballGeneralistExperience() {
             {currentPolicy && !runnablePolicies.includes(currentPolicy) && <p role="alert">This policy is not executable with the current generalist metadata.</p>}
             <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !runnablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
                 {tab === 'evaluate' && <button type="button" className="fg-button" disabled={!!busy} onClick={() => void doAction('baseline', 'football_generalist_baseline', { scenario, seed: evaluationSeed, episodes })}>Run baseline</button>}</div>
-            {tab === 'evaluate' && <><h3>Saved evaluations</h3>{activity.filter(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action)).map(item =>
-                <button key={item.ticket} className="fg-record-link" onClick={() => setDetail({ kind: 'evaluation', id: item.ticket })}>{item.scenario ?? '—'} · {item.status} · {item.ticket} →</button>)}
-                {!activity.some(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action)) && <p className="fg-muted">No saved generalist evaluations yet.</p>}</>}
+            {tab === 'evaluate' && <><h3>Evaluation history</h3><p className="fg-muted">Running evaluations are included, even when started outside this page. Refreshes every 10 seconds.</p>
+                {evaluations.map(item => <button key={item.ticket} className="fg-record-link" onClick={() => setDetail({ kind: 'evaluation', id: item.ticket })}>
+                    {item.scenario ?? '—'} · {item.status} · {progressLabel(item)} · {item.ticket} →</button>)}
+                {!evaluations.length && <p className="fg-muted">No generalist evaluations yet.</p>}</>}
             {!runnablePolicies.length && <p className="fg-muted">No compatible registered policies are available for inference yet.</p>}
         </section>}
         {tab === 'checks' && <section className="fg-panel"><h2>Generalist contract</h2>

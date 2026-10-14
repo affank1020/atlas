@@ -16,7 +16,7 @@ export type GeneralistPolicy = {
 };
 export type GeneralistActivity = {
     ticket: string; action: string; status: string; scenario?: string; policy_id?: string | null;
-    started_at?: string; output?: string; error?: string;
+    started_at?: string; output?: string; error?: string; requested_episodes?: number;
     result?: { episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null; run_id?: string };
 };
 type RunDetail = {
@@ -173,7 +173,13 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
         const timer = window.setInterval(poll, 5000);
         return () => { live = false; window.clearInterval(timer); };
     }, [ticket, page]);
-    const d = detail, summary = d?.summary, operation = d?.operation;
+    const d = detail, operation = d?.operation;
+    // The receipt reports aggregate outcomes while the runner is still writing its final report.
+    // Keep these visible even for historical operations whose episode-file ID was mismatched.
+    const summary = d?.summary ?? (operation?.result?.episodes != null ? {
+        total: operation.result.episodes, outcomes: operation.result.outcomes ?? {},
+        success_rate: operation.result.success_rate ?? null, measured_success_episodes: 0,
+    } : null);
     const rows = d?.episodes.filter(e => JSON.stringify(e).toLowerCase().includes(filter.toLowerCase())) ?? [];
     return <section className="fg-detail">
         <button className="fg-link" onClick={onBack}>← Evaluation history</button>
@@ -182,11 +188,18 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
         {!d && !error && <p role="status">Loading evaluation results…</p>}
         {d && <>
             <div className="fg-detail-metrics">
-                {metric('Episodes recorded', num(summary?.total, 0))}
+                {metric(d?.summary ? 'Saved episodes' : 'Episodes observed', num(summary?.total, 0))}
                 {metric('Measured success', percent(summary?.success_rate))}
                 {metric('Scenario', operation?.scenario ?? '—')}
                 {metric('Status', operation?.status ?? '—')}
             </div>
+            {operation?.requested_episodes != null && summary && <div className="fg-progress" role="progressbar"
+                aria-label="Evaluation episode progress" aria-valuemin={0} aria-valuemax={operation.requested_episodes}
+                aria-valuenow={Math.min(summary.total, operation.requested_episodes)}>
+                <div style={{ width: Math.min(100, 100 * summary.total / Math.max(1, operation.requested_episodes)) + '%' }} />
+            </div>}
+            {operation?.requested_episodes != null && <p className="fg-muted">
+                {num(summary?.total, 0)} / {num(operation.requested_episodes, 0)} episodes observed</p>}
             {operation?.policy_id && <section className="fg-panel"><h3>Policy</h3>
                 <button className="fg-record-link" onClick={() => onPolicy(operation.policy_id!)}>{operation.policy_id} →</button></section>}
             <section className="fg-panel"><h3>Outcome breakdown</h3>
@@ -202,7 +215,9 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
                         <span>{pretty(episode.scenario ?? episode.scenario_id)}</span><small>{episode.reward == null ? '' : 'Reward ' + pretty(episode.reward)}</small></summary>
                     <pre className="fg-output">{JSON.stringify(episode, null, 2)}</pre>
                 </details>)}</div>
-                {!rows.length && <p className="fg-muted">No episodes on this page match the filter.</p>}
+                {!rows.length && <p className="fg-muted">{!d.pagination.total
+                    ? 'Individual episode records are not available yet; aggregate receipt outcomes appear above when reported.'
+                    : 'No episodes on this page match the filter.'}</p>}
                 <div className="fg-actions">
                     <button className="fg-button" disabled={page === 0} onClick={() => setPage(x => x - 1)}>← Previous</button>
                     <span>Page {page + 1} / {Math.max(1, Math.ceil(d.pagination.total / 100))}</span>
