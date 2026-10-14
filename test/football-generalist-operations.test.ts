@@ -49,3 +49,87 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch', policyId: 'legacy-policy', scenario: 'mix' }));
     } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('generalist run detail safely provides saved checkpoints and reports missing terminal logs', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-detail-'));
+    try {
+        const dir = path.join(root, 'training-driver-runs', 'external-run');
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, 'generalist-run.json'), JSON.stringify({
+            family: 'generalist', mode: 'train', run_id: 'run-detail-42', scenario: 'mix', seed: 42,
+        }));
+        const detail = await footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: 'run-detail-42' }) as any;
+        assert.equal(detail.run.id, 'run-detail-42');
+        assert.equal(detail.log_source, null);
+        assert.match(detail.log_note, /No saved text trainer log/);
+        const operations = path.join(root, 'training-driver-runs', 'atlas-generalist-operations');
+        await mkdir(operations, { recursive: true });
+        const ticket = '5d2504cd-c985-4b5e-a5f7-31cc84fd245a';
+        await writeFile(path.join(operations, ticket + '.json'), JSON.stringify({
+            ticket, pid: -1, action: 'generalist_train', run_id: 'run-detail-42',
+        }));
+        await writeFile(path.join(operations, ticket + '.out'),
+            '[INFO] FootballGeneralistV2. Step: 1500. Time Elapsed: 10 s. Mean Reward: 0.5.\\n');
+        await mkdir(path.join(dir, 'run-detail-42'), { recursive: true });
+        await writeFile(path.join(dir, 'run-detail-42', 'configuration.yaml'),
+            'behaviors:\n  FootballGeneralistV2:\n    max_steps: 100000\n');
+        const live = await footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: 'run-detail-42' }) as any;
+        assert.equal(live.log_source, 'Atlas training launch');
+        assert.match(live.logs, /Step: 1500/);
+        assert.equal(live.ticket, ticket);
+        assert.equal(live.training_budget_steps, 100000);
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: '../bad' }));
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_run_detail', runId: 'missing' }));
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+test('generalist evaluation detail paginates actual results and preserves outcome evidence', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-eval-'));
+    try {
+        const dir = path.join(root, 'training-driver-runs', 'atlas-generalist-operations');
+        await mkdir(dir, { recursive: true });
+        const ticket = '75ed74ef-a004-4299-8f2f-ad47389cd39a';
+        await writeFile(path.join(dir, ticket + '.json'), JSON.stringify({
+            ticket, pid: -1, action: 'generalist_evaluate', policy_id: 'policy_generalist-a',
+            started_at: new Date().toISOString(), output: path.join(dir, ticket + '.result.json'),
+        }));
+        await writeFile(path.join(dir, ticket + '.result.json'), JSON.stringify({ contract: 'football-generalist-v2',
+            episodes: [
+                { index: 0, outcome: 'contact', success: true },
+                { index: 1, outcome: 'timeout', success: false },
+                { index: 2, outcome: 'contact', success: true },
+            ],
+        }));
+        const result = await footballControl(ws(root), { ...input, action: 'generalist_evaluation_detail', runId: ticket,
+            offset: 1, limit: 1 }) as any;
+        assert.equal(result.summary.total, 3);
+        assert.equal(result.summary.success_rate, 2 / 3);
+        assert.deepEqual(result.summary.outcomes, { contact: 2, timeout: 1 });
+        assert.equal(result.episodes[0].index, 1);
+        assert.equal(result.pagination.has_more, true);
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_evaluation_detail', runId: '../bad' }));
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('generalist policy packaging is only offered for a completed export and exposed in run records', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-package-'));
+    try {
+        const dir = path.join(root, 'training-driver-runs', 'finished-run');
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, 'generalist-run.json'), JSON.stringify({
+            family: 'generalist', mode: 'train', run_id: 'complete-42', scenario: 'mix',
+        }));
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_package',
+            runId: 'complete-42' }), (error: any) => error.code === 'INVALID_ARGUMENT');
+        await mkdir(path.join(dir, 'complete-42'), { recursive: true });
+        await writeFile(path.join(dir, 'complete-42', 'FootballGeneralistV2.onnx'), 'model');
+        await writeFile(path.join(dir, 'policy-packaging.json'), JSON.stringify({
+            status: 'failed', error: 'Unity import failed',
+        }));
+        const runs = await footballControl(ws(root), { ...input, action: 'generalist_runs' }) as any[];
+        assert.equal(runs[0].packaging.status, 'failed');
+        assert.equal(runs[0].packaging.error, 'Unity import failed');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_package',
+            runId: '../invalid' }));
+    } finally { await rm(root, { recursive: true, force: true }); }
+});

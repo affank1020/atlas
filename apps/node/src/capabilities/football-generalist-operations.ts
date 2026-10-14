@@ -5,9 +5,9 @@ import path from 'node:path';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
 import { generalistManifest } from './football-generalist.js';
-import { listGeneralistRuns } from './football-generalist-runs.js';
+import { generalistRunDetail, listGeneralistRuns } from './football-generalist-runs.js';
 
-type Args = { action: string; runId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number };
+type Args = { action: string; runId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const env = () => Object.fromEntries(['PATH','HOME','TMPDIR','LANG','USER','LOGNAME'].filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
 
@@ -64,6 +64,9 @@ export function generalistPolicies(workspace: Workspace) {
                 policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
             found.push({ id: policy.id, family: 'generalist', behavior: policy.behavior, status: policy.status ?? 'unverified',
                 source: path.relative(workspace.rootPath, file), compatible_metadata: compatibleMetadata,
+                source_run_id: typeof (policy.source_run_id ?? policy.run_id) === 'string' && idPattern.test(policy.source_run_id ?? policy.run_id) ? (policy.source_run_id ?? policy.run_id) : null,
+                contract_sha256: policy.contract_sha256, scenario_sha256: policy.scenario_sha256,
+                implementation_sha256: policy.implementation_sha256,
                 // The canonical runner checks implementation + model + bundle hashes at execution.
                 executable_verified: false, view_scenario: policy.view_scenario,
                 onnx_available: typeof policy.onnx_path === 'string' && existsSync(policy.onnx_path),
@@ -115,13 +118,22 @@ function receipt(workspace: Workspace, id: string) {
         // Only the bridge's explicit completion receipt can establish training command success.
         const line = output.trim().split('\n').at(-1);
         try { const parsed = JSON.parse(line || ''); if (parsed.completed === true && parsed.family === 'generalist') result = { run_id: parsed.run_id, completed: true }; } catch {}
+    } else if (item.action === 'generalist_package') {
+        try {
+            const parsed = JSON.parse(output.trim().split('\n').at(-1) || '');
+            if (parsed.status === 'registered' && typeof parsed.policy_id === 'string')
+                result = { policy_id: parsed.policy_id, registered: true };
+        } catch {}
     } else if (typeof item.output === 'string' && existsSync(item.output)) {
         try {
             const parsed = readJson(item.output);
             if (parsed.contract === 'football-generalist-v2' && Array.isArray(parsed.episodes)) {
                 const counts: Record<string, number> = {};
                 for (const episode of parsed.episodes) if (typeof episode.outcome === 'string') counts[episode.outcome] = (counts[episode.outcome] ?? 0) + 1;
-                result = { episodes: parsed.episodes.length, outcomes: counts };
+                const measured = parsed.episodes.filter((ep: any) => typeof ep.success === 'boolean');
+                result = { episodes: parsed.episodes.length, outcomes: counts,
+                    success_rate: measured.length === parsed.episodes.length && measured.length > 0
+                        ? measured.filter((ep: any) => ep.success).length / measured.length : null };
             }
         } catch {}
     }
@@ -142,12 +154,60 @@ function reports(workspace: Workspace) {
     }
     return result.sort((a, b) => String(b.started_at).localeCompare(String(a.started_at))).slice(0, 100);
 }
+
+/** Paginated generalist evaluation diagnostics, limited to Atlas-owned saved output. */
+function generalistEvaluationDetail(workspace: Workspace, id: string, offset: number, limit: number) {
+    const operation = receipt(workspace, id);
+    if (!['generalist_evaluate', 'generalist_baseline'].includes(operation.action))
+        throw new AtlasError('This receipt is not a generalist evaluation.', 'INVALID_ARGUMENT');
+    const file = path.join(taskDir(workspace), id + '.result.json');
+    if (!existsSync(file)) return { operation, summary: null, episodes: [], pagination: { offset, total: 0, has_more: false },
+        note: 'No completed evaluation result was saved for this operation.' };
+    if (lstatSync(file).isSymbolicLink() || statSync(file).size > 4 * 1024 * 1024)
+        throw new AtlasError('Evaluation result is unavailable or exceeds the safe read limit.', 'INVALID_ARGUMENT');
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed.contract !== 'football-generalist-v2' || !Array.isArray(parsed.episodes))
+        throw new AtlasError('This is not a generalist V2 evaluation report.', 'INVALID_ARGUMENT');
+    const counts: Record<string, number> = {};
+    let known = 0, successes = 0;
+    for (const episode of parsed.episodes) {
+        if (typeof episode?.outcome === 'string') counts[episode.outcome] = (counts[episode.outcome] ?? 0) + 1;
+        if (typeof episode?.success === 'boolean') { known++; if (episode.success) successes++; }
+    }
+    const total = parsed.episodes.length;
+    return {
+        operation, summary: { total, outcomes: counts, success_rate: known === total && total ? successes / total : null,
+            measured_success_episodes: known },
+        episodes: parsed.episodes.slice(offset, offset + limit),
+        pagination: { offset, total, has_more: offset + limit < total },
+        note: known === total ? 'Success is measured from saved episode success flags.' :
+            'Success rate is unavailable unless each saved episode explicitly records success; outcomes are shown separately.',
+    };
+}
+
 export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (workspace.kind !== 'unity' || workspace.status !== 'active') throw new AtlasError('Active Unity workspace required.', 'WORKSPACE_UNAVAILABLE');
     if (x.action === 'generalist_runs') return listGeneralistRuns(workspace);
+    if (x.action === 'generalist_run_detail') return generalistRunDetail(workspace, x.runId!);
     if (x.action === 'generalist_policies') return generalistPolicies(workspace);
     if (x.action === 'generalist_activity') return reports(workspace);
     if (x.action === 'generalist_status') return receipt(workspace, x.runId!);
+    if (x.action === 'generalist_package') {
+        if (typeof x.runId !== 'string' || !idPattern.test(x.runId))
+            throw new AtlasError('Invalid generalist run ID.', 'INVALID_ARGUMENT');
+        const run = listGeneralistRuns(workspace).find(candidate => candidate.id === x.runId);
+        if (!run) throw new AtlasError('Generalist training run not found.', 'NOT_FOUND');
+        const root = realpathSync(workspace.rootPath);
+        const directory = realpathSync(path.join(root, String(run.output_dir)));
+        if (!directory.startsWith(root + path.sep) || !statSync(directory).isDirectory())
+            throw new AtlasError('Generalist training directory is outside the workspace.', 'INVALID_ARGUMENT');
+        if (!existsSync(path.join(directory, x.runId, 'FootballGeneralistV2.onnx')))
+            throw new AtlasError('The training run has no final exported ONNX model yet.', 'INVALID_ARGUMENT');
+        const script = safeFile(workspace, path.join(root, 'football_generalist.py'));
+        return launch(workspace, x.action, [script, 'package', '--output', directory],
+            { run_id: x.runId, output_dir: String(run.output_dir) });
+    }
+    if (x.action === 'generalist_evaluation_detail') return generalistEvaluationDetail(workspace, x.runId!, x.offset ?? 0, x.limit ?? 100);
     if (x.action === 'generalist_stop') {
         const item = receipt(workspace, x.runId!);
         if (item.action !== 'generalist_train' || item.status !== 'running' ||

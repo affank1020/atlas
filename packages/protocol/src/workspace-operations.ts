@@ -23,11 +23,11 @@ export const workspaceOperationSchemas = {
     // Only the Football Training Application exposes carefully scoped typed actions.
     football_control: z.object({
         ...scope,
-        action: z.enum(['generalist_manifest', 'generalist_runs', 'generalist_policies', 'generalist_activity', 'generalist_status', 'generalist_stop', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'training_resources', 'recover_queue', 'resume_training', 'drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status', 'validation_status', 'validation_python', 'validation_editor', 'validation_physics']),
+        action: z.enum(['generalist_manifest', 'generalist_runs', 'generalist_run_detail', 'generalist_evaluation_detail', 'generalist_policies', 'generalist_activity', 'generalist_status', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'training_resources', 'recover_queue', 'resume_training', 'drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status', 'validation_status', 'validation_python', 'validation_editor', 'validation_physics']),
         scenario: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
-        policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
+        policyId: z.string().regex(/^(?:policy_[A-Za-z0-9][A-Za-z0-9_-]{0,79}|generalist-[A-Za-z0-9_-]{1,70})$/).optional(),
         evaluationId: z.string().regex(/^eval_[A-Za-z0-9_]{1,74}$/).optional(),
         baselineMode: z.enum(['zero', 'random', 'forward', 'scripted']).optional(),
         replayEpisode: z.number().int().min(0).max(10000).optional(),
