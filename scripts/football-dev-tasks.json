@@ -35,5 +35,11 @@
     "args": ["tools/build_generalist.py", "--copy", "/tmp/atlas-football-generalist-build-20261014", "--app", "/tmp/atlas-football-generalist-build-20261014.app"],
     "passEnvironment": [],
     "timeoutMs": 600000
+  },
+  "generalist_s0_evaluation": {
+    "executable": "python3",
+    "args": ["validation/generalist/run_s0_evaluation.py"],
+    "passEnvironment": [],
+    "timeoutMs": 600000
   }
 }

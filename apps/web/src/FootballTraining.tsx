@@ -58,6 +58,7 @@ export function FootballTraining() {
     const [runSearch, setRunSearch] = useState('');
     const [filterDrill, setFilterDrill] = useState('');
     const [policySearch, setPolicySearch] = useState('');
+    const [catalogScope, setCatalogScope] = useState<'current' | 'legacy'>('current');
     const [episodes, setEpisodes] = useState(100);
     const [evalSeed, setEvalSeed] = useState(123);
     const [evaluationMode, setEvaluationMode] = useState<'primary' | 'stage1_retention' | 'stage2_zero_shot'>('primary');
@@ -143,7 +144,10 @@ export function FootballTraining() {
         return sectionMatch && (!filterDrill || job.drill === filterDrill) &&
             (job.id + ' ' + job.drill + ' ' + job.preset).toLowerCase().includes(runSearch.toLowerCase());
     });
+    const scopedPolicies = policies.filter(policy =>
+        ((policy as Policy & { family?: string }).family === "generalist") === (catalogScope === "current"));
     const visiblePolicies = policies.filter(policy =>
+        ((policy as Policy & { family?: string }).family === 'generalist') === (catalogScope === 'current') &&
         (!filterDrill || policy.drill === filterDrill) &&
         (policy.id + ' ' + policy.drill + ' ' + policy.source_run_id).toLowerCase().includes(policySearch.toLowerCase()));
     const openRun = (id: string) => {
@@ -261,8 +265,10 @@ export function FootballTraining() {
             <div><small>Indexed policies</small><strong>{policies.length}</strong></div>
         </div>}
         {screen === 'drills' && <section className="football-panel football-overview-panel">
-            <div className="football-panel-head"><div><span className="football-kicker">SKILL DEVELOPMENT</span><h2>Training drills</h2></div><span>{drills.length} scenarios</span></div>
-            <div className="football-card-grid">
+            <div className="football-panel-head"><div><span className="football-kicker">SKILL DEVELOPMENT</span><h2>Training drills</h2></div><span>{catalogScope === "current" ? generalistManifest?.scenarios.scenarios.length ?? 0 : drills.length} scenarios</span></div>
+            <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("current")}>Current M2</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("legacy")}>Legacy archive</button></div>
+            {catalogScope === "current" && <div className="football-card-grid">{generalistManifest?.scenarios.scenarios.map(s => <div className="football-drill-card" key={s.id}><div className="football-card-top"><span className="football-card-number">S{s.stage}</span><span className="football-card-tag">{s.stage === 0 ? "Current" : "Experimental"}</span></div><strong>{s.name}</strong><p>{s.objective}</p><small>{s.id}</small></div>)}{!generalistManifest && <p>{generalistManifestError || "Loading current scenarios"}</p>}</div>}
+            {catalogScope === "legacy" && <div className="football-card-grid">
                 {drills.map((drill, i) => <button type="button" key={drill.id} className={`football-drill-card ${selectedDrill === drill.id ? 'selected' : ''}`} onClick={() => setSelectedDrill(drill.id)}>
                     <div className="football-card-top"><span className="football-card-number">{String(i + 1).padStart(2, '0')}</span><span className="football-card-tag">{drill.observation_size} obs · {drill.continuous_actions} actions</span></div>
                     <svg className="football-mini-pitch" viewBox="0 0 240 110" role="img" aria-label={`Diagram of ${titleFor(drill.id)} practice`}>
@@ -280,12 +286,14 @@ export function FootballTraining() {
                     {drill.curriculum && <small className="football-muted">{drill.curriculum.stages.length} selectable curriculum stages · manual</small>}
                     <div className="football-card-foot"><span>{drill.behavior}</span><span>{selectedDrill === drill.id ? 'Selected ✓' : 'Select ↗'}</span></div>
                 </button>)}
-                {!loading && drills.length === 0 && <div className="football-empty">No drills returned by the connected Mac Node.</div>}
-            </div>
-            <div className="football-actions"><button className="football-button primary" onClick={() => navigate('train')}>Configure selected drill →</button></div>
+                {!loading && drills.length === 0 && <div className="football-empty">No legacy drills returned by the connected Mac Node.</div>}
+            </div>}
+            {catalogScope === "legacy" && <div className="football-actions"><button className="football-button primary" onClick={() => navigate('train')}>Configure selected legacy drill →</button></div>}
         </section>}
         {screen === 'policies' && <section className="football-panel football-overview-panel">
-            <div className="football-panel-head"><div><span className="football-kicker">MODEL ARTEFACTS</span><h2>Policy library</h2></div><span>{policies.length} indexed</span></div>
+            <div className="football-panel-head"><div><span className="football-kicker">MODEL ARTEFACTS</span><h2>Policy library</h2></div><span>{visiblePolicies.length} shown</span></div>
+            <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => { setCatalogScope("current"); setFilterDrill(""); }}>Current M2</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => { setCatalogScope("legacy"); setFilterDrill(""); }}>Legacy archive</button></div>
+            {catalogScope === "current" && !visiblePolicies.length && <p className="football-muted">No indexed generalist policies yet. Historical ONNX exports are available in Legacy archive.</p>}
             <p className="football-muted">Exported ONNX policies remain linked to their original training runs. Select a model to inspect its artefacts and prepare an evaluation.</p>
             <div className="football-search-controls">
                 <input aria-label="Search policies" placeholder="Search policies or source runs" value={policySearch} onChange={e => setPolicySearch(e.target.value)} />
@@ -300,7 +308,7 @@ export function FootballTraining() {
                 </button>)}
                 {!loading && visiblePolicies.length === 0 && <div className="football-empty">No matching policies. Index a completed run to add a policy to the library.</div>}
             </div>
-            {currentPolicy && <div className="football-selected-policy">
+            {currentPolicy && visiblePolicies.some(policy => policy.id === currentPolicy.id) && <div className="football-selected-policy">
                 <div><span className="football-kicker">SELECTED POLICY</span><strong>{currentPolicy.id}</strong><small>{titleFor(currentPolicy.drill)} · {currentPolicy.artifacts.length} artefacts · {stateLabel(currentPolicy.evaluation)}{currentPolicy.observation_transform === "mirror_left_v1" ? " · Mirror-left v1" : ""}{currentPolicy.stage1_reward_mode === "heading_delta_far_v1" ? " · Heading-progress reward" : ""}{currentPolicy.stage2_reward_mode === "lateral_delta_offcentre_v1" ? " · Lateral-control reward" : ""}{currentPolicy.parent_policy_id ? " · Parent: " + currentPolicy.parent_policy_id : ""}{jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage ? ` · Stage ${jobs.find(job => job.id === currentPolicy.source_run_id)?.curriculum_stage}` : ''}</small></div>
                 <button className="football-button primary" disabled={!!busy} onClick={() => { setScreen('evaluation'); }}>Evaluate policy →</button>
                 <button className="football-button quiet" disabled={!!busy} onClick={() => { setScreen('viewer'); }}>Open policy viewer →</button>
@@ -501,17 +509,18 @@ export function FootballTraining() {
             <section className="football-panel">
                 <div className="football-panel-head"><div><span className="football-kicker">POLICY PLAYBACK</span><h2>Load Policy Viewer</h2></div></div>
                 <p className="football-muted">Play a saved ONNX policy in a standalone graphical Unity visualiser. This uses a separate inference process; it won't resume or replace PPO training.</p>
+                <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("current")}>Current M2</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("legacy")}>Legacy archive</button></div>
                 <div className="football-fields">
                     <label className="wide">Indexed policy
-                        <select value={selectedPolicy} onChange={e => setSelectedPolicy(e.target.value)} disabled={!policies.length}>
-                            {policies.map(policy => <option key={policy.id} value={policy.id}>{policy.id} · {titleFor(policy.drill)}</option>)}
+                        <select value={scopedPolicies.some(policy => policy.id === selectedPolicy) ? selectedPolicy : scopedPolicies[0]?.id ?? ""} onChange={e => setSelectedPolicy(e.target.value)} disabled={!scopedPolicies.length}>
+                            {scopedPolicies.map(policy => <option key={policy.id} value={policy.id}>{policy.id} · {titleFor(policy.drill)}</option>)}
                         </select>
                     </label>
                     <label>Viewer arenas<input type="number" value={viewerArenas} min={1} max={16} onChange={e => setViewerArenas(Number(e.target.value))} /></label>
                     <label>Seed<input type="number" value={viewerSeed} min={0} max={2147483647} onChange={e => setViewerSeed(Number(e.target.value))} /></label>
                 </div>
-                <div className="football-actions"><button className="football-button primary" disabled={!!busy || !currentPolicy || !Number.isInteger(viewerArenas) || viewerArenas < 1 || viewerArenas > 16 || !Number.isInteger(viewerSeed) || viewerSeed < 0}
-                    onClick={() => launchViewer('policy', currentPolicy!.id)}>Open policy viewer ↗</button></div>
+                <div className="football-actions"><button className="football-button primary" disabled={!!busy || !scopedPolicies.length || !Number.isInteger(viewerArenas) || viewerArenas < 1 || viewerArenas > 16 || !Number.isInteger(viewerSeed) || viewerSeed < 0}
+                    onClick={() => launchViewer('policy', (scopedPolicies.find(p => p.id === selectedPolicy) ?? scopedPolicies[0]).id)}>Open policy viewer ↗</button></div>
                 <p className="football-muted">A first-time Unity policy build may require the Editor to be closed. The viewer opens on the Mac, not embedded in Atlas Web.</p>
             </section>
             {viewerLaunch && <section className="football-panel">

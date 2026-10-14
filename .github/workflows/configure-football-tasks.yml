@@ -105,8 +105,8 @@ jobs:
           BEGIN
             IF (SELECT count(*) FROM workspaces w
                 CROSS JOIN LATERAL jsonb_object_keys(w.dev_tasks) k
-                WHERE w.id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid) <> 5 THEN
-              RAISE EXCEPTION 'Expected five configured dev tasks; rolling back';
+                WHERE w.id = '961d0046-eb49-446d-835e-00bec3e46059'::uuid) <> 6 THEN
+              RAISE EXCEPTION 'Expected six configured dev tasks; rolling back';
             END IF;
           END
           $verify$;

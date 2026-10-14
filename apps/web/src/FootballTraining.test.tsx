@@ -75,6 +75,7 @@ test('evaluation and viewer commands use typed policy and run operations', async
     fireEvent.click(screen.getByRole('button', { name: /^Watch/ }));
     fireEvent.click(screen.getByRole('button', { name: /Watch live on Mac/ }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_watch_live', { runId: activeJob.id }));
+    fireEvent.click(screen.getByRole('button', { name: 'Legacy archive' }));
     fireEvent.click(screen.getByRole('button', { name: /Open policy viewer/ }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('football_open_policy_viewer', { policyId: policy.id, arenas: 1, seed: 42 }));
 });
