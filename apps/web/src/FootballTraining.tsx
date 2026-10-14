@@ -266,7 +266,7 @@ export function FootballTraining() {
         </div>}
         {screen === 'drills' && <section className="football-panel football-overview-panel">
             <div className="football-panel-head"><div><span className="football-kicker">SKILL DEVELOPMENT</span><h2>Training drills</h2></div><span>{catalogScope === "current" ? generalistManifest?.scenarios.scenarios.length ?? 0 : drills.length} scenarios</span></div>
-            <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("current")}>Current M2</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("legacy")}>Legacy archive</button></div>
+            <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("current")}>General</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("legacy")}>Legacy archive</button></div>
             {catalogScope === "current" && <div className="football-card-grid">{generalistManifest?.scenarios.scenarios.map(s => <div className="football-drill-card" key={s.id}><div className="football-card-top"><span className="football-card-number">S{s.stage}</span><span className="football-card-tag">{s.stage === 0 ? "Current" : "Experimental"}</span></div><strong>{s.name}</strong><p>{s.objective}</p><small>{s.id}</small></div>)}{!generalistManifest && <p>{generalistManifestError || "Loading current scenarios"}</p>}</div>}
             {catalogScope === "legacy" && <div className="football-card-grid">
                 {drills.map((drill, i) => <button type="button" key={drill.id} className={`football-drill-card ${selectedDrill === drill.id ? 'selected' : ''}`} onClick={() => setSelectedDrill(drill.id)}>
@@ -292,7 +292,7 @@ export function FootballTraining() {
         </section>}
         {screen === 'policies' && <section className="football-panel football-overview-panel">
             <div className="football-panel-head"><div><span className="football-kicker">MODEL ARTEFACTS</span><h2>Policy library</h2></div><span>{visiblePolicies.length} shown</span></div>
-            <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => { setCatalogScope("current"); setFilterDrill(""); }}>Current M2</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => { setCatalogScope("legacy"); setFilterDrill(""); }}>Legacy archive</button></div>
+            <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => { setCatalogScope("current"); setFilterDrill(""); }}>General</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => { setCatalogScope("legacy"); setFilterDrill(""); }}>Legacy archive</button></div>
             {catalogScope === "current" && !visiblePolicies.length && <p className="football-muted">No indexed generalist policies yet. Historical ONNX exports are available in Legacy archive.</p>}
             <p className="football-muted">Exported ONNX policies remain linked to their original training runs. Select a model to inspect its artefacts and prepare an evaluation.</p>
             <div className="football-search-controls">
@@ -509,7 +509,7 @@ export function FootballTraining() {
             <section className="football-panel">
                 <div className="football-panel-head"><div><span className="football-kicker">POLICY PLAYBACK</span><h2>Load Policy Viewer</h2></div></div>
                 <p className="football-muted">Play a saved ONNX policy in a standalone graphical Unity visualiser. This uses a separate inference process; it won't resume or replace PPO training.</p>
-                <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("current")}>Current M2</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("legacy")}>Legacy archive</button></div>
+                <div className="football-actions"><button className={`football-button ${catalogScope === "current" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("current")}>General</button><button className={`football-button ${catalogScope === "legacy" ? "primary" : "quiet"}`} onClick={() => setCatalogScope("legacy")}>Legacy archive</button></div>
                 <div className="football-fields">
                     <label className="wide">Indexed policy
                         <select value={scopedPolicies.some(policy => policy.id === selectedPolicy) ? selectedPolicy : scopedPolicies[0]?.id ?? ""} onChange={e => setSelectedPolicy(e.target.value)} disabled={!scopedPolicies.length}>

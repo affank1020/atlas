@@ -150,7 +150,14 @@ export async function footballControl(workspace: Workspace, raw: unknown): Promi
         const errfile = openSync(path.join(directory, ticket + '.err'), 'wx', 0o600);
         let pid: number | undefined;
         try {
-            const child = spawn('python3', [script, ...argsFor(x)], {
+            const generalist = x.action === 'launch_headless' && x.drill === 'generalist_s0';
+            const generalistScript = path.join(workspace.rootPath, 'atlas_generalist_launch.py');
+            if (generalist && (!existsSync(generalistScript) || lstatSync(generalistScript).isSymbolicLink() || !lstatSync(generalistScript).isFile() || !realpathSync(generalistScript).startsWith(realpathSync(workspace.rootPath) + path.sep)))
+                throw new AtlasError('Generalist launch bridge is unavailable.', 'DRIVER_UNAVAILABLE');
+            const commandArgs = generalist
+                ? [generalistScript, '--preset', x.preset ?? 'smoke', '--seed', String(x.seed ?? 42), '--base-port', String(x.basePort === 5005 ? 5605 : x.basePort ?? 5605), '--arenas', String(x.arenas ?? 1)]
+                : [script, ...argsFor(x)];
+            const child = spawn('python3', commandArgs, {
                 cwd: workspace.rootPath, env: cleanEnv(), shell: false, detached: true, stdio: ['ignore', outfile, errfile],
             });
             // A startup error happens asynchronously and is written to the receipt log.
