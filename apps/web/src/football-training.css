@@ -156,3 +156,38 @@
 .football-curriculum-stages span{font-weight:650;font-size:.76rem}
 .football-curriculum-stages small{color:var(--text-muted);font-size:.69rem;margin-top:7px;line-height:1.5}
 @media(max-width:760px){.football-curriculum-stages{grid-template-columns:1fr}}
+
+/* Generalist-first M2 programme; historical controls remain unchanged. */
+.football-generalist{display:grid;gap:18px}
+.football-generalist-hero{background:linear-gradient(145deg,var(--surface-elevated),var(--surface))}
+.football-generalist-hero-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(230px,1fr);gap:22px;align-items:start}
+.football-generalist-hero h2{font-size:1.65rem;line-height:1.2;letter-spacing:-.03em;max-width:650px}
+.football-generalist-hero p{max-width:770px}
+.football-generalist-state{padding:12px 14px;border:1px solid var(--border);background:var(--surface);border-radius:7px}
+.football-generalist-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.football-generalist-tile{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:17px 14px;display:grid;gap:8px}
+.football-generalist-tile small{font-size:.71rem;line-height:1.4;color:var(--text-muted)}
+.football-generalist-tile strong{font-size:1.55rem;font-variant-numeric:tabular-nums}
+.football-generalist-roadmap{display:grid;gap:9px}
+.football-generalist-roadmap-card{display:grid;grid-template-columns:50px 1fr auto;align-items:start;gap:14px;padding:13px 15px;border:1px solid var(--border);border-radius:8px}
+.football-generalist-roadmap-card strong{font-size:.87rem}
+.football-generalist-roadmap-card p{font-size:.77rem;color:var(--text-secondary);margin:5px 0 0}
+.football-generalist-roadmap-card>small{font-size:.7rem;color:var(--text-muted);white-space:nowrap}
+.football-generalist-step{display:inline-flex;align-items:center;justify-content:center;width:42px;min-height:32px;border-radius:6px;background:var(--surface-elevated);border:1px solid var(--border);font-weight:750;font-size:.79rem}
+.football-generalist-stage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.football-generalist-stage{border:1px solid var(--border);border-radius:8px;display:flex;align-items:start;gap:12px;padding:16px}
+.football-generalist-stage h3{font-size:.9rem;margin:4px 0 6px}
+.football-generalist-stage p{font-size:.8rem;margin:0 0 12px}
+.football-generalist-stage dl{display:grid;gap:4px;margin:0;font-size:.76rem}
+.football-generalist-stage dt{font-weight:750;color:var(--text-primary);margin-top:7px}
+.football-generalist-stage dd{margin:0;color:var(--text-secondary)}
+.football-generalist-contract-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;overflow:auto}
+.football-generalist-contract-grid>div{min-width:0;overflow-x:auto}
+.football-generalist-contract-grid h3{font-size:.86rem;margin:0 0 10px}
+.football-generalist-contract-grid table{width:100%;border-collapse:collapse;font-size:.73rem}
+.football-generalist-contract-grid td,.football-generalist-contract-grid th{border-bottom:1px solid var(--border);padding:8px;text-align:left;vertical-align:top}
+.football-generalist-contract-grid th{color:var(--text-muted);font-weight:750}
+.football-generalist-contract-grid td:first-child{white-space:nowrap;font-variant-numeric:tabular-nums}
+.football-generalist-note{color:var(--text-muted);font-size:.74rem}
+@media(max-width:880px){.football-generalist-hero-grid,.football-generalist-contract-grid{grid-template-columns:1fr}}
+@media(max-width:640px){.football-generalist-stage-grid{grid-template-columns:1fr}.football-generalist-roadmap-card{grid-template-columns:42px 1fr}.football-generalist-roadmap-card>small{grid-column:2}.football-generalist-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}

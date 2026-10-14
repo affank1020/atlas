@@ -44,3 +44,8 @@ Before deploy: run Atlas web tests/build; Unity compile and build tests; physica
 
 ## Research rationale
 Google Research Football Football Academy (2020), From Motor Control to Team Play in Simulated Humanoid Football (2022), Reverse Curriculum Generation (2017), and Prioritized Level Replay (2021) inform scenario-based skill acquisition, skill reuse, adaptive starts and rehearsal. They do not prove an optimal schedule for this project.
+
+## Atlas UI implementation follow-up (2026-10-14)
+Implemented locally (not deployed): `apps/web/src/FootballGeneralistDashboard.tsx` provides the default M2 programme dashboard, seven R0–R6 roadmap steps, S0–S5 competency/visual/evidence cards, candidate 37-observation/5-action ABI, and promotion-evidence guidance. Current actual indexed policies are split into legacy versus generalist only when explicit `contract_version === football-generalist-v1` or `behavior === FootballGeneralistV1`; validation/promotion requires `promotion_status` of `validated` or `promoted`. Old unassigned specialist policies cannot inflate generalist competence. There is no new metadata backend in this task: those optional policy fields will become meaningful when the Unity contract and trainer start exporting them. The candidate ABI text is explicitly provisional and must be replaced with a validated Unity-exported contract, not treated as authoritative. The historical Run, Evaluation, Train, Policies and Watch tools remain unchanged.
+
+Tests: `npm test` passed locally (155 server tests, 78 web tests, Mac Node UI typecheck). `npm run build:web` passed. Deployment and real browser inspection outstanding; no Unity access required or used.
