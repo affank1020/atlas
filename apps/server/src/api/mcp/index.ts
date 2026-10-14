@@ -23,6 +23,25 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
       { description, inputSchema, ...(oauthScope ? { securitySchemes: [{ type: 'oauth2' as const, scopes: [oauthScope] }] } : {}) },
       async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
 
+    // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
+    // Register the active generalist evaluation flow first, without bypassing the
+    // existing Application input validation, project/Node routing or audit trail.
+    // These are the SAME registry tools, not a second execution path.
+    const appTools = services.applications.tools();
+    const priorityNames = [
+        'football_generalist_evaluate',
+        'football_generalist_baseline',
+        'football_generalist_status',
+        'football_generalist_evaluation_detail',
+        'football_generalist_policies',
+    ];
+    const prioritized = new Set(priorityNames);
+    for (const name of priorityNames) {
+        const definition = appTools.find(candidate => candidate.name === name);
+        if (!definition) throw new Error(`Required generalist MCP tool missing from Application registry: ${name}`);
+        tool(definition.name, definition.description, definition.inputSchema);
+    }
+
     for (const name of Object.keys(workspaceSchemas) as WorkspaceToolName[]) tool(name, workspaceDescriptions[name], workspaceSchemas[name].shape);
     for (const name of Object.keys(sessionSchemas) as SessionToolName[]) tool(name, sessionDescriptions[name], sessionSchemas[name].shape);
 
@@ -78,7 +97,9 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     tool("ask_atlas", "Chat about Atlas records using fresh evidence and optional conversation history.", askAtlasInputSchema.shape);
     tool('list_applications', 'List launchable first-party Applications in a Project.', { projectId: z.string().uuid() });
     tool('get_application', 'Get the registered Application manifest for a Project.', { projectId: z.string().uuid(), slug: z.string() });
-    for (const definition of services.applications.tools()) tool(definition.name, definition.description, definition.inputSchema);
+    for (const definition of appTools) {
+        if (!prioritized.has(definition.name)) tool(definition.name, definition.description, definition.inputSchema);
+    }
     return server;
 }
 
