@@ -52,6 +52,7 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         name: 'Football Training', description: 'Run and inspect Unity ML-Agents training, logs and policies on your connected Mac.',
         tools: [
             action('football_generalist_manifest', 'Read versioned generalist policy contract, curriculum and scenario definitions from the connected Unity workspace. Read-only; no build or training.', {}, 'generalist_manifest'),
+            action('football_generalist_runs', 'Discover canonical generalist training receipts, including runs launched outside Atlas. Unknown state is not treated as success.', {}, 'generalist_runs'),
             action('football_list_drills', 'List available football training drills and trainer contracts.', {}, 'drills'),
             action('football_prebuild_training', 'Build and verify a cached Unity player while training is idle. Poll the launch receipt. Never launches PPO.', { drill }, 'prebuild_training'),
             action('football_training_resources', 'Read owner-configured admission budgets, host usage and queue health.', {}, 'training_resources'),

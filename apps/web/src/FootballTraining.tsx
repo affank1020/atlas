@@ -3,6 +3,7 @@ import { callTool } from './api';
 import { FootballRunControlRoom, FootballEvaluationControlRoom } from './FootballRunControlRoom';
 import { FootballValidation } from './FootballValidation';
 import { FootballGeneralistDashboard } from './FootballGeneralistDashboard';
+import { FootballGeneralistRuns } from './FootballGeneralistRuns';
 import './football-training.css';
 
 type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string; reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string };
@@ -59,6 +60,7 @@ export function FootballTraining() {
     const [filterDrill, setFilterDrill] = useState('');
     const [policySearch, setPolicySearch] = useState('');
     const [catalogScope, setCatalogScope] = useState<'current' | 'legacy'>('current');
+    const [generalScenario, setGeneralScenario] = useState('mix');
     const [episodes, setEpisodes] = useState(100);
     const [evalSeed, setEvalSeed] = useState(123);
     const [evaluationMode, setEvaluationMode] = useState<'primary' | 'stage1_retention' | 'stage2_zero_shot'>('primary');
@@ -238,6 +240,7 @@ export function FootballTraining() {
             {screens.map(item => <button type="button" key={item.id} className={screen === item.id ? 'selected' : ''} aria-current={screen === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}
         </nav>
         {screen === 'generalist' && <FootballGeneralistDashboard policies={policies} drills={drills} jobs={jobs} evaluations={evaluations} manifest={generalistManifest} manifestError={generalistManifestError} onNavigate={navigate} onOpenRun={openRun} />}
+        {screen === 'runs' && <FootballGeneralistRuns />}
         {screen === 'validation' && <FootballValidation />}
         {(screen === 'overview' || screen === 'runs' || screen === 'train') && resources?.settings && <section className="football-panel" aria-label="Training resources">
             <h2>Concurrency and throughput</h2>
