@@ -1,3 +1,15 @@
+export type GeneralistScenario = {
+    id: string; name: string; stage: number; objective: string; objectiveType?: string;
+    physicalDifficulty: number; decisionComplexity: number; weight: number; targetRepresentation: string;
+    episodeSeconds: number; spawnDistanceMin?: number; spawnDistanceMax?: number;
+    lateralSpread?: number; headingSpread?: number; ballSpeed?: number;
+    targetForwardMetres?: number; targetRadius?: number; minimumControlledMetres?: number;
+    minimumMeaningfulTouches?: number; touchProgressMetres?: number; maximumBallPlayerDistance?: number;
+    controlRadius?: number; maximumControlledBallSpeed?: number; randomizedDirection?: boolean;
+    directionBucketCount?: number; moderateTurnMinDegrees?: number; moderateTurnMaxDegrees?: number;
+    successReward?: number; failureReward?: number; progressReward?: number; timePenalty?: number;
+    touchBonus?: number; followupTouchReward?: number;
+};
 export type GeneralistManifest = {
     available: boolean;
     source: string;
@@ -6,7 +18,8 @@ export type GeneralistManifest = {
         observations: { size: number; reference_frame?: string; fields: { name: string; indices: number[] }[] };
         actions: { continuous: number; channels: { index: number; name: string; range: number[]; activation?: string; mapping?: string }[] };
     };
-    scenarios: { sceneVersion: string; physicsVersion: string; scenarios: { id: string; name: string; stage: number; objective: string; physicalDifficulty: number; decisionComplexity: number; weight: number; targetRepresentation: string; episodeSeconds: number }[] };
+    scenarios: { sceneVersion: string; physicsVersion: string; ballControlMode?: string; scenarios: GeneralistScenario[] };
+    drill_guide?: { schemaVersion: number; drills: Record<string, { summary: string; focus: string; purpose: string }> };
     curriculum: { held_out_seeds?: number[]; stages: { id: string; name: string; implemented: boolean }[]; promotion?: { minimum_held_out_episodes: number; minimum_success_rate: number; maximum_retention_drop: number; automatic_promotion_enabled: boolean }; current_checkpoint?: string | null };
     fingerprints: { contract_sha256: string; scenario_sha256: string; curriculum_sha256: string };
     provenance: string;

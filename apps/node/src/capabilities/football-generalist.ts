@@ -8,6 +8,7 @@ const INPUTS = {
     contract: 'ml-agents/config/football_generalist_v2_contract.json',
     scenarios: 'Assets/Resources/Generalist/scenarios.json',
     curriculum: 'ml-agents/config/generalist_curriculum.json',
+    guide: 'ml-agents/config/generalist_drill_guide.json',
 } as const;
 
 function safeJson(workspace: Workspace, relative: string): { data: any; sha256: string } {
@@ -28,7 +29,21 @@ export function generalistManifest(workspace: Workspace) {
         const contract = safeJson(workspace, INPUTS.contract);
         const scenarios = safeJson(workspace, INPUTS.scenarios);
         const curriculum = safeJson(workspace, INPUTS.curriculum);
+        // Older test fixtures and workspaces may predate the optional presentation guide.
+        // The canonical Python runner requires complete guide entries when registering new scenarios.
+        let drillGuide: { schemaVersion: number; drills: Record<string, { summary: string; focus: string; purpose: string }> } | undefined;
+        try {
+            drillGuide = safeJson(workspace, INPUTS.guide).data;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
         const c = contract.data, s = scenarios.data, k = curriculum.data;
+        if (drillGuide && (!drillGuide.drills || typeof drillGuide.drills !== 'object' ||
+            s?.scenarios?.some((entry: { id: string }) => ['summary', 'focus', 'purpose'].some(field => {
+                const value = drillGuide?.drills?.[entry.id]?.[field as 'summary' | 'focus' | 'purpose'];
+                return typeof value !== 'string' || value.trim().length === 0;
+            }))))
+            throw new Error('Invalid generalist drill guide');
         if (c?.contract_id !== 'football-generalist-v2' || c?.observations?.size !== 54 ||
             c?.actions?.continuous !== 5 || c?.behavior !== 'FootballGeneralistV2' ||
             !Array.isArray(c?.observations?.fields) || !Array.isArray(c?.actions?.channels) ||
@@ -38,7 +53,7 @@ export function generalistManifest(workspace: Workspace) {
         return {
             available: true,
             source: 'unity-workspace',
-            contract: c, scenarios: s, curriculum: k,
+            contract: c, scenarios: s, curriculum: k, drill_guide: drillGuide,
             fingerprints: { contract_sha256: contract.sha256, scenario_sha256: scenarios.sha256, curriculum_sha256: curriculum.sha256 },
             // Implementation fingerprint must come from the canonical runner; these are source-file hashes only.
             provenance: 'working_tree_metadata_not_policy_validation',

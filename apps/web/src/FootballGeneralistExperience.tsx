@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
 import { GeneralistRunView, GeneralistPolicyView, GeneralistEvaluationView } from './FootballGeneralistDetails';
 import type { GeneralistManifest } from './FootballGeneralistDashboard';
+import { GeneralistDrillCatalog } from './GeneralistDrillCatalog';
 import './football-training.css';
 import './football-generalist-experience.css';
 
@@ -9,10 +10,10 @@ type Run = { id: string; family: string; scenario?: string; state: string; start
 type Policy = { id: string; behavior: string; status: string; source: string; compatible_metadata: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
-type Tab = 'home' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
+type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
 
 const tabs: { id: Tab; label: string }[] = [
-    { id: 'home', label: 'Home' }, { id: 'train', label: 'Train' },
+    { id: 'home', label: 'Home' }, { id: 'drills', label: 'Drills' }, { id: 'train', label: 'Train' },
     { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
     { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' },
     { id: 'checks', label: 'Contract' }, { id: 'archive', label: 'Legacy archive' },
@@ -32,6 +33,7 @@ export function FootballGeneralistExperience() {
     const [busy, setBusy] = useState('');
     const [loading, setLoading] = useState(true);
     const [scenario, setScenario] = useState('mix');
+    const [selectedDrillScenario, setSelectedDrillScenario] = useState('');
     const [preset, setPreset] = useState<'smoke' | 'pilot_100k'>('smoke');
     const [initializeFromRunId, setInitializeFromRunId] = useState('');
     const [seed, setSeed] = useState(42);
@@ -159,6 +161,7 @@ export function FootballGeneralistExperience() {
                 {!evaluations.length && <p className="fg-muted">No generalist evaluation receipts found.</p>}
             </section>
         </div>}
+        {tab === 'drills' && <GeneralistDrillCatalog manifest={manifest} selected={selectedDrillScenario} onSelect={setSelectedDrillScenario} onTrain={id => { setScenario(id); setTab('train'); }}/>} 
         {tab === 'train' && <section className="fg-panel">
             <h2>New training run</h2><p className="fg-muted">Starts a new PPO learner. S1 rehearsal samples 75% dribbling and 25% S0 contact episodes; it requires a compatible recorded checkpoint as the initial weights, not a resume of the old run.</p>
             <div className="fg-form">
@@ -172,6 +175,11 @@ export function FootballGeneralistExperience() {
                 <label>Parallel environments<input type="number" value={workers} min={1} max={16} onChange={e => setWorkers(Number(e.target.value))}/></label>
                 <label>Base port<input type="number" value={basePort} min={1024} max={65519} onChange={e => setBasePort(Number(e.target.value))}/></label>
             </div>
+            {manifest?.scenarios.scenarios.find(s => s.id === scenario) && <div className="fg-drill-training-note">
+                <strong>{manifest.scenarios.scenarios.find(s => s.id === scenario)?.name}</strong>
+                <p>{manifest.drill_guide?.drills?.[scenario]?.summary || manifest.scenarios.scenarios.find(s => s.id === scenario)?.objective}</p>
+                <button type="button" className="fg-link" onClick={() => { setSelectedDrillScenario(scenario); setTab('drills'); }}>View full drill breakdown →</button>
+            </div>}
             <button className="fg-button primary" disabled={!!busy || !manifest || manifest.curriculum.held_out_seeds?.includes(seed) || (scenario === 's1_rehearsal' && !initializeFromRunId)} onClick={() => {
                 if (window.confirm('Start one generalist PPO training run on the connected Mac?')) void doAction('train', 'football_generalist_train', { scenario, preset, seed, arenas: workers, basePort, ...(initializeFromRunId ? { initializeFromRunId } : {}) });
             }}>{busy === 'train' ? 'Starting…' : 'Launch generalist training'}</button>

@@ -1,0 +1,45 @@
+/* Generalist drill catalogue: compact, readable and sourced from the scenario manifest. */
+.fg-drill-training-note { border:1px solid var(--border,#384152); margin:16px 0; padding:14px; border-radius:4px; }
+.fg-drill-training-note strong { font-size:13px; }
+.fg-drill-training-note p { margin:7px 0; font-size:12px; color:var(--text-muted,#9ba5b5); }
+
+.fg-drills .fg-panel-title { align-items:start; }
+.fg-drills .fg-panel-title p { margin:7px 0 0; font-size:13px; }
+.fg-drill-toolbar { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; padding-bottom:16px; }
+.fg-drill-scopes { display:flex; border:1px solid var(--border,#384152); border-radius:4px; overflow:hidden; }
+.fg-drill-scopes button { border:0; padding:9px 12px; font:inherit; font-size:12px; cursor:pointer; background:transparent; color:inherit; }
+.fg-drill-scopes button+button { border-left:1px solid var(--border,#384152); }
+.fg-drill-scopes button.active { background:var(--surface-hover,#293342); font-weight:700; }
+.fg-drill-toolbar input { min-width:190px; max-width:320px; flex:1; border:1px solid var(--border,#384152); background:var(--surface,#1d222b); color:inherit; border-radius:4px; padding:9px 11px; font:inherit; font-size:12px; }
+.fg-drill-layout { display:grid; grid-template-columns:minmax(210px, 310px) minmax(0, 1fr); gap:20px; align-items:start; }
+.fg-drill-list { display:grid; gap:0; border:1px solid var(--border,#384152); border-radius:4px; overflow:hidden; max-height:900px; overflow-y:auto; }
+.fg-drill-list>button { display:grid; gap:7px; background:transparent; color:inherit; cursor:pointer; text-align:left; padding:14px; font:inherit; border:0; border-bottom:1px solid var(--border,#384152); }
+.fg-drill-list>button:last-child { border-bottom:0; }
+.fg-drill-list>button:hover { background:var(--surface-hover,#293342); }
+.fg-drill-list>button.selected { box-shadow:inset 3px 0 0 var(--accent,#8faaf2); background:var(--surface-hover,#293342); }
+.fg-drill-list-heading { display:flex; justify-content:space-between; gap:12px; font-size:13px; }
+.fg-drill-list-heading small { color:var(--text-muted,#9ba5b5); white-space:nowrap; }
+.fg-drill-list-summary { font-size:12px; line-height:1.45; color:var(--text-muted,#9ba5b5); }
+.fg-drill-detail { min-width:0; border:1px solid var(--border,#384152); border-radius:4px; }
+.fg-drill-detail-heading { padding:18px 20px; border-bottom:1px solid var(--border,#384152); }
+.fg-drill-type { font-size:10px; letter-spacing:.09em; color:var(--text-muted,#9ba5b5); font-weight:700; }
+.fg-drill-detail h3 { font-size:18px; letter-spacing:-.02em; margin:7px 0 8px; }
+.fg-drill-detail-heading p { font-size:13px; line-height:1.55; margin:0; color:var(--text-muted,#9ba5b5); }
+.fg-drill-detail section { padding:15px 20px; border-bottom:1px solid var(--border,#384152); }
+.fg-drill-detail section:last-child { border-bottom:0; }
+.fg-drill-detail h4 { font-size:13px; font-weight:700; margin:0 0 10px; }
+.fg-drill-detail section>p { font-size:12.5px; line-height:1.6; margin:0 0 8px; }
+.fg-drill-detail section>p:last-child { margin-bottom:0; }
+.fg-drill-facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 18px; margin:0; }
+.fg-drill-facts>div { display:flex; justify-content:space-between; align-items:baseline; gap:10px; border-bottom:1px solid var(--border,#384152); padding:8px 0; min-width:0; font-size:12px; }
+.fg-drill-facts dt { color:var(--text-muted,#9ba5b5); }
+.fg-drill-facts dd { margin:0; font-weight:600; text-align:right; overflow-wrap:anywhere; }
+.fg-drill-raw { margin-top:12px; font-size:12px; }
+.fg-drill-raw summary { cursor:pointer; color:var(--text-muted,#9ba5b5); }
+.fg-drill-raw pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; border:1px solid var(--border,#384152); border-radius:4px; max-height:380px; overflow:auto; font-size:11px; }
+.fg-drill-footer { display:flex; justify-content:flex-end; padding-top:12px; }
+.fg-drill-legacy-stage { padding:9px 0; border-top:1px solid var(--border,#384152); }
+.fg-drill-legacy-stage strong { font-size:12px; }
+.fg-drill-legacy-stage p,.fg-drill-legacy-stage small { font-size:12px; color:var(--text-muted,#9ba5b5); margin:5px 0; }
+@media(max-width:800px) { .fg-drill-layout { grid-template-columns:1fr; } .fg-drill-list { max-height:310px; } }
+@media(max-width:530px) { .fg-drill-facts { grid-template-columns:1fr; } .fg-drill-toolbar input { max-width:none; width:100%; } .fg-drill-detail section,.fg-drill-detail-heading { padding:13px; } }
