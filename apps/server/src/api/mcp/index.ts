@@ -36,11 +36,19 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         'football_generalist_policies',
         'football_generalist_assessments',
     ];
-    const prioritized = new Set(priorityNames);
+    // Make corpus-wide Knowledge Bank search available to ChatGPT even when
+    // the connector exposes only the first portion of our MCP catalogue.
+    const knowledgeNames = ['knowledge_bank_browse', 'knowledge_bank_overview'];
+    const prioritized = new Set([...priorityNames, ...knowledgeNames]);
     for (const name of priorityNames) {
         const definition = appTools.find(candidate => candidate.name === name);
         if (!definition) throw new Error(`Required generalist MCP tool missing from Application registry: ${name}`);
         tool(definition.name, definition.description, definition.inputSchema);
+    }
+
+    for (const name of knowledgeNames) {
+        const definition = appTools.find(candidate => candidate.name === name);
+        if (definition) tool(definition.name, definition.description, definition.inputSchema);
     }
 
     for (const name of Object.keys(workspaceSchemas) as WorkspaceToolName[]) tool(name, workspaceDescriptions[name], workspaceSchemas[name].shape);
