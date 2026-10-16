@@ -1,18 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
+import { KnowledgeStudy } from './KnowledgeStudy';
+import { KnowledgeRecordDetails, knowledgeTitle, type KnowledgeDetailRecord } from './KnowledgeRecordDetails';
 import './knowledge-bank.css';
 
 type Collection = 'entries' | 'sources' | 'sections' | 'relations';
-type KnowledgeRecord = {
-    id: string; title?: string; name?: string; kind?: string; summary?: string; detail?: string;
-    description?: string; sourceKey?: string; sourceType?: string; sourceTypeResolved?: string | null;
-    sourceTitle?: string | null; sourceRole?: string; originalUrl?: string; sourceOriginalUrl?: string | null; sourceLink?: string;
-    pageLink?: string; pageStart?: number; pageEnd?: number; locator?: string; sectionKey?: string;
-    sectionLabel?: string; authors?: string; year?: number; doi?: string; citation?: string;
-    status?: string; claimProvenance?: string; reviewStatus?: string; sourceExcerpt?: string;
-    rationale?: string; fromEntryKey?: string; toEntryKey?: string; relationType?: string;
-    relationProvenance?: string; linkNotes?: string; tags?: string[]; groupKeys?: string[];
-};
+type KnowledgeRecord = KnowledgeDetailRecord;
 type Page = { items: KnowledgeRecord[]; total: number; limit: number; offset: number };
 type Overview = { groups: { id: string; key: string; name: string; status?: string }[]; counts: Record<string, number> };
 const collections: { value: Collection; label: string; description: string }[] = [
@@ -26,17 +19,13 @@ const sourceTypes = [
     ['lecture_notes','Lecture notes'], ['paper','Research papers'], ['book','Books'], ['documentation','Documentation'],
     ['webpage','Webpages'], ['slides','Slides'], ['transcript','Transcripts'], ['other','Other'],
 ];
-const safeLink = (value?: string) => {
-    if (!value) return '';
-    try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.toString() : ''; }
-    catch { return ''; }
-};
-const titleFor = (r: KnowledgeRecord) => r.title || r.name || r.sectionLabel || r.relationType || 'Untitled record';
+const titleFor = knowledgeTitle;
 const number = (n: number) => n.toLocaleString('en-GB');
 const emptyOverview: Overview = { groups: [], counts: {} };
 
 export function KnowledgeBank() {
     const [collection, setCollection] = useState<Collection>('entries');
+    const [mainPanel, setMainPanel] = useState<'library'|'study'>('library');
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [group, setGroup] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('group') || '');
@@ -52,10 +41,13 @@ export function KnowledgeBank() {
     const [page, setPage] = useState<Page>({ items: [], total: 0, offset: 0, limit: 25 });
     const [overview, setOverview] = useState<Overview>(emptyOverview);
     const [selectedId, setSelectedId] = useState('');
+    const [expandedId, setExpandedId] = useState('');
+    const expandedDialogRef = useRef<HTMLDialogElement>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [refreshToken, setRefreshToken] = useState(0);
     const selected = page.items.find(r => r.id === selectedId);
+    const expanded = page.items.find(r => r.id === expandedId);
     const activeCollection = collections.find(c => c.value === collection)!;
 
     useEffect(() => {
@@ -99,7 +91,14 @@ export function KnowledgeBank() {
         return () => { window.clearTimeout(token); controller.abort(); };
     }, [sourceSearch, suggestOpen]);
 
-    const resetOffset = () => { setOffset(0); setSelectedId(''); };
+    useEffect(() => {
+        const dialog = expandedDialogRef.current;
+        if (!dialog) return;
+        if (expanded && !dialog.open) dialog.showModal();
+        else if (!expanded && dialog.open) dialog.close();
+    }, [expanded]);
+
+    const resetOffset = () => { setOffset(0); setSelectedId(''); setExpandedId(''); };
     const switchCollection = (next: Collection) => { setCollection(next); resetOffset(); };
     const setSource = (r: KnowledgeRecord) => {
         setSourceKey(r.sourceKey || ''); setSourceLabel(titleFor(r)); setSuggestOpen(false); setSourceSearch(''); resetOffset();
@@ -125,7 +124,11 @@ export function KnowledgeBank() {
                 <span><strong>{number(overview.counts['Knowledge Relationships'] || 0)}</strong> connections</span>
             </div>
         </header>
-        <div className="knowledge-layout">
+        <nav className="knowledge-mainnav" aria-label="Knowledge Bank sections">
+          <button type="button" aria-current={mainPanel==='library'?'page':undefined} onClick={()=>setMainPanel('library')}>Browse library</button>
+          <button type="button" aria-current={mainPanel==='study'?'page':undefined} onClick={()=>{setExpandedId('');setMainPanel('study');}}>Study &amp; practice</button>
+        </nav>
+        {mainPanel==='study' ? <KnowledgeStudy/> : <div className="knowledge-layout">
             <aside className="knowledge-search" aria-label="Knowledge filters">
                 <div className="knowledge-filter-head"><h2>Find knowledge</h2><button type="button" onClick={clear}>Clear all</button></div>
                 <label htmlFor="knowledge-query">Search entire library</label>
@@ -182,7 +185,7 @@ export function KnowledgeBank() {
                                 : 'Try a different search term or remove a filter.'}</p>
                         </div> : <div className="knowledge-result-list">
                             {page.items.map(item => <button type="button" className={`knowledge-result ${selectedId === item.id ? 'active' : ''}`}
-                                key={item.id} onClick={() => setSelectedId(item.id)}>
+                                key={item.id} onClick={() => { setSelectedId(item.id); setExpandedId(item.id); }}>
                                 <div className="knowledge-result-header"><strong>{titleFor(item)}</strong><span>{item.kind || item.sourceType || item.status || item.relationType || 'Section'}</span></div>
                                 <p>{item.summary || item.description || item.rationale || (collection === 'sources' ? 'Original document and reference' : 'Open for details')}</p>
                                 <small>{item.sourceTitle || (collection === 'sources' ? item.authors || item.sourceRole : item.sourceKey) || 'Knowledge Bank'}
@@ -197,36 +200,26 @@ export function KnowledgeBank() {
                 </div>}
             </main>
             <aside className="knowledge-detail" aria-label="Record details">
-                {selected ? <div>
-                    <div className="knowledge-detail-label">SOURCE-GROUNDED RECORD</div>
-                    <h2>{titleFor(selected)}</h2>
-                    <div className="knowledge-pills">{[selected.kind, selected.sourceType || selected.sourceTypeResolved || undefined, selected.claimProvenance, selected.reviewStatus, selected.status].filter(Boolean).map((v,i) => <span key={i}>{v}</span>)}</div>
-                    {selected.summary && <section><h3>Summary</h3><p>{selected.summary}</p></section>}
-                    {selected.detail && <section><h3>Detailed notes</h3><p>{selected.detail}</p></section>}
-                    {selected.description && <section><h3>Description</h3><p>{selected.description}</p></section>}
-                    {selected.sourceExcerpt && <section><h3>Short source excerpt</h3><blockquote>{selected.sourceExcerpt}</blockquote></section>}
-                    {selected.rationale && <section><h3>Relationship</h3><p>{selected.rationale}</p><small>{selected.fromEntryKey} → {selected.toEntryKey}</small></section>}
-                    <section><h3>Original reference</h3>
-                        <dl>
-                            {selected.sourceTitle && <><dt>Source</dt><dd>{selected.sourceTitle}</dd></>}
-                            {selected.sourceKey && <><dt>Source key</dt><dd>{selected.sourceKey}</dd></>}
-                            {selected.sectionKey && <><dt>Section</dt><dd>{selected.sectionKey}</dd></>}
-                            {selected.locator && <><dt>Location</dt><dd>{selected.locator}</dd></>}
-                            {selected.pageStart !== undefined && <><dt>Pages</dt><dd>{selected.pageStart}{selected.pageEnd !== undefined && selected.pageEnd !== selected.pageStart ? `–${selected.pageEnd}` : ''}</dd></>}
-                            {selected.authors && <><dt>Authors</dt><dd>{selected.authors}</dd></>}
-                            {selected.doi && <><dt>DOI</dt><dd>{selected.doi}</dd></>}
-                            {selected.citation && <><dt>Citation</dt><dd>{selected.citation}</dd></>}
-                        </dl>
-                        {safeLink(selected.sourceLink || selected.pageLink || selected.originalUrl || selected.sourceOriginalUrl || '') && <a className="knowledge-link"
-                            href={safeLink(selected.sourceLink || selected.pageLink || selected.originalUrl || selected.sourceOriginalUrl || '')}
-                            target="_blank" rel="noreferrer noopener">{selected.sourceLink || selected.pageLink ? 'Open cited passage ↗' : 'Open original source ↗'}</a>}
-                        {selected.linkNotes && <p className="knowledge-muted">{selected.linkNotes}</p>}
-                    </section>
-                    {!!selected.tags?.length && <section><h3>Topics</h3><div className="knowledge-pills">{selected.tags.map(t => <span key={t}>{t}</span>)}</div></section>}
-                    {collection === 'sources' && selected.sourceKey && <button className="knowledge-source-open" type="button"
-                        onClick={() => { setSource(selected); switchCollection('entries'); }}>Find knowledge from this source →</button>}
-                </div> : <div className="knowledge-detail-prompt"><span>↗</span><h2>Inspect a record</h2><p>Select an item to see its full notes, references and original document links.</p></div>}
+                {selected ? <KnowledgeRecordDetails record={selected}
+                    onFindSource={collection === 'sources' ? record => { setExpandedId(''); setSource(record); switchCollection('entries'); } : undefined} />
+                 : <div className="knowledge-detail-prompt"><span>↗</span><h2>Inspect a record</h2><p>Choose an entry to read the original quotation, its explanation and full source metadata.</p></div>}
             </aside>
-        </div>
+        </div>}
+        {mainPanel === 'library' && <dialog ref={expandedDialogRef} className="knowledge-expanded-dialog"
+            aria-label={expanded ? `Full details: ${titleFor(expanded)}` : 'Full knowledge record'}
+            onClose={() => setExpandedId('')}
+            onClick={event => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
+            {expanded && <div className="knowledge-expanded-inner">
+                <div className="knowledge-expanded-bar">
+                    <span>Expanded knowledge entry</span>
+                    <button type="button" autoFocus aria-label="Close expanded entry"
+                        onClick={() => expandedDialogRef.current?.close()}>Close <span aria-hidden="true">×</span></button>
+                </div>
+                <KnowledgeRecordDetails record={expanded}
+                    onFindSource={collection === 'sources' ? record => {
+                        expandedDialogRef.current?.close(); setSource(record); switchCollection('entries');
+                    } : undefined}/>
+            </div>}
+        </dialog>}
     </div>;
 }

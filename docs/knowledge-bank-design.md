@@ -35,3 +35,20 @@ Relationships: relationKey, fromEntryKey, toEntryKey, relationType, rationale, r
 - Tests: `test/knowledge-bank.test.ts`, `apps/web/src/KnowledgeBank.test.tsx`. Full `npm test` passed 172 backend, 101 web, Mac UI check (16 Oct 2026).
 - Older saved View: still available under `/projects/f5091ee1-3d72-4654-8192-37ccfe8608a7/views/knowledge-bank`, but its query cap remains 100. It is not the recommended interface.
 - Limitations: source text not yet ingested; default source is a planned placeholder only. Data is already persisted remotely; the new Application source changes are in the local Atlas checkout and must be deployed before appearing on hosted Atlas.
+
+
+## Optional study layer (16 October 2026)
+- The **Knowledge Study Cards** and **Knowledge Review Progress** stores extend—not replace—the existing unified knowledge bank. Cards carry stable IDs, source and section links, associated entry keys, group metadata, and distinct lecturer/generated origins. Review progress keeps only self-assessment scheduling metadata.
+- Backend: `apps/server/src/apps/knowledge-study.ts` with read-only `knowledge_bank_study_deck` and progress-writing `knowledge_bank_rate_card`. Due/new cards are selected with PostgreSQL filters and pagination rather than a first-100 UI cap; 10-minute Again, then interval-based Hard/Good/Easy scheduling is a lightweight practice heuristic, **not a validated memory-science model**. Card grades are explicitly self-rated, never AI-scored.
+- Frontend: `apps/web/src/KnowledgeStudy.tsx`, `knowledge-study.css`, accessible under the Knowledge Bank Application's **Study & practice** section. Supports source search, groups, flashcard reveals, user-written self-assessment answers, saved reviews, due/new sessions and multi-batch browse-all practice.
+- The first cohort is 19 Chapter 1 cards: five original self-assessment prompts (lecturer wording, our source-grounded answer guides), fourteen generated prompts. Future chunks follow the rules in `knowledge-bank-ingestion.md`.
+- Tests: `test/knowledge-study.test.ts` checks PostgreSQL paging with 125 cards, filtering, persisted progress and due exclusion; `apps/web/src/KnowledgeStudy.test.tsx` checks reveal, grade and mini-assessment.
+- Local application code must be redeployed before these Study features appear on hosted Atlas; the stores and seed cards are already live in PostgreSQL.
+
+
+## Source-first entry reading (16 October 2026)
+- Existing `Knowledge Entries.sourceExcerpt` is now populated for all 52 Preamble and Chapter 1 entries with exact short quotations validated against user-uploaded Markdown passages (Preamble 20, Chapter 1 32). Source quotations must not be paraphrased or invented.
+- `KnowledgeRecordDetails.tsx` centralises a consistent display for the narrow preview and expanded reader: the original excerpt is prioritised, followed by AI-organised summary, detailed explanation, any verification qualification, and full available provenance/tags/links.
+- Clicking a result opens a large native `<dialog>` with close/Escape/backdrop handling; this is a presentation change only, preserving existing Core IDs and paginated search. The dialog's content is accessible and source-first.
+- The test in `apps/web/src/KnowledgeBank.test.tsx` checks opening the expanded reader, the stored original quote, summary, context and original source link.
+- The excerpt is searchable through `knowledge_bank_browse`, which already includes `sourceExcerpt` in server-side search. A source link alone is never a substitute for quoting and identifying the underlying passage.

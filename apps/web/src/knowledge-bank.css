@@ -72,3 +72,45 @@
 .knowledge-detail-prompt p{color:var(--text-secondary);font-size:.83rem}
 @media(max-width:1100px){.knowledge-layout{grid-template-columns:210px minmax(290px,1fr)}.knowledge-detail{grid-column:2;position:static;min-height:0;max-height:none;border-top:1px solid var(--border);border-left:0}}
 @media(max-width:700px){.knowledge-head{padding:23px 18px}.knowledge-layout{display:flex;flex-direction:column}.knowledge-search,.knowledge-content,.knowledge-detail{position:static;width:100%;padding:20px 18px;border-left:0;border-right:0}.knowledge-search{border-bottom:1px solid var(--border)}.knowledge-content{min-width:0}.knowledge-detail{max-height:none}.knowledge-overview{gap:12px}.knowledge-overview span{padding-right:12px}.knowledge-content-heading{align-items:start}.knowledge-suggestions{width:100%}}
+
+
+/* The original passage is evidence, not a secondary afterthought. */
+.knowledge-quote-section{background:var(--surface-secondary);border:1px solid var(--border-strong);
+    border-radius:10px;padding:17px 19px;margin-top:20px!important}
+.knowledge-quote-section h3{margin:0 0 14px!important;letter-spacing:.07em;font-size:.76rem}
+.knowledge-verbatim-quote{margin:0!important;padding:0 0 0 16px!important;border-left:3px solid var(--accent)!important;
+    font-size:clamp(.93rem,1.2vw,1.06rem)!important;line-height:1.85!important;
+    font-weight:500;color:var(--text-primary)!important;white-space:pre-wrap}
+.knowledge-quote-source{margin-top:13px!important;color:var(--text-muted)!important;font-size:.76rem!important}
+.knowledge-record-facts{display:grid;grid-template-columns:minmax(85px,110px) minmax(0,1fr);gap:11px;
+    margin:12px 0;font-size:.84rem;line-height:1.6;overflow-wrap:anywhere}
+.knowledge-record-facts dt{font-weight:750;color:var(--text-muted)}
+.knowledge-record-facts dd{margin:0}
+.knowledge-record-detail{min-width:0;overflow-wrap:anywhere}
+.knowledge-record-detail section{border-top:1px solid var(--border);margin-top:22px;padding-top:18px}
+.knowledge-record-detail h2{font-size:clamp(1.2rem,2.5vw,1.85rem);line-height:1.3;letter-spacing:-.03em;margin:10px 0 15px}
+.knowledge-record-detail h3{font-size:.8rem;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin:0 0 12px}
+.knowledge-record-detail section>p,.knowledge-record-detail section>small{font-size:.93rem;line-height:1.83;white-space:pre-wrap}
+.knowledge-expanded-dialog{width:min(860px,calc(100vw - 32px));max-width:calc(100vw - 32px);
+    max-height:min(88vh,1000px);margin:auto;padding:0;background:var(--surface-elevated);
+    border:1px solid var(--border-strong);border-radius:15px;color:var(--text-primary);
+    box-shadow:0 20px 80px rgba(0,0,0,.26);overflow-y:auto;overscroll-behavior:contain}
+.knowledge-expanded-dialog::backdrop{background:rgba(0,0,0,.58);backdrop-filter:blur(3px)}
+.knowledge-expanded-inner{padding:0 clamp(18px,4vw,48px) 36px}
+.knowledge-expanded-bar{display:flex;align-items:center;justify-content:space-between;gap:15px;
+    position:sticky;top:0;background:var(--surface-elevated);padding:15px 0;margin-bottom:24px;
+    border-bottom:1px solid var(--border);z-index:1}
+.knowledge-expanded-bar>span{font-size:.75rem;font-weight:750;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted)}
+.knowledge-expanded-bar button{padding:7px 13px;border:1px solid var(--border-strong);background:var(--surface-secondary);
+    border-radius:7px;color:var(--text-primary);font-size:.82rem;cursor:pointer}
+.knowledge-expanded-dialog .knowledge-detail-label{color:var(--text-muted)}
+.knowledge-expanded-dialog .knowledge-record-detail section>p{font-size:1rem}
+.knowledge-expanded-dialog .knowledge-pills{margin-bottom:10px}
+.knowledge-expanded-dialog .knowledge-record-detail .knowledge-quote-section{margin-top:23px}
+.knowledge-expanded-dialog .knowledge-record-detail .knowledge-quote-section blockquote{font-size:1.12rem!important}
+.knowledge-detail .knowledge-record-detail h2{font-size:1.23rem}
+.knowledge-detail .knowledge-quote-section{padding:13px}
+.knowledge-detail .knowledge-verbatim-quote{font-size:.86rem!important;line-height:1.7!important}
+.knowledge-detail .knowledge-record-facts{font-size:.77rem;grid-template-columns:70px minmax(0,1fr)}
+@media(max-width:700px){.knowledge-expanded-dialog{max-height:94vh}.knowledge-expanded-inner{padding:0 18px 26px}
+    .knowledge-expanded-dialog .knowledge-record-detail section>p{font-size:.9rem}}

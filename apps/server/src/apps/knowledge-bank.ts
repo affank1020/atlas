@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Pool } from 'pg';
 import type { CoreService } from '../core/service.js';
 import type { ApplicationDefinition, ApplicationTool } from './registry.js';
+import { studyDeckSchema, rateCardSchema, type KnowledgeStudyService } from './knowledge-study.js';
 
 /**
  * A read-only, server-backed browser over the existing Atlas Core stores.
@@ -148,7 +149,7 @@ export class KnowledgeBankService {
     }
 }
 
-export function knowledgeBankApplication(service: Pick<KnowledgeBankService, 'browse' | 'overview'>): ApplicationDefinition {
+export function knowledgeBankApplication(service: Pick<KnowledgeBankService, 'browse' | 'overview'>, study?: Pick<KnowledgeStudyService,'deck'|'rate'>): ApplicationDefinition {
     const tools: ApplicationTool[] = [
         {
             name: 'knowledge_bank_overview',
@@ -163,6 +164,10 @@ export function knowledgeBankApplication(service: Pick<KnowledgeBankService, 'br
             invoke: input => service.browse(input),
         },
     ];
+    if (study) tools.push(
+        { name:'knowledge_bank_study_deck',description:'Retrieve due or all source-linked study flashcards and lecturer self-assessment practice prompts. Supports group and source filters.',inputSchema:studyDeckSchema.shape,invoke:input=>study.deck(input) },
+        { name:'knowledge_bank_rate_card',description:'Record a self-rated flashcard review and compute its next practice date. Not automatic grading.',inputSchema:rateCardSchema.shape,invoke:input=>study.rate(input) },
+    );
     return {
         type: 'knowledge-bank',
         slug: 'knowledge-bank',

@@ -11,6 +11,12 @@ const overview = { groups: [
 };
 beforeEach(() => {
     vi.resetAllMocks();
+    // jsdom does not implement the native modal methods in all test environments.
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+    HTMLDialogElement.prototype.close = function () {
+        this.removeAttribute('open');
+        this.dispatchEvent(new Event('close'));
+    };
     window.location.hash = '#/projects/project/applications/knowledge-bank';
     vi.mocked(callTool).mockImplementation(async (name, input) => {
         if (name === 'knowledge_bank_overview') return overview as never;
@@ -19,7 +25,11 @@ beforeEach(() => {
         const offset = params.offset || 0;
         const items = Array.from({ length: Math.min(25, Math.max(0, total - offset)) }, (_, i) => ({
             id:'record-'+(offset+i),title:'UX concept '+(offset+i),kind:'concept',
-            sourceKey:'ux-book',sourceTitle:'Lecturer notes',summary:'A source-grounded concept.',
+            sourceKey:'ux-book',sourceTitle:'Lecturer notes',summary:'A source-grounded concept.', detail:'Extended contextual analysis.',
+            sourceExcerpt:'Verified lecturer statement from the original passage.',
+            locator:'Chapter 1 > Being Critical',
+            sourceLink:'https://leanpub.com/read/UX/wrong',
+            confidenceNote:'Some numerical claims remain unverified.',
         }));
         return {items,total,offset,limit:25} as never;
     });
@@ -45,6 +55,23 @@ test('Knowledge Bank group filtering runs on the server and preserves source pro
         expect.objectContaining({group:'ux',offset:0}), expect.anything()));
     expect(await screen.findByText('145 results')).toBeInTheDocument();
     fireEvent.click(screen.getByText('UX concept 0'));
-    expect(screen.getByText('Original reference')).toBeInTheDocument();
+    expect(within(screen.getByRole('complementary', {name:'Record details'})).getByText('Source and provenance')).toBeInTheDocument();
     expect(within(screen.getByRole('complementary', {name:'Record details'})).getByText('Lecturer notes')).toBeInTheDocument();
+});
+
+test('clicking a knowledge entry opens a full-size, source-first reading dialog', async () => {
+    render(<KnowledgeBank />);
+    expect(await screen.findByText('146 results')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('UX concept 0'));
+    const dialog = screen.getByRole('dialog', {name:'Full details: UX concept 0'});
+    expect(dialog).toHaveAttribute('open');
+    expect(within(dialog).getByText('Original notes · Verbatim passage')).toBeInTheDocument();
+    expect(within(dialog).getByText('Verified lecturer statement from the original passage.')).toBeInTheDocument();
+    expect(within(dialog).getByText('AI-organised summary')).toBeInTheDocument();
+    expect(within(dialog).getByText('Extended contextual analysis.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Some numerical claims remain unverified.')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link',{name:'Open referenced section ↗'}))
+        .toHaveAttribute('href','https://leanpub.com/read/UX/wrong');
+    fireEvent.click(within(dialog).getByRole('button',{name:'Close expanded entry'}));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });

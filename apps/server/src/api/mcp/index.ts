@@ -38,7 +38,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     ];
     // Make corpus-wide Knowledge Bank search available to ChatGPT even when
     // the connector exposes only the first portion of our MCP catalogue.
-    const knowledgeNames = ['knowledge_bank_browse', 'knowledge_bank_overview'];
+    const knowledgeNames = ['knowledge_bank_browse', 'knowledge_bank_overview', 'knowledge_bank_study_deck', 'knowledge_bank_rate_card'];
     const prioritized = new Set([...priorityNames, ...knowledgeNames]);
     for (const name of priorityNames) {
         const definition = appTools.find(candidate => candidate.name === name);
