@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, symlink, rm, rename } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { footballControl } from '../apps/node/src/capabilities/football.js';
@@ -248,4 +248,84 @@ test('Watch receipts reject false visibility from unrelated files or exited laun
         assert.equal(failed.viewer.state, 'launch_failed');
         assert.equal(failed.status, 'failed_or_stopped');
     } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('historical featured policy exposes versioned playback only with its pinned recorded runner', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-historical-'));
+    const bareApp = await mkdtemp(path.join('/tmp', 'atlas-football-generalist-build-fixture-'));
+    const app = bareApp + '.app';
+    await rename(bareApp, app);
+    try {
+        const binary = path.join(app, 'Contents', 'MacOS', 'AI Football');
+        await mkdir(path.dirname(binary), { recursive: true });
+        await writeFile(binary, 'historical Unity player');
+        const oldScenario = 's1-dribble-moving-interception-v1';
+        await writeFile(path.join(app, 'Contents', 'generalist-build.json'), JSON.stringify({
+            family: 'generalist', contract: { behavior: 'FootballGeneralistV2' },
+            contract_sha256: 'old-contract', scenario_sha256: 'old-scenarios',
+            implementation_sha256: 'old-implementation',
+            scenarios: { scenarios: [{ id: oldScenario }] },
+        }));
+        await mkdir(path.join(root, 'ml-agents/config'), { recursive: true });
+        await mkdir(path.join(root, 'Assets/Resources/Generalist'), { recursive: true });
+        await writeFile(path.join(root, 'ml-agents/config/football_generalist_v2_contract.json'), JSON.stringify({
+            contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2',
+            observations: { size: 54, fields: [] }, actions: { continuous: 5, channels: [] },
+        }));
+        await writeFile(path.join(root, 'Assets/Resources/Generalist/scenarios.json'), JSON.stringify({
+            scenarios: [{ id: 's2-score-basic-v1' }], sceneVersion: 's2', physicsVersion: 'p2',
+        }));
+        await writeFile(path.join(root, 'ml-agents/config/generalist_curriculum.json'), JSON.stringify({
+            held_out_seeds: [515], stages: [{ id: 'S2' }],
+        }));
+        const dir = path.join(root, 'training-driver-runs', 'old-run');
+        await mkdir(dir, { recursive: true });
+        const bundle = path.join(dir, 'old.footballpolicy');
+        const onnx = path.join(dir, 'old.onnx');
+        await writeFile(bundle, 'model bundle');
+        await writeFile(onnx, 'model');
+        await writeFile(path.join(root, 'football_generalist.py'), '# test fixture');
+        await writeFile(path.join(dir, 'policy.json'), JSON.stringify({
+            id: 'generalist-musiala-v1', family: 'generalist', behavior: 'FootballGeneralistV2',
+            runner_binary: binary, bundle_path: bundle, onnx_path: onnx,
+            contract_sha256: 'old-contract', scenario_sha256: 'old-scenarios',
+            implementation_sha256: 'old-implementation', view_scenario: oldScenario,
+        }));
+        const curation = path.join(root, 'validation/generalist');
+        await mkdir(curation, { recursive: true });
+        const curate = (featured: boolean) => writeFile(path.join(curation, 'policy-curation.json'),
+            JSON.stringify({ schema_version: 1, policies: { 'generalist-musiala-v1': { display_name: 'Musiala', featured } } }));
+        await curate(true);
+        const [policy] = await footballControl(ws(root), { ...input, action: 'generalist_policies' }) as any[];
+        assert.equal(policy.display_name, 'Musiala');
+        assert.equal(policy.featured, true);
+        assert.equal(policy.compatible_metadata, false);
+        assert.equal(policy.historical_watch_available, true);
+        // Wrong drill and current-version evaluation must both fail closed.
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: 'generalist-musiala-v1', scenario: 's2-score-basic-v1', seed: 515 }),
+            (error: any) => error.code === 'INVALID_ARGUMENT');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_evaluate',
+            policyId: 'generalist-musiala-v1', scenario: 's2-score-basic-v1', seed: 515 }),
+            (error: any) => error.code === 'INVALID_ARGUMENT');
+        const launched = await footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: 'generalist-musiala-v1', scenario: oldScenario, seed: 515 }) as any;
+        assert.equal(launched.accepted, true);
+        assert.equal(launched.action, 'generalist_watch');
+        const operations = path.join(root, 'training-driver-runs', 'atlas-generalist-operations');
+        const receipt = JSON.parse(await (await import('node:fs/promises')).readFile(path.join(operations, launched.ticket + '.json'), 'utf8'));
+        assert.equal(receipt.historical_watch, true);
+        assert.equal(receipt.scenario, oldScenario);
+        // Clearing curated status revokes the playback permission without removing the model.
+        await curate(false);
+        const [uncurated] = await footballControl(ws(root), { ...input, action: 'generalist_policies' }) as any[];
+        assert.equal(uncurated.historical_watch_available, false);
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: 'generalist-musiala-v1', scenario: oldScenario, seed: 515 }),
+            (error: any) => error.code === 'INVALID_ARGUMENT');
+    } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(app, { recursive: true, force: true });
+    }
 });

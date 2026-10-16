@@ -53,6 +53,27 @@ function scan(workspace: Workspace, filename: string) {
     for (const root of roots) walk(root, 0);
     return results;
 }
+/** Inspect a historical runner's recorded metadata without executing it.
+ * Final launch independently rechecks all file hashes in the Python runner.
+ * This never broadens allowed policies for training or evaluation. */
+function historicalWatchRunner(workspace: Workspace, policy: any) {
+    try {
+        const binary = safeRunnerBinary(workspace, policy.runner_binary);
+        const stamp = readJson(path.join(path.dirname(path.dirname(binary)), 'generalist-build.json'));
+        if (policy.family !== 'generalist' || stamp.family !== 'generalist' ||
+            policy.behavior !== stamp.contract?.behavior ||
+            !['contract_sha256','scenario_sha256','implementation_sha256'].every(key =>
+                typeof policy[key] === 'string' && policy[key] === stamp[key]) ||
+            typeof policy.view_scenario !== 'string' || !idPattern.test(policy.view_scenario) ||
+            !Array.isArray(stamp.scenarios?.scenarios) ||
+            !stamp.scenarios.scenarios.some((s: any) => s?.id === policy.view_scenario))
+            return null;
+        safeFile(workspace, policy.bundle_path);
+        safeFile(workspace, policy.onnx_path);
+        return { binary, scenario: policy.view_scenario };
+    } catch { return null; }
+}
+
 export function generalistPolicies(workspace: Workspace) {
     const curated = readCuration(workspace.rootPath);
     const manifest = generalistManifest(workspace);
@@ -66,8 +87,10 @@ export function generalistPolicies(workspace: Workspace) {
             const compatibleMetadata = policy.behavior === manifest.contract.behavior &&
                 policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
                 policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
+            const featured = curated[policy.id]?.featured === true;
+            const historicalRunner = featured && !compatibleMetadata ? historicalWatchRunner(workspace, policy) : null;
             found.push({ id: policy.id, display_name: curated[policy.id]?.display_name ?? (typeof policy.display_name === 'string' && policy.display_name.trim() ? policy.display_name.trim().slice(0, 80) : null),
-                featured: curated[policy.id]?.featured === true, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
+                featured, historical_watch_available: !!historicalRunner, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
                 onnx_sha256: typeof policy.onnx_sha256 === 'string' ? policy.onnx_sha256 : null, family: 'generalist', behavior: policy.behavior, status: policy.status ?? 'unverified',
                 source: path.relative(workspace.rootPath, file), compatible_metadata: compatibleMetadata,
                 source_run_id: typeof (policy.source_run_id ?? policy.run_id) === 'string' && idPattern.test(policy.source_run_id ?? policy.run_id) ? (policy.source_run_id ?? policy.run_id) : null,
@@ -323,10 +346,23 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         return { requested: true, ticket: item.ticket, status: 'interrupt_requested' };
     }
     const manifest = generalistManifest(workspace);
+    const pinnedWatch = x.action === 'generalist_watch' ? policyFile(workspace, x.policyId!) : null;
+    const currentWatch = pinnedWatch && pinnedWatch.policy.behavior === manifest.contract.behavior &&
+        pinnedWatch.policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
+        pinnedWatch.policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
+    const historicalWatch = !!pinnedWatch && !currentWatch;
+    const archivedRunner = historicalWatch ? historicalWatchRunner(workspace, pinnedWatch.policy) : null;
+    if (historicalWatch && (!readCuration(workspace.rootPath)[pinnedWatch!.policy.id]?.featured || !archivedRunner))
+        throw new AtlasError('Historical playback requires a featured policy with its exact saved Unity build and model artifacts.', 'INVALID_ARGUMENT');
+    // Historical Watch is restricted to the recorded original scenario; arbitrary
+    // current scenarios and the current showcase playlist are intentionally excluded.
+    const scenario = historicalWatch ? archivedRunner!.scenario : x.scenario ?? 'mix';
+    if (historicalWatch && x.scenario !== scenario)
+        throw new AtlasError('Historical Watch must use the scenario saved with this policy.', 'INVALID_ARGUMENT');
     const scenarios = new Set(['mix', 's1_rehearsal', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
     if (x.action === 'generalist_watch') scenarios.add(showcaseScenario);
-    const scenario = x.scenario ?? 'mix';
-    if (!scenarios.has(scenario)) throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
+    if (!historicalWatch && !scenarios.has(scenario))
+        throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
         const sourceId = x.initializeFromRunId;
@@ -359,11 +395,11 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     let binary: string;
     if (action !== 'baseline') {
         const p = policyFile(workspace, x.policyId!);
-        if (p.policy.behavior !== manifest.contract.behavior ||
+        if (!historicalWatch && (p.policy.behavior !== manifest.contract.behavior ||
             p.policy.contract_sha256 !== manifest.fingerprints.contract_sha256 ||
-            p.policy.scenario_sha256 !== manifest.fingerprints.scenario_sha256)
+            p.policy.scenario_sha256 !== manifest.fingerprints.scenario_sha256))
             throw new AtlasError('Generalist policy provenance does not match the current contract/scenarios.', 'INVALID_ARGUMENT');
-        binary = safeRunnerBinary(workspace, p.policy.runner_binary);
+        binary = historicalWatch ? archivedRunner!.binary : safeRunnerBinary(workspace, p.policy.runner_binary);
         const bundle = safeFile(workspace, p.policy.bundle_path);
         safeFile(workspace, p.policy.onnx_path);
         args.push('--policy', p.file, '--bundle', bundle);
@@ -383,8 +419,9 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         binary = candidateBinary;
     }
     const script = safeFile(workspace, path.join(workspace.rootPath, 'football_generalist.py'));
-    const cmd = [script, action, '--binary', binary, ...args];
-    return launch(workspace, x.action, cmd, { scenario, policy_id: x.policyId ?? null, output,
+    const cmd = [script, action, '--binary', binary, ...args,
+        ...(historicalWatch ? ['--historical-watch'] : [])];
+    return launch(workspace, x.action, cmd, { scenario, historical_watch: historicalWatch, policy_id: x.policyId ?? null, output,
         seed: x.seed ?? 515,
         ...(action !== 'watch' ? { requested_episodes: x.episodes ?? 10 } : {}) }, ticket);
 }

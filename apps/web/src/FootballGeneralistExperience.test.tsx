@@ -353,3 +353,65 @@ test('S1 continuation requires a checkpoint and forwards the exact source run', 
     }));
     vi.mocked(window.confirm).mockRestore();
 });
+
+
+test('featured historical policy remains selectable in Watch with its saved scenario but never Evaluate', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_policies') return [{
+            id: 'generalist-musiala-v1', display_name: 'Musiala', featured: true,
+            status: 'unevaluated', behavior: 'FootballGeneralistV2',
+            compatible_metadata: false, historical_watch_available: true,
+            view_scenario: 's1-dribble-moving-interception-v1',
+            onnx_available: true, bundle_available: true,
+        }] as never;
+        if (name === 'football_generalist_watch') return {
+            accepted: true, status: 'launching',
+            ticket: 'fead3242-aaba-4ef3-8d37-c88a6c077d17', action: 'generalist_watch',
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    const option = await screen.findByRole('option', { name: 'Musiala · Historical' });
+    expect(option).toHaveValue('generalist-musiala-v1');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
+        target: { value: 'generalist-musiala-v1' },
+    });
+    expect(screen.getByText('Historical playback')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Mixed dribbling showcase/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_watch',
+        expect.objectContaining({
+            policyId: 'generalist-musiala-v1', scenario: 's1-dribble-moving-interception-v1',
+        })));
+    fireEvent.click(screen.getByRole('button', { name: 'Evaluate' }));
+    expect(screen.queryByRole('option', { name: 'Musiala · Historical' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Unity player' })).not.toBeInTheDocument();
+});
+
+test('historical featured players lacking an original runner remain visible but unwatchable', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_policies') return [{
+            id: 'generalist-musiala-v1', display_name: 'Musiala', featured: true,
+            compatible_metadata: false, historical_watch_available: false,
+            status: 'unevaluated', behavior: 'FootballGeneralistV2',
+            view_scenario: 's1-dribble-moving-interception-v1',
+            onnx_available: true, bundle_available: true,
+        }] as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Policies' }));
+    const card = await screen.findByText('Musiala');
+    expect(card).toBeInTheDocument();
+    const cardWatch = screen.getAllByRole('button', { name: 'Watch' }).find(button => button.hasAttribute('disabled'));
+    expect(cardWatch).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Player profile' }));
+    expect(screen.getByRole('button', { name: /Watch in Unity/ })).toBeDisabled();
+});

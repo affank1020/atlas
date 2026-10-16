@@ -14,7 +14,7 @@ export type GeneralistRun = {
         source_implementation_sha256?: string; checkpoint_sha256?: string } | null;
 };
 export type GeneralistPolicy = {
-    id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean;
+    id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean;
     executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean;
     source_run_id?: string | null; contract_sha256?: string; scenario_sha256?: string;
     implementation_sha256?: string;
@@ -258,6 +258,9 @@ export function GeneralistPolicyView({ policy, runs, activity, assessment, onBac
     const [newName, setNewName] = useState(policy.display_name || policy.id);
     const linkedEvaluations = activity.filter(item => (item.policy_id === policy.id || item.policy_id === policy.source_policy_id) && item.action === 'generalist_evaluate');
     const runnable = policy.compatible_metadata && policy.onnx_available && policy.bundle_available;
+    const historicalPlayback = policy.featured && !policy.compatible_metadata && policy.historical_watch_available &&
+        policy.onnx_available && policy.bundle_available;
+    const watchable = runnable || !!historicalPlayback;
     return <section className="fg-detail">
         <button className="fg-link" onClick={onBack}>← Policies</button>
         <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY PROFILE</p><h2>{policy.display_name || policy.id}</h2></div><span>{policy.featured ? 'Featured' : 'Research checkpoint'}</span></div>
@@ -268,7 +271,8 @@ export function GeneralistPolicyView({ policy, runs, activity, assessment, onBac
             {metric('Saved evaluations', String(linkedEvaluations.length))}
         </div>
         <div className="fg-actions fg-profile-actions">
-            <button className="fg-button primary" disabled={!runnable} onClick={() => onWatch(policy.id)}>Watch in Unity →</button>
+            <button className="fg-button primary" disabled={!watchable} onClick={() => onWatch(policy.id)}>
+                {historicalPlayback ? 'Watch original Unity build →' : 'Watch in Unity →'}</button>
             <button className="fg-button" disabled={!runnable} onClick={() => onEvaluate(policy.id)}>Evaluate →</button>
         </div>
         {onRename && <section className="fg-panel fg-policy-editor"><h3>Player identity</h3>
@@ -280,7 +284,8 @@ export function GeneralistPolicyView({ policy, runs, activity, assessment, onBac
                     {policy.featured ? 'Remove from featured' : 'Feature policy'}</button>}</div>
         </section>}
         <FootballPolicySkills assessment={assessment} onEvaluate={onEvaluateSkill ? scenario => onEvaluateSkill(policy.id, scenario) : undefined}/>
-        {!runnable && <p className="fg-muted">Watch and Evaluate require a compatible indexed model and Unity bundle. The runner performs its own validation before starting.</p>}
+        {historicalPlayback && <p className="fg-muted">Historical featured policy: Watch uses its original recorded runner and saved scenario. Evaluation against current drills is unavailable.</p>}
+        {!watchable && <p className="fg-muted">Watch requires a compatible model or a featured historical player with its original saved Unity build. Missing or incompatible archived builds cannot launch safely.</p>}
         <section className="fg-panel"><h3>Provenance</h3><dl className="fg-detail-list">
             <dt>Policy ID</dt><dd>{policy.id}</dd>
             <dt>Behavior</dt><dd>{policy.behavior}</dd>

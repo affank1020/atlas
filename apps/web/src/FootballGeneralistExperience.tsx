@@ -9,7 +9,7 @@ import './football-training.css';
 import './football-generalist-experience.css';
 
 type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string; initialization_available?: boolean; initialization?: { source_run_id?: string; checkpoint_sha256?: string } | null };
-type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
+type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
 type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
@@ -76,7 +76,10 @@ export function FootballGeneralistExperience() {
             else failures.push('training runs');
             if (p.status === 'fulfilled' && Array.isArray(p.value)) {
                 setPolicies(p.value);
-                setSelectedPolicy(current => current || p.value[0]?.id || '');
+                setSelectedPolicy(current => current && p.value.some(policy => policy.id === current) ? current :
+                    p.value.find(policy => policy.featured && (policy.compatible_metadata || policy.historical_watch_available) &&
+                        policy.onnx_available && policy.bundle_available)?.id ||
+                    p.value.find(policy => policy.compatible_metadata && policy.onnx_available && policy.bundle_available)?.id || '');
             } else failures.push('policies');
             if (a.status === 'fulfilled' && Array.isArray(a.value)) setActivity(a.value);
             else failures.push('evaluation activity');
@@ -114,7 +117,12 @@ export function FootballGeneralistExperience() {
 
     const scenarios = manifest?.scenarios.scenarios ?? [];
     const runnablePolicies = policies.filter(p => p.compatible_metadata && p.bundle_available && p.onnx_available);
+    const historicalWatchPolicies = policies.filter(p => p.featured && !p.compatible_metadata &&
+        p.historical_watch_available && p.bundle_available && p.onnx_available);
+    const watchPolicies = [...runnablePolicies, ...historicalWatchPolicies];
+    const selectablePolicies = tab === 'watch' ? watchPolicies : runnablePolicies;
     const currentPolicy = policies.find(p => p.id === selectedPolicy);
+    const historicalSelected = tab === 'watch' && currentPolicy && historicalWatchPolicies.some(p => p.id === currentPolicy.id);
     // Discovered receipts include evaluations started through ChatGPT or another Atlas client.
     const evaluations = activity.filter(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action));
     const progressLabel = (item: Receipt) => item.result?.episodes == null ? 'No outcomes yet' :
@@ -306,8 +314,10 @@ export function FootballGeneralistExperience() {
                         {!a?.benchmarks.some(m => m.rate != null) && <p className="fg-muted">No measured assessment evidence yet.</p>}</div>
                     <div className="fg-actions">
                         <button className="fg-button primary" onClick={() => setDetail({ kind: 'policy', id: p.id })}>Player profile</button>
-                        <button className="fg-button" onClick={() => { setSelectedPolicy(p.id); setTab('watch'); }}>Watch</button>
-                        <button className="fg-button" onClick={() => { setSelectedPolicy(p.id); setTab('evaluate'); }}>Evaluate</button>
+                        <button className="fg-button" disabled={!watchPolicies.some(candidate => candidate.id === p.id)}
+                            onClick={() => { setSelectedPolicy(p.id); setTab('watch'); }}>Watch</button>
+                        <button className="fg-button" disabled={!runnablePolicies.some(candidate => candidate.id === p.id)}
+                            onClick={() => { setSelectedPolicy(p.id); setTab('evaluate'); }}>Evaluate</button>
                     </div>
                 </article>;
             })}</div>
@@ -320,7 +330,7 @@ export function FootballGeneralistExperience() {
                     <span>{p.onnx_available && p.bundle_available ? 'Model & bundle available' : 'Incomplete artifacts'}</span>
                     <small>{p.status}</small></div>)}
             <details className="fg-policy-archive"><summary>Historical or incompatible policies ({policies.filter(p => !p.compatible_metadata).length})</summary>
-                <p className="fg-muted">Older versions have different environment fingerprints. Preserved as research history, not selectable for the current Watch engine.</p>
+                <p className="fg-muted">Older versions retain their original environment fingerprints. Featured policies with an available matching saved Unity player can be watched in Historical playback; other checkpoints remain research history.</p>
                 {policies.filter(p => !p.compatible_metadata).map(p => <button key={p.id} className="fg-record-link"
                     onClick={() => setDetail({ kind: 'policy', id: p.id })}>{nameOfPolicy(p)} →</button>)}
             </details>
@@ -331,17 +341,30 @@ export function FootballGeneralistExperience() {
         </section>}
         {(tab === 'evaluate' || tab === 'watch') && <section className="fg-panel">
             <h2>{tab === 'watch' ? 'Watch a generalist policy' : 'Evaluate a generalist policy'}</h2>
-            <p className="fg-muted">{tab === 'watch' ? 'Open a separate, windowed Unity player on the connected Mac (not the Unity Editor).' : 'Run seeded inference against the selected generalist scenario.'} Only explicitly indexed policies with a model and bundle are selectable.</p>
+            <p className="fg-muted">{tab === 'watch' ? 'Open a windowed Unity player on the connected Mac. Featured historical players use their own original verified build and saved drill.' : 'Run seeded inference against the selected current generalist scenario.'} Policies need a model and bundle; historical playback is Watch-only.</p>
             <div className="fg-form">
                 <label>Policy<select value={selectedPolicy} onChange={e => setSelectedPolicy(e.target.value)}>
-                    <option value="">Choose policy</option>{runnablePolicies.map(p => <option key={p.id} value={p.id}>{p.display_name || p.id}</option>)}</select></label>
-                <GeneralistDrillPicker scenarios={scenarios} mode={tab === 'watch' ? 'watch' : 'evaluate'} value={tab === 'watch' ? watchScenario : scenario} onChange={tab === 'watch' ? setWatchScenario : setScenario}/>
+                    <option value="">Choose policy</option>
+                    <optgroup label="Featured players">{selectablePolicies.filter(p => p.featured).map(p =>
+                        <option key={p.id} value={p.id}>{p.display_name || p.id}{!p.compatible_metadata ? ' · Historical' : ''}</option>)}</optgroup>
+                    <optgroup label="Current research checkpoints">{selectablePolicies.filter(p => !p.featured).map(p =>
+                        <option key={p.id} value={p.id}>{p.display_name || p.id}</option>)}</optgroup>
+                </select></label>
+                {historicalSelected ? <div className="fg-historical-watch-note" role="status">
+                    <strong>Historical playback</strong>
+                    <p>Uses {currentPolicy!.display_name || currentPolicy!.id}'s original versioned Unity build and saved scenario
+                        ({currentPolicy!.view_scenario || 'not recorded'}). Current drills cannot be selected for this model.
+                        Its model and earlier training evidence remain unchanged.</p>
+                </div> :
+                    <GeneralistDrillPicker scenarios={scenarios} mode={tab === 'watch' ? 'watch' : 'evaluate'}
+                        value={tab === 'watch' ? watchScenario : scenario} onChange={tab === 'watch' ? setWatchScenario : setScenario}/>}
                 <label>Seed<input type="number" value={evaluationSeed} min={0} onChange={e => setEvaluationSeed(Number(e.target.value))}/></label>
                 {tab === 'evaluate' && <label>Episodes<input type="number" value={episodes} min={1} max={10000} onChange={e => setEpisodes(Number(e.target.value))}/></label>}
             </div>
             {currentPolicy && <button className="fg-record-link" onClick={() => setDetail({ kind: 'policy', id: currentPolicy.id })}>View {currentPolicy.id} profile →</button>}
-            {currentPolicy && !runnablePolicies.includes(currentPolicy) && <p role="alert">This policy is not executable with the current generalist metadata.</p>}
-            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !runnablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario: tab === 'watch' ? watchScenario : scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
+            {currentPolicy && !selectablePolicies.some(p => p.id === currentPolicy.id) &&
+                <p role="alert">This policy cannot be played here. Historical featured players require their saved Unity build; current evaluation requires current scenario metadata.</p>}
+            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !selectablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario: tab === 'watch' ? (historicalSelected ? currentPolicy!.view_scenario : watchScenario) : scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
                 {tab === 'evaluate' && <button type="button" className="fg-button" disabled={!!busy} onClick={() => void doAction('baseline', 'football_generalist_baseline', { scenario, seed: evaluationSeed, episodes })}>Run baseline</button>}</div>
             {tab === 'evaluate' && <div className="fg-evaluation-history">
                 <div className="fg-panel-title"><h3>Evaluation history</h3><span>{activeEvaluations.length} active</span></div>
@@ -362,7 +385,7 @@ export function FootballGeneralistExperience() {
                 </button>)}
                 {!filteredEvaluations.length && <p className="fg-muted">No evaluation results match the selected filters.</p>}
             </div>}
-            {!runnablePolicies.length && <p className="fg-muted">No compatible registered policies are available for inference yet.</p>}
+            {!selectablePolicies.length && <p className="fg-muted">No suitable indexed policies are available for {tab === 'watch' ? 'playback' : 'evaluation'} yet.</p>}
         </section>}
         {tab === 'checks' && <section className="fg-panel"><h2>Generalist contract</h2>
             <div className="fg-details"><span>Contract: {manifest?.contract.contract_id ?? '—'}</span><span>Behavior: {manifest?.contract.behavior ?? '—'}</span><span>Observations: {manifest?.contract.observations.size ?? '—'}</span><span>Actions: {manifest?.contract.actions.continuous ?? '—'}</span><span>Contract SHA: {shortHash(manifest?.fingerprints.contract_sha256)}</span><span>Scenario SHA: {shortHash(manifest?.fingerprints.scenario_sha256)}</span></div>

@@ -37,3 +37,42 @@ The first-party Football application route now mounts `FootballGeneralistExperie
 - **Live acceptance check still needed:** with the existing Unity Editor open/connected, click Watch → Open Unity player; ensure the standalone window appears alongside the Editor and close only the player; the Editor should remain connected. If no visible window appears, inspect Latest operation viewer state/player log and the signed-in macOS GUI session before changing policy/training.
 - Local Node/Server/Web services must load rebuilt code (and public web deployment must serve the new bundle). Merely building `dist` is not proof that active services restarted. Do not start extra PPO training to test this.
 - Validation: Unity `generalist_contract_tests` 22 passed; Atlas `npm test` 164 backend / 87 web plus native Node UI; Atlas `npm run build` passed.
+
+
+## Featured historical Watch (2026-10-16)
+
+- **Featured** is a saved presentation/categorisation flag, separate from runtime compatibility.
+  A frozen featured policy such as Musiala can remain visible and named even after
+  the S2/S3 scenario catalogue evolves. No archived policy is re-trained or rewritten.
+- The Watch picker groups featured players and compatible research checkpoints.
+  Current-compatible policies use the existing camera-enabled verified runner.
+  Incompatible featured policies are offered **only** if their original saved
+  Unity executable, ONNX and Unity model bundle are still present, and the
+  archived build stamp matches their original contract/scenario/implementation
+  fingerprints and saved view scenario. For historical playback the drill is
+  pinned: the current scenario picker is replaced by a version explanation.
+- The Node API rejects historical Watch for unfeatured policies, mismatched
+  scenarios and missing/unstamped saved builds. The canonical Python Watch
+  launcher independently validates the **exact pinned** binary, complete
+  assets/assemblies digest, bundle SHA-256, ONNX SHA-256 and old scenario ID
+  before asking macOS LaunchServices to launch it.
+- Current-environment **Evaluate**, baseline, training and policy promotion
+  checks are **unchanged**. Historical Watch is presentation-only and is not
+  a way to run archived weights in a newer training environment.
+- **Operational caveat:** historical runners currently live in the isolated
+  `/private/tmp/atlas-football-generalist-build*.app` directory. The saved
+  Musiala build passed the real hash/integrity check at implementation time,
+  but if macOS later removes it, historical playback will become disabled
+  safely. A durable archived-build export should be implemented before
+  treating temporary runner paths as long-term preservation.
+- The change requires rebuilding/reloading both Atlas Node and the served Web
+  frontend; rebuilding bundles by itself does **not** activate changes in a
+  running Node process. `./atlasctl restart` restarts only the hosted Node
+  once active work is finished. Remote Web deployments also need their normal
+  bundle deployment. Do not restart while training is active.
+- Validation: Atlas `npm test` passed (171 backend tests, 99 web tests, Node UI
+  typecheck); `npm run build` passed. Unity generalist Python suite passed
+  72 tests (one opt-in physics smoke skipped), including hash tampering, real
+  archived Musiala integrity, and dry-run historical Watch CLI checks.
+- Full GUI visibility is OS-dependent; live window opening requires a human
+  acceptance check on the Mac after the Node/Web update is loaded.
