@@ -1,54 +1,43 @@
-# Atlas Knowledge Bank — Design and operating contract
+# Atlas Knowledge Bank — Architecture and decisions
 
-## Decisions
-- One standalone **Knowledge Bank** Atlas project so the source library is cross-disciplinary. Groups are metadata, not separate projects/stores. Existing University and FYP projects remain untouched.
-- Five project-owned typed Atlas Stores: Groups, Sources, Sections, Entries and Relationships (see `knowledge-bank-ingestion.md` for IDs and ingestion steps).
-- ChatGPT takes supplied reading chunks, follows the Markdown protocol and writes directly through Atlas MCP. PostgreSQL/Core owns persistent data, audits and schemas. **No independent ingestion backend**.
-- Browse all by default, with optional group, source, document type, entry kind and topic filters. Source identity and type are not conflated with topic tags.
-- Original facts/quotations/explanations keep precise provenance. Atomic Entries reference one Source and optional Section. Cross-source synthesis uses Relationships.
-- Initial UX focus, FYP papers may be added later using identical schema and instructions; do not migrate existing FYP literature without an explicit request.
-- React is used for **browsing only**, not ingestion. The code-defined `Knowledge Bank` Application lives within the Knowledge Bank Atlas Project. A read-only, project-scoped SQL operation searches the existing Core `records` and `stores` tables with total counts, typed filters and deterministic 25-row pages (max 100 per request). No new persistence service, ingestion backend, or index is introduced.
-- `knowledge_bank_browse` and `knowledge_bank_overview` serve Atlas Web and are prioritised for ChatGPT MCP clients. Queries cover all matching records on the server; the legacy saved View remains limited to the first 100 per Store.
-- Direct document links are desired but must resolve to verified, durable URLs; otherwise show exact chapter/section/page metadata only.
+## Current direction (16 October 2026)
+The user chose a **single Knowledge Bank Atlas Project and native View**. A standalone code-defined Knowledge Bank Application and dedicated Study Application were retired. No first-party Knowledge Bank Application should be registered or shipped.
 
-## Record organization
-Groups: key, name, description, linkedProjectId, status.
-Sources: sourceKey, title, groupKeys[], sourceType, sourceRole, authors/year/DOI, originalUrl/fileRef, citation, tags[], status, linkNotes.
-Sections: sectionKey, sourceKey, parentSectionKey, groupKeys[], title, sectionLabel, position, pageStart/pageEnd/pageLink, summary, tags[], status.
-Entries: entryKey, sourceKey, sectionKey, groupKeys[], title, kind, summary, detail, sourceExcerpt, claimProvenance, locator/pageStart/pageEnd/sourceLink, tags[], reviewStatus, confidenceNote.
-Relationships: relationKey, fromEntryKey, toEntryKey, relationType, rationale, relationProvenance, evidenceSourceKey, tags[].
+The source of truth is **Core/PostgreSQL Stores**, not a separate service. ChatGPT handles source ingestion using `docs/knowledge-bank-ingestion.md`; the View only browses current saved records.
 
-## Operational acceptance checks
-1. An uploaded section can be added, then the same chunk reprocessed without duplicate stable keys.
-2. Search by title/topic/terminology retrieves saved Entries via Atlas MCP.
-3. Filter by group, exact source, source type, kind and tags produces correct records (with source type determined from Sources).
-4. Browse a section and open an Entry containing its provenance; original links only if verified.
-5. Cross-chapter relationships never destroy the separate source claims.
-6. Documents are not marked complete when only partially supplied.
-7. For more than 100 Entries, the Application must provide server-backed search and paginated results; the test `test/knowledge-bank.test.ts` creates 146 Entries and verifies filters/offsets beyond 100. Do not use the legacy View as the authoritative search surface.
+- Knowledge Bank project ID: `f5091ee1-3d72-4654-8192-37ccfe8608a7`
+- Native View ID: `2107baaf-806e-448f-a954-fc89ebe937f0`
+- Native View route: `#/projects/f5091ee1-3d72-4654-8192-37ccfe8608a7/views/2107baaf-806e-448f-a954-fc89ebe937f0`
+- Five active knowledge stores: Groups, Sources, Sections, Entries, Relationships (IDs are in the ingestion protocol).
 
-## Implemented Application (local code; deployment required)
-- Project: `f5091ee1-3d72-4654-8192-37ccfe8608a7`
-- Local Application route: `#/projects/f5091ee1-3d72-4654-8192-37ccfe8608a7/applications/knowledge-bank`
-- Server: `apps/server/src/apps/knowledge-bank.ts` — `knowledge_bank_browse`, `knowledge_bank_overview`; SQL read-only, scoped to the five known Store UUIDs and Knowledge Bank project.
-- Web: `apps/web/src/KnowledgeBank.tsx` and `knowledge-bank.css` — All-group default, filters, server-side pagination, source suggestions, provenance detail and external source links.
-- Tests: `test/knowledge-bank.test.ts`, `apps/web/src/KnowledgeBank.test.tsx`. Full `npm test` passed 172 backend, 101 web, Mac UI check (16 Oct 2026).
-- Older saved View: still available under `/projects/f5091ee1-3d72-4654-8192-37ccfe8608a7/views/knowledge-bank`, but its query cap remains 100. It is not the recommended interface.
-- Limitations: source text not yet ingested; default source is a planned placeholder only. Data is already persisted remotely; the new Application source changes are in the local Atlas checkout and must be deployed before appearing on hosted Atlas.
+## Data organisation
+A `group` is optional logical metadata, not a separate project or database. Default browsing shows **All**. Source ID identifies an exact document; source type distinguishes lecture notes, papers, books, and other material; topic tags identify concepts. Multiple papers' findings should not be silently merged into a single citationless claim.
+
+Every knowledge entry must preserve provenance: source, section, locator/page when known, a checked original excerpt if available, a distinct AI summary and details, and whether its contents are explicit source facts, paraphrases or inference. Related claims connect through a separate Relationship record.
+
+## Presentation: a View, not an Application
+The existing View `knowledge-bank` shows entries, sources, chapters and connections. Filters for group, source identity/type, knowledge kind and topical tags are optional. Clicking an entry opens a large native dialog with the original source quotation first, then summary, explanation, caveats, tags and source metadata. The dialog closes by Close button or Escape.
+
+**Important View constraint:** each static Store query returns at most 100 records; the View's JavaScript filters only the loaded subset. It is NOT corpus-wide search when Entries grow beyond 100. ChatGPT can search Atlas Core across all records using `search_atlas` and `query_records` with filtering and offsets. Avoid declaring this limitation solved or recreating a backend just for ingestion. If full-corpus View search is later essential, explicitly revisit expanding the View platform or choosing a separate search interface.
+
+## Practice and legacy implementation
+Use ChatGPT for informal, source-grounded revision questions and mini assessments outside official tests. The code-defined Knowledge Bank and Study Applications were removed from the local Atlas project and should disappear from hosted Applications after Server/Web deployment. Historical study card/progress stores and their data are left intact for reversibility, but future chapter ingestion does not automatically create flashcards.
+
+## Verification checklist
+- New reading chunk is ingested without duplicate `entryKey`/`sourceKey`.
+- `sourceExcerpt` matches the uploaded source exactly and is shown before AI explanations.
+- Filtering and click-to-expand reader render safely in the native View (no privileged DOM or network).
+- Original source links are only displayed when actually known; locators are useful without them.
+- All five Core stores remain independent of any optional UI.
+- View's first-100 limitation remains explicit; ChatGPT retrieval uses Core.
+- No launchable Knowledge Bank Application is registered after deployment.
 
 
-## Optional study layer (16 October 2026)
-- The **Knowledge Study Cards** and **Knowledge Review Progress** stores extend—not replace—the existing unified knowledge bank. Cards carry stable IDs, source and section links, associated entry keys, group metadata, and distinct lecturer/generated origins. Review progress keeps only self-assessment scheduling metadata.
-- Backend: `apps/server/src/apps/knowledge-study.ts` with read-only `knowledge_bank_study_deck` and progress-writing `knowledge_bank_rate_card`. Due/new cards are selected with PostgreSQL filters and pagination rather than a first-100 UI cap; 10-minute Again, then interval-based Hard/Good/Easy scheduling is a lightweight practice heuristic, **not a validated memory-science model**. Card grades are explicitly self-rated, never AI-scored.
-- Frontend: `apps/web/src/KnowledgeStudy.tsx`, `knowledge-study.css`, accessible under the Knowledge Bank Application's **Study & practice** section. Supports source search, groups, flashcard reveals, user-written self-assessment answers, saved reviews, due/new sessions and multi-batch browse-all practice.
-- The first cohort is 19 Chapter 1 cards: five original self-assessment prompts (lecturer wording, our source-grounded answer guides), fourteen generated prompts. Future chunks follow the rules in `knowledge-bank-ingestion.md`.
-- Tests: `test/knowledge-study.test.ts` checks PostgreSQL paging with 125 cards, filtering, persisted progress and due exclusion; `apps/web/src/KnowledgeStudy.test.tsx` checks reveal, grade and mini-assessment.
-- Local application code must be redeployed before these Study features appear on hosted Atlas; the stores and seed cards are already live in PostgreSQL.
-
-
-## Source-first entry reading (16 October 2026)
-- Existing `Knowledge Entries.sourceExcerpt` is now populated for all 52 Preamble and Chapter 1 entries with exact short quotations validated against user-uploaded Markdown passages (Preamble 20, Chapter 1 32). Source quotations must not be paraphrased or invented.
-- `KnowledgeRecordDetails.tsx` centralises a consistent display for the narrow preview and expanded reader: the original excerpt is prioritised, followed by AI-organised summary, detailed explanation, any verification qualification, and full available provenance/tags/links.
-- Clicking a result opens a large native `<dialog>` with close/Escape/backdrop handling; this is a presentation change only, preserving existing Core IDs and paginated search. The dialog's content is accessible and source-first.
-- The test in `apps/web/src/KnowledgeBank.test.tsx` checks opening the expanded reader, the stored original quote, summary, context and original source link.
-- The excerpt is searchable through `knowledge_bank_browse`, which already includes `sourceExcerpt` in server-side search. A source link alone is never a substitute for quoting and identifying the underlying passage.
+## Native View server-side search/pagination upgrade (locally implemented; deployment needed)
+- Atlas Views now support **declarative, parameter-bound, paginated Store queries**, avoiding a standalone Knowledge Bank Application. Query definitions accept `searchParam`, `offsetParam`, and `paramFilters: [{param, field, operator:"eq"|"contains"}]`.
+- URL params must be explicitly declared in the saved View manifest with `url-params`. Server-side validation rejects unknown params, stores, fields or operators; the SQL repository binds user search terms and filter values, caps each page at 100 records, and returns total-match counts as `<queryName>Page[0]`.
+- `atlas.setParam(...)` followed by `atlas.refresh()` renders the next server-filtered page. No direct iframe network access, added app, or extra ingestion service.
+- Unit/integration tests: `test/view-query-pagination.test.ts` (145 rows; cross-100 pagination, text search, group/source/tag filters, param validation and SQL-injection-style input) and `test/knowledge-view-draft.test.ts` (full saved View draft, original excerpts, sandbox validation).
+- A complete staged definition is saved as `docs/knowledge-bank-view-server-search.json`. It retains the existing source-first expanded entry dialog and adds server-side search and 25-row page controls on Sources, Sections, Entries and Relationships. Filtering by source type applies to the Sources tab; group/source/kind/tag apply to collections with those fields. Connections lack a groupKeys field, so group alone does not filter relationships.
+- **Rollout order is mandatory:** (1) deploy the updated Atlas Server; (2) reread the active native View to confirm its revision; (3) preview the staged definition against the deployed Server, then update the existing View ID in place; (4) render and validate search and pagination. Never publish the staged definition while the hosted Server still rejects new query properties. Old View continues to work during the upgrade.
+- This is server-side search over JSONB record data (case-insensitive substring), not a rank-ordered semantic search engine. It is suited to this corpus; performance should be rechecked for very large data volumes.

@@ -46,7 +46,7 @@ export function FootballGeneralistExperience() {
     const [scenario, setScenario] = useState('mix');
     const [watchScenario, setWatchScenario] = useState(SHOWCASE_DRILL);
     const [selectedDrillScenario, setSelectedDrillScenario] = useState('');
-    const [preset, setPreset] = useState<'smoke' | 'pilot_100k'>('smoke');
+    const [preset, setPreset] = useState<'smoke' | 'pilot_50k' | 'pilot_100k'>('smoke');
     const [initializeFromRunId, setInitializeFromRunId] = useState('');
     const [seed, setSeed] = useState(42);
     const [workers, setWorkers] = useState(1);
@@ -255,7 +255,7 @@ export function FootballGeneralistExperience() {
             <h2>New training run</h2><p className="fg-muted">Starts a new PPO learner. S1 rehearsal samples 75% dribbling and 25% S0 contact episodes; it requires a compatible recorded checkpoint as the initial weights, not a resume of the old run.</p>
             <div className="fg-form">
                 <GeneralistDrillPicker scenarios={scenarios} mode="train" value={scenario} onChange={setScenario}/>
-                <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_100k">Pilot · 100k steps</option></select></label>
+                <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_50k' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_50k" disabled={scenario !== 's2-score-basic-v1'}>S2.2b pilot · 50k steps</option><option value="pilot_100k">Pilot · 100k steps</option></select></label>
                 <label>Initial weights<select aria-label="Initial weights" value={initializeFromRunId} onChange={e => setInitializeFromRunId(e.target.value)}>
                     <option value="">Start with random weights</option>
                     {initializationRuns.map(r => <option key={r.id} value={r.id}>{r.id} · {r.scenario ?? 'Generalist'}</option>)}

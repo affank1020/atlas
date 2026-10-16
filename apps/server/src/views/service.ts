@@ -19,7 +19,7 @@ export class ViewService {
             this.core.requireProject(data,input.projectId);const name=cleanText(input.name,"View name");this.core.unique(data.views.filter(x=>x.projectId===input.projectId),name,"view");
             const slug=input.slug?.trim();if(slug){validateSlug(slug);this.uniqueSlug(data.views,input.projectId,slug)}
             const html=this.viewTemplate(input);const manifest=validateManifest(input.manifest);const script=input.script??'';
-            const queries=validateViewQueries(input.queries,data.stores.filter(x=>x.projectId===input.projectId));validatePresentation(html,input.css,manifest,script);
+            const queries=validateViewQueries(input.queries,data.stores.filter(x=>x.projectId===input.projectId),manifest);validatePresentation(html,input.css,manifest,script);
             const actions=this.checkedViewActions(input.actions,manifest,data,input.projectId);
             const stamp=now();const view:View={id:randomUUID(),projectId:input.projectId,name,...(slug&&{slug}),...(input.description!==undefined&&{description:input.description}),queries,html,css:input.css,...(actions.length&&{actions}),...(manifest&&{manifest}),...(script&&{script}),createdAt:stamp,updatedAt:stamp};
             data.views.push(view);this.core.audit(data,"view.created",input.client,input.projectId,undefined,undefined,undefined,view,view.id);return view;
@@ -32,10 +32,11 @@ export class ViewService {
             if(input.name!==undefined){const name=cleanText(input.name,"View name");this.core.unique(data.views.filter(x=>x.projectId===input.projectId),name,"view",view.id);view.name=name}
             if(input.slug!==undefined){if(!input.slug?.trim())delete view.slug;else{const slug=input.slug.trim();validateSlug(slug);this.uniqueSlug(data.views,input.projectId,slug,view.id);view.slug=slug}}
             if(input.description!==undefined)input.description===null?delete view.description:view.description=input.description;
-            if(input.queries!==undefined)view.queries=validateViewQueries(input.queries,data.stores.filter(x=>x.projectId===input.projectId));
+            if(input.queries!==undefined)view.queries=input.queries;
             if(input.manifest!==undefined){const manifest=validateManifest(input.manifest);if(manifest)view.manifest=manifest;else delete view.manifest}
             if(input.script!==undefined)view.script=input.script;
             if(input.actions!==undefined)view.actions=input.actions;
+            validateViewQueries(view.queries,data.stores.filter(x=>x.projectId===view.projectId),view.manifest);
             this.checkedViewActions(view.actions,view.manifest,data,input.projectId);
             view.html=this.viewTemplate(input,view.html);view.css=input.css??view.css;validatePresentation(view.html,view.css,view.manifest,view.script);
             view.updatedAt=new Date(Math.max(Date.now(),Date.parse(before.updatedAt)+1)).toISOString();this.core.audit(data,"view.updated",input.client,input.projectId,undefined,undefined,before,view,view.id);return view;
@@ -56,8 +57,27 @@ export class ViewService {
     }
     private async renderDefinition(view:View,data:AtlasData,params:Record<string,string>):Promise<ViewRenderResult>{
         const manifest=validateManifest(view.manifest);const actions=this.checkedViewActions(view.actions,manifest,data,view.projectId);const runtimeId=randomUUID();const resolvedParams=validateParams(manifest,params);validatePresentation(view.html,view.css,manifest,view.script);
-        validateViewQueries(view.queries,data.stores.filter(x=>x.projectId===view.projectId));const bindings:Record<string,RecordData[]>={};const diagnostics=[];
-        for(const query of view.queries){const store=this.core.requireStore(data,view.projectId,query.storeId);const page=await this.store.queryRecords(store,{filters:query.filters,sort:query.sort,limit:query.limit??100});bindings[query.name]=page.items.map(record=>({...structuredClone(record.data),_atlas:{id:record.id,storeId:record.storeId}}));diagnostics.push({name:query.name,storeId:query.storeId,returned:page.items.length})}
+        validateViewQueries(view.queries,data.stores.filter(x=>x.projectId===view.projectId),manifest);const bindings:Record<string,RecordData[]>={};const diagnostics=[];
+        for (const query of view.queries) {
+            const store=this.core.requireStore(data,view.projectId,query.storeId);
+            const offsetText=query.offsetParam?resolvedParams[query.offsetParam]:'';
+            // Bound the offset: no negative, fractional or exponentially large scans.
+            const offset=offsetText && /^[0-9]{1,7}$/.test(offsetText) ? Math.min(Number(offsetText),1_000_000) : 0;
+            const filters=[...(query.filters??[])];
+            for(const f of query.paramFilters??[]){
+                const value=resolvedParams[f.param]?.trim();
+                if(value)filters.push({field:f.field,operator:f.operator,value});
+            }
+            const page=await this.store.queryRecords(store,{
+                filters,sort:query.sort,limit:query.limit??100,offset,
+                searchText:query.searchParam?resolvedParams[query.searchParam]:''
+            });
+            bindings[query.name]=page.items.map(record=>({...structuredClone(record.data),_atlas:{id:record.id,storeId:record.storeId}}));
+            bindings[query.name+'Page']=[{total:page.total,offset:page.offset,limit:page.limit,
+                pageStart:page.items.length?page.offset+1:0,pageEnd:page.offset+page.items.length,
+                hasNext:page.offset+page.items.length<page.total,hasPrevious:page.offset>0}];
+            diagnostics.push({name:query.name,storeId:query.storeId,returned:page.items.length});
+        }
         const renderedHtml=renderTemplate(view.html,{...bindings,params:resolvedParams},manifest);
         return {runtimeId,actions,...(view.slug&&{standalonePath:`/projects/${view.projectId}/views/${view.slug}`}),view:{id:view.id,projectId:view.projectId,name:view.name,...(view.slug&&{slug:view.slug})},data:bindings,renderedHtml,css:view.css,manifest,script:view.script,params:resolvedParams,document:viewDocument({runtimeId,actions,html:renderedHtml,css:view.css,script:view.script,manifest,data:bindings,params:resolvedParams}),diagnostics:{queries:diagnostics}};
     }

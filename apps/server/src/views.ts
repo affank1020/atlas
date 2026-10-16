@@ -113,11 +113,11 @@ export function validatePresentation(html:string,css:string,manifest?:ViewManife
 export function sanitizeRenderedHtml(html:string,manifest?:ViewManifest){return validateMarkup(html,manifest,true)}
 export function renderTemplate(html:string,data:Record<string,unknown>,manifest?:ViewManifest){try{return sanitizeRenderedHtml(templates.compile(html,{noEscape:false})(data),manifest)}catch(error){if(error instanceof AtlasError)throw error;throw new AtlasError(`View template rendering failed: ${(error as Error).message}`)}}
 export function validateSlug(slug: string) { if (!slugPattern.test(slug)) throw new AtlasError("View slug must contain lowercase letters, numbers, and single hyphens only."); }
-export function validateViewQueries(queries: ViewQuery[], stores: Store[]) {
+export function validateViewQueries(queries: ViewQuery[], stores: Store[], manifest?: ViewManifest) {
     if (!Array.isArray(queries) || queries.length>16) throw new AtlasError("View queries must be an array of at most 16 queries.");
     const names = new Set<string>();
     for (const query of queries) {
-        const shape=z.object({name:z.string(),storeId:z.string().uuid(),limit:z.number().int().min(1).max(100).optional(),filters:z.array(z.object({field:z.string(),operator:z.enum(["eq","neq","gt","gte","lt","lte","in","contains"]),value:z.unknown()})).max(32).optional(),sort:z.array(z.object({field:z.string(),direction:z.enum(["asc","desc"]).optional()})).max(16).optional()}).strict().safeParse(query);
+        const shape=z.object({name:z.string(),storeId:z.string().uuid(),limit:z.number().int().min(1).max(100).optional(),searchParam:paramKey.optional(),offsetParam:paramKey.optional(),paramFilters:z.array(z.object({param:paramKey,field:z.string(),operator:z.enum(["eq","contains"])}).strict()).max(16).optional(),filters:z.array(z.object({field:z.string(),operator:z.enum(["eq","neq","gt","gte","lt","lte","in","contains"]),value:z.unknown()})).max(32).optional(),sort:z.array(z.object({field:z.string(),direction:z.enum(["asc","desc"]).optional()})).max(16).optional()}).strict().safeParse(query);
         if(!shape.success)throw new AtlasError(`Invalid View query: ${shape.error.message}`);
         if (["params", "constructor", "prototype", "__proto__"].includes(query.name) || !bindingPattern.test(query.name)) throw new AtlasError(`Invalid query binding name '${query.name}'.`);
         if (names.has(query.name)) throw new AtlasError(`Duplicate query binding name '${query.name}'.`);
@@ -125,10 +125,21 @@ export function validateViewQueries(queries: ViewQuery[], stores: Store[]) {
         const store = stores.find(item => item.id === query.storeId && !item.archivedAt);
         if (!store) throw new AtlasError(`Store '${query.storeId}' was not found in the View's project or is archived.`, "NOT_FOUND");
         if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) throw new AtlasError("View query limits must be between 1 and 100.");
+        const used = [query.searchParam, query.offsetParam, ...(query.paramFilters??[]).map(f=>f.param)].filter((p):p is string=>!!p);
+        for (const key of used) if (!manifest?.capabilities?.includes("url-params") || !Object.hasOwn(manifest.params??{},key))
+            throw new AtlasError(`View query parameter '${key}' must be declared in the url-params manifest.`);
         const fields = new Map(store.schema.fields.map(field => [field.name, field]));
+        for (const filter of query.paramFilters??[]) {
+            const field=fields.get(filter.field);
+            if(!field)throw new AtlasError(`Unknown parameter filter field '${filter.field}' for store '${store.name}'.`);
+            if (filter.operator==='eq' && field.type!=='string' && field.type!=='enum') throw new AtlasError('URL string equality filters require a string or enum field.');
+            validateOperator(field,filter.operator,"");
+        }
         for (const filter of query.filters ?? []) { if (!["eq","neq","gt","gte","lt","lte","in","contains"].includes(filter.operator)) throw new AtlasError("Unsupported query filter operator."); const field = fields.get(filter.field); if (!field) throw new AtlasError(`Unknown filter field '${filter.field}' for store '${store.name}'.`); validateOperator(field, filter.operator, filter.value); }
         for (const sort of query.sort ?? []) { if(sort.direction !== undefined && !["asc","desc"].includes(sort.direction)) throw new AtlasError("Unsupported query sort direction."); if (!fields.has(sort.field) && !["createdAt", "updatedAt"].includes(sort.field)) throw new AtlasError(`Unknown sort field '${sort.field}' for store '${store.name}'.`); }
     }
+    for(const name of names) if(names.has(name+'Page'))
+        throw new AtlasError('Query names must not collide with generated page metadata.');
     return structuredClone(queries);
 }
 function validateOperator(field: FieldDefinition, operator: string, value: unknown) {

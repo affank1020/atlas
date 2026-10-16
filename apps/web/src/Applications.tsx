@@ -2,7 +2,6 @@ import { useEffect, useState, type ComponentType } from 'react';
 import { callTool } from './api';
 import { Portfolio } from './Portfolio';
 import { FootballGeneralistExperience } from './FootballGeneralistExperience';
-import { KnowledgeBank } from './KnowledgeBank';
 import './applications.css';
 
 export type ApplicationManifest = {
@@ -18,7 +17,6 @@ export type ApplicationManifest = {
 const applicationComponents: Record<string, ComponentType> = {
     portfolio: Portfolio,
     'football-training': FootballGeneralistExperience,
-    'knowledge-bank': KnowledgeBank,
 };
 
 export function ProjectApplications({ projectId }: { projectId: string }) {

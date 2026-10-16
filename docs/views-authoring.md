@@ -221,3 +221,23 @@ Normal record audit events include project/store/record IDs, `viewId`, and `clie
 `apps/server/examples/views/university-v3.json` preserves the original twelve queries and deterministic Focus Now ranking from `university-v2-reference.json`. Four additional queries supply module topics, assessments, recent activity and attempts. Start and Complete declare only Study Tasks `status` writes, fixed to `in_progress` and `completed`. Successful writes refresh the pending task list and recalculate Focus Now locally, without Fabric or Ask Atlas.
 
 Module buttons set the declared `module` URL parameter; one persistent View provides the overview and module detail tabs. The saved **Task Prioritisation Policy v1** remains unchanged and visible. `scripts/upgrade-university-view.mjs` previews and updates the known dashboard with a concurrency check, and verifies that Project Guidance records are unchanged.
+
+
+## Bound query parameters and pagination (new server feature — deploy before use)
+A saved View query may declare `searchParam`, `offsetParam`, and `paramFilters` bound to values in the View's URL-parameter manifest. The query's fields and operators must be valid for its Store, and the named params must be declared under the manifest's `url-params` capability. The static limit remains at most 100 records per query, **per page**.
+
+Example:
+```json
+{
+  "manifest": {"viewKitVersion":1,"capabilities":["client-script","url-params"],"params":{"q":"","offset":"0","group":""}},
+  "queries": [{
+    "name":"entries","storeId":"STORE_UUID","limit":25,
+    "searchParam":"q","offsetParam":"offset",
+    "paramFilters":[{"param":"group","field":"groupKeys","operator":"contains"}]
+  }]
+}
+```
+
+The View renderer exposes the page's records as `entries` and a single-element metadata array `entriesPage` with `total`, `offset`, `limit`, `pageStart`, `pageEnd`, `hasNext` and `hasPrevious`. Bind controls to `atlas.setParam('q',...) / atlas.setParam('offset',...) / atlas.refresh()`. Params are transmitted in the refresh request, not interpolated into SQL by client code. Empty search/filter parameters are ignored, and invalid/huge offsets are reset or bounded.
+
+**This requires the updated Server code to be deployed.** Existing native Views remain backward compatible. The Knowledge Bank staged definition and rollout notes are in `docs/knowledge-bank-view-server-search.json` and `docs/knowledge-bank-design.md`.

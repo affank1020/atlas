@@ -15,7 +15,7 @@ export class PostgresRepository implements AtlasRepository {
     constructor(config: string | PoolConfig) { this.pool = new Pool(typeof config === "string" ? { connectionString: config } : config); }
     async close() { await this.pool.end(); }
     async snapshot(): Promise<AtlasData> { const client = await this.pool.connect(); try { return await this.read(client); } finally { client.release(); } }
-    async queryRecords(store: Store, input: { filters?: RecordFilter[]; sort?: SortSpec[]; limit?: number; offset?: number; includeArchived?: boolean }): Promise<Page<AtlasRecord>> {
+    async queryRecords(store: Store, input: { filters?: RecordFilter[]; sort?: SortSpec[]; limit?: number; offset?: number; searchText?: string; includeArchived?: boolean }): Promise<Page<AtlasRecord>> {
         const values: unknown[]=[store.id]; const parameter=(value:unknown)=>{values.push(value); return `$${values.length}`;}; const where=["r.store_id=$1"];
         if(!input.includeArchived) where.push("r.archived_at IS NULL");
         const fields=new Map(store.schema.fields.map((field)=>[field.name,field]));
@@ -28,12 +28,13 @@ export class PostgresRepository implements AtlasRepository {
                 default: { const operator={gt:">",gte:">=",lt:"<",lte:"<="}[filter.operator]; const expression=definition.type==="number"?`(${text})::double precision`:text; const comparison=definition.type==="number"?parameter(filter.value):parameter(String(filter.value)); where.push(`${expression} ${operator} ${comparison}`); }
             }
         }
+        if (input.searchText?.trim()) where.push(`strpos(lower(r.data::text), ${parameter(input.searchText.trim().toLowerCase())}) > 0`);
         const ordering=(input.sort?.length?input.sort:[{field:"createdAt",direction:"asc" as const}]).map((sort)=>{ const direction=sort.direction==="desc"?"DESC":"ASC"; if(sort.field==="createdAt") return `r.created_at ${direction}`; if(sort.field==="updatedAt") return `r.updated_at ${direction}`; const definition=fields.get(sort.field)!; const key=parameter(sort.field); return `${definition.type==="number"?`(r.data ->> ${key})::double precision`:`r.data ->> ${key}`} ${direction} NULLS FIRST`; });
         ordering.push("r.id ASC"); const limit=Math.min(Math.max(input.limit??50,1),100); const offset=Math.max(input.offset??0,0); const limitParameter=parameter(limit); const offsetParameter=parameter(offset);
         const result=await this.pool.query(`SELECT r.*,s.project_id,count(*) OVER()::int AS total FROM records r JOIN stores s ON s.id=r.store_id WHERE ${where.join(" AND ")} ORDER BY ${ordering.join(",")} LIMIT ${limitParameter} OFFSET ${offsetParameter}`,values);
         return {items:result.rows.map(recordFromRow),total:result.rows[0]?.total??(offset?await this.countRecords(store,input):0),limit,offset};
     }
-    private async countRecords(store:Store,input:{filters?:RecordFilter[];includeArchived?:boolean}) { const page=await this.queryRecords(store,{...input,limit:1,offset:0}); return page.total; }
+    private async countRecords(store:Store,input:{filters?:RecordFilter[];searchText?:string;includeArchived?:boolean}) { const page=await this.queryRecords(store,{...input,limit:1,offset:0}); return page.total; }
     async transaction<T>(operation: (draft: AtlasData) => T | Promise<T>): Promise<T> {
         const client = await this.pool.connect();
         try { await client.query("BEGIN"); await client.query("SELECT pg_advisory_xact_lock($1)", [0x41544c41]); const before = await this.read(client); const draft = structuredClone(before); const result = await operation(draft); await this.writeChanges(client, before, draft); await client.query("COMMIT"); return structuredClone(result); }

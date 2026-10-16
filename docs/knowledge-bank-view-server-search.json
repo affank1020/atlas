@@ -1,0 +1,160 @@
+{
+  "viewId": "2107baaf-806e-448f-a954-fc89ebe937f0",
+  "expectedUpdatedAt": "2026-10-16T22:30:39.702Z",
+  "description": "Unified Knowledge Bank with server-wide search, filters and paged native View queries. Requires updated Atlas Server; no standalone Application.",
+  "queries": [
+    {
+      "name": "groups",
+      "storeId": "4ecdd6c1-6807-456b-9151-cc13a9c31b34",
+      "sort": [
+        {
+          "field": "name",
+          "direction": "asc"
+        }
+      ],
+      "limit": 100
+    },
+    {
+      "name": "sources",
+      "storeId": "0a079819-044a-402e-854f-f14d200b3796",
+      "limit": 25,
+      "sort": [
+        {
+          "field": "title",
+          "direction": "asc"
+        }
+      ],
+      "searchParam": "q",
+      "offsetParam": "sourceOffset",
+      "paramFilters": [
+        {
+          "param": "group",
+          "field": "groupKeys",
+          "operator": "contains"
+        },
+        {
+          "param": "source",
+          "field": "sourceKey",
+          "operator": "eq"
+        },
+        {
+          "param": "sourceType",
+          "field": "sourceType",
+          "operator": "eq"
+        },
+        {
+          "param": "tag",
+          "field": "tags",
+          "operator": "contains"
+        }
+      ]
+    },
+    {
+      "name": "sections",
+      "storeId": "9e8ab094-f3c7-4eb2-8481-be55b019d5b7",
+      "limit": 25,
+      "sort": [
+        {
+          "field": "title",
+          "direction": "asc"
+        }
+      ],
+      "searchParam": "q",
+      "offsetParam": "sectionOffset",
+      "paramFilters": [
+        {
+          "param": "group",
+          "field": "groupKeys",
+          "operator": "contains"
+        },
+        {
+          "param": "source",
+          "field": "sourceKey",
+          "operator": "eq"
+        },
+        {
+          "param": "tag",
+          "field": "tags",
+          "operator": "contains"
+        }
+      ]
+    },
+    {
+      "name": "entries",
+      "storeId": "c06e106f-7507-4cad-9881-3774917ee580",
+      "limit": 25,
+      "sort": [
+        {
+          "field": "title",
+          "direction": "asc"
+        }
+      ],
+      "searchParam": "q",
+      "offsetParam": "entryOffset",
+      "paramFilters": [
+        {
+          "param": "group",
+          "field": "groupKeys",
+          "operator": "contains"
+        },
+        {
+          "param": "source",
+          "field": "sourceKey",
+          "operator": "eq"
+        },
+        {
+          "param": "kind",
+          "field": "kind",
+          "operator": "eq"
+        },
+        {
+          "param": "tag",
+          "field": "tags",
+          "operator": "contains"
+        }
+      ]
+    },
+    {
+      "name": "relations",
+      "storeId": "1d238fe1-c6ed-41ac-99ba-89ed052f2a7e",
+      "limit": 25,
+      "searchParam": "q",
+      "offsetParam": "relationOffset",
+      "paramFilters": [
+        {
+          "param": "source",
+          "field": "evidenceSourceKey",
+          "operator": "eq"
+        },
+        {
+          "param": "tag",
+          "field": "tags",
+          "operator": "contains"
+        }
+      ]
+    }
+  ],
+  "manifest": {
+    "viewKitVersion": 1,
+    "layout": "wide",
+    "capabilities": [
+      "client-script",
+      "url-params"
+    ],
+    "params": {
+      "q": "",
+      "group": "",
+      "source": "",
+      "sourceType": "",
+      "kind": "",
+      "tag": "",
+      "entryOffset": "0",
+      "sourceOffset": "0",
+      "sectionOffset": "0",
+      "relationOffset": "0"
+    }
+  },
+  "html": "<atlas-page layout=\"wide\">\n  <header class=\"kb-header\">\n    <div class=\"kb-kicker\">ATLAS / RESEARCH</div>\n    <div class=\"kb-header-main\">\n      <div><h1>Knowledge Bank</h1><p>Source-grounded notes, concepts and research — one searchable collection.</p></div>\n      <div class=\"kb-counts\"><span><strong>{{sources.length}}</strong> sources on page</span><span><strong>{{entries.length}}</strong> entries on page</span><span><strong>{{sections.length}}</strong> sections on page</span></div>\n    </div>\n  </header>\n  <section class=\"kb-searcharea\" aria-label=\"Search and filters\">\n    <div class=\"kb-mainsearch\"><label for=\"kb-search\">Search the full knowledge bank</label><input id=\"kb-search\" type=\"search\" placeholder=\"Find any concept, source quote, method, example…\"><button id=\"kb-search-submit\" type=\"button\">Search all records</button></div>\n    <div class=\"kb-filters\">\n      <div><label for=\"kb-group\">Group</label><select id=\"kb-group\"><option value=\"\">All groups</option>{{#each groups}}<option value=\"{{key}}\">{{name}}</option>{{/each}}</select></div>\n      <div><label for=\"kb-source\">Source</label><select id=\"kb-source\"><option value=\"\">All sources</option>{{#each sources}}<option value=\"{{sourceKey}}\">{{title}}</option>{{/each}}</select></div>\n      <div><label for=\"kb-type\">Document type (Sources tab)</label><select id=\"kb-type\"><option value=\"\">Any document type</option><option value=\"lecture_notes\">Lecture notes</option><option value=\"paper\">Paper</option><option value=\"book\">Book</option><option value=\"documentation\">Documentation</option><option value=\"webpage\">Webpage</option><option value=\"slides\">Slides</option><option value=\"transcript\">Transcript</option><option value=\"other\">Other</option></select></div>\n      <div><label for=\"kb-kind\">Knowledge type</label><select id=\"kb-kind\"><option value=\"\">Any entry type</option><option value=\"concept\">Concept</option><option value=\"definition\">Definition</option><option value=\"method\">Method</option><option value=\"standard\">Standard</option><option value=\"finding\">Finding</option><option value=\"argument\">Argument</option><option value=\"example\">Example</option><option value=\"criticism\">Criticism</option><option value=\"comparison\">Comparison</option><option value=\"summary\">Summary</option><option value=\"other\">Other</option></select></div>\n      <div><label for=\"kb-tags\">Topic tags</label><input id=\"kb-tags\" type=\"search\" placeholder=\"Filter by tag\"></div>\n    </div>\n    <div class=\"kb-search-footer\"><p id=\"kb-results-label\" aria-live=\"polite\">Server-side search and filters</p><button id=\"kb-reset\" type=\"button\">Clear filters</button></div>\n  </section>\n  <atlas-tabs label=\"Library\">\n    <section label=\"Knowledge\" class=\"kb-tab\">\n      <div class=\"kb-sectionhead\"><h2>Knowledge entries</h2><p>Definitions, methods, claims and examples with their source references.</p></div>\n      <div class=\"kb-list\" id=\"kb-entry-list\">\n      {{#each entries}}\n        <article class=\"kb-item kb-entry\" data-role=\"entry\" data-id=\"{{entryKey}}\">\n          <button type=\"button\" class=\"kb-open\" aria-label=\"Expand entry: {{title}}\">\n            <div class=\"kb-entry-top\"><h3>{{title}}</h3><atlas-badge>{{kind}}</atlas-badge></div>\n            <p class=\"kb-summary\">{{summary}}</p>\n            <div class=\"kb-meta\"><span>{{sourceKey}}</span>{{#if locator}}<span>{{locator}}</span>{{/if}}<span>{{claimProvenance}}</span></div>\n            <div class=\"kb-read-more\">Read full entry ↗</div>\n          </button>\n          <dialog class=\"kb-reader\" aria-label=\"Full entry: {{title}}\">\n           <div class=\"kb-reader-body\">\n            <div class=\"kb-reader-top\"><span>KNOWLEDGE BANK / FULL ENTRY</span><button type=\"button\" class=\"kb-reader-close\">Close ×</button></div>\n            <h2>{{title}}</h2>\n            <div class=\"kb-badges\"><span>{{kind}}</span><span>{{claimProvenance}}</span><span>{{reviewStatus}}</span></div>\n            {{#if sourceExcerpt}}<section class=\"kb-quote-section\"><h3>Original notes · Verbatim passage</h3><blockquote>{{sourceExcerpt}}</blockquote><p class=\"kb-evidence-note\">{{sourceKey}}{{#if locator}} · {{locator}}{{/if}}</p></section>{{/if}}\n            {{#if summary}}<section><h3>AI-organised summary</h3><p>{{summary}}</p></section>{{/if}}\n            {{#if detail}}<section><h3>Detailed explanation</h3><p>{{detail}}</p></section>{{/if}}\n            {{#if confidenceNote}}<section><h3>Qualification / verification note</h3><p>{{confidenceNote}}</p></section>{{/if}}\n            <section><h3>Source and provenance</h3><dl>\n              <dt>Source</dt><dd>{{sourceKey}}</dd>\n              {{#if locator}}<dt>Location</dt><dd>{{locator}}</dd>{{/if}}\n              {{#if sectionKey}}<dt>Section</dt><dd>{{sectionKey}}</dd>{{/if}}\n              {{#if pageStart}}<dt>Start page</dt><dd>{{pageStart}}</dd>{{/if}}\n              {{#if pageEnd}}<dt>End page</dt><dd>{{pageEnd}}</dd>{{/if}}\n              <dt>Kind</dt><dd>{{kind}}</dd><dt>Provenance</dt><dd>{{claimProvenance}}</dd><dt>Review</dt><dd>{{reviewStatus}}</dd>\n            </dl>{{#if sourceLink}}<p><a href=\"{{sourceLink}}\">Open original source ↗</a></p>{{/if}}</section>\n            {{#if tags}}<section><h3>Topic tags</h3><p>{{tags}}</p></section>{{/if}}\n           </div>\n          </dialog>\n        </article>\n      {{else}}<atlas-empty-state title=\"No extracted knowledge yet\">Add a chapter or paper through ChatGPT to populate source-linked entries.</atlas-empty-state>{{/each}}\n      </div>\n      <nav class=\"kb-pagination\" data-pager=\"entries\" aria-label=\"Knowledge entries pagination\"><span class=\"kb-page-label\">{{#each entriesPage}}Showing {{pageStart}}–{{pageEnd}} of {{total}} matches{{/each}}</span><div><button type=\"button\" class=\"kb-prev\">Previous</button><button type=\"button\" class=\"kb-next\">Next</button></div></nav>\n    </section>\n    <section label=\"Sources\" class=\"kb-tab\">\n      <div class=\"kb-sectionhead\"><h2>Original sources</h2><p>Every book, paper or notes document retains its own identity and provenance.</p></div>\n      <div class=\"kb-list\">\n      {{#each sources}}\n        <article class=\"kb-item kb-source\" data-role=\"source\" data-id=\"{{sourceKey}}\">\n          <div class=\"kb-entry-top\"><h3>{{title}}</h3><atlas-badge>{{sourceType}}</atlas-badge></div>\n          <p class=\"kb-summary\">{{description}}</p>\n          <div class=\"kb-meta\"><span>{{sourceRole}}</span><span>{{status}}</span><span>{{authors}}</span></div><button type=\"button\" class=\"kb-pick-source\">Filter this source ↗</button>\n          <details><summary>Source details</summary>\n            {{#if citation}}<p>{{citation}}</p>{{/if}}{{#if linkNotes}}<p>{{linkNotes}}</p>{{/if}}\n            {{#if originalUrl}}<p><a href=\"{{originalUrl}}\">Open source link ↗</a></p>{{/if}}\n            {{#if doi}}<p>DOI: {{doi}}</p>{{/if}}\n          </details>\n        </article>\n      {{else}}<atlas-empty-state title=\"No sources\">Source registrations will appear here.</atlas-empty-state>{{/each}}\n      </div>\n      <nav class=\"kb-pagination\" data-pager=\"sources\" aria-label=\"Sources pagination\"><span class=\"kb-page-label\">{{#each sourcesPage}}Showing {{pageStart}}–{{pageEnd}} of {{total}} matches{{/each}}</span><div><button type=\"button\" class=\"kb-prev\">Previous</button><button type=\"button\" class=\"kb-next\">Next</button></div></nav>\n    </section>\n    <section label=\"Chapters & sections\" class=\"kb-tab\">\n      <div class=\"kb-sectionhead\"><h2>Chapters &amp; sections</h2><p>Navigate individual sections and see which readings have been ingested.</p></div>\n      <div class=\"kb-list\">\n      {{#each sections}}\n        <article class=\"kb-item kb-section\" data-role=\"section\" data-id=\"{{sectionKey}}\">\n          <div class=\"kb-entry-top\"><h3>{{sectionLabel}} {{title}}</h3><atlas-badge>{{status}}</atlas-badge></div>\n          <p class=\"kb-summary\">{{summary}}</p>\n          <div class=\"kb-meta\"><span>{{sourceKey}}</span><span>Pages {{value pageStart}}–{{value pageEnd}}</span></div>\n          {{#if pageLink}}<p class=\"kb-source-link\"><a href=\"{{pageLink}}\">Open section ↗</a></p>{{/if}}\n        </article>\n      {{else}}<atlas-empty-state title=\"No chapters ingested\">Chapter and section records appear when the first chunk is processed.</atlas-empty-state>{{/each}}\n      </div>\n      <nav class=\"kb-pagination\" data-pager=\"sections\" aria-label=\"Chapters and sections pagination\"><span class=\"kb-page-label\">{{#each sectionsPage}}Showing {{pageStart}}–{{pageEnd}} of {{total}} matches{{/each}}</span><div><button type=\"button\" class=\"kb-prev\">Previous</button><button type=\"button\" class=\"kb-next\">Next</button></div></nav>\n    </section>\n    <section label=\"Connections\" class=\"kb-tab\">\n      <div class=\"kb-sectionhead\"><h2>Knowledge connections</h2><p>Explicit and inferred relationships are kept separately from original claims.</p></div>\n      <div class=\"kb-list\">\n      {{#each relations}}\n        <article class=\"kb-item kb-relation\" data-role=\"relation\" data-id=\"{{relationKey}}\">\n          <div class=\"kb-entry-top\"><h3>{{relationType}}</h3><atlas-badge>{{relationProvenance}}</atlas-badge></div>\n          <p class=\"kb-summary\">{{rationale}}</p>\n          <div class=\"kb-meta\"><span>{{fromEntryKey}}</span><span>↔</span><span>{{toEntryKey}}</span></div>\n        </article>\n      {{else}}<atlas-empty-state title=\"No relationships yet\">Connections appear as overlapping concepts are encountered.</atlas-empty-state>{{/each}}\n      </div>\n      <nav class=\"kb-pagination\" data-pager=\"relations\" aria-label=\"Relationships pagination\"><span class=\"kb-page-label\">{{#each relationsPage}}Showing {{pageStart}}–{{pageEnd}} of {{total}} matches{{/each}}</span><div><button type=\"button\" class=\"kb-prev\">Previous</button><button type=\"button\" class=\"kb-next\">Next</button></div></nav>\n    </section>\n  </atlas-tabs>\n  <p id=\"kb-empty-filter\" hidden>No matching items among the loaded records. Try a broader search or clear filters.</p>\n  <footer class=\"kb-footnote\">Search and filters run on all matching PostgreSQL records, returning only the requested page. Document type is specific to the Sources tab.</footer>\n</atlas-page>",
+  "css": "atlas-page{--atlas-page-width:78rem} .kb-header{padding:.3rem 0 1.2rem;border-bottom:1px solid var(--atlas-border)} .kb-kicker{letter-spacing:.15em;text-transform:uppercase;font-size:.72rem;font-weight:750;color:var(--atlas-muted)} .kb-header-main{display:flex;align-items:end;justify-content:space-between;gap:1.2rem;flex-wrap:wrap}.kb-header h1{font-size:clamp(1.8rem,3.5vw,2.6rem);letter-spacing:-.04em;line-height:1.15;margin:.55rem 0 .35rem}.kb-header p,.kb-sectionhead p{margin:0;color:var(--atlas-muted);line-height:1.55}.kb-counts{display:flex;gap:.75rem;flex-wrap:wrap;color:var(--atlas-muted);font-size:.77rem}.kb-counts span{padding:.45rem .7rem;border-radius:10px;background:var(--atlas-surface);border:1px solid var(--atlas-border)}.kb-counts strong{font-size:1rem;color:var(--atlas-text)}.kb-searcharea{background:var(--atlas-surface);border:1px solid var(--atlas-border);border-radius:var(--atlas-radius);padding:1.1rem;margin:1.25rem 0 1.4rem}.kb-searcharea label{font-size:.78rem;color:var(--atlas-muted);font-weight:650;display:block;margin-bottom:.35rem}.kb-searcharea input,.kb-searcharea select{width:100%;min-width:0;padding:.72rem .8rem;border:1px solid var(--atlas-border);border-radius:9px;background:var(--atlas-bg);color:var(--atlas-text);font:inherit}.kb-searcharea input:focus,.kb-searcharea select:focus{outline:2px solid var(--atlas-accent);outline-offset:1px}.kb-mainsearch input{font-size:1.04rem}.kb-filters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.65rem;margin-top:1rem}.kb-search-footer{display:flex;gap:.7rem;align-items:center;justify-content:space-between;margin-top:.7rem}.kb-search-footer p{font-size:.78rem;color:var(--atlas-muted);margin:0}.kb-search-footer button{border:0;background:transparent;color:var(--atlas-accent);padding:.35rem;cursor:pointer;font-weight:650}.kb-sectionhead{margin:.2rem 0 1rem}.kb-sectionhead h2{font-size:1.2rem;letter-spacing:-.025em;margin:0 0 .2rem}.kb-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem}.kb-item{border:1px solid var(--atlas-border);background:var(--atlas-surface);padding:1rem 1.1rem;border-radius:var(--atlas-radius);min-width:0}.kb-entry-top{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem}.kb-entry h3,.kb-item h3{font-size:1rem;line-height:1.4;letter-spacing:-.01em;margin:0}.kb-summary{line-height:1.65;font-size:.91rem;color:var(--atlas-text);margin:.6rem 0}.kb-meta{display:flex;flex-wrap:wrap;gap:.35rem .6rem;color:var(--atlas-muted);font-size:.76rem;overflow-wrap:anywhere}.kb-meta span:not(:last-child)::after{content:' ·';margin-left:.35rem}.kb-item details{border-top:1px solid var(--atlas-border);margin-top:.8rem;padding-top:.6rem;font-size:.88rem;line-height:1.6}.kb-item summary{cursor:pointer;color:var(--atlas-accent);font-weight:650}.kb-detail{white-space:pre-wrap;margin:.7rem 0}.kb-excerpt{border-left:2px solid var(--atlas-border);padding-left:.7rem;color:var(--atlas-muted)}.kb-detail-meta,.kb-footnote{color:var(--atlas-muted);font-size:.76rem}.kb-item a{color:var(--atlas-accent);overflow-wrap:anywhere}.kb-item[hidden]{display:none!important}.kb-tab{padding-top:.85rem}.kb-footnote{padding:1.3rem 0;max-width:50rem;line-height:1.6}.kb-source-link{font-size:.86rem}#kb-empty-filter{color:var(--atlas-muted);font-size:.86rem}@media(max-width:920px){.kb-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:690px){.kb-list{grid-template-columns:1fr}.kb-filters{grid-template-columns:1fr}.kb-header-main{align-items:start}}\n.kb-open{width:100%;text-align:left;color:inherit;background:transparent;border:0;padding:0;font:inherit;cursor:pointer}\n.kb-open:focus-visible,.kb-reader-close:focus-visible{outline:2px solid var(--atlas-accent);outline-offset:4px}\n.kb-read-more{margin-top:.85rem;padding-top:.65rem;border-top:1px solid var(--atlas-border);font-size:.82rem;color:var(--atlas-accent);font-weight:700}\n.kb-open:hover .kb-read-more{text-decoration:underline}\n.kb-reader{box-sizing:border-box;width:min(850px,calc(100vw - 30px));max-width:calc(100vw - 30px);max-height:90vh;margin:auto;padding:0;border-radius:14px;border:1px solid var(--atlas-border);background:var(--atlas-bg);color:var(--atlas-text);overflow:auto;box-shadow:0 25px 80px rgba(0,0,0,.23)}\n.kb-reader::backdrop{background:rgba(0,0,0,.62)}\n.kb-reader-body{padding:0 clamp(18px,4vw,45px) 35px}\n.kb-reader-top{display:flex;gap:15px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:1;background:var(--atlas-bg);border-bottom:1px solid var(--atlas-border);padding:15px 0;color:var(--atlas-muted);font-size:.72rem;letter-spacing:.11em;font-weight:700}\n.kb-reader-close{padding:9px 13px;border:1px solid var(--atlas-border);border-radius:7px;background:var(--atlas-surface);color:var(--atlas-text);font:inherit;font-size:.82rem;letter-spacing:normal;cursor:pointer}\n.kb-reader h2{font-size:clamp(1.35rem,3vw,2rem);letter-spacing:-.03em;line-height:1.3;margin:25px 0 13px}\n.kb-badges{display:flex;flex-wrap:wrap;gap:7px}.kb-badges span{font-size:.72rem;padding:5px 8px;border:1px solid var(--atlas-border);background:var(--atlas-surface);border-radius:5px;color:var(--atlas-muted)}\n.kb-reader section{margin-top:23px;padding-top:17px;border-top:1px solid var(--atlas-border)}\n.kb-reader section h3{font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;color:var(--atlas-muted);margin:0 0 12px}\n.kb-reader section p{font-size:.96rem;line-height:1.82;margin:0;white-space:pre-wrap}\n.kb-reader .kb-quote-section{padding:20px;border-radius:10px;background:var(--atlas-surface);border:1px solid var(--atlas-border)}\n.kb-reader blockquote{margin:0;padding-left:16px;border-left:3px solid var(--atlas-accent);line-height:1.8;font-size:1.07rem;font-weight:500;white-space:pre-wrap}\n.kb-reader .kb-evidence-note{margin-top:13px;color:var(--atlas-muted);font-size:.77rem}\n.kb-reader dl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;font-size:.83rem;line-height:1.55;overflow-wrap:anywhere}\n.kb-reader dt{font-weight:700;color:var(--atlas-muted)}.kb-reader dd{margin:0}\n.kb-reader a{color:var(--atlas-accent);font-weight:700}\n@media(max-width:640px){.kb-reader{max-height:95vh}.kb-reader-body{padding:0 18px 24px}.kb-reader .kb-quote-section{padding:14px}.kb-reader dl{grid-template-columns:85px minmax(0,1fr)}}\n\n.kb-mainsearch{display:flex;flex-wrap:wrap;gap:.5rem;align-items:end}\n.kb-mainsearch label{flex-basis:100%}\n.kb-mainsearch input{flex:1;min-width:220px}\n.kb-mainsearch button,.kb-pagination button,.kb-pick-source{border:1px solid var(--atlas-border);background:var(--atlas-surface);border-radius:7px;padding:.73rem .85rem;color:var(--atlas-text);font:inherit;cursor:pointer}\n.kb-mainsearch button{background:var(--atlas-accent);color:white;border-color:var(--atlas-accent);font-weight:700}\n.kb-pagination{display:flex;justify-content:space-between;gap:.9rem;flex-wrap:wrap;align-items:center;padding:1rem 0;margin-top:.9rem;color:var(--atlas-muted);font-size:.8rem}\n.kb-pagination>div{display:flex;gap:.5rem}\n.kb-pagination button{padding:.5rem .75rem}\n.kb-pagination button:disabled{opacity:.4;cursor:default}\n.kb-pick-source{margin:.8rem 0 .4rem;color:var(--atlas-accent);font-size:.82rem;font-weight:700;padding:.4rem .7rem}\n",
+  "script": "atlas.onReady(()=>{\n const pairs=[\n  {name:'q',input:document.getElementById('kb-search'),value:atlas.params.q},\n  {name:'group',input:document.getElementById('kb-group'),value:atlas.params.group},\n  {name:'source',input:document.getElementById('kb-source'),value:atlas.params.source},\n  {name:'sourceType',input:document.getElementById('kb-type'),value:atlas.params.sourceType},\n  {name:'kind',input:document.getElementById('kb-kind'),value:atlas.params.kind},\n  {name:'tag',input:document.getElementById('kb-tags'),value:atlas.params.tag}\n ];\n pairs.forEach(item=>{item.input.value=item.value||'';});\n const offsets=['entryOffset','sourceOffset','sectionOffset','relationOffset'];\n function commit(){\n  pairs.forEach(item=>atlas.setParam(item.name,item.input.value.trim()));\n  offsets.forEach(key=>atlas.setParam(key,'0'));\n  atlas.refresh();\n }\n document.getElementById('kb-search-submit').addEventListener('click',commit);\n const search=document.getElementById('kb-search');\n search.addEventListener('keydown',event=>{if(event.key==='Enter')commit();});\n document.getElementById('kb-group').addEventListener('change',commit);\n document.getElementById('kb-source').addEventListener('change',commit);\n document.getElementById('kb-type').addEventListener('change',commit);\n document.getElementById('kb-kind').addEventListener('change',commit);\n document.getElementById('kb-tags').addEventListener('keydown',event=>{if(event.key==='Enter')commit();});\n document.getElementById('kb-reset').addEventListener('click',()=>{\n  pairs.forEach(item=>item.input.value='');\n  commit();\n });\n const pagerDefs=[\n  {name:'entries',param:'entryOffset',page:atlas.data.entriesPage[0]},\n  {name:'sources',param:'sourceOffset',page:atlas.data.sourcesPage[0]},\n  {name:'sections',param:'sectionOffset',page:atlas.data.sectionsPage[0]},\n  {name:'relations',param:'relationOffset',page:atlas.data.relationsPage[0]}\n ];\n pagerDefs.forEach(info=>{\n  const panel=document.querySelector('.kb-pagination[data-pager=\"'+info.name+'\"]');\n  if(!panel || !info.page)return;\n  const prev=panel.querySelector('.kb-prev');\n  const next=panel.querySelector('.kb-next');\n  prev.disabled=!info.page.hasPrevious;\n  next.disabled=!info.page.hasNext;\n  prev.addEventListener('click',()=>{atlas.setParam(info.param,String(Math.max(0,info.page.offset-info.page.limit)));atlas.refresh();});\n  next.addEventListener('click',()=>{atlas.setParam(info.param,String(info.page.offset+info.page.limit));atlas.refresh();});\n });\n document.querySelectorAll('.kb-pick-source').forEach(button=>{\n  button.addEventListener('click',()=>{\n   const key=button.parentElement.getAttribute('data-id');\n   if(!key)return;\n   atlas.setParam('source',key);\n   atlas.setParam('q','');\n   offsets.forEach(name=>atlas.setParam(name,'0'));\n   atlas.refresh();\n  });\n });\n document.querySelectorAll('.kb-open').forEach(button=>{\n  button.addEventListener('click',()=>{\n   const dialog=button.parentElement.querySelector('dialog.kb-reader');\n   if(dialog)dialog.showModal();\n  });\n });\n document.querySelectorAll('.kb-reader-close').forEach(button=>{\n  button.addEventListener('click',()=>{\n   const dialog=button.closest('dialog.kb-reader');\n   if(dialog)dialog.close();\n  });\n });\n});"
+}
