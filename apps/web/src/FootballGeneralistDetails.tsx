@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { callTool } from './api';
+import { FootballPolicySkills } from './FootballPolicySkills';
+import type { PolicyAssessment } from './football-skill-model';
 
 export type GeneralistRun = {
     id: string; family: string; state: string; scenario?: string; preset?: string;
@@ -12,7 +14,7 @@ export type GeneralistRun = {
         source_implementation_sha256?: string; checkpoint_sha256?: string } | null;
 };
 export type GeneralistPolicy = {
-    id: string; behavior: string; status: string; source: string; compatible_metadata: boolean;
+    id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean;
     executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean;
     source_run_id?: string | null; contract_sha256?: string; scenario_sha256?: string;
     implementation_sha256?: string;
@@ -171,8 +173,8 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
         </>}
     </section>;
 }
-export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
-    ticket: string; onBack: () => void; onPolicy: (id: string) => void;
+export function GeneralistEvaluationView({ ticket, onBack, onPolicy, policyName }: {
+    ticket: string; onBack: () => void; onPolicy: (id: string) => void; policyName?: (id: string) => string;
 }) {
     const [detail, setDetail] = useState<EvaluationDetail | null>(null);
     const [error, setError] = useState('');
@@ -197,7 +199,7 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
     const rows = d?.episodes.filter(e => JSON.stringify(e).toLowerCase().includes(filter.toLowerCase())) ?? [];
     return <section className="fg-detail">
         <button className="fg-link" onClick={onBack}>← Evaluation history</button>
-        <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY EVALUATION</p><h2>{ticket}</h2></div><span>{operation?.status ?? 'Loading'}</span></div>
+        <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY EVALUATION</p><h2>{operation?.policy_id ? (policyName?.(operation.policy_id) || operation.policy_id) : 'Baseline evaluation'}</h2><small className="fg-muted">{ticket}</small></div><span>{operation?.status ?? 'Loading'}</span></div>
         {error && <p className="fg-error" role="alert">Could not fetch evaluation detail: {error}</p>}
         {!d && !error && <p role="status">Loading evaluation results…</p>}
         {d && <>
@@ -215,7 +217,7 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
             {operation?.requested_episodes != null && <p className="fg-muted">
                 {num(summary?.total, 0)} / {num(operation.requested_episodes, 0)} episodes observed</p>}
             {operation?.policy_id && <section className="fg-panel"><h3>Policy</h3>
-                <button className="fg-record-link" onClick={() => onPolicy(operation.policy_id!)}>{operation.policy_id} →</button></section>}
+                <button className="fg-record-link" onClick={() => onPolicy(operation.policy_id!)}>{policyName?.(operation.policy_id) || operation.policy_id} →</button></section>}
             <section className="fg-panel"><h3>Outcome breakdown</h3>
                 {Object.entries(summary?.outcomes ?? {}).map(([outcome, count]) => <div className="fg-outcome" key={outcome}>
                     <span>{outcome}</span><div><i style={{ width: String(100 * count / Math.max(1, summary?.total ?? 1)) + '%' }} /></div><strong>{count}</strong>
@@ -244,18 +246,21 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy }: {
         </>}
     </section>;
 }
-export function GeneralistPolicyView({ policy, runs, activity, onBack, onRun, onEvaluation, onWatch, onEvaluate }: {
-    policy: GeneralistPolicy; runs: GeneralistRun[]; activity: GeneralistActivity[];
+export function GeneralistPolicyView({ policy, runs, activity, assessment, onBack, onRun, onEvaluation, onWatch, onEvaluate, onEvaluateSkill, onRename, onFeature }: {
+    policy: GeneralistPolicy; runs: GeneralistRun[]; activity: GeneralistActivity[]; assessment?: PolicyAssessment;
     onBack: () => void; onRun: (id: string) => void; onEvaluation: (id: string) => void;
     onWatch: (id: string) => void; onEvaluate: (id: string) => void;
+    onEvaluateSkill?: (id: string, scenario: string) => void;
+    onRename?: (id: string, name: string) => Promise<void>; onFeature?: (id: string, featured: boolean) => Promise<void>;
 }) {
     const linkedRuns = runs.filter(run => policy.source_run_id === run.id ||
         !!(run.output_dir && policy.source.startsWith(run.output_dir + '/')));
-    const linkedEvaluations = activity.filter(item => item.policy_id === policy.id && item.action === 'generalist_evaluate');
+    const [newName, setNewName] = useState(policy.display_name || policy.id);
+    const linkedEvaluations = activity.filter(item => (item.policy_id === policy.id || item.policy_id === policy.source_policy_id) && item.action === 'generalist_evaluate');
     const runnable = policy.compatible_metadata && policy.onnx_available && policy.bundle_available;
     return <section className="fg-detail">
         <button className="fg-link" onClick={onBack}>← Policies</button>
-        <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY PROFILE</p><h2>{policy.id}</h2></div><span>{policy.status}</span></div>
+        <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY PROFILE</p><h2>{policy.display_name || policy.id}</h2></div><span>{policy.featured ? 'Featured' : 'Research checkpoint'}</span></div>
         <div className="fg-detail-metrics">
             {metric('Contract metadata', policy.compatible_metadata ? 'Matching' : 'Incompatible')}
             {metric('ONNX model', policy.onnx_available ? 'Present' : 'Missing')}
@@ -266,8 +271,18 @@ export function GeneralistPolicyView({ policy, runs, activity, onBack, onRun, on
             <button className="fg-button primary" disabled={!runnable} onClick={() => onWatch(policy.id)}>Watch in Unity →</button>
             <button className="fg-button" disabled={!runnable} onClick={() => onEvaluate(policy.id)}>Evaluate →</button>
         </div>
+        {onRename && <section className="fg-panel fg-policy-editor"><h3>Player identity</h3>
+            <p className="fg-muted">Change the display name without changing policy IDs, weights or saved evaluations.</p>
+            <div className="fg-actions"><input aria-label="Policy display name" value={newName} maxLength={64} onChange={e => setNewName(e.target.value)}/>
+                <button className="fg-button" disabled={!newName.trim() || newName.trim() === (policy.display_name || policy.id)}
+                    onClick={() => void onRename(policy.id, newName.trim())}>Save name</button>
+                {onFeature && <button className="fg-button" onClick={() => void onFeature(policy.id, !policy.featured)}>
+                    {policy.featured ? 'Remove from featured' : 'Feature policy'}</button>}</div>
+        </section>}
+        <FootballPolicySkills assessment={assessment} onEvaluate={onEvaluateSkill ? scenario => onEvaluateSkill(policy.id, scenario) : undefined}/>
         {!runnable && <p className="fg-muted">Watch and Evaluate require a compatible indexed model and Unity bundle. The runner performs its own validation before starting.</p>}
         <section className="fg-panel"><h3>Provenance</h3><dl className="fg-detail-list">
+            <dt>Policy ID</dt><dd>{policy.id}</dd>
             <dt>Behavior</dt><dd>{policy.behavior}</dd>
             <dt>Metadata</dt><dd>{policy.source}</dd>
             <dt>Source run ID</dt><dd>{policy.source_run_id ?? 'Not recorded'}</dd>

@@ -24,7 +24,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
+        const start = ['generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -56,6 +56,9 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_generalist_run_detail', 'Read bounded live trainer output, checkpoints and metadata for a discovered generalist run.', { runId }, 'generalist_run_detail'),
             action('football_generalist_evaluation_detail', 'Read saved generalist evaluation outcomes and paginated episodes.', { runId: z.string().uuid(), offset: integer.min(0).max(10000).default(0), limit: integer.min(1).max(200).default(100) }, 'generalist_evaluation_detail'),
             action('football_generalist_policies', 'Discover only explicitly registered generalist policy metadata; no inferred compatibility.', {}, 'generalist_policies'),
+            action('football_generalist_assessments', 'Read grouped, provisional skill evidence from saved held-out policy evaluations.', {}, 'generalist_assessments'),
+            action('football_generalist_policy_update', 'Set a friendly policy name or feature a saved policy without modifying model identity or weights.',
+                { policyId: runId, displayName: z.string().min(1).max(64).optional(), featured: z.boolean().optional() }, 'generalist_policy_update'),
             action('football_generalist_activity', 'Read generalist evaluation, baseline and watch receipts.', {}, 'generalist_activity'),
             action('football_generalist_status', 'Inspect a generalist operation receipt.', { runId: z.string().uuid() }, 'generalist_status'),
             action('football_generalist_package', 'Register a completed generalist ONNX run as a hashed Unity policy bundle without restarting training.', { runId }, 'generalist_package'),

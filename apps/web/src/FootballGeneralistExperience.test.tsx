@@ -32,7 +32,7 @@ test('Generalist application defaults to new contract, not legacy driver', async
     expect(screen.getByText('football-generalist-v2')).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
         'football_generalist_manifest', 'football_generalist_runs',
-        'football_generalist_policies', 'football_generalist_activity',
+        'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Train' }));
     expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeInTheDocument();
@@ -183,6 +183,37 @@ test('allows safe backfill packaging for exported generalist ONNX without anothe
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_train')).toBe(false);
 });
 
+test('Musiala is selectable by name and mixed dribbling is a Watch-only drill', async () => {
+    vi.mocked(callTool).mockImplementation(async (name) => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_policies') return [{
+            id: 'generalist-musiala-v1', display_name: 'Musiala',
+            behavior: 'FootballGeneralistV2', status: 'indexed',
+            compatible_metadata: true, onnx_available: true, bundle_available: true,
+        }] as never;
+        if (name === 'football_generalist_watch') return {
+            accepted: true, status: 'launching', ticket: '1a423a0a-f18f-4d4a-81d4-c7d6f1a8458f',
+            action: 'generalist_watch',
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    expect(await screen.findByRole('option', { name: 'Musiala' })).toHaveValue('generalist-musiala-v1');
+    expect(screen.getByRole('button', { name: /Mixed dribbling showcase/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), { target: { value: 'generalist-musiala-v1' } });
+    // The showcase is the default Watch drill; launch without a second selector.
+    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
+        'football_generalist_watch', expect.objectContaining({
+            policyId: 'generalist-musiala-v1', scenario: 'dribbling_showcase_v1',
+        }),
+    ));
+    fireEvent.click(screen.getByRole('button', { name: 'Evaluate' }));
+    expect(screen.queryByRole('button', { name: /Mixed dribbling showcase/ })).not.toBeInTheDocument();
+});
+
 test('Watch receipt shows player logging evidence without claiming a visible window', async () => {
     const ticket = 'ef456628-8eed-4579-af11-bc7248c745d8';
     vi.mocked(callTool).mockImplementation(async (name) => {
@@ -231,8 +262,9 @@ test('shows externally launched evaluation progress without a saved per-episode 
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    expect(await screen.findByText('25 / 100 episodes · 25 physical contact')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 's0-contact-easy-v1 →' }));
+    const activeEvaluation = await screen.findByRole('button', { name: /Evaluation · generalist-run.*25 \/ 100 episodes/ });
+    expect(activeEvaluation).toHaveTextContent('25 / 100 episodes · 25 physical contact');
+    fireEvent.click(activeEvaluation);
     expect(await screen.findByRole('progressbar', { name: 'Evaluation episode progress' }))
         .toHaveAttribute('aria-valuenow', '25');
     expect(screen.getByText('25 / 100 episodes observed')).toBeInTheDocument();
@@ -258,7 +290,8 @@ test('S1 continuation requires a checkpoint and forwards the exact source run', 
     render(<FootballGeneralistExperience />);
     await screen.findByRole('button', { name: 'Train' });
     fireEvent.click(screen.getByRole('button', { name: 'Train' }));
-    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 's1_rehearsal' } });
+    fireEvent.click(screen.getByRole('button', { name: /S0 mixed contact starts/ }));
+    fireEvent.click(screen.getByRole('button', { name: /S1 with S0 rehearsal/ }));
     expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeDisabled();
     expect(screen.getByText('Select a recorded S0 checkpoint before S1 continuation.')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Initial weights'), { target: { value: 'proven-s0' } });

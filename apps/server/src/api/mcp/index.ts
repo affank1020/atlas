@@ -34,6 +34,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         'football_generalist_status',
         'football_generalist_evaluation_detail',
         'football_generalist_policies',
+        'football_generalist_assessments',
     ];
     const prioritized = new Set(priorityNames);
     for (const name of priorityNames) {

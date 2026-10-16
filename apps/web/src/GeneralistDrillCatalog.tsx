@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
+import { SKILL_GROUPS, skillForScenario, scenarioPurpose } from './football-skill-model';
 import type { GeneralistManifest, GeneralistScenario } from './FootballGeneralistDashboard';
 import './generalist-drill-catalog.css';
 
@@ -141,17 +142,25 @@ export function GeneralistDrillCatalog({ manifest, selected, onSelect, onTrain }
         </div>
         <div className="fg-drill-layout">
             <div className="fg-drill-list" aria-label={scope === 'general' ? 'Generalist drill listings' : 'Legacy drill listings'}>
-                {visible.map(item => {
-                    const isGeneral = scope === 'general';
-                    const name = isGeneral ? (item as GeneralistScenario).name : nameOf(item.id);
-                    const summary = isGeneral ? manifest?.drill_guide?.drills?.[item.id]?.summary || (item as GeneralistScenario).objective : (item as LegacyDrill).behavior;
-                    const chosen = isGeneral ? activeScenario?.id === item.id : activeLegacy?.id === item.id;
-                    return <button type="button" key={item.id} className={chosen ? 'selected' : ''} aria-pressed={chosen}
-                        onClick={() => isGeneral ? onSelect(item.id) : setLegacySelected(item.id)}>
-                        <span className="fg-drill-list-heading"><strong>{name}</strong><small>{isGeneral ? `S${(item as GeneralistScenario).stage}` : 'Legacy'}</small></span>
-                        <span className="fg-drill-list-summary">{summary}</span>
-                    </button>;
-                })}
+                {scope === 'general' ? SKILL_GROUPS.map(group => {
+                    const members = (visible as GeneralistScenario[]).filter(item => skillForScenario(item) === group.id);
+                    if (!members.length) return null;
+                    return <section className="fg-catalog-group" key={group.id}>
+                        <h3>{group.label}</h3>
+                        {members.map(item => <button type="button" key={item.id}
+                            className={activeScenario?.id === item.id ? 'selected' : ''}
+                            aria-pressed={activeScenario?.id === item.id} onClick={() => onSelect(item.id)}>
+                            <span className="fg-drill-list-heading"><strong>{item.name}</strong>
+                                <small>{scenarioPurpose(item.id) === 'benchmark-candidate' ? 'Benchmark candidate' : 'Research'}</small></span>
+                            <span className="fg-drill-list-summary">{manifest?.drill_guide?.drills?.[item.id]?.summary || item.objective}</span>
+                        </button>)}
+                    </section>;
+                }) : (visible as LegacyDrill[]).map(item =>
+                    <button type="button" key={item.id} className={activeLegacy?.id === item.id ? 'selected' : ''}
+                        aria-pressed={activeLegacy?.id === item.id} onClick={() => setLegacySelected(item.id)}>
+                        <span className="fg-drill-list-heading"><strong>{nameOf(item.id)}</strong><small>Legacy</small></span>
+                        <span className="fg-drill-list-summary">{item.behavior}</span>
+                    </button>)}
                 {scope === 'general' && !manifest && <p className="fg-muted">Connect the Mac Node to load Generalist scenarios.</p>}
                 {scope === 'legacy' && legacy === null && !legacyError && <p role="status" className="fg-muted">Loading archived drills…</p>}
                 {legacyError && scope === 'legacy' && <p role="alert">{legacyError}</p>}

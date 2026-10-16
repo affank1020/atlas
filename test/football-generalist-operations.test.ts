@@ -62,6 +62,17 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
             (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_status', runId: '../secret' }));
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch', policyId: 'legacy-policy', scenario: 'mix' }));
+        // A Watch-only playlist cannot leak into PPO or held-out evaluation.
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
+            scenario: 'dribbling_showcase_v1', preset: 'smoke', seed: 42 }),
+            (e: any) => e.code === 'INVALID_ARGUMENT');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_evaluate',
+            scenario: 'dribbling_showcase_v1', policyId: 'generalist-musiala-v1', seed: 515 }),
+            (e: any) => e.code === 'INVALID_ARGUMENT');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch',
+            scenario: 'dribbling_showcase_v1', policyId: 'generalist-musiala-v1', seed: 515 }),
+            (e: any) => e.code === 'NOT_FOUND');
+
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 

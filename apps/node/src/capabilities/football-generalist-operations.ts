@@ -2,13 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { readCuration, writeCuration, deriveAssessments, type SavedAssessment } from './generalist-policy-profiles.js';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
 import { generalistManifest } from './football-generalist.js';
 import { generalistRunDetail, listGeneralistRuns } from './football-generalist-runs.js';
 
-type Args = { action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
+type Args = { displayName?: string; featured?: boolean; action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+// Watch-only curated playlist; not a training/evaluation scenario or policy ABI change.
+const showcaseScenario = 'dribbling_showcase_v1';
 const env = () => Object.fromEntries(['PATH','HOME','TMPDIR','LANG','USER','LOGNAME'].filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
 
 function safeFile(workspace: Workspace, file: string): string {
@@ -51,6 +54,7 @@ function scan(workspace: Workspace, filename: string) {
     return results;
 }
 export function generalistPolicies(workspace: Workspace) {
+    const curated = readCuration(workspace.rootPath);
     const manifest = generalistManifest(workspace);
     const found = [];
     const seen = new Set<string>();
@@ -62,7 +66,9 @@ export function generalistPolicies(workspace: Workspace) {
             const compatibleMetadata = policy.behavior === manifest.contract.behavior &&
                 policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
                 policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
-            found.push({ id: policy.id, family: 'generalist', behavior: policy.behavior, status: policy.status ?? 'unverified',
+            found.push({ id: policy.id, display_name: curated[policy.id]?.display_name ?? (typeof policy.display_name === 'string' && policy.display_name.trim() ? policy.display_name.trim().slice(0, 80) : null),
+                featured: curated[policy.id]?.featured === true, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
+                onnx_sha256: typeof policy.onnx_sha256 === 'string' ? policy.onnx_sha256 : null, family: 'generalist', behavior: policy.behavior, status: policy.status ?? 'unverified',
                 source: path.relative(workspace.rootPath, file), compatible_metadata: compatibleMetadata,
                 source_run_id: typeof (policy.source_run_id ?? policy.run_id) === 'string' && idPattern.test(policy.source_run_id ?? policy.run_id) ? (policy.source_run_id ?? policy.run_id) : null,
                 contract_sha256: policy.contract_sha256, scenario_sha256: policy.scenario_sha256,
@@ -246,6 +252,47 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (x.action === 'generalist_runs') return listGeneralistRuns(workspace);
     if (x.action === 'generalist_run_detail') return generalistRunDetail(workspace, x.runId!);
     if (x.action === 'generalist_policies') return generalistPolicies(workspace);
+    if (x.action === 'generalist_policy_update') {
+        if (typeof x.policyId !== 'string' || !idPattern.test(x.policyId))
+            throw new AtlasError('Invalid policy identifier.', 'INVALID_ARGUMENT');
+        policyFile(workspace, x.policyId); // Existing explicit policy, not a fabricated identifier.
+        const change: { display_name?: string; featured?: boolean } = {};
+        if (x.displayName !== undefined) {
+            if (typeof x.displayName !== 'string' || !/^[\\p{L}\\p{N}][\\p{L}\\p{N} ._'-]{0,63}$/u.test(x.displayName.trim()))
+                throw new AtlasError('Display name must be 1–64 plain characters.', 'INVALID_ARGUMENT');
+            change.display_name = x.displayName.trim();
+        }
+        if (x.featured !== undefined) {
+            if (typeof x.featured !== 'boolean') throw new AtlasError('Invalid featured flag.', 'INVALID_ARGUMENT');
+            if (x.featured) {
+                const metadata = generalistPolicies(workspace).find(p => p.id === x.policyId);
+                if (!metadata?.compatible_metadata || !metadata.onnx_available || !metadata.bundle_available)
+                    throw new AtlasError('Only currently compatible bundled policies can be featured.', 'INVALID_ARGUMENT');
+            }
+            change.featured = x.featured;
+        }
+        if (!Object.keys(change).length) throw new AtlasError('No changes requested.', 'INVALID_ARGUMENT');
+        return { policy_id: x.policyId, ...writeCuration(workspace.rootPath, x.policyId, change) };
+    }
+    if (x.action === 'generalist_assessments') {
+        const entries: SavedAssessment[] = [];
+        for (const item of reports(workspace)) {
+            if (item.action !== 'generalist_evaluate' || item.status !== 'completed' ||
+                typeof item.policy_id !== 'string' || typeof item.scenario !== 'string') continue;
+            const file = path.join(taskDir(workspace), item.ticket + '.result.json');
+            try {
+                if (lstatSync(file).isSymbolicLink() || statSync(file).size > 4 * 1024 * 1024) continue;
+                const parsed = JSON.parse(readFileSync(file, 'utf8'));
+                if (parsed.contract !== 'football-generalist-v2' || !Array.isArray(parsed.episodes) ||
+                    !parsed.episodes.length || parsed.episodes.some((e: any) => typeof e?.success !== 'boolean')) continue;
+                entries.push({ ticket: item.ticket, policy_id: item.policy_id, scenario: item.scenario,
+                    seed: Number.isSafeInteger(item.seed) ? item.seed : null, episodes: parsed.episodes });
+            } catch { /* incomplete or older report cannot be trusted as performance */ }
+        }
+        return { suite: { id: 'dribbling-assessment-v1', status: 'provisional_historical',
+            benchmarkEpisodes: 100, note: 'Historical benchmark evidence is descriptive, not certified; repeat on unused held-out seeds to certify.' },
+            policies: deriveAssessments(generalistPolicies(workspace), entries) };
+    }
     if (x.action === 'generalist_activity') return reports(workspace);
     if (x.action === 'generalist_status') return receipt(workspace, x.runId!);
     if (x.action === 'generalist_package') {
@@ -277,6 +324,7 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     }
     const manifest = generalistManifest(workspace);
     const scenarios = new Set(['mix', 's1_rehearsal', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
+    if (x.action === 'generalist_watch') scenarios.add(showcaseScenario);
     const scenario = x.scenario ?? 'mix';
     if (!scenarios.has(scenario)) throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
@@ -301,13 +349,13 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         return launch(workspace, x.action, cmd, { run_id: runId, scenario, preset: x.preset ?? 'smoke',
             initialization_source_run_id: sourceId ?? null });
     }
-    const script = safeFile(workspace, path.join(workspace.rootPath, 'football_generalist.py'));
     const ticket = randomUUID();
     const output = path.join(taskDir(workspace), ticket + '.result.json');
-    const cmd = [script];
-    const args = ['--scenario', scenario, '--seed', String(x.seed ?? 515), '--arenas', String(x.arenas ?? 1), '--episodes', String(x.episodes ?? 10), '--output', output];
+    const runnerScenario = x.action === 'generalist_watch' && scenario === showcaseScenario ? 's0-contact-easy-v1' : scenario;
+    const args = ['--scenario', runnerScenario, '--seed', String(x.seed ?? 515), '--arenas', String(x.arenas ?? 1), '--episodes', String(x.episodes ?? 10), '--output', output];
     const action = x.action === 'generalist_baseline' ? 'baseline' : x.action === 'generalist_evaluate' ? 'evaluate' : x.action === 'generalist_watch' ? 'watch' : null;
     if (!action) throw new AtlasError('Unsupported generalist action.', 'INVALID_ARGUMENT');
+    if (action === 'watch' && scenario === showcaseScenario) args.push('--showcase');
     let binary: string;
     if (action !== 'baseline') {
         const p = policyFile(workspace, x.policyId!);
@@ -334,7 +382,8 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         if (!candidateBinary) throw new AtlasError('No recorded generalist runner is available for baseline execution.', 'DRIVER_UNAVAILABLE');
         binary = candidateBinary;
     }
-    cmd.push(action, '--binary', binary, ...args);
+    const script = safeFile(workspace, path.join(workspace.rootPath, 'football_generalist.py'));
+    const cmd = [script, action, '--binary', binary, ...args];
     return launch(workspace, x.action, cmd, { scenario, policy_id: x.policyId ?? null, output,
         ...(action !== 'watch' ? { requested_episodes: x.episodes ?? 10 } : {}) }, ticket);
 }
