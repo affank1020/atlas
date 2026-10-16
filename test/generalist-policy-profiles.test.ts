@@ -46,3 +46,40 @@ test('historical assessments deduplicate by ticket and merge aliases only when m
     assert.equal(other.benchmarks[0].total, 1);
     assert.equal(named.benchmarks.find(b => b.id === 'moving_ball')?.status, 'not_assessed');
 });
+
+test('recovers historical seeds from actual episode evidence when receipt seed is absent', () => {
+    const policies = [{ id: 'generalist-musiala-v1', onnx_sha256: 'model-hash' }];
+    const records = [
+        { ticket: 'saved-100', policy_id: 'generalist-musiala-v1',
+            scenario: 's1-dribble-3m-v1', seed: null,
+            episodes: [{ success: true, seed: 515 }, { success: false, seed: 515 }] },
+        // In multi-arena reports the episodes can name more than one seed.
+        { ticket: 'saved-multi', policy_id: 'generalist-musiala-v1',
+            scenario: 's1-dribble-3m-v1', seed: null,
+            episodes: [{ success: true, seed: 616 }, { success: true, seed: 717 }] },
+        // Existing receipts still work when the episode format lacks a seed.
+        { ticket: 'seeded-receipt', policy_id: 'generalist-musiala-v1',
+            scenario: 's1-dribble-3m-v1', seed: 818, episodes: [{ success: true }] },
+        { ticket: 'unknown-seed', policy_id: 'generalist-musiala-v1',
+            scenario: 's1-dribble-3m-v1', seed: null, episodes: [{ success: true }] },
+    ];
+    const [assessment] = deriveAssessments(policies, records);
+    const close = assessment.benchmarks.find(b => b.id === 'close_control')!;
+    assert.equal(close.total, 6);
+    assert.equal(close.successes, 5);
+    assert.deepEqual(close.seeds, [515, 616, 717, 818]);
+    assert.equal(close.ticketCount, 4);
+});
+
+test('does not invent seed provenance from invalid or conflicting receipt values', () => {
+    const policies = [{ id: 'generalist-musiala-v1', onnx_sha256: 'model-hash' }];
+    const [assessment] = deriveAssessments(policies, [
+        { ticket: 'wrong-receipt', policy_id: 'generalist-musiala-v1', scenario: 's1-dribble-3m-v1',
+            seed: 515, episodes: [{ success: true, seed: 616 }] },
+        { ticket: 'no-provenance', policy_id: 'generalist-musiala-v1', scenario: 's1-dribble-3m-v1',
+            seed: null, episodes: [{ success: true }] },
+    ]);
+    const close = assessment.benchmarks.find(b => b.id === 'close_control')!;
+    assert.deepEqual(close.seeds, [616]);
+    assert.equal(close.total, 2);
+});

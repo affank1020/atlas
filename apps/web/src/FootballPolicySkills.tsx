@@ -16,9 +16,13 @@ export function FootballPolicySkills({ assessment, onEvaluate }: {
         <div className="fg-skill-list">{ASSESSMENT_SUITE.benchmarks.map((bench, i) => {
             const result = scores[i];
             const rate = result?.rate == null ? null : Math.round(result.rate * 100);
+            const seeds = result?.seeds ?? [];
+            const seedSummary = !seeds.length ? 'seed metadata unavailable' :
+                seeds.length === 1 ? `1 recorded seed (${seeds[0]})` :
+                `${seeds.length} recorded seeds (${seeds.slice(0, 5).join(', ')}${seeds.length > 5 ? ', …' : ''})`;
             return <div className="fg-skill-row" key={bench.id}>
                 <div className="fg-skill-heading"><div><strong>{bench.label}</strong>
-                    <small>{result?.total ? result.successes + '/' + result.total + ' episodes · ' + result.seeds.length + ' recorded seeds' : 'Not assessed'}</small></div>
+                    <small>{result?.total ? result.successes + '/' + result.total + ' episodes · ' + seedSummary : 'Not assessed'}</small></div>
                     <strong>{rate == null ? '—' : rate + '%'}</strong></div>
                 <div className="fg-skill-bar" role="meter" aria-label={bench.label}
                     aria-valuemin={0} aria-valuemax={100} aria-valuenow={rate ?? 0}

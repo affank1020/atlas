@@ -385,5 +385,6 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     const script = safeFile(workspace, path.join(workspace.rootPath, 'football_generalist.py'));
     const cmd = [script, action, '--binary', binary, ...args];
     return launch(workspace, x.action, cmd, { scenario, policy_id: x.policyId ?? null, output,
+        seed: x.seed ?? 515,
         ...(action !== 'watch' ? { requested_episodes: x.episodes ?? 10 } : {}) }, ticket);
 }

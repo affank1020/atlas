@@ -38,7 +38,7 @@ export function writeCuration(root: string, policyId: string, update: Curated) {
 }
 
 export type SavedAssessment = { ticket: string; policy_id: string; scenario: string;
-    seed: number | null; episodes: Array<{ success: boolean }> };
+    seed: number | null; episodes: Array<{ success: boolean; seed?: number }> };
 export function deriveAssessments(policies: Array<{ id: string; source_policy_id?: string | null; onnx_sha256?: string | null }>,
     records: SavedAssessment[]) {
     const hashOf = new Map(policies.map(p => [p.id, p.onnx_sha256]));
@@ -60,8 +60,19 @@ export function deriveAssessments(policies: Array<{ id: string; source_policy_id
                 const episodes = distinct.flatMap(r => r.episodes);
                 const total = episodes.length;
                 const successes = episodes.filter(e => e.success).length;
+                // Old Atlas receipts omitted their requested seed, but Unity persisted the
+                // actual seed on each episode. Prefer observed episode seeds, falling back
+                // to the receipt only for older reports without per-episode provenance.
+                const isSeed = (seed: unknown): seed is number =>
+                    typeof seed === 'number' && Number.isSafeInteger(seed) && seed >= 0 && seed <= 2147483647;
+                const recordedSeeds = new Set<number>();
+                for (const record of distinct) {
+                    const episodeSeeds = record.episodes.map(e => e.seed).filter(isSeed);
+                    if (episodeSeeds.length) episodeSeeds.forEach(seed => recordedSeeds.add(seed));
+                    else if (isSeed(record.seed)) recordedSeeds.add(record.seed);
+                }
                 return { ...b, total, successes, rate: total ? successes / total : null,
-                    ticketCount: distinct.length, seeds: [...new Set(distinct.map(x => x.seed).filter((x): x is number => typeof x === 'number'))],
+                    ticketCount: distinct.length, seeds: [...recordedSeeds].sort((a, b) => a - b),
                     tickets: distinct.map(x => x.ticket),
                     // Historical drills have been used for development; do not automatically certify.
                     status: total > 0 ? 'provisional' as const : 'not_assessed' as const };

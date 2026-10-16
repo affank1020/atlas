@@ -21,6 +21,7 @@ test('skill profile reports measured episodes separately from certification and 
             ticketCount: 3, seeds: [515, 616, 717], tickets: ['a','b','c'], status: 'provisional' }],
     }} onEvaluate={onEvaluate}/>);
     expect(screen.getByText(/98\/100 episodes/)).toBeInTheDocument();
+    expect(screen.getByText(/3 recorded seeds \(515, 616, 717\)/)).toBeInTheDocument();
     expect(screen.getByRole('meter', { name: /Close control/ })).toHaveAttribute('aria-valuenow', '98');
     expect(screen.getAllByText('Not assessed').length).toBeGreaterThan(0);
     expect(screen.getByText(/not certified holdouts/i)).toBeInTheDocument();
