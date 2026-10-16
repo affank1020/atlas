@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import { GeneralistRunView, GeneralistPolicyView, GeneralistEvaluationView } from './FootballGeneralistDetails';
 import type { GeneralistManifest } from './FootballGeneralistDashboard';
@@ -39,6 +39,10 @@ export function FootballGeneralistExperience() {
     const [notice, setNotice] = useState('');
     const [busy, setBusy] = useState('');
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [refreshStatus, setRefreshStatus] = useState('Not synced yet');
+    const [assessmentWarning, setAssessmentWarning] = useState('');
+    const activeRefresh = useRef<Promise<void> | null>(null);
     const [scenario, setScenario] = useState('mix');
     const [watchScenario, setWatchScenario] = useState(SHOWCASE_DRILL);
     const [selectedDrillScenario, setSelectedDrillScenario] = useState('');
@@ -53,22 +57,44 @@ export function FootballGeneralistExperience() {
     const [ticket, setTicket] = useState<Receipt | null>(null);
     const [detail, setDetail] = useState<{ kind: 'run' | 'policy' | 'evaluation'; id: string } | null>(null);
 
-    const refresh = useCallback(async () => {
-        const [m, r, p, a, skillData] = await Promise.all([
-            callTool<GeneralistManifest>('football_generalist_manifest'),
-            callTool<Run[]>('football_generalist_runs'),
-            callTool<Policy[]>('football_generalist_policies'),
-            callTool<Receipt[]>('football_generalist_activity'),
-            callTool<{ policies: PolicyAssessment[] }>('football_generalist_assessments'),
-        ]);
-        if (!m.available || m.contract.contract_id !== 'football-generalist-v2') throw new Error('Generalist V2 contract unavailable on the connected Node.');
-        setManifest(m);
-        setRuns(r);
-        setPolicies(p);
-        setActivity(a);
-        setAssessments(Array.isArray(skillData?.policies) ? skillData.policies : []);
-        setSelectedPolicy(current => current || p[0]?.id || '');
-        setError('');
+    const refresh = useCallback((): Promise<void> => {
+        // Manual and timed refreshes share one request; a slower poll cannot overwrite a newer result.
+        if (activeRefresh.current) return activeRefresh.current;
+        const request = (async () => {
+            const [m, r, p, a, skillData] = await Promise.allSettled([
+                callTool<GeneralistManifest>('football_generalist_manifest'),
+                callTool<Run[]>('football_generalist_runs'),
+                callTool<Policy[]>('football_generalist_policies'),
+                callTool<Receipt[]>('football_generalist_activity'),
+                callTool<{ policies: PolicyAssessment[] }>('football_generalist_assessments'),
+            ]);
+            const failures: string[] = [];
+            if (m.status === 'fulfilled' && m.value?.available && m.value.contract?.contract_id === 'football-generalist-v2')
+                setManifest(m.value);
+            else failures.push('contract');
+            if (r.status === 'fulfilled' && Array.isArray(r.value)) setRuns(r.value);
+            else failures.push('training runs');
+            if (p.status === 'fulfilled' && Array.isArray(p.value)) {
+                setPolicies(p.value);
+                setSelectedPolicy(current => current || p.value[0]?.id || '');
+            } else failures.push('policies');
+            if (a.status === 'fulfilled' && Array.isArray(a.value)) setActivity(a.value);
+            else failures.push('evaluation activity');
+            const assessmentsAvailable = skillData.status === 'fulfilled' && Array.isArray(skillData.value?.policies);
+            if (assessmentsAvailable) {
+                setAssessments(skillData.value.policies);
+                setAssessmentWarning('');
+            } else {
+                // A missing optional assessment endpoint must never hide training/evaluation data.
+                setAssessmentWarning('Skill assessments unavailable. Runs, policies and evaluations can still update.');
+            }
+            setError(failures.length ? `Refresh incomplete: ${failures.join(', ')} could not be updated. Previous data retained where available.` : '');
+            const partial = failures.length > 0 || !assessmentsAvailable;
+            const anythingUpdated = failures.length < 4 || assessmentsAvailable;
+            setRefreshStatus(`${!anythingUpdated ? 'Refresh failed' : partial ? 'Partially updated' : 'Updated'} at ${new Date().toLocaleTimeString()}`);
+        })().finally(() => { activeRefresh.current = null; });
+        activeRefresh.current = request;
+        return request;
     }, []);
     useEffect(() => {
         let mounted = true;
@@ -163,10 +189,18 @@ export function FootballGeneralistExperience() {
     return <main className="fg">
         <header className="fg-heading">
             <div><p className="fg-eyebrow">AI FOOTBALL / FYP</p><h1>Generalist</h1><p className="fg-subtitle">Unity reinforcement learning · one policy, multiple scenarios</p></div>
-            <button type="button" className="fg-button" onClick={() => void refresh().catch(e => setError(String(e)))} disabled={!!busy}>Refresh</button>
+            <div className="fg-refresh-controls">
+                <span className="fg-refresh-status" role="status" aria-live="polite">{refreshing ? 'Fetching latest data…' : refreshStatus}</span>
+                <button type="button" className="fg-button" disabled={!!busy || refreshing}
+                    onClick={() => {
+                        setRefreshing(true);
+                        void refresh().catch(e => setError(String(e))).finally(() => setRefreshing(false));
+                    }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
+            </div>
         </header>
         {loading && <p role="status">Connecting to the generalist workspace…</p>}
         {error && <p className="fg-error" role="alert">{error}</p>}
+        {assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
         {notice && <p className="fg-notice" role="status">{notice}</p>}
         <nav className="fg-nav" aria-label="Football sections">{tabs.map(t =>
             <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>

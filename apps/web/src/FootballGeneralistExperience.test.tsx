@@ -19,12 +19,63 @@ beforeEach(() => {
         if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'unknown', scenario: 's0-contact-easy-v1' }] as never;
         if (name === 'football_generalist_policies') return [] as never;
         if (name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
         if (name === 'football_list_policies') return [{ id: 'legacy-policy', drill: 'shooting_v1' }] as never;
         if (name === 'football_list_jobs') return [{ id: 'legacy-run', drill: 'shooting_v1', state: 'completed' }] as never;
         return [] as never;
     });
 });
 afterEach(cleanup);
+
+test('failed optional assessments do not block the dashboard or subsequent refreshes', async () => {
+    let runsRead = 0;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') return [{
+            id: ++runsRead === 1 ? 'before-refresh' : 'after-refresh',
+            family: 'generalist', state: 'unknown',
+        }] as never;
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') throw new Error('Invalid Workspace operation input.');
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    expect(await screen.findByRole('button', { name: 'before-refresh →' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/Skill assessments unavailable/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByRole('button', { name: 'after-refresh →' })).toBeInTheDocument();
+    expect(screen.getByText(/Partially updated at/)).toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'football_generalist_runs')).toHaveLength(2);
+});
+
+test('manual refresh shows busy state and reports a completed data reload', async () => {
+    let reads = 0;
+    let finishRefresh: ((runs: { id: string; family: string; state: string }[]) => void) | undefined;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') {
+            if (++reads === 1) return [{ id: 'initial-run', family: 'generalist', state: 'unknown' }] as never;
+            return new Promise<{ id: string; family: string; state: string }[]>(resolve => {
+                finishRefresh = resolve;
+            }) as never;
+        }
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    expect(await screen.findByRole('button', { name: 'initial-run →' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled();
+    expect(screen.getByText('Fetching latest data…')).toBeInTheDocument();
+    await waitFor(() => expect(finishRefresh).toBeDefined());
+    finishRefresh!([{ id: 'updated-run', family: 'generalist', state: 'unknown' }]);
+    expect(await screen.findByRole('button', { name: 'updated-run →' })).toBeInTheDocument();
+    expect(screen.getByText(/Updated at/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
+});
 
 test('Generalist application defaults to new contract, not legacy driver', async () => {
     render(<FootballGeneralistExperience />);

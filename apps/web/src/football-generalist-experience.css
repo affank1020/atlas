@@ -1,6 +1,9 @@
 .fg { max-width: 1240px; margin: 0 auto; padding: 28px; color: var(--text-primary, #dfe5f0); }
 .fg-heading,.fg-panel-title { display:flex; justify-content:space-between; align-items:center; gap:16px; }
 .fg-heading { margin-bottom:22px; }
+.fg-refresh-controls { display:flex; gap:12px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
+.fg-refresh-status { color:var(--text-muted,#9ba5b5); font-size:12px; font-variant-numeric:tabular-nums; }
+.fg-refresh-controls .fg-button:not(:disabled):hover { border-color:var(--accent,#8da8ef); }
 .fg-heading h1 { margin:3px 0 5px; font-size:26px; letter-spacing:-.035em; }
 .fg-eyebrow { font-size:11px; letter-spacing:.13em; font-weight:700; color:var(--text-muted,#969fad); margin:0; }
 .fg-subtitle, .fg-muted { color:var(--text-muted,#9ba5b5); font-size:13px; }

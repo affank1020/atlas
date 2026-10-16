@@ -3,6 +3,7 @@ import test from 'node:test';
 import { footballTrainingApplication, FootballTrainingService, FOOTBALL_PROJECT_ID } from '../apps/server/src/apps/football-training.js';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
 import { workspaceSchemas } from '../apps/server/src/workspaces/contracts.js';
+import { workspaceOperationSchemas } from '../packages/protocol/src/workspace-operations.js';
 
 const workspace = { id: '861c6a57-2259-400a-9d03-20bc72942b11', projectId: FOOTBALL_PROJECT_ID, kind: 'unity', status: 'active', nodeId: '330f7fa0-2aba-47ed-b33f-2933c29a43ac' };
 function harness({ available = true, fail = false } = {}) {
@@ -129,4 +130,21 @@ test('generalist metadata is read-only and routed through the FYP workspace', as
     assert.equal(invocations[0][1], 'football_control');
     assert.equal(invocations[0][2].action, 'generalist_manifest');
     assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 0);
+});
+
+test('assessment reads and policy curation pass both Application and Node protocol validation', async () => {
+    const { apps, invocations, audits } = harness();
+    await apps.invoke('football_generalist_assessments', {});
+    await apps.invoke('football_generalist_policy_update', { policyId: 'generalist-musiala-v1', displayName: 'Musiala', featured: true });
+    assert.deepEqual(invocations.map((item: any[]) => item[2].action), ['generalist_assessments', 'generalist_policy_update']);
+    for (const invocation of invocations) {
+        assert.doesNotThrow(() => workspaceOperationSchemas.football_control.parse(invocation[2]));
+    }
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 1);
+    await assert.rejects(apps.invoke('football_generalist_policy_update', { policyId: '../escape', featured: true }));
+    await assert.rejects(apps.invoke('football_generalist_policy_update', { policyId: 'generalist-musiala-v1', featured: 'yes' }));
+    assert.equal(workspaceOperationSchemas.football_control.safeParse({
+        projectId: FOOTBALL_PROJECT_ID, workspaceId: workspace.id,
+        action: 'generalist_assessments', command: 'arbitrary',
+    }).success, false);
 });
