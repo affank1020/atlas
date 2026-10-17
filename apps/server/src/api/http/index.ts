@@ -1,4 +1,5 @@
 import { nodeSchemas } from '../../nodes/contracts.js';
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { workspaceSchemas, type WorkspaceToolName } from "../../workspaces/contracts.js";
@@ -96,6 +97,23 @@ export function createHttpTransport(services: ServerServices) {
         }
         if (request.method === "GET" && request.url === "/health") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(await catalog.status())); return; }
         if (request.method !== "POST" || request.url !== "/mcp") { response.writeHead(404, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "Not found" })); return; }
+        // Keep this trace free of credentials, request bodies and tool arguments. It
+        // identifies which stage an authenticated request reached if a client gives up.
+        const traceId = randomUUID();
+        const started = performance.now();
+        let stage = 'received';
+        let finished = false;
+        const trace = (event: string, extra: Record<string, unknown> = {}) => {
+            if (config.mcpDiagnostics) console.info(JSON.stringify({ component: 'mcp-http', traceId, event, stage,
+                elapsedMs: Math.round(performance.now() - started), ...extra }));
+        };
+        trace('stage');
+        request.once('end', () => trace('request_body_complete'));
+        response.once('finish', () => { finished = true; trace('response_finished', { status: response.statusCode }); });
+        response.once('close', () => {
+            if (!finished) trace('client_disconnected', { status: response.statusCode,
+                headersSent: response.headersSent, requestComplete: request.complete });
+        });
         // Public ingress MUST fail closed unless OAuth is configured. Local
         // loopback development retains its existing direct MCP behavior.
         if (config.mcpAuth.trustedIngress && !config.mcpAuth.enabled) {
@@ -105,13 +123,16 @@ export function createHttpTransport(services: ServerServices) {
         }
         if (config.mcpAuth.enabled) {
             let authenticated = false;
+            stage = 'authenticating'; trace('stage');
             try { authenticated = await mcpVerifier.authenticate(request.headers.authorization); }
             catch {
+                stage = 'auth_provider_unavailable'; trace('stage');
                 response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
                 response.end(JSON.stringify({ error: 'MCP_AUTH_PROVIDER_UNAVAILABLE' }));
                 return;
             }
             if (!authenticated) {
+                stage = 'auth_rejected'; trace('stage');
                 response.writeHead(401, {
                     'content-type': 'application/json', 'cache-control': 'no-store',
                     'www-authenticate': `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource', config.mcpAuth.resource).toString()}", scope="${config.mcpAuth.scope}"`
@@ -119,11 +140,29 @@ export function createHttpTransport(services: ServerServices) {
                 response.end(JSON.stringify({ error: 'MCP_UNAUTHORIZED' }));
                 return;
             }
+            stage = 'authenticated'; trace('stage');
         }
-        const server = createMcpTransport(services, config.mcpAuth.enabled ? config.mcpAuth.scope : undefined); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        response.on("close", () => { void transport.close(); void server.close(); });
-        try { await server.connect(transport); await transport.handleRequest(request, response); }
-        catch (error) { if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" }); if (!response.writableEnded) response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
+        let server: ReturnType<typeof createMcpTransport> | undefined;
+        try {
+            stage = 'creating_transport'; trace('stage');
+            server = createMcpTransport(services, config.mcpAuth.enabled ? config.mcpAuth.scope : undefined);
+            const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+            const connectedServer = server;
+            response.once('close', () => { void connectedServer.close().catch(() => trace('cleanup_failed')); });
+            stage = 'connecting'; trace('stage');
+            await server.connect(transport);
+            stage = 'handling_request'; trace('stage');
+            await transport.handleRequest(request, response);
+            stage = 'request_handled'; trace('stage');
+        } catch (error) {
+            stage = 'request_failed';
+            trace('stage', { error: error instanceof Error ? error.name : 'unknown' });
+            if (!response.headersSent) {
+                response.writeHead(500, { 'content-type': 'application/json' });
+                response.end(JSON.stringify({ error: 'MCP_REQUEST_FAILED' }));
+            } else if (!response.writableEnded) response.end();
+            if (server) void server.close().catch(() => trace('cleanup_failed'));
+        }
     });
     services.nodeGateway?.attach(http);
     http.on("close", () => { void lifecycle.close().catch(() => console.error("Atlas Server shutdown failed.")); });

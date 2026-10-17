@@ -154,4 +154,12 @@ Do **not** delete the old database or local private backup yet.
   types, Client ID/secret and registration options.
 - Auth0 login succeeds but tools fail: check `aud`, `sub` and `scope` claims,
   without sharing raw access tokens.
+- For an authenticated request that stalls, temporarily set
+  `ATLAS_MCP_DIAGNOSTICS=true` in the private VPS environment and recreate only
+  the Server container. Server logs emit a credential-free `mcp-http` trace ID,
+  stage, duration and finish/disconnect outcome. A last stage of `authenticating`
+  points to token verification; `creating_transport` or `connecting` points to
+  MCP setup; `handling_request` points to request processing or response
+  streaming. Turn the flag off after diagnosis. Do not collect raw Authorization
+  headers in Caddy access logs; remove temporary access logging when done.
 - Keep `/mcp` behind OAuth; don't remove Server validation to fix linking.

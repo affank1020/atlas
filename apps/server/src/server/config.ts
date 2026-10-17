@@ -55,6 +55,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     }
     return {
         databaseUrl, host, port,
+        mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
             issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
