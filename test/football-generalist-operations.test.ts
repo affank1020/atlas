@@ -43,6 +43,8 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
             stages: [{ id: 'S0' }], held_out_seeds: [515],
         }));
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'bogus', preset: 'smoke', seed: 42 }), (e: any) => e.code === 'INVALID_ARGUMENT');
+        // 50k remains allowlisted: no arbitrary scenario may receive that budget.
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 's0-contact-easy-v1', preset: 'pilot_50k', seed: 42 }), (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'mix', preset: 'smoke', seed: 515 }), (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'mix', preset: 'smoke', seed: 42 }));
         // S1 must never silently start from random weights.

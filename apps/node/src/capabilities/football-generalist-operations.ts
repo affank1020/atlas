@@ -360,14 +360,21 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (historicalWatch && x.scenario !== scenario)
         throw new AtlasError('Historical Watch must use the scenario saved with this policy.', 'INVALID_ARGUMENT');
     const scenarios = new Set(['mix', 's1_rehearsal', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
+    // Training-only aliases must be present in the versioned curriculum. Never
+    // permit phase aliases for evaluation/Watch, which require a real scenario.
+    const phaseIds = new Set((manifest.curriculum.shooting_phases ?? [])
+        .map((phase: { id: string }) => phase.id));
+    if (x.action === 'generalist_train') for (const id of phaseIds) scenarios.add(id);
     if (x.action === 'generalist_watch') scenarios.add(showcaseScenario);
     if (!historicalWatch && !scenarios.has(scenario))
         throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
+        if (x.preset === 'pilot_50k' && !['s2-score-basic-v1', 's2_phase_shoot_retention_v2', 's2_phase_interception_rehearsal_v3'].includes(scenario))
+            throw new AtlasError('50k pilot is reserved for the versioned S2.2 curricula.', 'INVALID_ARGUMENT');
         const sourceId = x.initializeFromRunId;
-        if (scenario === 's1_rehearsal' && !sourceId)
-            throw new AtlasError('S1 rehearsal requires a recorded S0 checkpoint.', 'INVALID_ARGUMENT');
+        if ((scenario === 's1_rehearsal' || phaseIds.has(scenario)) && !sourceId)
+            throw new AtlasError('Versioned curriculum training requires an explicit source checkpoint.', 'INVALID_ARGUMENT');
         if (sourceId) {
             if (!idPattern.test(sourceId)) throw new AtlasError('Invalid source run ID.', 'INVALID_ARGUMENT');
             const source = listGeneralistRuns(workspace).find(run => run.id === sourceId);
