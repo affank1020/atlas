@@ -2,10 +2,12 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { vi, test, expect } from 'vitest';
 import { AppShell, ProjectNav } from './AppShell';
 import { callTool } from './api';
-vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', callTool: vi.fn() }));
+import { Provider } from 'react-redux';
+import { store } from './store';
+vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
 test('shell lists real projects, exposes Ask globally, and omits unsupported primitives', async () => {
     vi.mocked(callTool).mockResolvedValue([{ id: 'real-project', name: 'Research' }]);
-    render(<AppShell page="project" projectId="real-project" contentClass=""><h1>Research overview</h1></AppShell>);
+    render(<Provider store={store}><AppShell page="project" projectId="real-project" contentClass=""><h1>Research overview</h1></AppShell></Provider>);
     expect(await screen.findByRole('link', { name: /Research/ })).toHaveAttribute('href', '#/projects/real-project');
     expect(screen.getByRole('link', { name: /Ask Atlas/ })).toHaveAttribute('href', '#/ask-atlas');
     expect(screen.getByRole('link', { name: /Nodes/ })).toHaveAttribute('href', '#/nodes');

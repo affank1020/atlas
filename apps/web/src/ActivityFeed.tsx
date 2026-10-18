@@ -15,11 +15,11 @@ function ActivityRow({ item }: { item: ReturnType<typeof presentActivity>[number
     </details>;
 }
 
-export function ActivityFeed({ projectId, title = 'Recent activity' }: { projectId?: string; title?: string }) {
+export function ActivityFeed({ projectId, title = 'Recent activity', refreshVersion = 0 }: { projectId?: string; title?: string; refreshVersion?: number }) {
     // Scope changes remount the reader so late responses cannot leak between projects.
-    return <ActivityReader key={projectId ?? 'all'} projectId={projectId} title={title} />;
+    return <ActivityReader key={projectId ?? 'all'} projectId={projectId} title={title} refreshVersion={refreshVersion} />;
 }
-function ActivityReader({ projectId, title }: { projectId?: string; title: string }) {
+function ActivityReader({ projectId, title, refreshVersion }: { projectId?: string; title: string; refreshVersion: number }) {
     const [workspaceId, setWorkspaceId] = useState('');
     const [category, setCategory] = useState(''); const [client, setClient] = useState('');
     const [events, setEvents] = useState<AuditEvent[]>([]); const [names, setNames] = useState<Record<string, string>>({});
@@ -27,6 +27,8 @@ function ActivityReader({ projectId, title }: { projectId?: string; title: strin
     const viewport = useRef<HTMLDivElement>(null);
     const anchor = useRef<{ id: string; offset: number } | null>(null);
     const namesLoaded = useRef(new Map<string, number>());
+    const [manualRefresh, setManualRefresh] = useState(0);
+    const previousScope = useRef('');
     useEffect(() => {
         let disposed = false; let timer: ReturnType<typeof setTimeout>;
         const controller = new AbortController();
@@ -49,10 +51,11 @@ function ActivityReader({ projectId, title }: { projectId?: string; title: strin
             } catch (e) { if (!disposed) setError((e as Error).message); }
             if (!disposed) timer = setTimeout(refresh, 5000);
         }
-        setEvents([]); setLoaded(false); setError(''); setUpdated('');
+        const scope = `${projectId ?? ''}:${workspaceId}`;
+        if (previousScope.current !== scope) { setEvents([]); setLoaded(false); setError(''); setUpdated(''); previousScope.current = scope; }
         void refresh();
         return () => { disposed = true; clearTimeout(timer); controller.abort(); };
-    }, [projectId, workspaceId]);
+    }, [projectId, workspaceId, refreshVersion, manualRefresh]);
     useLayoutEffect(() => {
         const container = viewport.current; const saved = anchor.current;
         if (container && saved) {
@@ -65,7 +68,7 @@ function ActivityReader({ projectId, title }: { projectId?: string; title: strin
     const visible = filterActivity(items, category, client, workspaceId);
     const workspaceOptions = { ...names, ...Object.fromEntries(items.filter(i => i.workspaceId).map(i => [i.workspaceId!, i.workspaceName!])) };
     return <section className="panel activity-panel" aria-label={title}>
-        <div className="panel-head"><div><p className="eyebrow">Workspace Activity · Core · Views</p><h2>{title}</h2></div><small role="status">{updated ? `Auto-refresh · Updated ${updated}` : 'Loading activity…'}</small></div>
+        <div className="panel-head"><div><p className="eyebrow">Workspace Activity · Core · Views</p><h2>{title}</h2></div><div className="actions"><small role="status">{updated ? `Auto-refresh · Updated ${updated}` : 'Loading activity…'}</small><button className="ghost" onClick={() => setManualRefresh(value => value + 1)}>Refresh</button></div></div>
         <div className="activity-filters">
             <label>Category<select value={category} onChange={e => setCategory(e.target.value)}>{[['', 'All'], ['workspace', 'Workspace'], ['files', 'Files'], ['unity', 'Unity'], ['git', 'Git'], ['dev', 'Development'], ['error', 'Errors'], ['core', 'Core'], ['view', 'Views']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Client<select value={client} onChange={e => setClient(e.target.value)}><option value="">All clients</option>{[...new Set([...items.map(i => clientName(i.client)), ...(client ? [client] : [])])].sort().map(c => <option key={c} value={c}>{clientName(c)}</option>)}</select></label>

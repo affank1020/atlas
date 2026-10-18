@@ -1,9 +1,9 @@
 # Atlas Connect — Implementation Roadmap
 
-**Version:** 0.1 (planning baseline)  
-**Date:** 12 October 2026  
+**Version:** 0.2 (public/private boundary clarified)  
+**Date:** 19 October 2026  
 **Status:** Proposed; implementation not started  
-**Scope:** macOS Node + Samsung Android Node (tablet first), using a hosted Atlas Server and optional private Tailscale transport.
+**Scope:** macOS Node + Samsung Android Node (tablet first), using a hosted Atlas Server and optional private Tailscale transport. The hosted Server remains accessible to public web applications (particularly a portfolio website reading content published through the Atlas Portfolio CMS) and to ChatGPT via its existing OAuth/MCP endpoint.
 
 ## 1. Vision and intended result
 
@@ -18,6 +18,7 @@ This is **not** a port of Observatory, Views, Projects or the main Atlas web app
 3. Send a file from either device to the other, with explicit destination approval, progress and clear completion/error status.
 4. Open either companion UI to see trusted devices, connection status and recent transfers.
 5. Mac and Samsung can communicate across different networks while signed into the tailnet; Atlas Server remains accessible to ChatGPT via its public OAuth endpoint.
+6. An external portfolio website fetches published CMS content and media from Atlas over ordinary public HTTPS with **no Tailscale installation required**. Editing and publishing remain authenticated Atlas operations.
 
 ### Non-goals for V1
 
@@ -30,12 +31,27 @@ This is **not** a port of Observatory, Views, Projects or the main Atlas web app
 
 ## 2. Architecture decisions
 
-- **Atlas Server (VPS):** device registry, existing Node authentication and UUIDs, authenticated capability routing, presence, transfer signalling, transfer metadata, expiry and audit. Retain the existing public HTTPS/MCP/OAuth route.
+- **Atlas Server (VPS):** device registry, existing Node authentication and UUIDs, authenticated capability routing, presence, transfer signalling, transfer metadata, expiry and audit. Retain existing public HTTPS/MCP/OAuth and published-content/media routes for external applications.
 - **Atlas Mac Node:** extend the current Node V2 runtime and native SwiftUI control interface with device clipboard and file capabilities; preserve its identity and Workspace/Unity/training features.
 - **Atlas Android Node:** new Kotlin + Jetpack Compose companion, implementing a compatible subset of the Atlas Node protocol. It advertises only capabilities Android can safely support.
-- **Tailscale:** private IP/DNS/connectivity between machines, including a private HTTPS/WSS ingress to Atlas Node services. Tailnet policy limits access. Device credentials, explicit approvals and typed authorisation still apply.
+- **Tailscale:** *additional* private IP/DNS/connectivity between machines, including a private HTTPS/WSS ingress to Atlas Node services. It must not become a prerequisite for reaching Atlas's public CMS/API, web app, or ChatGPT MCP. Tailnet policy limits access. Device credentials, explicit approvals and typed authorisation still apply.
 - **Control plane vs data plane:** small authenticated messages and transfer setup through Server; prefer streaming binary data directly over the tailnet **when peers are reachable**, otherwise give a clear failure and later add an optional bounded relay. Do not send arbitrary large files through the existing JSON Workspace operations.
 - **Android lifecycle:** full Node operation while app is active; background delivery is best-effort using queued requests/notifications. Use Android-compliant user-initiated transfer work for lengthy transfers. No dependency on uninterrupted background socket uptime.
+
+### Public application access and CMS boundary (added 19 October 2026)
+
+**Architectural invariant:** introducing Tailscale must **never make Atlas generally tailnet-only**. Atlas is both (a) a public-facing application/API platform and (b) a control plane for private trusted Nodes.
+
+- **Public HTTPS ingress (existing Caddy/domain):** continue serving the Atlas web app where intended, ChatGPT's authenticated MCP/OAuth routes, and explicitly published, read-only portfolio CMS content and media to third-party websites without requiring Tailscale.
+- **Existing API integration points:** `GET /api/public/portfolio` and `GET /api/media/:assetId/:variant` are implemented. Treat these as the current external Portfolio delivery surface; confirm production routing, published-only semantics, availability and caching as part of the ongoing Contentful → Atlas migration.
+- **CMS authoring:** retain the Portfolio application *within Atlas* as the place to edit drafts, upload media, publish/unpublish, and manage revisions. Authoring and mutations require proper user/application authentication and authorisation; do not expose CMS write operations through anonymous public reads.
+- **External app authentication:** public published-content reads may be anonymous; future private reads and service-to-service writes need dedicated scoped credentials/flows, separate from Node credentials. Never put a privileged API secret in client-side JavaScript. Browser CORS rules are not access control.
+- **Private device ingress:** Node registration/control WebSockets, approved device capabilities and peer file-transfer channels may use Tailscale Serve/MagicDNS or directly reachable tailnet addresses. Keep Node identity and per-operation authorisation as a distinct layer.
+- **Strict ingress boundary:** audit current public `/api/tools/*`, Node enrolment, debug and administrative routes; ensure public routing exposes only deliberately approved endpoints and protects all privileged operations with server-side auth. Do not assume changing CORS or IP reachability is enough.
+- **Deployability:** public Caddy routing and private tailnet routing must coexist with independent rollback. Preserve TLS, OAuth discovery, webhook routes where still needed, external-app reliability and meaningful cache policies.
+- **Tests:** from a device **not on Tailscale**, fetch published portfolio JSON/media and exercise ChatGPT MCP OAuth; confirm draft/unpublished content and privileged mutations are inaccessible without authorisation. Separately test private Node WSS over tailnet and existing Workspace/Unity capabilities.
+
+This requirement spans Atlas Connect networking and the independent Portfolio CMS migration; Tailscale is not the transport for normal external web-app clients.
 
 ## 3. Roadmap and milestone gates
 
@@ -49,9 +65,9 @@ This is **not** a port of Observatory, Views, Projects or the main Atlas web app
 - Test Mac ↔ VPS and Mac ↔ Samsung connectivity, including whether traffic is direct or relayed via `tailscale ping` / `tailscale status`.
 - Expose a **private** Atlas Node endpoint (e.g. Tailscale Serve to existing ingress) and verify WebSocket upgrade/authentication, TLS and server routing.
 - Point a test Node at that WSS endpoint, measure stability and verify reconnects. Migrate the production Mac Node only after success; preserve UUID/credential.
-- Retain public ChatGPT MCP/OAuth domain, existing deployment path and rollback configuration. Ensure VPS admin access remains reachable before considering public SSH firewall changes.
+- Retain public ChatGPT MCP/OAuth, Atlas web, Portfolio published-content/media endpoints, existing deployment path and rollback configuration. Keep public and private ingress routes explicitly separated; verify ordinary internet clients still work without Tailscale. Ensure VPS admin access remains reachable before considering public SSH firewall changes.
 
-**Acceptance gate:** Mac Node reliably registers through tailnet; Workspace and Unity calls still function; public ChatGPT MCP still works; returning to public Node WSS is documented and tested.
+**Acceptance gate:** Mac Node reliably registers through tailnet; Workspace and Unity calls still function; public ChatGPT MCP and external Portfolio published-content/media reads still work *without* Tailscale; privileged endpoints remain authorised; returning to public Node WSS is documented and tested.
 
 ### M1 — First-class device capability contracts
 **Estimate:** 2–4 development days  
@@ -148,13 +164,15 @@ This is **not** a port of Observatory, Views, Projects or the main Atlas web app
 | Android restricts background clipboard access | Explicit Share Intent and foreground actions; no automatic Android clipboard scanning |
 | Android limits long-lived background services | Active Node plus queued messages, notifications and compliant transfer jobs; no fake always-online status |
 | VPS deployment interrupts Node WebSocket | Existing reconnect, local diagnostics, timestamps, and keep public WSS rollback |
+| Private tailnet deployment accidentally blocks public Atlas/CMS consumers | Preserve separate public HTTPS routes; test published portfolio and ChatGPT MCP from non-tailnet client on every ingress change |
+| Public API exposes Atlas administrative/Node actions | Explicit route allowlisting, server-side auth/scope checks, rate limits and ingress review; CORS alone is insufficient |
 | Broad filesystem/clipboard privileges | Narrow capability schemas, user approval, destination sandbox/pickers, expiry, size limits |
 | Accidental leaks between devices | Preserve Node auth, tailnet grants, per-transfer authorisation, avoid persistent clipboard contents, redact logs |
 | Scope creep into full mobile Atlas | Companion-only native interface; no Observatory port or general Workspace editor in V1 |
 
 ## 6. Immediate next actions
 
-1. **M0 spike:** inspect VPS ingress (Docker/Caddy) and Tailscale state; establish private Serve endpoint without changing public MCP; measure existing Node disconnect patterns before/after.
+1. **M0 spike:** inspect VPS ingress (Docker/Caddy) and Tailscale state; establish private Serve endpoint without changing public MCP or external published Portfolio APIs; audit routing/auth and measure existing Node disconnect patterns before/after.
 2. **M1 contract design:** write a short ADR covering device capability names, authorisation, inbox semantics, active vs offline targets, transfer session shape and backwards compatibility with Node V2.
 3. **M2/M3 thin vertical slice:** build Mac receiver and Android Share Intent sender first. Validate Android enrolment and text handoff *before* implementing files.
 4. **Milestone tracking:** maintain this document as the source of truth, marking gates complete only after real device tests with evidence.

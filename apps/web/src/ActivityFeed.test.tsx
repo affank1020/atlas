@@ -50,6 +50,17 @@ it('retains activity on refresh failure and ignores late responses after scope c
     mounted.unmount(); await act(async () => resolve([result])); expect(screen.queryByText('Started Play Mode')).not.toBeInTheDocument();
 });
 
+it('refreshes on demand without clearing visible activity', async () => {
+    api.callTool.mockImplementation(async (name: string) => name === 'list_project_workspaces' ? [] : [result]);
+    render(<ActivityFeed projectId="project" />);
+    expect(await screen.findByText('Started Play Mode')).toBeInTheDocument();
+    const before = api.callTool.mock.calls.filter(([name]) => name === 'get_recent_activity').length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(screen.getByText('Started Play Mode')).toBeInTheDocument();
+    await act(async () => {});
+    expect(api.callTool.mock.calls.filter(([name]) => name === 'get_recent_activity')).toHaveLength(before + 1);
+});
+
 it('does not overlap requests and pauses polling while hidden', async () => {
     vi.useFakeTimers(); let resolve!: (data: AuditEvent[]) => void;
     api.callTool.mockImplementation((name: string) => name === 'list_project_workspaces' ? Promise.resolve([]) : new Promise(r => { resolve = r; }));

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { API_BASE, callTool } from './api';
-import type { Project } from './types';
+import { API_BASE } from './api';
+import { useListProjectsQuery } from './atlasApi';
 
 export type ProjectSection = 'overview' | 'data' | 'views' | 'applications' | 'workspaces' | 'activity' | 'settings';
 const sections: ProjectSection[] = ['overview', 'data', 'views', 'applications', 'workspaces', 'activity', 'settings'];
@@ -9,15 +9,9 @@ export function ProjectNav({ projectId, section }: { projectId: string; section:
 }
 
 export function AppShell({ page, projectId, contentClass, children }: { page: string; projectId?: string; contentClass: string; children: ReactNode }) {
-    const [projects, setProjects] = useState<Project[]>([]);
-    const [error, setError] = useState('');
+    const { data: projects = [], error } = useListProjectsQuery({ includeArchived: false });
     const [open, setOpen] = useState(false);
-    useEffect(() => {
-        let live = true;
-        callTool<Project[]>('list_projects').then(value => { if (live) { setProjects(value); setError(''); } }).catch(() => { if (live) setError('Projects unavailable'); });
-        setOpen(false);
-        return () => { live = false; };
-    }, [page, projectId, location.hash]);
+    useEffect(() => setOpen(false), [page, projectId]);
     const project = projects.find(p => p.id === projectId);
     const link = (href: string, label: string, active: boolean, icon: string) => <a href={href} className={active ? 'active' : ''} aria-current={active ? 'page' : undefined}><span aria-hidden="true" className="nav-icon">{icon}</span>{label}</a>;
     return <div className={`app-shell ${open ? 'nav-open' : ''}`}>
@@ -30,7 +24,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                 <p className="nav-group">Projects</p>
                 {link('#/projects', 'All projects', page === 'projects', '▦')}
                 {projects.map(p => <a href={`#/projects/${p.id}`} key={p.id} className={p.id === projectId ? 'active project-link' : 'project-link'} aria-current={p.id === projectId ? 'page' : undefined}><span className="project-monogram" aria-hidden="true">{p.name.slice(0, 2).toUpperCase()}</span><span>{p.name}</span></a>)}
-                {error && <small className="nav-message">{error}</small>}
+                {error && <small className="nav-message">Projects unavailable</small>}
                 <p className="nav-group">Infrastructure</p>
                 {link('#/nodes', 'Nodes', page === 'nodes', '▤')}
                 {link('#/activity', 'Activity', page === 'activity', '≋')}
