@@ -41,7 +41,7 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
         }));
         await writeFile(path.join(root, 'ml-agents/config/generalist_curriculum.json'), JSON.stringify({
             stages: [{ id: 'S0' }], held_out_seeds: [515],
-            shooting_phases: [{ id: 's2_phase_balanced_rehearsal_v4' }],
+            shooting_phases: [{ id: 's2_phase_balanced_rehearsal_v4' }, { id: 's2_phase_early_intercept_reversal_v5' }],
         }));
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'bogus', preset: 'smoke', seed: 42 }), (e: any) => e.code === 'INVALID_ARGUMENT');
         // 50k remains allowlisted: no arbitrary scenario may receive that budget.
@@ -49,6 +49,10 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
         // S2.2d is admitted by this allowlist, but still requires a source checkpoint.
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
             scenario: 's2_phase_balanced_rehearsal_v4', preset: 'pilot_50k', seed: 46 }),
+            (e: any) => e.code === 'INVALID_ARGUMENT' && /explicit source checkpoint/.test(e.message));
+        // Early-interception training is separately versioned but shares the mandatory warm-start gate.
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
+            scenario: 's2_phase_early_intercept_reversal_v5', preset: 'pilot_50k', seed: 48 }),
             (e: any) => e.code === 'INVALID_ARGUMENT' && /explicit source checkpoint/.test(e.message));
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'mix', preset: 'smoke', seed: 515 }), (e: any) => e.code === 'INVALID_ARGUMENT');
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train', scenario: 'mix', preset: 'smoke', seed: 42 }));

@@ -57,22 +57,17 @@ function paths(name) {
 }
 
 function hostedWebUrl() {
-  if (existsSync(nodeEnvFile)) {
-    // Read the hostname only; never print the Node identity or credential.
-    const match = readFileSync(nodeEnvFile, "utf8")
-      .match(/^ATLAS_SERVER_URL\s*=\s*["']?([^"'\r\n# ]+)/m);
-    if (match) {
-      try {
-        const url = new URL(match[1]);
-        if (url.protocol === "wss:" && url.pathname === "/node/connect") {
-          url.protocol = "https:";
-          url.pathname = "/";
-          return url.toString();
-        }
-      } catch { /* Ignore invalid local configuration; startup reports its error. */ }
-    }
-  }
-  return "https://affan-atlas.duckdns.org/";
+  // The public Web URL is independent of the private Node WebSocket transport.
+  const fallback = "https://affan-atlas.duckdns.org/";
+  const configured = process.env.ATLAS_WEB_URL || (existsSync(nodeEnvFile)
+    ? readFileSync(nodeEnvFile, "utf8").match(/^ATLAS_WEB_URL\s*=\s*["']?([^"'\r\n# ]+)/m)?.[1]
+    : undefined);
+  if (!configured) return fallback;
+  try {
+    const url = new URL(configured);
+    if (url.protocol === "https:" && !url.username && !url.password) return url.toString();
+  } catch { /* Fall back to the known public origin. */ }
+  return fallback;
 }
 
 function commandExists(command) {

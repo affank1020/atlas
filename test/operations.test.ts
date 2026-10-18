@@ -98,6 +98,20 @@ test("Atlas Control CLI and VPS diagnostics scripts parse", () => {
   assert.equal(vps.status, 0, vps.stderr);
 });
 
+test("private Tailscale Node ingress is opt-in, loopback-only and path-restricted", () => {
+  const compose = readFileSync("infra/docker-compose.production.yml", "utf8");
+  const config = readFileSync("infra/Caddyfile.node-private", "utf8");
+  const deploy = readFileSync(".github/workflows/deploy.yml", "utf8");
+  assert.ok(compose.includes('profiles: ["tailscale"]'));
+  assert.ok(compose.includes('"127.0.0.1:3100:8080"'));
+  assert.ok(config.includes("@node path /node/connect /node/enrol"));
+  assert.ok(config.includes('respond "Not found" 404'));
+  assert.ok(!config.includes("/api/tools"));
+  assert.ok(!config.includes("/mcp"));
+  assert.ok(!config.includes("/api/public"));
+  assert.ok(deploy.includes("infra/Caddyfile.node-private"));
+});
+
 test("help exposes hosted, local development, launchd and VPS modes", () => {
   const result = spawnSync(process.execPath, [controlScript, "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -233,6 +247,28 @@ test("machine-readable Node diagnostics are bounded and never expose credentials
   assert.equal(status.unmanagedNodeCount, 0);
   assert.ok(status.logs.every((path: string) => path.endsWith(".log")));
   assert.doesNotMatch(result.stdout, /ATLAS_NODE_CREDENTIAL|test-node-credential|Bearer /);
+});
+
+test("hosted Web URL stays public when the Node connects through Tailscale", t => {
+  const item = fixture("hosted");
+  t.after(() => rmSync(item.root, { recursive: true, force: true }));
+  const envFile = join(item.nodeDirectory, ".env.node");
+  const original = readFileSync(envFile, "utf8");
+  const tailnet = original.replace("wss://atlas.example/node/connect", "wss://vps.example.ts.net:8443/node/connect");
+  writeFileSync(envFile, tailnet);
+
+  const status = item.run(["status", "--json"]);
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).webUrl, "https://affan-atlas.duckdns.org/");
+
+  writeFileSync(envFile, tailnet + "\nATLAS_WEB_URL=https://custom-public.example/\n");
+  const configured = item.run(["status", "--json"]);
+  assert.equal(configured.status, 0, configured.stderr);
+  assert.equal(JSON.parse(configured.stdout).webUrl, "https://custom-public.example/");
+
+  const overridden = item.run(["status", "--json"], { ATLAS_WEB_URL: "https://another-public.example/" });
+  assert.equal(overridden.status, 0, overridden.stderr);
+  assert.equal(JSON.parse(overridden.stdout).webUrl, "https://another-public.example/");
 });
 
 test("native Mac companion has valid shell launcher and uses atlasctl instead of a second supervisor", () => {

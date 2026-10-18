@@ -1,0 +1,16 @@
+# Local HTTP-only ingress for Tailscale's TLS-terminated TCP forwarding.
+# Not exposed to the public internet. Tailscale terminates TLS and this
+# sidecar permits ONLY the Node WebSocket and one-use enrolment endpoint.
+{
+    auto_https off
+}
+
+:8080 {
+    @node path /node/connect /node/enrol
+    handle @node {
+        reverse_proxy server:3000
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

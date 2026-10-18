@@ -5,12 +5,17 @@ import { MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION, nodeRequestSchema, registe
 import { requiredCapability } from '@atlas/protocol/runtime';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 
-export interface StandaloneNodeConfig { id: string; name: string; platform?: string; version?: string; serverUrl: string; token: string; reconnectMinMs?: number; reconnectMaxMs?: number }
+export interface StandaloneNodeConfig {
+    id: string; name: string; platform?: string; version?: string; serverUrl: string; token: string;
+    reconnectMinMs?: number; reconnectMaxMs?: number;
+    heartbeatMs?: number; heartbeatTimeoutMs?: number;
+}
 /** Outbound-only Node connection. Socket state never changes the trusted local runtime policy. */
 export class StandaloneNode extends EventEmitter {
     private socket?: WebSocket;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
     private registrationTimer?: ReturnType<typeof setTimeout>;
+    private heartbeatTimer?: ReturnType<typeof setInterval>;
     private reconnectAttempt = 0;
     private errorReported = false;
     private running = false;
@@ -20,9 +25,28 @@ export class StandaloneNode extends EventEmitter {
     start() { if (this.running) return; this.running = true; this.connect(); }
     private connect() {
         if (!this.running) return;
-        const socket = new WebSocket(this.config.serverUrl, { headers: { Authorization: `Bearer ${this.config.token}` }, maxPayload: MAX_NODE_FRAME_BYTES });
-        this.socket = socket; this.registered = false;
+        const socket = new WebSocket(this.config.serverUrl, { headers: { Authorization: `Bearer ${this.config.token}` }, maxPayload: MAX_NODE_FRAME_BYTES, handshakeTimeout: 15_000 });
+        this.socket = socket; this.registered = false; this.errorReported = false;
+        let lastPong = Date.now();
+        const heartbeatMs = this.config.heartbeatMs ?? 15_000;
+        const heartbeatTimeoutMs = this.config.heartbeatTimeoutMs ?? 45_000;
+        const clearHeartbeat = () => { clearInterval(this.heartbeatTimer); this.heartbeatTimer = undefined; };
+        socket.on('pong', () => { lastPong = Date.now(); });
         socket.on('open', () => {
+            lastPong = Date.now();
+            clearHeartbeat();
+            this.heartbeatTimer = setInterval(() => {
+                if (!this.running || this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+                // A sleeping Mac can leave the TCP/WebSocket looking open after the server
+                // has already discarded it. Tear it down so normal backoff reconnects.
+                if (Date.now() - lastPong > heartbeatTimeoutMs) {
+                    this.emit('connectionError', 'WebSocket heartbeat timed out; reconnecting');
+                    socket.terminate();
+                    return;
+                }
+                socket.ping();
+            }, heartbeatMs);
+            this.heartbeatTimer.unref();
             socket.send(JSON.stringify({ type: 'register', protocol: NODE_PROTOCOL_VERSION,
                 nodeId: this.config.id, name: this.config.name, platform: this.config.platform ?? process.platform, ...(this.config.version && { version: this.config.version }), capabilities: this.runtime.getCapabilities() }));
             this.registrationTimer = setTimeout(() => socket.close(1008, 'Registration timeout'), 5_000);
@@ -51,6 +75,7 @@ export class StandaloneNode extends EventEmitter {
             this.emit('socketClosed', code, String(reason).slice(0, 120));
             if (!this.registered && reason.length && !this.errorReported) { this.errorReported = true; this.emit('connectionError', String(reason).slice(0, 200)); }
             clearTimeout(this.registrationTimer);
+            clearHeartbeat();
             if (this.socket !== socket) return;
             this.socket = undefined;
             const wasOnline = this.registered; this.registered = false;
@@ -89,7 +114,7 @@ export class StandaloneNode extends EventEmitter {
     }
     async stop() {
         this.running = false;
-        clearTimeout(this.reconnectTimer); clearTimeout(this.registrationTimer);
+        clearTimeout(this.reconnectTimer); clearTimeout(this.registrationTimer); clearInterval(this.heartbeatTimer); this.heartbeatTimer = undefined;
         this.runtime.close?.();
         const socket = this.socket;
         if (socket?.readyState === WebSocket.OPEN) socket.close(1000, 'Node shutdown');

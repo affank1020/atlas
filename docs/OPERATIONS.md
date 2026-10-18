@@ -59,6 +59,79 @@ docker compose --env-file infra/production.env -f infra/docker-compose.productio
 Avoid `docker compose config` without `--quiet`, as it can print resolved
 secrets. Never run `docker compose down -v` on the VPS.
 
+## Optional Tailscale private Node transport (staged, not yet activated)
+
+Atlas's public HTTPS endpoint, Portfolio CMS API/media and ChatGPT MCP/OAuth stay
+publicly reachable through the existing Caddy ingress. **Tailscale is an
+additional private transport for Node WebSockets**, not a replacement for public
+Atlas APIs or an alternative to Node authentication.
+
+The initial HTTPS reverse proxy on `8443` accepted Node registrations but
+experienced repeated abnormal WebSocket closures (`1006`); it is not
+accepted as the production Node transport yet. The opt-in alternative uses
+**Tailscale Serve TLS-terminated TCP** on a separate tailnet-only port,
+feeding a dedicated HTTP/1.1 Caddy sidecar. Its listener is bound to
+VPS loopback `127.0.0.1:3100`; its routes are limited to
+`/node/connect` (credential-authenticated WSS upgrade) and `/node/enrol`
+(one-use enrolment token). All other routes return HTTP 404.
+
+### Activate the isolated TCP-mode test endpoint
+
+After merging/deploying the Atlas commit that contains
+`infra/docker-compose.production.yml` and
+`infra/Caddyfile.node-private`, on the VPS:
+
+```bash
+cd ~/atlas-deploy
+docker compose --env-file infra/production.env -f infra/docker-compose.production.yml \
+  --profile tailscale up -d node-private-ingress
+curl -i http://127.0.0.1:3100/health
+sudo tailscale serve --bg --tls-terminated-tcp=8444 tcp://127.0.0.1:3100
+tailscale serve status
+```
+
+The `/health` curl above must return **404**, because this proxy should not
+permit administrative or general Atlas API access. If Tailscale Serve rejects
+the TCP listener configuration, do not modify the public ingress or Node
+identity; inspect the installed Tailscale version and CLI help first.
+
+From the Mac, while connected to the tailnet, check that
+`https://vps-996c17b1.tail8f0f1e.ts.net:8444/health` returns 404 and
+a WebSocket upgrade to `/node/connect` **without** credentials returns 401.
+Then edit only `ATLAS_SERVER_URL` in private `apps/node/.env.node`:
+
+```dotenv
+ATLAS_SERVER_URL=wss://vps-996c17b1.tail8f0f1e.ts.net:8444/node/connect
+```
+
+Run `./atlasctl restart` to compile the heartbeat-enabled Node and
+reconnect with its existing UUID, credential and Workspace bindings.
+Monitor `./atlasctl status --json`, `./atlasctl logs node`, and the live
+server Node registry for repeated disconnects. Run a real read-only
+Workspace or Git operation; leave the Mac awake and test sleep/wake recovery
+separately. The Node client watchdog probes every 15 seconds and forcibly
+recycles a connection after 45 seconds without a WebSocket pong, so a
+stale connection after sleep should recover rather than require restart.
+
+### Rollback and cleanup
+
+To restore the known public transport, change only the Node URL back to
+`wss://affan-atlas.duckdns.org/node/connect` and run `./atlasctl restart`.
+Keep both tailnet test endpoints isolated until the private route is proven.
+
+After a successful comparison, optional cleanup on VPS:
+
+```bash
+sudo tailscale serve --tls-terminated-tcp=8444 off
+docker compose --env-file infra/production.env -f infra/docker-compose.production.yml \
+  --profile tailscale stop node-private-ingress
+```
+
+Don't turn off the existing `8443` HTTPS Serve listener until its use has been
+reviewed; don't use `tailscale funnel` or publish VPS port `3100` on
+`0.0.0.0`. Tailnet ACL/grants should restrict access to the private Node
+port, and the existing app-level Node credentials must remain mandatory.
+
 ## MacBook Node cutover
 
 **Cutover order for uninterrupted ChatGPT workspace access:** first establish
