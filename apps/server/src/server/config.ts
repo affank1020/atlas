@@ -11,7 +11,15 @@ export function loadUnityConfig(env: NodeJS.ProcessEnv = process.env) {
 export function loadAiConfig(env: NodeJS.ProcessEnv = process.env) { return { baseUrl: env.OLLAMA_URL ?? 'http://127.0.0.1:11434' }; }
 export function loadRetrievalConfig(env: NodeJS.ProcessEnv = process.env) { return { embeddingModel: env.FABRIC_EMBEDDING_MODEL ?? 'nomic-embed-text' }; }
 export function loadPortfolioConfig(env: NodeJS.ProcessEnv = process.env) {
-    return { mediaRoot: env.ATLAS_MEDIA_DIR ?? path.resolve('data/media'), integrationEnvironment: {
+    const endpoint = env.ATLAS_R2_ENDPOINT?.trim() ?? '';
+    const bucket = env.ATLAS_R2_BUCKET?.trim() ?? '';
+    const accessKeyId = env.ATLAS_R2_ACCESS_KEY_ID?.trim() ?? '';
+    const secretAccessKey = env.ATLAS_R2_SECRET_ACCESS_KEY?.trim() ?? '';
+    const values = [endpoint, bucket, accessKeyId, secretAccessKey];
+    if (values.some(Boolean) && !values.every(Boolean))
+        throw new Error('ATLAS_R2_ENDPOINT, ATLAS_R2_BUCKET, ATLAS_R2_ACCESS_KEY_ID and ATLAS_R2_SECRET_ACCESS_KEY must all be set together.');
+    const r2 = values.every(Boolean) ? { endpoint, bucket, accessKeyId, secretAccessKey } : null;
+    return { mediaRoot: env.ATLAS_MEDIA_DIR ?? path.resolve('data/media'), r2, integrationEnvironment: {
         CONTENTFUL_SPACE_ID: env.CONTENTFUL_SPACE_ID,
         CONTENTFUL_ENVIRONMENT: env.CONTENTFUL_ENVIRONMENT,
         CONTENTFUL_DELIVERY_ACCESS_TOKEN: env.CONTENTFUL_DELIVERY_ACCESS_TOKEN,

@@ -1,9 +1,8 @@
 import { loadPortfolioConfig } from "../server/config.js";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { Pool } from "pg";
 import sharp from "sharp";
+import { createMediaObjectStore, MediaObjectNotFound, type MediaObjectStore, type R2MediaConfig } from "./storage.js";
 import type { CoreService } from "../core/service.js";
 import { AtlasError } from "../shared/errors.js";
 import type { RetrievalIndex, RetrievalDocument } from "../retrieval/indexing.js";
@@ -207,7 +206,11 @@ const extensionFor = (mime: string) => ({ "image/jpeg":"jpg", "image/png":"png",
 
 export class PortfolioMediaService {
     readonly pool: Pool;
-    constructor(databaseUrl: string, readonly root = loadPortfolioConfig().mediaRoot) { this.pool = new Pool({ connectionString: databaseUrl }); }
+    readonly objects: MediaObjectStore;
+    constructor(databaseUrl: string, readonly root = loadPortfolioConfig().mediaRoot, r2: R2MediaConfig | null = loadPortfolioConfig().r2) {
+        this.pool = new Pool({ connectionString: databaseUrl });
+        this.objects = createMediaObjectStore(root, r2);
+    }
     async close() { await this.pool.end(); }
     async list() { const result = await this.pool.query(`SELECT id,original_name AS "originalName",mime_type AS "mimeType",byte_size AS "byteSize",width,height,alt_text AS "altText",caption,status,created_at AS "createdAt",updated_at AS "updatedAt" FROM media_assets ORDER BY created_at DESC`); return result.rows.map(row => ({ ...row, byteSize: Number(row.byteSize), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), url: `/api/media/${row.id}/original`, ...(String(row.mimeType).startsWith("image/") && { thumbnailUrl: `/api/media/${row.id}/thumbnail`, previewUrl: `/api/media/${row.id}/preview` }) })); }
     async upload(input: { fileName: string; mimeType: string; base64: string; altText?: string; caption?: string; client?: string }) {
@@ -217,7 +220,6 @@ export class PortfolioMediaService {
         const checksum = createHash("sha256").update(bytes).digest("hex");
         const existing = await this.pool.query(`SELECT id FROM media_assets WHERE checksum=$1 AND status='active' LIMIT 1`, [checksum]);
         if (existing.rows[0]) return (await this.list()).find(asset => asset.id === existing.rows[0].id);
-        await mkdir(this.root, { recursive: true });
         const id = randomUUID(), originalKey = `${checksum}.${extensionFor(input.mimeType)}`;
         let width: number | undefined, height: number | undefined;
         const variants: { name:string; key:string; mime:string; bytes:Buffer; width?:number; height?:number }[] = [];
@@ -225,13 +227,13 @@ export class PortfolioMediaService {
             const image = sharp(bytes, { animated: false }); const metadata = await image.metadata(); width = metadata.width; height = metadata.height;
             for (const [name, size] of [["thumbnail",480],["preview",1600]] as const) { const output = await sharp(bytes).rotate().resize({ width:size, height:size, fit:"inside", withoutEnlargement:true }).webp({ quality:82 }).toBuffer({ resolveWithObject:true }); variants.push({ name, key:`${checksum}-${name}.webp`, mime:"image/webp", bytes:output.data, width:output.info.width, height:output.info.height }); }
         } else if (!bytes.subarray(0,5).equals(Buffer.from("%PDF-"))) throw new AtlasError("The uploaded file is not a valid PDF.");
-        await writeFile(path.join(this.root, originalKey), bytes, { flag: "wx" }).catch(error => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
-        for (const variant of variants) await writeFile(path.join(this.root, variant.key), variant.bytes, { flag: "wx" }).catch(error => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
+        await this.objects.put(originalKey, bytes, input.mimeType);
+        for (const variant of variants) await this.objects.put(variant.key, variant.bytes, variant.mime);
         const connection = await this.pool.connect(); try { await connection.query("BEGIN"); await connection.query(`INSERT INTO media_assets(id,checksum,storage_key,original_name,mime_type,byte_size,width,height,alt_text,caption,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id,checksum,originalKey,input.fileName,input.mimeType,bytes.length,width??null,height??null,input.altText?.trim()||null,input.caption?.trim()||null,input.client??"portfolio-observatory"]); for (const variant of variants) await connection.query(`INSERT INTO media_variants(asset_id,name,storage_key,mime_type,byte_size,width,height) VALUES($1,$2,$3,$4,$5,$6,$7)`,[id,variant.name,variant.key,variant.mime,variant.bytes.length,variant.width??null,variant.height??null]); await connection.query("COMMIT"); } catch(error) { await connection.query("ROLLBACK"); throw error; } finally { connection.release(); }
         return (await this.list()).find(asset => asset.id === id)!;
     }
     async update(id: string, input: { altText?: string | null; caption?: string | null; status?: "active" | "archived" }) { const result = await this.pool.query(`UPDATE media_assets SET alt_text=CASE WHEN $2::boolean THEN $3 ELSE alt_text END,caption=CASE WHEN $4::boolean THEN $5 ELSE caption END,status=coalesce($6,status),updated_at=now() WHERE id=$1 RETURNING id`,[id,input.altText!==undefined,input.altText?.trim()||null,input.caption!==undefined,input.caption?.trim()||null,input.status??null]); if(!result.rows[0])throw new AtlasError(`Media asset '${id}' was not found.`,"NOT_FOUND"); return (await this.list()).find(asset=>asset.id===id); }
-    async file(id: string, variant: string) { const result = variant === "original" ? await this.pool.query(`SELECT storage_key,mime_type FROM media_assets WHERE id=$1 AND status='active'`,[id]) : await this.pool.query(`SELECT v.storage_key,v.mime_type FROM media_variants v JOIN media_assets a ON a.id=v.asset_id WHERE v.asset_id=$1 AND v.name=$2 AND a.status='active'`,[id,variant]); if(!result.rows[0])throw new AtlasError("Media file was not found.","NOT_FOUND"); return { bytes: await readFile(path.join(this.root,result.rows[0].storage_key)), mimeType: result.rows[0].mime_type }; }
+    async file(id: string, variant: string) { const result = variant === "original" ? await this.pool.query(`SELECT storage_key,mime_type FROM media_assets WHERE id=$1 AND status='active'`,[id]) : await this.pool.query(`SELECT v.storage_key,v.mime_type FROM media_variants v JOIN media_assets a ON a.id=v.asset_id WHERE v.asset_id=$1 AND v.name=$2 AND a.status='active'`,[id,variant]); if(!result.rows[0])throw new AtlasError("Media file was not found.","NOT_FOUND"); const bytes = await this.objects.get(result.rows[0].storage_key).catch(error => { if (error instanceof MediaObjectNotFound) throw new AtlasError("Media file was not found.", "NOT_FOUND"); throw error; }); return { bytes, mimeType: result.rows[0].mime_type }; }
 }
 
 export type PortfolioSchemaField = FieldDefinition;

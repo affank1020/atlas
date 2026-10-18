@@ -38,6 +38,10 @@ services:
       ATLAS_MCP_DIAGNOSTICS: ${ATLAS_MCP_DIAGNOSTICS:-false}
       ATLAS_WORKSPACE_ORIGINS: ${ATLAS_WORKSPACE_ORIGINS:?Set ATLAS_WORKSPACE_ORIGINS in infra/production.env}
       ATLAS_MEDIA_DIR: /var/lib/atlas/media
+      ATLAS_R2_ENDPOINT: ${ATLAS_R2_ENDPOINT:-}
+      ATLAS_R2_BUCKET: ${ATLAS_R2_BUCKET:-}
+      ATLAS_R2_ACCESS_KEY_ID: ${ATLAS_R2_ACCESS_KEY_ID:-}
+      ATLAS_R2_SECRET_ACCESS_KEY: ${ATLAS_R2_SECRET_ACCESS_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://127.0.0.1:11434}
       FABRIC_EMBEDDING_MODEL: ${FABRIC_EMBEDDING_MODEL:-nomic-embed-text}
       CONTENTFUL_SPACE_ID: ${CONTENTFUL_SPACE_ID:-}
@@ -83,6 +87,24 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+
+
+  # Opt-in private Node WebSocket ingress for Tailscale Serve L4/TLS forwarding.
+  # Start explicitly with: docker compose --profile tailscale up -d node-private-ingress
+  # Only VPS loopback can access this proxy; the tailnet port is managed by tailscaled.
+  node-private-ingress:
+    profiles: ["tailscale"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3100:8080"
+    volumes:
+      - ./Caddyfile.node-private:/etc/caddy/Caddyfile:ro
     security_opt:
       - no-new-privileges:true
 

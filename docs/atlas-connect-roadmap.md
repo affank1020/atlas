@@ -2,7 +2,7 @@
 
 **Version:** 0.2 (public/private boundary clarified)  
 **Date:** 19 October 2026  
-**Status:** Proposed; implementation not started  
+**Status:** M0 in progress — tailnet verified and HTTPS Serve smoke-tested; private TCP ingress and Node reconnect hardening staged in repo, pending VPS activation and sustained live tests  
 **Scope:** macOS Node + Samsung Android Node (tablet first), using a hosted Atlas Server and optional private Tailscale transport. The hosted Server remains accessible to public web applications (particularly a portfolio website reading content published through the Atlas Portfolio CMS) and to ChatGPT via its existing OAuth/MCP endpoint.
 
 ## 1. Vision and intended result
@@ -54,6 +54,15 @@ This is **not** a port of Observatory, Views, Projects or the main Atlas web app
 This requirement spans Atlas Connect networking and the independent Portfolio CMS migration; Tailscale is not the transport for normal external web-app clients.
 
 ## 3. Roadmap and milestone gates
+
+### M0 implementation checkpoint — 19 October 2026
+
+- VPS and Mac can ping each other directly over Tailscale; Atlas responds on VPS loopback; initial tailnet-only HTTPS Serve on port 8443 rejects unauthenticated Node upgrade with 401 and unrelated HTTP paths with 404.
+- Mac Node completed authenticated registration over the 8443 private route, but its WebSocket disconnected repeatedly (1006/occasional 502); **this path is not yet production-ready** and Mac Node was restored to public WSS.
+- Atlas Node client now probes WebSocket ping/pong, bounds connection handshake time and reconnects stalled sockets after a timeout. Integration test simulates an open socket that silently stops answering; keep these changes versioned and restart Node to activate them.
+- Staged alternative (not yet deployed): opt-in `node-private-ingress` Caddy sidecar on VPS loopback 3100 with strict Node-only path allowlist, consumed using Tailscale Serve TLS-terminated TCP on tailnet port 8444. This reduces HTTP proxy interference without exposing the rest of Atlas.
+- Next gate: deploy the sidecar alongside the public stack *without activating it automatically*, start it explicitly on VPS, verify 401/404 boundaries, compare private WSS with public WSS while awake, then test Mac sleep/wake recovery and read-only Workspace/Unity commands. Keep the original public WSS rollback throughout.
+- Independent external portfolio CMS reads, media, web app and ChatGPT MCP endpoints remain on `https://affan-atlas.duckdns.org`; neither Tailscale listener replaces them.
 
 ### M0 — Networking foundation: private Atlas transport
 **Estimate:** 0.5–2 development days  

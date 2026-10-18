@@ -19,6 +19,47 @@ after(cleanupDatabases);
 const folders: string[] = [];
 after(async () => { await Promise.all(folders.map(folder => rm(folder, { recursive: true, force: true }))); });
 
+test('Node heartbeat reconnects a WebSocket that remains open but stops replying', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'atlas-node-heartbeat-')); folders.push(root);
+    const server = createServer();
+    // Simulate a proxy that accepts and acknowledges a Node, but silently loses
+    // WebSocket control frames without closing the underlying TCP socket.
+    const sockets = new WebSocketServer({ server, autoPong: false });
+    const nodeId = '00000000-0000-4000-8000-000000000011';
+    let connections = 0;
+    sockets.on('connection', socket => {
+        connections++;
+        socket.on('message', data => {
+            if (JSON.parse(String(data)).type === 'register') {
+                socket.send(JSON.stringify({ type: 'registered', protocol: 2, nodeId }));
+            }
+        });
+    });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const node = new StandaloneNode({
+        id: nodeId, name: 'Heartbeat test', token: 'test-credential-0000000000000000000000',
+        serverUrl: `ws://127.0.0.1:${(server.address() as {port: number}).port}`,
+        heartbeatMs: 15, heartbeatTimeoutMs: 90, reconnectMinMs: 10, reconnectMaxMs: 25,
+    }, new LocalNodeRuntime([root], new Map()));
+    try {
+        const online = once(node, 'online');
+        const errored = once(node, 'connectionError');
+        node.start(); await online;
+        const [reason] = await Promise.race([
+            errored,
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('heartbeat did not detect stale connection')), 2000)),
+        ]);
+        assert.match(String(reason), /heartbeat timed out/i);
+        for (let i = 0; connections < 2 && i < 80; i++) await new Promise(resolve => setTimeout(resolve, 10));
+        assert.ok(connections >= 2, 'Node should reconnect without being restarted');
+    } finally {
+        await node.stop();
+        for (const socket of sockets.clients) socket.terminate();
+        sockets.close();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+});
+
 test('standalone Node serves Workspace calls, enforces auth, and fails closed through disconnect/reconnect', async () => {
     const fixture = await databaseFixture();
     const root = await mkdtemp(path.join(tmpdir(), 'atlas-remote-node-')); folders.push(root);
