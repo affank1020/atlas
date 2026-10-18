@@ -7,12 +7,17 @@ class ToolRequestError extends Error {
 export type ToolMutation = { name: string; input: Record<string, unknown> };
 const mutationListeners = new Set<(mutation: ToolMutation) => void>();
 const MUTATION = /^(create_|update_|archive_|delete_|save_|publish_|unpublish_|bulk_|patch_|upsert_|configure_|execute_view_action$)/;
+let toolRequestCount = 0;
+
+/** Counts actual HTTP tool requests, including failed attempts. */
+export const getToolRequestCount = () => toolRequestCount;
 
 /** Low-level transport. RTK Query owns caching for migrated reads. */
 export async function callTool<T>(name: string, input: Record<string, unknown> = {}, signal?: AbortSignal, notifyMutation = true): Promise<T> {
     const timeoutMs = name === "workspace_run_dev_task" ? 660_000 : ["football_validate_python", "football_validate_editor_gates", "football_validate_physics_smoke"].includes(name) ? 210_000 : name === "ask_atlas" || name === "ask_portfolio" ? 240_000 : name === "football_index_policy" ? 70_000 : 30_000;
     let response: Response;
     try {
+        toolRequestCount++;
         response = await fetch(`${API_BASE}/api/tools/${name}`, {
             method: "POST",
             headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" },

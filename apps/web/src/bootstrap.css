@@ -1,0 +1,28 @@
+.atlas-bootstrap { position: relative; isolation: isolate; display: grid; place-items: center; min-height: 100dvh; overflow: hidden; padding: 32px 20px; background: var(--bg-secondary); color: var(--text-primary); }
+.atlas-bootstrap::before { content: ''; position: absolute; inset: 0; z-index: -1; background: radial-gradient(circle at 50% 46%, #27325966 0, #171b2a44 30%, transparent 63%), linear-gradient(140deg, #15171c, #111318 70%); }
+.atlas-bootstrap-glow { position: absolute; z-index: -1; width: min(72vw, 760px); aspect-ratio: 1; border: 1px solid #7e94f51c; border-radius: 50%; box-shadow: 0 0 0 90px #7e94f508, 0 0 0 180px #7e94f506; animation: atlas-bootstrap-breathe 5s ease-in-out infinite; }
+.atlas-bootstrap-card { width: min(100%, 520px); text-align: center; }
+.atlas-bootstrap-mark { position: relative; display: grid; place-items: center; width: 82px; height: 82px; margin: 0 auto 22px; border-radius: 19px; border: 1px solid #899af478; background: linear-gradient(155deg, #394a83, #222b49 62%, #1a2034); box-shadow: 0 20px 64px #080b1688, inset 0 1px #ced6ff32; transform: rotate(-7deg); }
+.atlas-bootstrap-mark span { font-size: 52px; font-weight: 650; letter-spacing: -.09em; line-height: 1; color: #dce3ff; transform: rotate(7deg) translateX(-2px); }
+.atlas-bootstrap-wordmark { margin: 0 0 30px; font-size: 13px; font-weight: 700; letter-spacing: .33em; color: var(--text-primary); }
+.atlas-bootstrap-wordmark span { margin-left: 5px; font-size: 9px; letter-spacing: .19em; color: var(--accent); }
+.atlas-bootstrap h1 { margin: 0; font-size: clamp(1.65rem, 4vw, 2.2rem); font-weight: 580; letter-spacing: -.055em; line-height: 1.2; }
+.atlas-bootstrap-description { max-width: 390px; margin: 14px auto 35px; color: var(--text-secondary); font-size: .94rem; }
+.atlas-bootstrap-progress { max-width: 360px; margin: 0 auto; }
+.atlas-bootstrap-progress progress, .atlas-bootstrap-discovery { display: block; width: 100%; height: 5px; border: 0; border-radius: 99px; overflow: hidden; background: #32394b; }
+.atlas-bootstrap-progress progress::-webkit-progress-bar { background: #32394b; border-radius: 99px; }
+.atlas-bootstrap-progress progress::-webkit-progress-value { background: linear-gradient(90deg, #586dd2, #a8b8ff); border-radius: 99px; transition: width 230ms ease; }
+.atlas-bootstrap-progress progress::-moz-progress-bar { background: linear-gradient(90deg, #586dd2, #a8b8ff); border-radius: 99px; }
+.atlas-bootstrap-discovery::after { content: ''; display: block; width: 34%; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #586dd2, #a8b8ff); animation: atlas-bootstrap-search 1.6s ease-in-out infinite alternate; }
+.atlas-bootstrap-progress-text { display: flex; justify-content: space-between; gap: 16px; margin-top: 13px; color: var(--text-muted); font-size: .77rem; font-variant-numeric: tabular-nums; }
+.atlas-bootstrap-error { max-width: 420px; margin: 24px auto 0; color: var(--warning); font-size: .83rem; }
+.atlas-bootstrap-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 20px; }
+.atlas-bootstrap-actions button { padding: 0 16px; }
+.atlas-bootstrap-skip { display: inline-block; margin-top: 25px; padding: 7px 8px; border: 0; background: transparent; color: var(--text-muted); font-size: .8rem; }
+.atlas-bootstrap-skip:hover { background: transparent; color: var(--text-primary); }
+.atlas-app-enter { animation: atlas-app-arrive 260ms ease-out both; }
+@keyframes atlas-bootstrap-breathe { 50% { opacity: .58; transform: scale(1.045); } }
+@keyframes atlas-bootstrap-search { to { transform: translateX(195%); } }
+@keyframes atlas-app-arrive { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 480px) { .atlas-bootstrap-progress-text { flex-direction: column; align-items: center; gap: 3px; } }
+@media (prefers-reduced-motion: reduce) { .atlas-bootstrap-glow, .atlas-bootstrap-discovery::after, .atlas-app-enter { animation: none; } .atlas-bootstrap-progress progress::-webkit-progress-value { transition: none; } }
