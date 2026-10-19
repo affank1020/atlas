@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouteTiming } from './performance';
+import { useEffect, useMemo, useState } from "react";
 import { API_BASE, callTool } from "./api";
 import "./Portfolio.css";
+import { useApplicationRead } from "./atlasApi";
+const EMPTY: never[] = [];
 
 type ContentType = "profile" | "contact" | "projects" | "experience" | "posts" | "collections";
 type Field = { name:string; type:"string"|"number"|"boolean"|"date"|"datetime"|"enum"|"array"|"object"; enumValues?:string[]; description?:string };
@@ -28,24 +31,26 @@ const getEntryMedia=(entry:Entry,assets:Media[])=>{
 };
 
 export function Portfolio(){
- const [schemas,setSchemas]=useState<Schema[]>([]),[entries,setEntries]=useState<Entry[]>([]),[dashboard,setDashboard]=useState<Dashboard>(),[media,setMedia]=useState<Media[]>([]);
- const [type,setType]=useState<ContentType>("projects"),[selectedId,setSelectedId]=useState<string>(),[draft,setDraft]=useState<Record<string,unknown>>({}),[view,setView]=useState<"content"|"media">("content"),[revisions,setRevisions]=useState<Revision[]>([]);
+ const schemaQuery=useApplicationRead<Schema[]>('get_portfolio_schemas'),entryQuery=useApplicationRead<Entry[]>('list_portfolio_entries'),dashboardQuery=useApplicationRead<Dashboard>('get_portfolio_dashboard'),mediaQuery=useApplicationRead<Media[]>('list_portfolio_media');
+ const schemas=schemaQuery.data??EMPTY,entries=entryQuery.data??EMPTY,dashboard=dashboardQuery.data,media=mediaQuery.data??EMPTY;
+ const [type,setType]=useState<ContentType>("projects"),[selectedId,setSelectedId]=useState<string>(),[draft,setDraft]=useState<Record<string,unknown>>({}),[view,setView]=useState<"content"|"media">("content");
  const [busy,setBusy]=useState(""),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [creating,setCreating]=useState(false),[search,setSearch]=useState("");
  const dirty=JSON.stringify(draft)!==JSON.stringify(selectedId?entries.find(entry=>entry.id===selectedId)?.data??{}:{});
  const leaveEditor=()=>!dirty||window.confirm("Discard unsaved changes? Your published content will not be affected.");
  useEffect(()=>{if(!dirty)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[dirty]);
- const load=useCallback(async()=>{try{const [s,e,d,m]=await Promise.all([callTool<Schema[]>("get_portfolio_schemas",{}),callTool<Entry[]>("list_portfolio_entries",{}),callTool<Dashboard>("get_portfolio_dashboard",{}),callTool<Media[]>("list_portfolio_media",{})]);setSchemas(s);setEntries(e);setDashboard(d);setMedia(m);setError("");}catch(e){setError((e as Error).message);}},[]);
- useEffect(()=>{void load();},[load]);
+ const load=async()=>{await Promise.all([schemaQuery.refetch(),entryQuery.refetch(),dashboardQuery.refetch(),mediaQuery.refetch(),...(selectedId?[revisionQuery.refetch()]:[])]);};
+ useRouteTiming("portfolio", "portfolio", !!schemaQuery.data && !!entryQuery.data && !!dashboardQuery.data && !!mediaQuery.data);
  const filtered=useMemo(()=>entries.filter(entry=>entry.contentType===type).sort((a,b)=>Number(a.data.order??999)-Number(b.data.order??999)||entryTitle(a).localeCompare(entryTitle(b))),[entries,type]);
  const visible=useMemo(()=>filtered.filter(entry=>entryTitle(entry).toLowerCase().includes(search.toLowerCase())),[filtered,search]);
  const selected=entries.find(entry=>entry.id===selectedId);
- useEffect(()=>{if(selected){setDraft(selected.data);void callTool<Revision[]>("list_portfolio_revisions",{recordId:selected.id}).then(setRevisions).catch(()=>setRevisions([]));}else{setDraft({});setRevisions([]);}},[selectedId,selected?.updatedAt]);
+ const revisionQuery=useApplicationRead<Revision[]>("list_portfolio_revisions",{recordId:selectedId},false,!selectedId);const revisions=revisionQuery.data??EMPTY;
+ useEffect(()=>{if(selected){setDraft(selected.data);}else{setDraft({});}},[selectedId,selected?.updatedAt]);
  useEffect(()=>{if(selectedId&&!filtered.some(x=>x.id===selectedId))setSelectedId(undefined);},[type,filtered,selectedId]);
  useEffect(()=>{if(!creating&&!selectedId&&filtered.length)setSelectedId(filtered[0].id);},[creating,selectedId,filtered]);
  const schema=schemas.find(item=>item.contentType===type);
- const run=async(name:string,action:()=>Promise<unknown>,message:string)=>{setBusy(name);setError("");setNotice("");try{await action();await load();setNotice(message);return true;}catch(e){setError((e as Error).message);return false;}finally{setBusy("");}};
- const save=async()=>{setBusy("save");setError("");setNotice("");try{const entry=await callTool<Entry>("save_portfolio_draft",{contentType:type,recordId:selectedId,data:draft});setDraft(entry.data);setSelectedId(entry.id);setCreating(false);await load();setNotice("Draft saved. Publish when you're ready to make it live.");}catch(e){setError((e as Error).message);}finally{setBusy("");}};
+ const run=async(name:string,action:()=>Promise<unknown>,message:string)=>{setBusy(name);setError("");setNotice("");try{await action();setNotice(message);return true;}catch(e){setError((e as Error).message);return false;}finally{setBusy("");}};
+ const save=async()=>{setBusy("save");setError("");setNotice("");try{const entry=await callTool<Entry>("save_portfolio_draft",{contentType:type,recordId:selectedId,data:draft});setDraft(entry.data);setSelectedId(entry.id);setCreating(false);setNotice("Draft saved. Publish when you're ready to make it live.");}catch(e){setError((e as Error).message);}finally{setBusy("");}};
  const change=(field:Field,value:unknown)=>setDraft(current=>({...current,[field.name]:value}));
  return <div className="portfolio-app">
   <header className="portfolio-head">
@@ -60,7 +65,7 @@ export function Portfolio(){
    <div className="portfolio-tab-group"><button className={view==="content"?"active":""} onClick={()=>setView("content")}>Content</button><button className={view==="media"?"active":""} onClick={()=>{if(leaveEditor())setView("media");}}>Media library</button></div>
    <a href="#/ask-portfolio">Ask Portfolio <span aria-hidden="true">↗</span></a>
   </nav>
-  {error&&<div role="alert" className="portfolio-notice error">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
+  {[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.isLoading)&&<p role="status">Loading portfolio…</p>}{[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.error)&&<p role="alert">Portfolio data unavailable. <button onClick={()=>void load()}>Retry</button></p>}<button onClick={()=>void load()}>Refresh portfolio</button>{error&&<div role="alert" className="portfolio-notice error">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
   {notice&&<div role="status" className="portfolio-notice success">{notice}<button onClick={()=>setNotice("")} aria-label="Dismiss message">×</button></div>}
   {view==="content"?<div className="portfolio-workspace">
    <aside className="portfolio-sidebar" aria-label="Content browser">
@@ -75,7 +80,7 @@ export function Portfolio(){
      {!visible.length&&<p className="portfolio-empty">{search?"No entries match your search.":"Nothing here yet. Create an entry to get started."}</p>}
     </div>
    </aside>
-   <main className="portfolio-editor">
+   <section className="portfolio-editor" aria-label="Content editor">
     {(selected||creating)?<>
      <div className="portfolio-editor-top"><div className="portfolio-editor-heading"><p className="eyebrow">{TITLES[type]} / {creating?"New entry":"Editor"}</p><h2>{creating?"Untitled "+TITLES[type].toLowerCase():entryTitle(selected!)}</h2><p>{creating?"Create a draft. Nothing goes live until you publish it.":"Last updated "+formatDate(selected!.updatedAt)}</p></div><div className="portfolio-editor-flags">{dirty&&<span className="portfolio-dirty">Unsaved changes</span>}{selected&&<span className={"portfolio-status "+selected.status}>{selected.status==="published"?"Published":selected.status==="changed"?"Unpublished edits":"Draft"}</span>}</div></div>
      <div className="portfolio-editor-content">
@@ -93,7 +98,7 @@ export function Portfolio(){
       <button className="portfolio-primary-button" disabled={!selected||!!busy||dirty||selected.status==="published"} title={dirty?"Save your changes before publishing":undefined} onClick={()=>selected&&void run("publish",()=>callTool("publish_portfolio_entry",{recordId:selected.id}),"Your latest revision is now live.")}>{busy==="publish"?"Publishing…":selected?.status==="published"?"Published":"Publish"}</button>
      </div>
     </>:<div className="portfolio-editor-placeholder"><div className="portfolio-placeholder-icon">✦</div><h2>Choose something to edit</h2><p>Select an entry from the library, or create a new one.</p><button className="portfolio-primary-button" onClick={()=>{setCreating(true);setDraft({});}}>Create entry</button></div>}
-   </main>
+   </section>
   </div>:<MediaLibrary media={media} busy={busy} setBusy={setBusy} setError={setError} setNotice={setNotice} reload={load}/>}
  </div>;
 }

@@ -64,20 +64,20 @@
 .portfolio-status.draft:before{background:var(--text-muted)}
 .portfolio-entry .portfolio-status{font-size:0;gap:0}
 .portfolio-entry .portfolio-status:before{width:6px;height:6px}
-.portfolio-editor{min-width:0;display:flex;flex-direction:column;background:var(--surface-elevated)}
-.portfolio-editor-top{padding:31px 40px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.portfolio-editor{min-width:0;width:100%;max-width:none;margin:0;padding:0;display:flex;flex-direction:column;background:var(--surface-elevated)}
+.portfolio-editor-top{width:100%;max-width:1050px;margin-inline:auto;padding:31px 40px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
 .portfolio-editor-heading{min-width:0}
 .portfolio-editor-heading .eyebrow{margin:0 0 12px}
 .portfolio-editor-heading h2{margin:0;font-size:1.65rem;line-height:1.15;font-weight:680;letter-spacing:-.042em;overflow-wrap:anywhere}
 .portfolio-editor-heading>p:last-child{margin:10px 0 0;color:var(--text-muted);font-size:.75rem}
 .portfolio-editor-flags{display:flex;align-items:center;gap:15px;flex-wrap:wrap;justify-content:flex-end;padding-top:4px}
 .portfolio-dirty{font-size:.68rem;color:var(--warning)}
-.portfolio-editor-content{width:100%;max-width:1050px;padding:0 40px 40px}
+.portfolio-editor-content{width:100%;max-width:1050px;margin-inline:auto;padding:0 40px 50px}
 .portfolio-section{padding:28px 0;border-bottom:1px solid var(--border)}
 .portfolio-section-intro{margin-bottom:22px}
 .portfolio-section-intro h3{margin:0 0 5px;font-size:.94rem;font-weight:710;letter-spacing:-.02em}
 .portfolio-section-intro p{margin:0;color:var(--text-muted);font-size:.76rem;line-height:1.5}
-.portfolio-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:19px 20px}
+.portfolio-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:22px 22px}
 .portfolio-form>.portfolio-wide-field{grid-column:1/-1}
 .portfolio-field{display:flex;flex-direction:column;gap:8px;min-width:0;font-size:.74rem;font-weight:670;color:var(--text-secondary)}
 .portfolio-field>label{font-size:.74rem;font-weight:670}
@@ -99,7 +99,7 @@
 .portfolio-chevron{font-size:1.25rem;color:var(--text-muted);line-height:1;transition:transform .15s}
 .portfolio-fold[open]>.portfolio-chevron,.portfolio-fold[open]>summary .portfolio-chevron{transform:rotate(180deg)}
 .portfolio-fold>.portfolio-form{padding:0 0 29px}
-.portfolio-editor-actions{position:sticky;bottom:0;z-index:4;display:flex;gap:9px;align-items:center;margin-top:auto;padding:15px 40px;background:var(--surface-elevated);border-top:1px solid var(--border);box-shadow:0 -5px 14px var(--shadow-color)}
+.portfolio-editor-actions{position:static;display:flex;gap:9px;align-items:center;margin-top:auto;padding:18px 40px;background:var(--surface-elevated);border-top:1px solid var(--border)}
 .portfolio-actions-space{flex:1}
 .portfolio-editor-actions button{min-height:36px;padding:9px 13px;font-size:.76rem;font-weight:650;border-radius:7px}
 .portfolio-subtle-button{background:var(--surface);border:1px solid var(--border);color:var(--text-primary)}
