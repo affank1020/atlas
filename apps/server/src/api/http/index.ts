@@ -1,3 +1,4 @@
+import { timed } from '../../shared/performance.js';
 import { nodeSchemas } from '../../nodes/contracts.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -77,7 +78,7 @@ export function createHttpTransport(services: ServerServices) {
         const standaloneUrl = new URL(request.url??"/","http://atlas.local");
         const standaloneMatch=standaloneUrl.pathname.match(/^\/projects\/([0-9a-f-]{36})\/views\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
         if(request.method==="GET"&&standaloneMatch){
-            try{const view=await services.views.getViewBySlug(standaloneMatch[1]!,standaloneMatch[2]!);const rendered=await services.views.renderView(view.projectId,view.id,Object.fromEntries(standaloneUrl.searchParams));
+            try{const rendered=await timed('view.standalone', () => services.views.renderStandalone(standaloneMatch[1]!,standaloneMatch[2]!,Object.fromEntries(standaloneUrl.searchParams)));
                 response.writeHead(200,{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer","x-frame-options":"DENY"});response.end(standaloneViewPage(rendered));
             }catch(error){response.writeHead(error instanceof AtlasError&&error.code==="NOT_FOUND"?404:400,{"content-type":"text/plain; charset=utf-8"});response.end(error instanceof Error?error.message:"View unavailable.")}return;
         }

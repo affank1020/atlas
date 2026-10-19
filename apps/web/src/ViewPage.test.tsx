@@ -58,3 +58,18 @@ it('shows compact View snapshots with separate edit and standalone links',async(
   expect(callTool).toHaveBeenCalledWith('render_view',{projectId:'p',viewId:'v',params:{}},expect.any(AbortSignal));
   expect(callTool).toHaveBeenCalledWith('render_view',{projectId:'p',viewId:'v2',params:{}},expect.any(AbortSignal));
 });
+
+it('defers offscreen preview requests until approaching the viewport', async()=>{
+ let observe: IntersectionObserverCallback | undefined;
+ vi.stubGlobal('IntersectionObserver',class {
+   constructor(callback:IntersectionObserverCallback){observe=callback}
+   observe(){} disconnect(){}
+ });
+ try {
+   vi.mocked(callTool).mockResolvedValue(rendered);
+   render(<Provider store={store}><ViewContainer view={saved}/></Provider>);
+   expect(callTool).not.toHaveBeenCalled();
+   await import('@testing-library/react').then(({act})=>act(()=>observe?.([{isIntersecting:true} as IntersectionObserverEntry],{} as IntersectionObserver)));
+   await waitFor(()=>expect(callTool).toHaveBeenCalledWith('render_view',{projectId:'p',viewId:'v',params:{}},expect.any(AbortSignal)));
+ } finally {vi.unstubAllGlobals()}
+});

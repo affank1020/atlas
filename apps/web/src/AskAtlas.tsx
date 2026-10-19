@@ -1,5 +1,6 @@
+import { useListProjectsQuery } from "./atlasApi";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { callAskAgent, callAskAtlas, callTool } from "./api";
+import { callAskAgent, callAskAtlas } from "./api";
 import {
     clearHistory, createConversation, defaultAskAtlasConfig, loadHistory, removeConversation, saveHistory, titleForQuestion,
     type AskAtlasConfig, type AskAtlasConversation, type AskAtlasHistory, type AskAtlasMessage,
@@ -103,12 +104,12 @@ export type AskChatProps = { agentName: string; toolName: "ask_atlas" | "ask_por
 
 export function AskChat({ agentName, toolName, storageKey, introEyebrow, introCopy, examples, fixedScope, banner }: AskChatProps) {
     const [history, setHistory] = useState<AskAtlasHistory>(() => loadHistory(globalThis.window?.localStorage, storageKey));
-    const [projects, setProjects] = useState<Project[]>([]);
+    const { data: projects = [], error: projectsError } = useListProjectsQuery({ includeArchived: false }, { skip: !!fixedScope });
     const [question, setQuestion] = useState("");
     const [busy, setBusy] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
     const [inspected, setInspected] = useState<{ response: AskAtlasResponse; config: AskAtlasConfig }>();
-    const [projectError, setProjectError] = useState("");
+    const projectError = projectsError?.message ?? "";
     const [storageAvailable, setStorageAvailable] = useState(true);
     const [modelFieldAccepted, setModelFieldAccepted] = useState<boolean>();
     const transcriptRef = useRef<HTMLDivElement>(null);
@@ -117,7 +118,6 @@ export function AskChat({ agentName, toolName, storageKey, introEyebrow, introCo
     const skipNextSave = useRef(false);
     const active = history.conversations.find(item => item.id === history.activeConversationId) ?? history.conversations[0]!;
 
-    useEffect(() => { if (!fixedScope) callTool<Project[]>("list_projects", {}).then(setProjects).catch(error => setProjectError(error.message)); }, [fixedScope]);
     useEffect(() => {
         if (skipNextSave.current) { skipNextSave.current = false; return; }
         setStorageAvailable(saveHistory(globalThis.window?.localStorage, history, storageKey));

@@ -1,5 +1,7 @@
+import { useRouteTiming } from './performance';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
+import { useLiveApplicationResource } from './applicationCache';
 import { GeneralistRunView, GeneralistPolicyView, GeneralistEvaluationView } from './FootballGeneralistDetails';
 import type { GeneralistManifest } from './FootballGeneralistDashboard';
 import { GeneralistDrillCatalog } from './GeneralistDrillCatalog';
@@ -25,20 +27,26 @@ const shortHash = (value?: string) => value ? value.slice(0, 10) : '—';
 const when = (value?: string) => value ? new Date(value).toLocaleString() : '—';
 
 export function FootballGeneralistExperience() {
+    const manifestResource = useLiveApplicationResource<GeneralistManifest>('football_generalist_manifest');
+    const runsResource = useLiveApplicationResource<Run[]>('football_generalist_runs');
+    const policiesResource = useLiveApplicationResource<Policy[]>('football_generalist_policies');
+    const activityResource = useLiveApplicationResource<Receipt[]>('football_generalist_activity');
+    const assessmentsResource = useLiveApplicationResource<{ policies: PolicyAssessment[] }>('football_generalist_assessments');
+    const cachedManifest = manifestResource.cached?.available && manifestResource.cached.contract?.contract_id === 'football-generalist-v2' ? manifestResource.cached : null;
     const [tab, setTab] = useState<Tab>('home');
-    const [manifest, setManifest] = useState<GeneralistManifest | null>(null);
-    const [runs, setRuns] = useState<Run[]>([]);
-    const [policies, setPolicies] = useState<Policy[]>([]);
-    const [assessments, setAssessments] = useState<PolicyAssessment[]>([]);
+    const [manifest, setManifest] = useState<GeneralistManifest | null>(cachedManifest);
+    const [runs, setRuns] = useState<Run[]>(Array.isArray(runsResource.cached) ? runsResource.cached : []);
+    const [policies, setPolicies] = useState<Policy[]>(Array.isArray(policiesResource.cached) ? policiesResource.cached : []);
+    const [assessments, setAssessments] = useState<PolicyAssessment[]>(Array.isArray(assessmentsResource.cached?.policies) ? assessmentsResource.cached.policies : []);
     const [historySearch, setHistorySearch] = useState('');
     const [historyFilter, setHistoryFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all');
     const [runsFilter, setRunsFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all');
-    const [activity, setActivity] = useState<Receipt[]>([]);
+    const [activity, setActivity] = useState<Receipt[]>(Array.isArray(activityResource.cached) ? activityResource.cached : []);
     const [legacy, setLegacy] = useState<Legacy | null>(null);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [busy, setBusy] = useState('');
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!cachedManifest);
     const [refreshing, setRefreshing] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState('Not synced yet');
     const [assessmentWarning, setAssessmentWarning] = useState('');
@@ -57,16 +65,17 @@ export function FootballGeneralistExperience() {
     const [ticket, setTicket] = useState<Receipt | null>(null);
     const [detail, setDetail] = useState<{ kind: 'run' | 'policy' | 'evaluation'; id: string } | null>(null);
 
+    useRouteTiming("football", "football", !!manifest && !loading);
     const refresh = useCallback((): Promise<void> => {
         // Manual and timed refreshes share one request; a slower poll cannot overwrite a newer result.
         if (activeRefresh.current) return activeRefresh.current;
         const request = (async () => {
             const [m, r, p, a, skillData] = await Promise.allSettled([
-                callTool<GeneralistManifest>('football_generalist_manifest'),
-                callTool<Run[]>('football_generalist_runs'),
-                callTool<Policy[]>('football_generalist_policies'),
-                callTool<Receipt[]>('football_generalist_activity'),
-                callTool<{ policies: PolicyAssessment[] }>('football_generalist_assessments'),
+                manifestResource.load(),
+                runsResource.load(),
+                policiesResource.load(),
+                activityResource.load(),
+                assessmentsResource.load(),
             ]);
             const failures: string[] = [];
             if (m.status === 'fulfilled' && m.value?.available && m.value.contract?.contract_id === 'football-generalist-v2')
@@ -98,7 +107,7 @@ export function FootballGeneralistExperience() {
         })().finally(() => { activeRefresh.current = null; });
         activeRefresh.current = request;
         return request;
-    }, []);
+    }, [manifestResource.load, runsResource.load, policiesResource.load, activityResource.load, assessmentsResource.load]);
     useEffect(() => {
         let mounted = true;
         void refresh().catch(e => { if (mounted) setError(String(e)); }).finally(() => { if (mounted) setLoading(false); });

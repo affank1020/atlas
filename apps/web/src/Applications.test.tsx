@@ -1,9 +1,12 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { Provider } from 'react-redux';
+import { createAtlasStore } from './store';
+import type { ReactElement, ReactNode } from 'react';
+import { cleanup, render as rtlRender, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ProjectApplications, ApplicationWindow } from './Applications';
 import { callTool } from './api';
 
-vi.mock('./api', () => ({ callTool: vi.fn() }));
+vi.mock('./api', () => ({ callTool: vi.fn(), onToolMutation: () => () => {} }));
 vi.mock('./Portfolio', () => ({ Portfolio: () => <div>Portfolio publishing UI</div> }));
 const manifest = {
     type: 'portfolio', slug: 'portfolio', name: 'Portfolio',
@@ -20,15 +23,15 @@ test('Applications are launchable in a new tab from the owning Project', async (
     expect(link).toHaveAttribute('href', '#/projects/project-portfolio/applications/portfolio');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    expect(callTool).toHaveBeenCalledWith('list_applications', { projectId: 'project-portfolio' });
+    expect(callTool).toHaveBeenCalledWith('list_applications', { projectId: 'project-portfolio' }, expect.any(AbortSignal));
 });
 
 test('A launched Application renders a dedicated page without the project View host', async () => {
-    vi.mocked(callTool).mockResolvedValue(manifest);
+    vi.mocked(callTool).mockImplementation(async name => (name === 'list_projects' ? [] : manifest) as never);
     render(<ApplicationWindow projectId="project-portfolio" slug="portfolio" />);
     expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Project Applications/ })).toHaveAttribute('href', '#/projects/project-portfolio/applications');
-    expect(callTool).toHaveBeenCalledWith('get_application', { projectId: 'project-portfolio', slug: 'portfolio' });
+    expect(callTool).toHaveBeenCalledWith('get_application', { projectId: 'project-portfolio', slug: 'portfolio' }, expect.any(AbortSignal));
 });
 
 test('Unknown Application registrations fail visibly instead of rendering Portfolio', async () => {
@@ -49,3 +52,5 @@ test('switching Project clears a previously loaded Application when the next loo
     expect(await screen.findByRole('alert')).toHaveTextContent('Application not found');
     expect(screen.queryByText('Portfolio publishing UI')).not.toBeInTheDocument();
 });
+
+const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };

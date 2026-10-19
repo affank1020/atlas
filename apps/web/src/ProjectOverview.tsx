@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityFeed } from './ActivityFeed';
 import { useRenderViewQuery } from './atlasApi';
 import { ViewFrame } from './ViewPage';
@@ -10,16 +10,26 @@ import type { Project, View } from './types';
  * belong to its standalone tab, not to an iframe nested in a project page.
  */
 export function ViewContainer({ view, refreshVersion = 0 }: { view: View; refreshVersion?: number }) {
+    const element = useRef<HTMLElement>(null);
+    const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined');
+    useEffect(() => {
+        if (visible || !element.current) return;
+        const observer = new IntersectionObserver(entries => {
+            if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
+        }, { rootMargin: '160px' });
+        observer.observe(element.current);
+        return () => observer.disconnect();
+    }, [visible]);
     const { data: rendered, error, isLoading, isFetching, refetch } = useRenderViewQuery(
         { projectId: view.projectId, viewId: view.id, params: {} },
-        { skip: !!view.archivedAt },
+        { skip: !!view.archivedAt || !visible },
     );
     const previousRefresh = useRef(refreshVersion);
-    useEffect(() => { if (refreshVersion !== previousRefresh.current && !view.archivedAt) void refetch(); previousRefresh.current = refreshVersion; }, [refreshVersion]);
+    useEffect(() => { if (refreshVersion !== previousRefresh.current && !view.archivedAt && visible) void refetch(); previousRefresh.current = refreshVersion; }, [refreshVersion]);
 
     const archived = !!view.archivedAt;
     const launchUrl = standaloneViewUrl(view);
-    return <article className={`view-card${archived ? ' view-card-archived' : ''}`} aria-label={view.name}>
+    return <article ref={element} className={`view-card${archived ? ' view-card-archived' : ''}`} aria-label={view.name}>
         <header className="view-card-head">
             <div className="view-card-heading">
                 <span className="eyebrow">View {archived && '· Archived'}</span>

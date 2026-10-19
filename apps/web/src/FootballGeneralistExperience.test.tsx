@@ -1,9 +1,12 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Provider } from 'react-redux';
+import { createAtlasStore } from './store';
+import type { ReactElement, ReactNode } from 'react';
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { callTool } from './api';
 import { FootballGeneralistExperience } from './FootballGeneralistExperience';
 
-vi.mock('./api', () => ({ callTool: vi.fn() }));
+vi.mock('./api', () => ({ callTool: vi.fn(), onToolMutation: () => () => {} }));
 const contract = {
     available: true,
     contract: { contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2',
@@ -414,4 +417,15 @@ test('historical featured players lacking an original runner remain visible but 
     expect(cardWatch).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Player profile' }));
     expect(screen.getByRole('button', { name: /Watch in Unity/ })).toBeDisabled();
+});
+
+const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };
+
+test('a cached unavailable manifest does not break navigation on revisit', async () => {
+    const { atlasApi } = await import('./atlasApi');
+    const { store } = createAtlasStore();
+    await store.dispatch(atlasApi.util.upsertQueryData('applicationRead', {name:'football_generalist_manifest',input:{}}, {available:false}));
+    rtlRender(<Provider store={store}><FootballGeneralistExperience /></Provider>);
+    expect(screen.getByRole('button', { name:'Home' })).toBeInTheDocument();
+    await screen.findByText('football-generalist-v2');
 });

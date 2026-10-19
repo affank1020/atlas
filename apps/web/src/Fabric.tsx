@@ -1,3 +1,4 @@
+import { useListProjectsQuery } from "./atlasApi";
 import { useEffect, useMemo, useState } from "react";
 import { callTool } from "./api";
 import type { FabricContextResponse, FabricResult, FabricSearchResponse, Project, RetrievalMode } from "./types";
@@ -88,11 +89,10 @@ function ModeComparison({ runs, onOpen }: { runs: Run[]; onOpen: (run: Run) => v
 }
 
 export function Fabric() {
-    const [projects, setProjects] = useState<Project[]>([]); const [projectError, setProjectError] = useState("");
+    const { data: projects = [], error: projectsError } = useListProjectsQuery({ includeArchived: false }); const projectError = projectsError?.message ?? "";
     const [query, setQuery] = useState(""); const [projectIds, setProjectIds] = useState<string[]>([]); const [searchMode, setSearchMode] = useState<RetrievalMode>("hybrid"); const [limit, setLimit] = useState(20); const [maxRecords, setMaxRecords] = useState(5);
     const [history, setHistory] = useState<Run[]>(() => { try { return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || "[]") as Run[]; } catch { return []; } });
     const [activeId, setActiveId] = useState(history[0]?.id); const [comparison, setComparison] = useState<Comparison>(); const [comparisonPair, setComparisonPair] = useState<[Run, Run]>(); const [modeRuns, setModeRuns] = useState<Run[]>([]); const [busy, setBusy] = useState<Mode | "compare" | "modes">(); const [error, setError] = useState(""); const [detail, setDetail] = useState<FabricResult>();
-    useEffect(() => { callTool<Project[]>("list_projects").then(setProjects).catch(e => setProjectError(e.message)); }, []);
     useEffect(() => { sessionStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 20))); }, [history]);
     const active = history.find(x => x.id === activeId);
     const run = async (mode: Mode, isRepeat = false, retrievalOverride = searchMode) => {

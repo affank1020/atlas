@@ -1,3 +1,4 @@
+import { timed } from '../shared/performance.js';
 import { nodeSchemas, type NodeToolName } from '../nodes/contracts.js';
 import type { NodeService } from '../nodes/service.js';
 import { sessionSchemas, type SessionToolName, type SessionService } from './sessions.js';
@@ -31,7 +32,7 @@ export type TransportServices = ApplicationServices & { dispatch(name: string, i
 /** One application dispatch path for HTTP, MCP and future internal job callers. */
 export function createDispatcher(services: ApplicationServices) {
     const { catalog, views, workspaces, retrieval, askAtlas, applications } = services;
-    return async (name: string, input: any = {}): Promise<unknown> => {
+    return async (name: string, input: any = {}): Promise<unknown> => timed(`tool.${/^[a-z_]+$/.test(name) ? name : 'unknown'}`, async () => {
         if (Object.hasOwn(sessionSchemas, name)) return services.sessions.call(name as SessionToolName,input);
         if (Object.hasOwn(nodeSchemas, name)) {
             if (!services.nodes) throw new AtlasError("Node registry is unavailable.", "NODE_UNAVAILABLE");
@@ -52,5 +53,5 @@ export function createDispatcher(services: ApplicationServices) {
         }
         if (applications.hasTool(name)) return applications.invoke(name, input);
         return callCoreTool(catalog, views, workspaces, name, input);
-    };
+    });
 }

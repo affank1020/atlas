@@ -1,4 +1,5 @@
-import { configureStore, createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { diagnostics } from './performance';
+import { configureStore, createSlice, type Middleware, type PayloadAction } from '@reduxjs/toolkit';
 import { setupListeners } from '@reduxjs/toolkit/query';
 import { atlasApi, mutationTags } from './atlasApi';
 import { onToolMutation } from './api';
@@ -10,10 +11,20 @@ const preferences = createSlice({
 });
 export const { setIncludeArchivedProjects } = preferences.actions;
 
+const performanceMiddleware: Middleware = () => next => action => {
+            if (typeof action === 'object' && action && 'type' in action) {
+                const entry = action as { type: string; meta?: { condition?: boolean } };
+                if (entry.type === 'atlasApi/executeQuery/pending') diagnostics.queryStarts++;
+                // RTK condition rejections include cache reuse and in-flight deduplication.
+                if (entry.type === 'atlasApi/executeQuery/rejected' && entry.meta?.condition) diagnostics.cacheReuses++;
+            }
+            return next(action);
+        };
+
 export function createAtlasStore() {
     const store = configureStore({
         reducer: { [atlasApi.reducerPath]: atlasApi.reducer, preferences: preferences.reducer },
-        middleware: getDefaultMiddleware => getDefaultMiddleware().concat(atlasApi.middleware),
+        middleware: getDefaultMiddleware => getDefaultMiddleware().concat(performanceMiddleware, atlasApi.middleware),
     });
     // Direct callTool writes in operational and not-yet-migrated screens still
     // invalidate only the RTK data affected by that mutation.

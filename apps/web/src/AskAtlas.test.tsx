@@ -1,11 +1,14 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Provider } from "react-redux";
+import { createAtlasStore } from "./store";
+import type { ReactElement, ReactNode } from "react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AskAtlas } from "./AskAtlas";
 import { ASK_ATLAS_HISTORY_KEY } from "./askAtlasHistory";
 import type { AskAtlasResponse } from "./types";
 
-const api = vi.hoisted(() => ({ callTool: vi.fn(), callAskAtlas: vi.fn() }));
+const api = vi.hoisted(() => ({ onToolMutation: () => () => {}, callTool: vi.fn(), callAskAtlas: vi.fn() }));
 vi.mock("./api", () => api);
 
 const response: AskAtlasResponse = {
@@ -113,3 +116,5 @@ describe("Ask Atlas chat workspace", () => {
         expect(api.callAskAtlas).toHaveBeenCalledTimes(2);
     });
 });
+
+const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };

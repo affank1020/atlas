@@ -111,3 +111,39 @@ test('RTK project mutations refresh the sidebar and affected project only', asyn
     expect(calls.filter(call => call === 'get_project:q')).toHaveLength(1);
     projects.unsubscribe(); p.unsubscribe(); q.unsubscribe(); unsubscribeMutations();
 });
+
+test('omitted archived flag shares a key and session retention survives hours without subscribers', async () => {
+    const fetcher = vi.fn(async () => response({ id:'p', name:'Cached' }));
+    vi.stubGlobal('fetch',fetcher);
+    const {store,unsubscribeMutations}=createAtlasStore();
+    try {
+        const first=store.dispatch(atlasApi.endpoints.getProject.initiate({projectId:'p'}));
+        await first.unwrap();first.unsubscribe();
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3*60*60*1000);
+        const second=store.dispatch(atlasApi.endpoints.getProject.initiate({projectId:'p',includeArchived:false}));
+        expect(await second.unwrap()).toMatchObject({name:'Cached'});
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        second.unsubscribe();
+        vi.useRealTimers();
+        const refresh=store.dispatch(atlasApi.endpoints.getProject.initiate({projectId:'p'}, {forceRefetch:true}));
+        await refresh.unwrap();expect(fetcher).toHaveBeenCalledTimes(2);refresh.unsubscribe();
+    } finally { vi.useRealTimers();store.dispatch(atlasApi.util.resetApiState());unsubscribeMutations(); }
+});
+
+test('application reads deduplicate and portfolio mutations leave other applications cached', async () => {
+    const calls:string[]=[];
+    vi.stubGlobal('fetch', vi.fn(async(url:string)=>{calls.push(url.split('/').pop()!);return response([])}));
+    const {store,unsubscribeMutations}=createAtlasStore();
+    const arg={name:'list_portfolio_entries' as const,input:{}};
+    const one=store.dispatch(atlasApi.endpoints.applicationRead.initiate(arg));
+    const two=store.dispatch(atlasApi.endpoints.applicationRead.initiate(arg));
+    const other=store.dispatch(atlasApi.endpoints.applicationRead.initiate({name:'list_applications',input:{projectId:'other'}}));
+    await Promise.all([one,two,other]);
+    expect(calls.filter(x=>x==='list_portfolio_entries')).toHaveLength(1);
+    await callTool('restore_portfolio_revision',{recordId:'record',revisionId:'revision'});
+    await store.dispatch(atlasApi.endpoints.applicationRead.initiate(arg));
+    expect(calls.filter(x=>x==='list_portfolio_entries')).toHaveLength(2);
+    expect(calls.filter(x=>x==='list_applications')).toHaveLength(1);
+    one.unsubscribe();two.unsubscribe();other.unsubscribe();store.dispatch(atlasApi.util.resetApiState());unsubscribeMutations();
+});

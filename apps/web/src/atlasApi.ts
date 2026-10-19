@@ -1,13 +1,13 @@
-import { createApi, fakeBaseQuery } from '@reduxjs/toolkit/query/react';
+import { createApi, fakeBaseQuery, defaultSerializeQueryArgs } from '@reduxjs/toolkit/query/react';
 import { callTool, type ToolMutation } from './api';
-import type { AtlasRecord, Page, Project, Store, View, ViewRenderResult } from './types';
+import type { AtlasRecord, AuditEvent, Page, Project, Store, View, ViewRenderResult } from './types';
 
 type ProjectScope = { projectId: string; includeArchived?: boolean };
 type StoreScope = ProjectScope & { storeId: string };
 type RecordScope = StoreScope & { limit: number; offset: number };
 type ViewScope = ProjectScope & { viewId: string };
 type RenderScope = ViewScope & { params: Record<string, string> };
-type Tag = { type: 'Projects' | 'Project' | 'Stores' | 'Store' | 'Records' | 'Views' | 'View' | 'ViewRender'; id: string };
+type Tag = { type: 'ApplicationData' | 'Projects' | 'Project' | 'Stores' | 'Store' | 'Records' | 'Views' | 'View' | 'ViewRender'; id: string };
 export type AtlasMutation = ToolMutation;
 const tag = (type: Tag['type'], id: string): Tag => ({ type, id });
 const scoped = (projectId: string, id: string) => `${projectId}/${id}`;
@@ -15,13 +15,14 @@ const projectScope = (projectId: string) => `project:${projectId}`;
 
 /** Explicit dependencies keep writes within their project or store. */
 export function mutationTags({ name, input }: AtlasMutation): Tag[] {
+    if (name.includes('portfolio')) return [tag('ApplicationData', 'portfolio')];
     const projectId = String(input.projectId ?? '');
     const storeId = String(input.storeId ?? '');
     const viewId = String(input.viewId ?? '');
-    if (/_project$/.test(name)) return [tag('Projects', 'LIST'), ...(projectId ? [tag('Project', projectId), tag('Stores', projectId), tag('Views', projectId), tag('Records', projectScope(projectId)), tag('ViewRender', projectScope(projectId))] : [])];
+    if (/_project$/.test(name)) return [tag('Projects', 'LIST'), ...(projectId ? [tag('Project', projectId), tag('ApplicationData', projectId), tag('Stores', projectId), tag('Views', projectId), tag('Records', projectScope(projectId)), tag('ViewRender', projectScope(projectId))] : [])];
     if (/_store$|_store_schema$/.test(name)) return [tag('Stores', projectId), ...(storeId ? [tag('Store', scoped(projectId, storeId)), tag('Records', scoped(projectId, storeId))] : []), tag('ViewRender', projectScope(projectId))];
     if (/_record$|_records$/.test(name)) return [tag('Records', scoped(projectId, storeId)), tag('ViewRender', projectScope(projectId))];
-    if (/_view$/.test(name)) return [tag('Views', projectId), ...(viewId ? [tag('View', scoped(projectId, viewId)), tag('ViewRender', scoped(projectId, viewId))] : []), tag('ViewRender', projectScope(projectId))];
+    if (/_view$/.test(name)) return [tag('Views', projectId), ...(viewId ? [tag('View', scoped(projectId, viewId)), tag('ViewRender', scoped(projectId, viewId))] : [])];
     if (name === 'execute_view_action') return [tag('ViewRender', projectScope(projectId)), tag('ViewRender', scoped(projectId, viewId)), tag('Records', projectScope(projectId))];
     return [];
 }
@@ -34,14 +35,22 @@ async function read<T>(name: string, input: Record<string, unknown>, signal: Abo
 export const atlasApi = createApi({
     reducerPath: 'atlasApi',
     baseQuery: fakeBaseQuery<{ message: string }>(),
-    tagTypes: ['Projects', 'Project', 'Stores', 'Store', 'Records', 'Views', 'View', 'ViewRender'],
+    tagTypes: ['ApplicationData', 'Projects', 'Project', 'Stores', 'Store', 'Records', 'Views', 'View', 'ViewRender'],
     // Session-scoped browsing: loaded responses remain in Redux until the browser
     // reloads. Explicit Refresh and successful writes are the freshness triggers.
     keepUnusedDataFor: Infinity,
+    serializeQueryArgs: args => {
+        const queryArgs = args.queryArgs as Record<string, unknown>;
+        return defaultSerializeQueryArgs({ ...args, queryArgs: ['listProjects','getProject','listStores','getStore','listRecords','listViews','getView'].includes(args.endpointName) ? { ...queryArgs, includeArchived: queryArgs.includeArchived ?? false } : queryArgs });
+    },
     refetchOnMountOrArgChange: false,
     refetchOnFocus: false,
     refetchOnReconnect: false,
     endpoints: build => ({
+        applicationRead: build.query<unknown, { name: ApplicationReadName; input: Record<string, unknown> }>({
+            queryFn: ({ name, input }, api) => read(name, input, api.signal),
+            providesTags: (_result, _error, { name, input }) => [tag('ApplicationData', name.includes('portfolio') ? 'portfolio' : String(input.projectId ?? 'football'))],
+        }),
         listProjects: build.query<Project[], { includeArchived?: boolean }>({
             queryFn: (arg, api) => read<Project[]>('list_projects', arg, api.signal),
             providesTags: result => [tag('Projects', 'LIST'), ...(result ?? []).map(project => tag('Project', project.id))],
@@ -56,7 +65,7 @@ export const atlasApi = createApi({
         }),
         getStore: build.query<Store, StoreScope>({
             queryFn: (arg, api) => read<Store>('get_store', arg, api.signal),
-            providesTags: (_result, _error, arg) => [tag('Store', scoped(arg.projectId, arg.storeId))],
+            providesTags: (_result, _error, arg) => [tag('Store', scoped(arg.projectId, arg.storeId)), tag('Project', arg.projectId)],
         }),
         listRecords: build.query<Page<AtlasRecord>, RecordScope>({
             queryFn: (arg, api) => read<Page<AtlasRecord>>('list_records', arg, api.signal),
@@ -68,7 +77,11 @@ export const atlasApi = createApi({
         }),
         getView: build.query<View, ViewScope>({
             queryFn: (arg, api) => read<View>('get_view', arg, api.signal),
-            providesTags: (_result, _error, arg) => [tag('View', scoped(arg.projectId, arg.viewId))],
+            providesTags: (_result, _error, arg) => [tag('View', scoped(arg.projectId, arg.viewId)), tag('Project', arg.projectId)],
+        }),
+        getViewHistory: build.query<AuditEvent[], ViewScope>({
+            queryFn: (arg, api) => read<AuditEvent[]>('get_view_history', arg, api.signal),
+            providesTags: (_result, _error, arg) => [tag('View', scoped(arg.projectId, arg.viewId)), tag('Project', arg.projectId)],
         }),
         renderView: build.query<ViewRenderResult, RenderScope>({
             queryFn: (arg, api) => read<ViewRenderResult>('render_view', arg, api.signal),
@@ -84,10 +97,19 @@ export const atlasApi = createApi({
     }),
 });
 
-export const { useListProjectsQuery, useGetProjectQuery, useListStoresQuery, useGetStoreQuery,
-    useListRecordsQuery, useListViewsQuery, useGetViewQuery, useRenderViewQuery, useMutateMutation } = atlasApi;
+export const { useApplicationReadQuery, useListProjectsQuery, useGetProjectQuery, useListStoresQuery, useGetStoreQuery,
+    useListRecordsQuery, useListViewsQuery, useGetViewQuery, useGetViewHistoryQuery, useRenderViewQuery, useMutateMutation } = atlasApi;
 
 export function useAtlasMutation() {
     const [mutate] = useMutateMutation();
     return <T = unknown>(name: string, input: Record<string, unknown>) => mutate({ name, input }).unwrap() as Promise<T>;
+}
+
+// Explicit allowlist: operational commands can never accidentally enter this cache.
+export type ApplicationReadName = 'list_applications' | 'get_application' |
+    'get_portfolio_schemas' | 'list_portfolio_entries' | 'get_portfolio_dashboard' | 'list_portfolio_media' | 'list_portfolio_revisions' |
+    'football_generalist_manifest' | 'football_generalist_runs' | 'football_generalist_policies' | 'football_generalist_activity' | 'football_generalist_assessments';
+export function useApplicationRead<T>(name: ApplicationReadName, input: Record<string, unknown> = {}, live = false, skip = false) {
+    const query = useApplicationReadQuery({ name, input }, { refetchOnMountOrArgChange: live, skip });
+    return { ...query, isLoading: query.isFetching && query.currentData === undefined, data: query.currentData as T | undefined };
 }

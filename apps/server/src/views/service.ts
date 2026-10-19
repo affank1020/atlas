@@ -1,3 +1,4 @@
+import { timed } from '../shared/performance.js';
 import { randomUUID } from "node:crypto";
 import { CoreService } from "../core/service.js";
 import { AtlasError } from "../shared/errors.js";
@@ -12,8 +13,8 @@ const cleanText = (value: string, label: string) => { const result = value.trim(
 export class ViewService {
     constructor(readonly core: CoreService) {}
     get store() { return this.core.store; }
-    async listViews(projectId: string, includeArchived = false) { const data = await this.store.snapshot(); this.core.requireProject(data, projectId, includeArchived); return active(data.views.filter(view => view.projectId === projectId), includeArchived); }
-    async getView(projectId: string, viewId: string, includeArchived = false) { const data = await this.store.snapshot(); this.core.requireProject(data, projectId, includeArchived); return this.requireView(data, projectId, viewId, includeArchived); }
+    async listViews(projectId: string, includeArchived = false) { const data = await this.core.catalogue({ projectId, includeArchived, views: true }); this.core.requireProject(data, projectId, includeArchived); return active(data.views.filter(view => view.projectId === projectId), includeArchived); }
+    async getView(projectId: string, viewId: string, includeArchived = false) { const data = await this.core.catalogue({ projectId, includeArchived, views: viewId }); this.core.requireProject(data, projectId, includeArchived); return this.requireView(data, projectId, viewId, includeArchived); }
     async createView(input: { projectId:string; name:string; slug?:string; description?:string; queries:ViewQuery[]; html?:string; template?:string; css:string; manifest?:ViewManifest; script?:string; actions?:ViewAction[] } & Client) {
         return this.store.transaction(data=>{
             this.core.requireProject(data,input.projectId);const name=cleanText(input.name,"View name");this.core.unique(data.views.filter(x=>x.projectId===input.projectId),name,"view");
@@ -47,18 +48,27 @@ export class ViewService {
         const value=input.template??input.html??fallback;if(typeof value!=='string')throw new AtlasError("A View template (or legacy html) is required.");return value;
     }
     async archiveView(projectId:string,viewId:string,client?:string){return this.store.transaction(data=>{this.core.requireProject(data,projectId);const view=this.requireView(data,projectId,viewId);const before=structuredClone(view);view.archivedAt=now();view.updatedAt=view.archivedAt;this.core.audit(data,"view.archived",client,projectId,undefined,undefined,before,view,view.id);return view;});}
-    async viewHistory(projectId:string,viewId:string){const data=await this.store.snapshot();this.core.requireProject(data,projectId,true);this.requireView(data,projectId,viewId,true);return data.auditEvents.filter(e=>e.viewId===viewId&&e.operation.startsWith("view.")).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));}
+    async viewHistory(projectId:string,viewId:string){const data=await this.core.catalogue({projectId,includeArchived:true,views:viewId});this.core.requireProject(data,projectId,true);this.requireView(data,projectId,viewId,true);if(this.store.readAudit)return this.store.readAudit({viewId,viewOperations:true});return data.auditEvents.filter(e=>e.viewId===viewId&&e.operation.startsWith("view.")).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));}
     async renderView(projectId:string,viewId:string,params:Record<string,string>={}):Promise<ViewRenderResult>{
-        const data=await this.store.snapshot();this.core.requireProject(data,projectId);const view=this.requireView(data,projectId,viewId);return this.renderDefinition(view,data,params);
+        const data=await this.core.catalogue({projectId,views:viewId,stores:true});this.core.requireProject(data,projectId);const view=this.requireView(data,projectId,viewId);return timed('view.render', () => this.renderDefinition(view,data,params));
+    }
+    async renderStandalone(projectId:string,slug:string,params:Record<string,string>={}) {
+        const data=await this.core.catalogue({projectId,viewSlug:slug,stores:true});
+        this.core.requireProject(data,projectId);
+        const view=data.views.find(v=>v.projectId===projectId&&!v.archivedAt&&(v.slug===slug||v.id===slug));
+        if(!view)throw new AtlasError('View not found or archived.','NOT_FOUND');
+        return timed('view.render', () => this.renderDefinition(view,data,params));
     }
     async previewView(input:{projectId:string;queries:ViewQuery[];html?:string;template?:string;css:string;manifest?:ViewManifest;script?:string;actions?:ViewAction[];params?:Record<string,string>}):Promise<ViewRenderResult>{
-        const data=await this.store.snapshot();this.core.requireProject(data,input.projectId);
+        const data=await this.core.catalogue({projectId:input.projectId,stores:true});this.core.requireProject(data,input.projectId);
         return this.renderDefinition({id:'preview',projectId:input.projectId,name:'Unsaved preview',queries:input.queries,html:this.viewTemplate(input),css:input.css,manifest:validateManifest(input.manifest),script:input.script,actions:input.actions,createdAt:now(),updatedAt:now()},data,input.params??{});
     }
     private async renderDefinition(view:View,data:AtlasData,params:Record<string,string>):Promise<ViewRenderResult>{
         const manifest=validateManifest(view.manifest);const actions=this.checkedViewActions(view.actions,manifest,data,view.projectId);const runtimeId=randomUUID();const resolvedParams=validateParams(manifest,params);validatePresentation(view.html,view.css,manifest,view.script);
         validateViewQueries(view.queries,data.stores.filter(x=>x.projectId===view.projectId),manifest);const bindings:Record<string,RecordData[]>={};const diagnostics=[];
-        for (const query of view.queries) {
+        // At most four independent reads per View, preserving declaration order.
+        for (let offsetIndex = 0; offsetIndex < view.queries.length; offsetIndex += 4) {
+            const results = await Promise.all(view.queries.slice(offsetIndex, offsetIndex + 4).map(async query => {
             const store=this.core.requireStore(data,view.projectId,query.storeId);
             const offsetText=query.offsetParam?resolvedParams[query.offsetParam]:'';
             // Bound the offset: no negative, fractional or exponentially large scans.
@@ -68,15 +78,20 @@ export class ViewService {
                 const value=resolvedParams[f.param]?.trim();
                 if(value)filters.push({field:f.field,operator:f.operator,value});
             }
-            const page=await this.store.queryRecords(store,{
+            const page=await timed('view.query', () => this.store.queryRecords(store,{
                 filters,sort:query.sort,limit:query.limit??100,offset,
                 searchText:query.searchParam?resolvedParams[query.searchParam]:''
-            });
-            bindings[query.name]=page.items.map(record=>({...structuredClone(record.data),_atlas:{id:record.id,storeId:record.storeId}}));
-            bindings[query.name+'Page']=[{total:page.total,offset:page.offset,limit:page.limit,
-                pageStart:page.items.length?page.offset+1:0,pageEnd:page.offset+page.items.length,
-                hasNext:page.offset+page.items.length<page.total,hasPrevious:page.offset>0}];
-            diagnostics.push({name:query.name,storeId:query.storeId,returned:page.items.length});
+            }));
+            return { query, page };
+            }));
+            // Assemble in declaration order even when reads complete out of order.
+            for (const { query, page } of results) {
+                bindings[query.name]=page.items.map(record=>({...record.data,_atlas:{id:record.id,storeId:record.storeId}}));
+                bindings[query.name+'Page']=[{total:page.total,offset:page.offset,limit:page.limit,
+                    pageStart:page.items.length?page.offset+1:0,pageEnd:page.offset+page.items.length,
+                    hasNext:page.offset+page.items.length<page.total,hasPrevious:page.offset>0}];
+                diagnostics.push({name:query.name,storeId:query.storeId,returned:page.items.length});
+            }
         }
         const renderedHtml=renderTemplate(view.html,{...bindings,params:resolvedParams},manifest);
         return {runtimeId,actions,...(view.slug&&{standalonePath:`/projects/${view.projectId}/views/${view.slug}`}),view:{id:view.id,projectId:view.projectId,name:view.name,...(view.slug&&{slug:view.slug})},data:bindings,renderedHtml,css:view.css,manifest,script:view.script,params:resolvedParams,document:viewDocument({runtimeId,actions,html:renderedHtml,css:view.css,script:view.script,manifest,data:bindings,params:resolvedParams}),diagnostics:{queries:diagnostics}};
@@ -101,7 +116,7 @@ export class ViewService {
         });
     }
     async getViewBySlug(projectId:string,slug:string){
-        const data=await this.store.snapshot();this.core.requireProject(data,projectId);
+        const data=await this.core.catalogue({projectId,viewSlug:slug});this.core.requireProject(data,projectId);
         const view=data.views.find(v=>v.projectId===projectId&&!v.archivedAt&&(v.slug===slug||v.id===slug));
         if(!view)throw new AtlasError('View not found or archived.','NOT_FOUND');return view;
     }

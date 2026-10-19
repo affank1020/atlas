@@ -9,7 +9,7 @@ export function ProjectNav({ projectId, section }: { projectId: string; section:
 }
 
 export function AppShell({ page, projectId, contentClass, children }: { page: string; projectId?: string; contentClass: string; children: ReactNode }) {
-    const { data: projects = [], error } = useListProjectsQuery({ includeArchived: false });
+    const { data: projects = [], error, isLoading, refetch } = useListProjectsQuery({ includeArchived: false });
     const [open, setOpen] = useState(false);
     useEffect(() => setOpen(false), [page, projectId]);
     const project = projects.find(p => p.id === projectId);
@@ -24,7 +24,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                 <p className="nav-group">Projects</p>
                 {link('#/projects', 'All projects', page === 'projects', '▦')}
                 {projects.map(p => <a href={`#/projects/${p.id}`} key={p.id} className={p.id === projectId ? 'active project-link' : 'project-link'} aria-current={p.id === projectId ? 'page' : undefined}><span className="project-monogram" aria-hidden="true">{p.name.slice(0, 2).toUpperCase()}</span><span>{p.name}</span></a>)}
-                {error && <small className="nav-message">Projects unavailable</small>}
+                {isLoading && <small role="status">Loading projects…</small>}{error && <small className="nav-message">Projects unavailable <button onClick={() => void refetch()}>Retry</button></small>}
                 <p className="nav-group">Infrastructure</p>
                 {link('#/nodes', 'Nodes', page === 'nodes', '▤')}
                 {link('#/activity', 'Activity', page === 'activity', '≋')}

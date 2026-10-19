@@ -1,3 +1,4 @@
+import { diagnostics } from './performance';
 const API_BASE = (import.meta.env.VITE_ATLAS_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:3000" : window.location.origin)).replace(/\/$/, "");
 
 class ToolRequestError extends Error {
@@ -6,7 +7,7 @@ class ToolRequestError extends Error {
 
 export type ToolMutation = { name: string; input: Record<string, unknown> };
 const mutationListeners = new Set<(mutation: ToolMutation) => void>();
-const MUTATION = /^(create_|update_|archive_|delete_|save_|publish_|unpublish_|bulk_|patch_|upsert_|configure_|execute_view_action$)/;
+const MUTATION = /^(create_|update_|archive_|delete_|save_|publish_|unpublish_|restore_|upload_|bulk_|patch_|upsert_|configure_|execute_view_action$)/;
 let toolRequestCount = 0;
 
 /** Counts actual HTTP tool requests, including failed attempts. */
@@ -18,6 +19,7 @@ export async function callTool<T>(name: string, input: Record<string, unknown> =
     let response: Response;
     try {
         toolRequestCount++;
+        diagnostics.networkRequests++;
         response = await fetch(`${API_BASE}/api/tools/${name}`, {
             method: "POST",
             headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" },

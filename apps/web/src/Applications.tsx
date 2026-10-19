@@ -1,7 +1,8 @@
-import { useEffect, useState, type ComponentType } from 'react';
-import { callTool } from './api';
-import { Portfolio } from './Portfolio';
-import { FootballGeneralistExperience } from './FootballGeneralistExperience';
+import { useRouteTiming } from './performance';
+import { useEffect, useRef, lazy, Suspense, type ComponentType } from 'react';
+import { useApplicationRead, useListProjectsQuery } from './atlasApi';
+const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
+const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
 import './applications.css';
 
 export type ApplicationManifest = {
@@ -19,21 +20,13 @@ const applicationComponents: Record<string, ComponentType> = {
     'football-training': FootballGeneralistExperience,
 };
 
-export function ProjectApplications({ projectId }: { projectId: string }) {
-    const [applications, setApplications] = useState<ApplicationManifest[]>([]);
-    const [busy, setBusy] = useState(true);
-    const [error, setError] = useState('');
-    useEffect(() => {
-        let active = true;
-        setBusy(true);
-        callTool<ApplicationManifest[]>('list_applications', { projectId })
-            .then(items => { if (active) { setApplications(items); setError(''); } })
-            .catch(e => { if (active) setError(e instanceof Error ? e.message : String(e)); })
-            .finally(() => { if (active) setBusy(false); });
-        return () => { active = false; };
-    }, [projectId]);
+export function ProjectApplications({ projectId, refreshVersion = 0 }: { projectId: string; refreshVersion?: number }) {
+    const { data: applications = [], isLoading: busy, error: queryError, refetch } = useApplicationRead<ApplicationManifest[]>('list_applications', { projectId });
+    const error = queryError?.message ?? '';
+    const previousRefresh = useRef(refreshVersion);
+    useEffect(() => { if (previousRefresh.current !== refreshVersion) void refetch(); previousRefresh.current = refreshVersion; }, [refreshVersion, refetch]);
     return <section className="panel project-applications" aria-label="Project Applications">
-        <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{applications.length} available</span></div>
+        <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{applications.length} available <button onClick={() => void refetch()}>Refresh</button></span></div>
         <p className="application-section-copy">Applications open in their own tab. Unlike Views, they provide dedicated tools and workflows.</p>
         {busy && <p role="status" className="application-status">Loading Applications…</p>}
         {error && <div role="alert" className="notice error">{error}</div>}
@@ -49,38 +42,28 @@ export function ProjectApplications({ projectId }: { projectId: string }) {
 }
 
 export function ApplicationWindow({ projectId, slug }: { projectId: string; slug: string }) {
-    const [application, setApplication] = useState<ApplicationManifest>();
-    const [error, setError] = useState('');
-    const [busy, setBusy] = useState(true);
-    useEffect(() => {
-        let active = true;
-        setBusy(true);
-        setApplication(undefined);
-        setError('');
-        callTool<ApplicationManifest>('get_application', { projectId, slug })
-            .then(app => { if (active) { setApplication(app); setError(''); } })
-            .catch(e => { if (active) { setApplication(undefined); setError(e instanceof Error ? e.message : String(e)); } })
-            .finally(() => { if (active) setBusy(false); });
-        return () => { active = false; };
-    }, [projectId, slug]);
+    useListProjectsQuery({ includeArchived: false });
+    const { data: application, error: queryError, isLoading: busy, refetch } = useApplicationRead<ApplicationManifest>('get_application', { projectId, slug });
+    const error = queryError?.message ?? '';
     useEffect(() => {
         if (!application) return;
         const previous = document.title;
         document.title = `${application.name} · Atlas`;
         return () => { document.title = previous; };
     }, [application]);
+    useRouteTiming("application-manifest", `${projectId}/${slug}`, !!application);
     const currentApplication = application?.projectId === projectId && application.slug === slug ? application : undefined;
-    const Component = currentApplication && !error ? applicationComponents[currentApplication.type] : undefined;
+    const Component = currentApplication ? applicationComponents[currentApplication.type] : undefined;
     return <div className="application-window">
         <header className="application-window-bar">
             <a href={`#/projects/${projectId}/applications`} className="application-back">← Project Applications</a>
-            <span className="application-window-brand">Atlas / {application?.name ?? 'Application'}</span>
+            <button onClick={() => void refetch()}>Refresh application</button><span className="application-window-brand">Atlas / {application?.name ?? 'Application'}</span>
         </header>
         <main className="application-window-main">
             {busy && <p role="status" className="application-status">Loading Application…</p>}
             {error && <div role="alert" className="notice error">{error}</div>}
             {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
-            {Component && !busy && <Component />}
+            {Component && !busy && <Suspense fallback={<p role="status">Loading application interface…</p>}><Component /></Suspense>}
         </main>
     </div>;
 }
