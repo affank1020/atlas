@@ -39,6 +39,7 @@ export function Portfolio(){
 }
 
 function EditorField({field,value,media,onChange}:{field:Field;value:unknown;media:Media[];onChange:(value:unknown)=>void}){
+ if(field.name==="showcase")return <ShowcaseEditor value={value} media={media} onChange={onChange}/>;
  const asset=field.name.endsWith("AssetId");
  if(asset)return <label>{label(field.name.replace(/Id$/, ""))}<select value={String(value??"")} onChange={e=>onChange(e.target.value)}><option value="">No asset</option>{media.filter(x=>x.status==="active").map(item=><option key={item.id} value={item.id}>{item.originalName}{item.altText?` — ${item.altText}`:""}</option>)}</select></label>;
  if(field.type==="boolean")return <label className="portfolio-check"><input type="checkbox" checked={Boolean(value)} onChange={e=>onChange(e.target.checked)}/>{label(field.name)}</label>;
@@ -46,6 +47,24 @@ function EditorField({field,value,media,onChange}:{field:Field;value:unknown;med
  if(field.type==="array"||field.type==="object")return <label>{label(field.name)}<textarea value={value===undefined?"":typeof value==="string"?value:JSON.stringify(value,null,2)} onChange={e=>{try{onChange(JSON.parse(e.target.value||(field.type==="array"?"[]":"{}")));}catch{onChange(e.target.value);}}} placeholder={field.type==="array"?'["First item"]':'{"label":"value"}'}/><small>JSON {field.type}</small></label>;
  if(LONG_FIELDS.has(field.name))return <label>{label(field.name)}<textarea className={field.name==="body"?"portfolio-body":""} value={String(value??"")} onChange={e=>onChange(e.target.value)}/>{field.name==="body"&&<small>Markdown supported</small>}</label>;
  return <label>{label(field.name)}<input type={field.type==="number"?"number":field.type==="datetime"?"datetime-local":"text"} value={String(value??"")} onChange={e=>onChange(field.type==="number"?(e.target.value===""?undefined:Number(e.target.value)):field.type==="datetime"&&e.target.value?new Date(e.target.value).toISOString():e.target.value)}/></label>;
+}
+
+const SHOWCASE_PRESETS = {
+ layout:["media-led","editorial","immersive","minimal"],
+ motif:["none","grid","lines","geometric"],
+ motionStyle:["none","subtle","ambient"],
+ mediaFit:["contain","cover"],
+ mediaPosition:["center","top","bottom","left","right"],
+} as const;
+function ShowcaseEditor({value,media,onChange}:{value:unknown;media:Media[];onChange:(value:unknown)=>void}){
+ const config=value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
+ const update=(key:string,next:string)=>{const changed={...config};if(next)changed[key]=next;else delete changed[key];onChange(changed);};
+ return <fieldset className="portfolio-showcase-editor"><legend>Showcase environment</legend><p>These choices control the portfolio scene. Changes remain a draft until published.</p>
+ <div className="portfolio-showcase-fields">
+ {(["accentColor","secondaryAccentColor","backgroundColor","ambientColor"] as const).map(key=><label key={key}>{label(key)}<input value={String(config[key]??"")} placeholder="#aabbcc" pattern="#[0-9a-fA-F]{6}" onChange={e=>update(key,e.target.value)}/></label>)}
+ {Object.entries(SHOWCASE_PRESETS).map(([key,values])=><label key={key}>{label(key)}<select value={String(config[key]??"")} onChange={e=>update(key,e.target.value)}><option value="">Default</option>{values.map(option=><option key={option} value={option}>{label(option)}</option>)}</select></label>)}
+ {(["artworkAssetId","backgroundAssetId"] as const).map(key=><label key={key}>{label(key.replace("AssetId",""))}<select value={String(config[key]??"")} onChange={e=>update(key,e.target.value)}><option value="">No image</option>{media.filter(asset=>asset.status==="active"&&asset.mimeType.startsWith("image/")).map(asset=><option key={asset.id} value={asset.id}>{asset.originalName}{asset.altText?` — ${asset.altText}`:""}</option>)}</select></label>)}
+ </div></fieldset>;
 }
 
 function MediaLibrary({media,busy,setBusy,setError,setNotice,reload}:{media:Media[];busy:string;setBusy:(x:string)=>void;setError:(x:string)=>void;setNotice:(x:string)=>void;reload:()=>Promise<void>}){

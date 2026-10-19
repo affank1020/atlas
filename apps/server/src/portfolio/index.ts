@@ -24,11 +24,32 @@ export type PortfolioContentType = keyof typeof PORTFOLIO_CONTENT_TYPES;
 const PORTFOLIO_MODELS: Record<PortfolioContentType, { description:string; fields:FieldDefinition[] }> = {
     profile:{description:"Portfolio identity, hero copy, CV and portrait.",fields:[{name:"firstName",type:"string"},{name:"lastName",type:"string"},{name:"tagline",type:"string"},{name:"description",type:"string"},{name:"cvAssetId",type:"string"},{name:"portraitAssetId",type:"string"}]},
     contact:{description:"Public contact and social links.",fields:[{name:"email",type:"string"},{name:"responseTime",type:"string"},{name:"githubUrl",type:"string"},{name:"linkedinUrl",type:"string"}]},
-    projects:{description:"Portfolio case studies and work.",fields:[{name:"title",type:"string"},{name:"slug",type:"string"},{name:"year",type:"string"},{name:"summary",type:"string"},{name:"body",type:"string"},{name:"role",type:"string"},{name:"outcomes",type:"array",default:[]},{name:"tags",type:"array",default:[]},{name:"note",type:"string"},{name:"href",type:"string"},{name:"repositoryUrl",type:"string"},{name:"liveUrl",type:"string"},{name:"links",type:"array",default:[]},{name:"imageAssetId",type:"string"},{name:"galleryAssetIds",type:"array",default:[]},{name:"collectionId",type:"string"},{name:"order",type:"number"}]},
-    experience:{description:"Roles and professional experience.",fields:[{name:"company",type:"string"},{name:"role",type:"string"},{name:"period",type:"string"},{name:"description",type:"string"},{name:"highlights",type:"array",default:[]},{name:"tags",type:"array",default:[]},{name:"accent",type:"string"},{name:"imageAssetId",type:"string"},{name:"order",type:"number"}]},
+    projects:{description:"Portfolio case studies and work.",fields:[{name:"title",type:"string"},{name:"slug",type:"string"},{name:"year",type:"string"},{name:"summary",type:"string"},{name:"body",type:"string"},{name:"role",type:"string"},{name:"outcomes",type:"array",default:[]},{name:"tags",type:"array",default:[]},{name:"note",type:"string"},{name:"href",type:"string"},{name:"repositoryUrl",type:"string"},{name:"liveUrl",type:"string"},{name:"links",type:"array",default:[]},{name:"imageAssetId",type:"string"},{name:"galleryAssetIds",type:"array",default:[]},{name:"collectionId",type:"string"},{name:"showcase",type:"object",description:"Optional visual palette, preset, and Atlas artwork asset IDs."},{name:"order",type:"number"}]},
+    experience:{description:"Roles and professional experience.",fields:[{name:"company",type:"string"},{name:"role",type:"string"},{name:"period",type:"string"},{name:"description",type:"string"},{name:"highlights",type:"array",default:[]},{name:"tags",type:"array",default:[]},{name:"accent",type:"string"},{name:"imageAssetId",type:"string"},{name:"showcase",type:"object",description:"Optional visual palette, preset, and Atlas artwork asset IDs."},{name:"order",type:"number"}]},
     posts:{description:"Published writing and drafts.",fields:[{name:"title",type:"string"},{name:"slug",type:"string"},{name:"excerpt",type:"string"},{name:"body",type:"string"},{name:"publishedAt",type:"datetime"},{name:"tags",type:"array",default:[]},{name:"heroAssetId",type:"string"},{name:"placeholder",type:"boolean",default:false},{name:"collectionId",type:"string"}]},
     collections:{description:"Ordered project and post collections.",fields:[{name:"key",type:"string"},{name:"title",type:"string"},{name:"slug",type:"string"},{name:"section",type:"enum",enumValues:["projects","blog"]},{name:"description",type:"string"},{name:"order",type:"number"},{name:"imageAssetId",type:"string"}]},
 };
+
+const SHOWCASE_OPTIONS = {
+    layout: ["media-led", "editorial", "immersive", "minimal"],
+    motif: ["none", "grid", "lines", "geometric"],
+    motionStyle: ["none", "subtle", "ambient"],
+    mediaFit: ["contain", "cover"],
+    mediaPosition: ["center", "top", "bottom", "left", "right"],
+} as const;
+const SHOWCASE_COLORS = ["accentColor", "secondaryAccentColor", "backgroundColor", "ambientColor"] as const;
+const SHOWCASE_ASSETS = ["artworkAssetId", "backgroundAssetId"] as const;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function sanitizeShowcase(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const result: Record<string, string> = {};
+    for (const key of SHOWCASE_COLORS) if (typeof input[key] === "string" && /^#[0-9a-fA-F]{6}$/.test(input[key])) result[key] = input[key];
+    for (const [key, allowed] of Object.entries(SHOWCASE_OPTIONS)) if (typeof input[key] === "string" && (allowed as readonly string[]).includes(input[key])) result[key] = input[key] as string;
+    for (const key of SHOWCASE_ASSETS) if (typeof input[key] === "string" && UUID.test(input[key])) result[key] = input[key];
+    return Object.keys(result).length ? result : undefined;
+}
 
 const TYPE_BY_STORE = new Map<string, PortfolioContentType>(Object.entries(PORTFOLIO_CONTENT_TYPES).map(([key, value]) => [value.storeId, key as PortfolioContentType]));
 const iso = (value: Date | string | null) => value ? new Date(value).toISOString() : undefined;
@@ -60,6 +81,14 @@ export class PortfolioService {
         const connection=await this.pool.connect();
         try { await connection.query("BEGIN"); await connection.query("SELECT pg_advisory_xact_lock($1)",[0x504f5254]); await connection.query(`INSERT INTO projects(id,name,description,created_at,updated_at) VALUES($1,'Portfolio','Canonical portfolio content managed in Observatory.',now(),now()) ON CONFLICT(id) DO NOTHING`,[PORTFOLIO_PROJECT_ID]);
             for(const [contentType,definition] of Object.entries(PORTFOLIO_CONTENT_TYPES) as [PortfolioContentType,(typeof PORTFOLIO_CONTENT_TYPES)[PortfolioContentType]][]){const model=PORTFOLIO_MODELS[contentType];await connection.query(`INSERT INTO stores(id,project_id,name,description,current_schema_version,created_at,updated_at) VALUES($1,$2,$3,$4,1,now(),now()) ON CONFLICT(id) DO NOTHING`,[definition.storeId,PORTFOLIO_PROJECT_ID,definition.name,model.description]);await connection.query(`INSERT INTO store_schemas(store_id,version,definition,created_at) VALUES($1,1,$2,now()) ON CONFLICT(store_id,version) DO NOTHING`,[definition.storeId,{fields:model.fields}]);}
+            for (const contentType of ["projects", "experience"] as const) {
+                const definition = PORTFOLIO_CONTENT_TYPES[contentType];
+                const current = await connection.query(`SELECT current_schema_version FROM stores WHERE id=$1`, [definition.storeId]);
+                if (Number(current.rows[0]?.current_schema_version) < 2) {
+                    await connection.query(`INSERT INTO store_schemas(store_id,version,definition,created_at) VALUES($1,2,$2,now()) ON CONFLICT(store_id,version) DO NOTHING`, [definition.storeId, { fields: PORTFOLIO_MODELS[contentType].fields }]);
+                    await connection.query(`UPDATE stores SET current_schema_version=2,updated_at=now() WHERE id=$1`, [definition.storeId]);
+                }
+            }
             await connection.query("COMMIT");
         } catch(error){await connection.query("ROLLBACK");throw error;} finally{connection.release();}
     }
@@ -120,7 +149,15 @@ export class PortfolioService {
             const duplicate = await this.pool.query(`SELECT r.id FROM portfolio_publications pp JOIN portfolio_revisions pr ON pr.id=pp.revision_id JOIN records r ON r.id=pp.record_id WHERE pr.store_id=$1 AND lower(pr.data->>'slug')=lower($2) AND r.id<>$3 LIMIT 1`, [entry.storeId, slug, entry.id]);
             if (duplicate.rows[0]) throw new AtlasError(`Cannot publish: slug '${slug}' is already published in ${PORTFOLIO_CONTENT_TYPES[entry.contentType].name}.`);
         }
-        const assetIds = Object.entries(entry.data).flatMap(([key, value]) => key.endsWith("AssetId") && typeof value === "string" ? [value] : key.endsWith("AssetIds") && Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+        const showcase = entry.data.showcase;
+        if (showcase !== undefined && (entry.contentType === "projects" || entry.contentType === "experience")) {
+            if (!showcase || typeof showcase !== "object" || Array.isArray(showcase)) throw new AtlasError("Cannot publish: showcase must be an object.");
+            const input = showcase as Record<string, unknown>;
+            const allowed = new Set<string>([...SHOWCASE_COLORS, ...SHOWCASE_ASSETS, ...Object.keys(SHOWCASE_OPTIONS)]);
+            for (const key of Object.keys(input)) if (!allowed.has(key) || (input[key] !== undefined && sanitizeShowcase({ [key]: input[key] }) === undefined)) throw new AtlasError(`Cannot publish: invalid showcase field '${key}'.`);
+        }
+        const showcaseAssetIds = sanitizeShowcase(showcase);
+        const assetIds = [...Object.entries(entry.data).flatMap(([key, value]) => key.endsWith("AssetId") && typeof value === "string" ? [value] : key.endsWith("AssetIds") && Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []), ...SHOWCASE_ASSETS.flatMap(key => showcaseAssetIds?.[key] ? [showcaseAssetIds[key]!] : [])];
         if (assetIds.length) {
             const result = await this.pool.query(`SELECT id,mime_type,alt_text,status FROM media_assets WHERE id=ANY($1::uuid[])`, [assetIds]);
             const found = new Map(result.rows.map(row => [row.id, row]));
@@ -128,6 +165,7 @@ export class PortfolioService {
                 const asset = found.get(id);
                 if (!asset || asset.status !== "active") throw new AtlasError(`Cannot publish: media asset '${id}' is missing or archived.`);
                 if (String(asset.mime_type).startsWith("image/") && !String(asset.alt_text ?? "").trim()) throw new AtlasError(`Cannot publish: image '${id}' needs alt text.`);
+                if (SHOWCASE_ASSETS.some(key => showcaseAssetIds?.[key] === id) && !String(asset.mime_type).startsWith("image/")) throw new AtlasError(`Cannot publish: showcase asset '${id}' must be an image.`);
             }
         }
     }
@@ -184,6 +222,17 @@ export class PortfolioService {
         return `${baseUrl}/api/media/${assetId}/${String(asset.rows[0].mime_type).startsWith("image/") ? variant : "original"}`;
     }
 
+    private async publicShowcase(value: unknown, baseUrl: string) {
+        const parsed = sanitizeShowcase(value);
+        if (!parsed) return undefined;
+        const { artworkAssetId, backgroundAssetId, ...visual } = parsed;
+        const [artworkUrl, backgroundUrl] = await Promise.all([
+            this.mediaUrl(artworkAssetId, "preview", baseUrl),
+            this.mediaUrl(backgroundAssetId, "preview", baseUrl),
+        ]);
+        return { ...visual, ...(artworkUrl && { artworkUrl }), ...(backgroundUrl && { backgroundUrl }) };
+    }
+
     async publicContent(baseUrl = "") {
         await this.ready;
         const result = await this.pool.query(`SELECT pr.store_id,pr.data FROM portfolio_publications pp JOIN portfolio_revisions pr ON pr.id=pp.revision_id JOIN records r ON r.id=pp.record_id WHERE r.archived_at IS NULL ORDER BY coalesce((pr.data->>'order')::numeric,999999),pp.published_at`);
@@ -193,8 +242,8 @@ export class PortfolioService {
         return {
             hero: groups.get("profile")?.[0] ? await enrich(groups.get("profile")![0]!, { cvAssetId: "cvUrl", portraitAssetId: "portraitUrl" }) : null,
             contact: groups.get("contact")?.[0] ?? null,
-            work: await Promise.all((groups.get("projects") ?? []).map(async item => { const value = await enrich(item, { imageAssetId: "image" }); if (Array.isArray(item.galleryAssetIds)) value.gallery = (await Promise.all(item.galleryAssetIds.map(id => this.mediaUrl(id,"preview",baseUrl)))).filter(Boolean); delete value.galleryAssetIds; return value; })),
-            experience: await Promise.all((groups.get("experience") ?? []).map(item => enrich(item, { imageAssetId: "image" }))),
+            work: await Promise.all((groups.get("projects") ?? []).map(async item => { const value = await enrich(item, { imageAssetId: "image" }); value.showcase = await this.publicShowcase(item.showcase, baseUrl); if (Array.isArray(item.galleryAssetIds)) value.gallery = (await Promise.all(item.galleryAssetIds.map(id => this.mediaUrl(id,"preview",baseUrl)))).filter(Boolean); delete value.galleryAssetIds; return value; })),
+            experience: await Promise.all((groups.get("experience") ?? []).map(async item => { const value = await enrich(item, { imageAssetId: "image" }); value.showcase = await this.publicShowcase(item.showcase, baseUrl); return value; })),
             posts: await Promise.all((groups.get("posts") ?? []).map(item => enrich(item, { heroAssetId: "heroImage" }))),
             collections: await Promise.all((groups.get("collections") ?? []).map(item => enrich(item, { imageAssetId: "image" }))),
         };

@@ -370,7 +370,7 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
-        if (x.preset === 'pilot_50k' && !['s2-score-basic-v1', 's2_phase_shoot_retention_v2', 's2_phase_interception_rehearsal_v3', 's2_phase_balanced_rehearsal_v4', 's2_phase_early_intercept_reversal_v5'].includes(scenario))
+        if (x.preset === 'pilot_50k' && !['s2-score-basic-v1', 's2_phase_shoot_retention_v2', 's2_phase_interception_rehearsal_v3', 's2_phase_balanced_rehearsal_v4', 's2_phase_early_intercept_reversal_v5', 's2_phase_early_intercept_balanced_v6', 's2_phase_near_reversal_retention_v7'].includes(scenario))
             throw new AtlasError('50k pilot is reserved for the versioned S2.2 curricula.', 'INVALID_ARGUMENT');
         const sourceId = x.initializeFromRunId;
         if ((scenario === 's1_rehearsal' || phaseIds.has(scenario)) && !sourceId)
