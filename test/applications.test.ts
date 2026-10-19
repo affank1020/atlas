@@ -46,8 +46,8 @@ test('Application registry rejects duplicate slugs and conflicting MCP operation
 
 test('Portfolio remains an Application with the existing MCP tool names', async () => {
     const services = {
-        portfolio: { dashboard: async () => ({ total: 3 }) },
-        media: { list: async () => [] },
+        portfolio: { dashboard: async () => ({ total: 3 }), getEntry: async () => ({contentType:'projects'}), patchDraft: async (x:unknown) => x, previewEntry: async () => ({validation:{valid:true}}) },
+        media: { list: async () => [], resolveAssets: async () => ['f72eaf65-982e-49cb-8624-1a3f8ab4cf4e'] },
         askPortfolio: { ask: async () => ({ answer: 'published only' }) },
         contentful: { status: async () => ({ available: true }), syncPortfolio: async () => ({ ok: true }) },
     };
@@ -55,10 +55,18 @@ test('Portfolio remains an Application with the existing MCP tool names', async 
     const apps = new ApplicationRegistry([application]);
     assert.equal(application.slug, 'portfolio');
     assert.equal(application.projectId, 'd99a6c45-a4ec-5ef6-8f22-c07d31f8bb38');
-    for (const name of ['ask_portfolio', 'get_contentful_status', 'sync_portfolio', 'get_portfolio_dashboard', 'get_portfolio_schemas', 'save_portfolio_draft', 'publish_portfolio_entry', 'list_portfolio_media', 'upload_portfolio_media']) {
+    for (const name of ['ask_portfolio', 'get_contentful_status', 'sync_portfolio', 'get_portfolio_dashboard', 'get_portfolio_schemas', 'save_portfolio_draft', 'patch_portfolio_entry', 'preview_portfolio_entry', 'set_portfolio_media', 'publish_portfolio_entry', 'list_portfolio_media', 'upload_portfolio_media']) {
         assert.ok(apps.hasTool(name), `Portfolio MCP tool ${name} is missing`);
     }
     assert.deepEqual(await apps.invoke('get_portfolio_dashboard', {}), { total: 3 });
     assert.deepEqual(await apps.invoke('list_portfolio_media', {}), []);
     await assert.rejects(apps.invoke('publish_portfolio_entry', { recordId: 'not-a-uuid' }));
+    const recordId='690e05f7-7926-4156-b702-2b0fb57821dc';
+    const updatedAt='2026-10-19T22:23:25.264Z';
+    const assigned=await apps.invoke('set_portfolio_media', {recordId,expectedUpdatedAt:updatedAt,slot:'gallery',assets:['logo.png']}) as any;
+    assert.deepEqual(assigned.changes,{galleryAssetIds:['f72eaf65-982e-49cb-8624-1a3f8ab4cf4e']});
+    await assert.rejects(apps.invoke('set_portfolio_media', {recordId,expectedUpdatedAt:updatedAt,slot:'cv',assets:[]}),/not available for projects/);
+    await assert.rejects(apps.invoke('set_portfolio_media', {recordId,expectedUpdatedAt:updatedAt,slot:'image',assets:['one.png','two.png']}),/Only the gallery/);
+    assert.deepEqual(await apps.invoke('preview_portfolio_entry', {recordId}),{validation:{valid:true}});
+    await assert.rejects(apps.invoke('patch_portfolio_entry', {recordId,changes:{summary:'missing version'}}));
 });

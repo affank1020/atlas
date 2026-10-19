@@ -140,6 +140,64 @@ export class PortfolioService {
         return this.getEntry(record.id);
     }
 
+    /**
+     * Conflict-safe partial draft edit. The expected timestamp is compared inside
+     * the Core transaction, before the schema-validated record update and audit.
+     * Dotted keys can patch individual showcase settings without replacing them.
+     * Null removes an optional field; it never publishes the result.
+     */
+    async patchDraft(input: { recordId: string; expectedUpdatedAt: string; changes: RecordData; client?: string }) {
+        await this.ready;
+        if (!input.changes || typeof input.changes !== "object" || Array.isArray(input.changes) || !Object.keys(input.changes).length)
+            throw new AtlasError("Provide at least one field to patch.");
+        const record = await this.catalog.store.transaction(state => {
+            const current = state.records.find(item => item.projectId === PORTFOLIO_PROJECT_ID && item.id === input.recordId && !item.archivedAt);
+            if (!current) throw new AtlasError(`Portfolio entry '${input.recordId}' was not found.`, "NOT_FOUND");
+            if (current.updatedAt !== input.expectedUpdatedAt)
+                throw new AtlasError("Portfolio draft changed since it was read. Refresh and retry the edit.");
+            const type = TYPE_BY_STORE.get(current.storeId);
+            if (!type) throw new AtlasError("Record does not belong to a Portfolio content store.");
+            const allowed = new Set(PORTFOLIO_MODELS[type].fields.map(field => field.name));
+            const next = structuredClone(current.data);
+            for (const [key, value] of Object.entries(input.changes)) {
+                if (key.startsWith("showcase.") && (type === "projects" || type === "experience")) {
+                    const property = key.slice("showcase.".length);
+                    const valid = [...SHOWCASE_COLORS, ...SHOWCASE_ASSETS, ...Object.keys(SHOWCASE_OPTIONS)];
+                    if (!valid.includes(property)) throw new AtlasError(`Unknown showcase field '${property}'.`);
+                    const currentShowcase = next.showcase;
+                    const showcase = currentShowcase && typeof currentShowcase === "object" && !Array.isArray(currentShowcase)
+                        ? { ...currentShowcase as Record<string, unknown> } : {};
+                    if (value === null) delete showcase[property];
+                    else showcase[property] = value;
+                    if (Object.keys(showcase).length) next.showcase = showcase;
+                    else delete next.showcase;
+                } else {
+                    if (!allowed.has(key)) throw new AtlasError(`Unknown Portfolio field '${key}'.`);
+                    if (value === null) delete next[key];
+                    else next[key] = value;
+                }
+            }
+            return this.catalog.updateRecordInState(state, {
+                projectId: PORTFOLIO_PROJECT_ID, storeId: current.storeId,
+                recordId: input.recordId, data: cleanObject(next), replace: true,
+                client: input.client ?? "portfolio-mcp",
+            });
+        });
+        await this.fabric.synchronize();
+        return this.getEntry(record.id);
+    }
+
+    /** Resolve one unpublished draft into the same public content shape as the site uses. */
+    async previewEntry(recordId: string, baseUrl = "") {
+        const entry = await this.getEntry(recordId);
+        let validation: { valid: boolean; errors: string[] } = { valid: true, errors: [] };
+        try { await this.validatePublish(entry); }
+        catch (error) { validation = { valid: false, errors: [error instanceof Error ? error.message : String(error)] }; }
+        return { recordId, contentType: entry.contentType, status: entry.status,
+            updatedAt: entry.updatedAt, publishedRevision: entry.publishedRevision,
+            validation, content: await this.serializeEntry(entry.contentType, entry.data, baseUrl) };
+    }
+
     private async validatePublish(entry: PortfolioEntry) {
         const missing = requiredByType[entry.contentType].filter(field => typeof entry.data[field] !== "string" || !String(entry.data[field]).trim());
         if (missing.length) throw new AtlasError(`Cannot publish: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} required.`);
@@ -233,19 +291,39 @@ export class PortfolioService {
         return { ...visual, ...(artworkUrl && { artworkUrl }), ...(backgroundUrl && { backgroundUrl }) };
     }
 
+    private async serializeEntry(type: PortfolioContentType, data: RecordData, baseUrl: string) {
+        const copy = { ...data };
+        const enrich = async (source: string, target: string) => {
+            const url = await this.mediaUrl(data[source], "preview", baseUrl);
+            if (url) copy[target] = url;
+            delete copy[source];
+        };
+        if (type === "profile") { await enrich("cvAssetId", "cvUrl"); await enrich("portraitAssetId", "portraitUrl"); }
+        else if (type === "projects") {
+            await enrich("imageAssetId", "image");
+            copy.showcase = await this.publicShowcase(data.showcase, baseUrl);
+            if (Array.isArray(data.galleryAssetIds)) copy.gallery = (await Promise.all(data.galleryAssetIds.map(id => this.mediaUrl(id, "preview", baseUrl)))).filter(Boolean);
+            delete copy.galleryAssetIds;
+        } else if (type === "experience") {
+            await enrich("imageAssetId", "image");
+            copy.showcase = await this.publicShowcase(data.showcase, baseUrl);
+        } else if (type === "posts") await enrich("heroAssetId", "heroImage");
+        else if (type === "collections") await enrich("imageAssetId", "image");
+        return copy;
+    }
+
     async publicContent(baseUrl = "") {
         await this.ready;
         const result = await this.pool.query(`SELECT pr.store_id,pr.data FROM portfolio_publications pp JOIN portfolio_revisions pr ON pr.id=pp.revision_id JOIN records r ON r.id=pp.record_id WHERE r.archived_at IS NULL ORDER BY coalesce((pr.data->>'order')::numeric,999999),pp.published_at`);
         const groups = new Map<PortfolioContentType, RecordData[]>();
         for (const row of result.rows) { const type = TYPE_BY_STORE.get(row.store_id)!; groups.set(type, [...(groups.get(type) ?? []), row.data]); }
-        const enrich = async (data: RecordData, mapping: Record<string,string>) => { const copy = { ...data }; for (const [source,target] of Object.entries(mapping)) { const url = await this.mediaUrl(data[source],"preview",baseUrl); if (url) copy[target] = url; delete copy[source]; } return copy; };
         return {
-            hero: groups.get("profile")?.[0] ? await enrich(groups.get("profile")![0]!, { cvAssetId: "cvUrl", portraitAssetId: "portraitUrl" }) : null,
+            hero: groups.get("profile")?.[0] ? await this.serializeEntry("profile", groups.get("profile")![0]!, baseUrl) : null,
             contact: groups.get("contact")?.[0] ?? null,
-            work: await Promise.all((groups.get("projects") ?? []).map(async item => { const value = await enrich(item, { imageAssetId: "image" }); value.showcase = await this.publicShowcase(item.showcase, baseUrl); if (Array.isArray(item.galleryAssetIds)) value.gallery = (await Promise.all(item.galleryAssetIds.map(id => this.mediaUrl(id,"preview",baseUrl)))).filter(Boolean); delete value.galleryAssetIds; return value; })),
-            experience: await Promise.all((groups.get("experience") ?? []).map(async item => { const value = await enrich(item, { imageAssetId: "image" }); value.showcase = await this.publicShowcase(item.showcase, baseUrl); return value; })),
-            posts: await Promise.all((groups.get("posts") ?? []).map(item => enrich(item, { heroAssetId: "heroImage" }))),
-            collections: await Promise.all((groups.get("collections") ?? []).map(item => enrich(item, { imageAssetId: "image" }))),
+            work: await Promise.all((groups.get("projects") ?? []).map(item => this.serializeEntry("projects", item, baseUrl))),
+            experience: await Promise.all((groups.get("experience") ?? []).map(item => this.serializeEntry("experience", item, baseUrl))),
+            posts: await Promise.all((groups.get("posts") ?? []).map(item => this.serializeEntry("posts", item, baseUrl))),
+            collections: await Promise.all((groups.get("collections") ?? []).map(item => this.serializeEntry("collections", item, baseUrl))),
         };
     }
 }
@@ -262,6 +340,27 @@ export class PortfolioMediaService {
     }
     async close() { await this.pool.end(); }
     async list() { const result = await this.pool.query(`SELECT id,original_name AS "originalName",mime_type AS "mimeType",byte_size AS "byteSize",width,height,alt_text AS "altText",caption,status,created_at AS "createdAt",updated_at AS "updatedAt" FROM media_assets ORDER BY created_at DESC`); return result.rows.map(row => ({ ...row, byteSize: Number(row.byteSize), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), url: `/api/media/${row.id}/original`, ...(String(row.mimeType).startsWith("image/") && { thumbnailUrl: `/api/media/${row.id}/thumbnail`, previewUrl: `/api/media/${row.id}/preview` }) })); }
+    /** Resolve exact asset filenames (case-insensitive) or IDs, rejecting ambiguous names. */
+    async resolveAssets(references: string[], kind: "image" | "pdf") {
+        if (references.length > 30) throw new AtlasError("A media assignment can contain at most 30 assets.");
+        const assets = (await this.list()).filter(asset => asset.status === "active");
+        const ids: string[] = [];
+        for (const raw of references) {
+            const reference = raw.trim().toLowerCase();
+            if (!reference) throw new AtlasError("Media reference cannot be empty.");
+            const matches = assets.filter(asset => asset.id.toLowerCase() === reference || asset.originalName.toLowerCase() === reference);
+            if (!matches.length) throw new AtlasError(`No active media asset matches '${raw}'.`, "NOT_FOUND");
+            if (matches.length > 1) throw new AtlasError(`Media filename '${raw}' is ambiguous; use its asset ID instead.`);
+            const asset = matches[0]!;
+            if (kind === "image" && !asset.mimeType.startsWith("image/")) throw new AtlasError(`'${raw}' is not an image.`);
+            if (kind === "pdf" && asset.mimeType !== "application/pdf") throw new AtlasError(`'${raw}' is not a PDF.`);
+            if (kind === "image" && !String(asset.altText ?? "").trim()) throw new AtlasError(`Image '${raw}' needs alt text before assignment.`);
+            if (ids.includes(asset.id)) throw new AtlasError(`Duplicate media asset '${raw}'.`);
+            ids.push(asset.id);
+        }
+        return ids;
+    }
+
     async upload(input: { fileName: string; mimeType: string; base64: string; altText?: string; caption?: string; client?: string }) {
         if (!ALLOWED_MEDIA.has(input.mimeType)) throw new AtlasError(`Unsupported media type '${input.mimeType}'.`);
         const bytes = Buffer.from(input.base64.replace(/^data:[^;]+;base64,/, ""), "base64");

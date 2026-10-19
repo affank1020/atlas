@@ -68,3 +68,76 @@ test("Showcase assets resolve to public image URLs without exposing asset IDs",a
   assert.deepEqual(publicData.work[0]?.showcase,{accentColor:"#ee4433",layout:"media-led",artworkUrl:`https://atlas.example.test/api/media/${asset.id}/preview`});
  }finally{await media.close();await portfolio.close();await fabric.repository.close();await rm(directory,{recursive:true,force:true});}
 });
+
+
+test("Portfolio patch edits selected fields only and rejects stale edits",async()=>{
+ const fixture=await databaseFixture();const fabric=createFabric(fixture.databaseUrl,null);
+ const portfolio=new PortfolioService(fixture.catalog,fabric.repository,fixture.databaseUrl);
+ try{
+  const draft=await portfolio.saveDraft({contentType:"projects",data:{
+   title:"Stable title",slug:"stable-title",summary:"Original",tags:["TypeScript"],
+   showcase:{accentColor:"#123456",layout:"editorial"}
+  }});
+  const edited=await portfolio.patchDraft({recordId:draft.id,expectedUpdatedAt:draft.updatedAt,changes:{
+   summary:"Updated summary","showcase.accentColor":"#abcdef"
+  }});
+  assert.equal(edited.data.title,"Stable title");
+  assert.deepEqual(edited.data.tags,["TypeScript"]);
+  assert.deepEqual(edited.data.showcase,{accentColor:"#abcdef",layout:"editorial"});
+  assert.equal(edited.status,"draft");
+  await assert.rejects(portfolio.patchDraft({
+   recordId:draft.id,expectedUpdatedAt:"2000-01-01T00:00:00.000Z",changes:{title:"Stale"}
+  }),/changed since it was read/);
+  assert.equal((await portfolio.getEntry(draft.id)).data.title,"Stable title");
+  await assert.rejects(portfolio.patchDraft({
+   recordId:draft.id,expectedUpdatedAt:edited.updatedAt,changes:{"showcase.unknown":"value"}
+  }),/Unknown showcase field/);
+  await assert.rejects(portfolio.patchDraft({
+   recordId:draft.id,expectedUpdatedAt:edited.updatedAt,changes:{notAField:"value"}
+  }),/Unknown Portfolio field/);
+  const removed=await portfolio.patchDraft({
+   recordId:draft.id,expectedUpdatedAt:edited.updatedAt,changes:{"showcase.accentColor":null}
+  });
+  assert.deepEqual(removed.data.showcase,{layout:"editorial"});
+ }finally{await portfolio.close();await fabric.repository.close();}
+});
+
+test("Portfolio preview returns unpublished render-ready content and validation",async()=>{
+ const fixture=await databaseFixture();const fabric=createFabric(fixture.databaseUrl,null);
+ const portfolio=new PortfolioService(fixture.catalog,fabric.repository,fixture.databaseUrl);
+ try{
+  const draft=await portfolio.saveDraft({contentType:"projects",data:{
+   title:"Preview only",slug:"preview-only",summary:"Pre-publication",
+   showcase:{accentColor:"#abcdef",motif:"grid"}
+  }});
+  const preview=await portfolio.previewEntry(draft.id,"https://atlas.example.test");
+  assert.equal(preview.validation.valid,true);
+  assert.equal(preview.content.title,"Preview only");
+  assert.deepEqual(preview.content.showcase,{accentColor:"#abcdef",motif:"grid"});
+  assert.equal((await portfolio.publicContent()).work.length,0);
+  assert.deepEqual(await portfolio.revisions(draft.id),[]);
+  const incomplete=await portfolio.saveDraft({contentType:"projects",data:{title:"Incomplete",slug:"incomplete"}});
+  const invalid=await portfolio.previewEntry(incomplete.id);
+  assert.equal(invalid.validation.valid,false);
+  assert.match(invalid.validation.errors.join(" "),/summary/);
+ }finally{await portfolio.close();await fabric.repository.close();}
+});
+
+test("Portfolio media resolves unambiguous names, IDs and image/PDF restrictions",async()=>{
+ const fixture=await databaseFixture();const directory=await mkdtemp(path.join(os.tmpdir(),"atlas-media-resolve-"));
+ const media=new PortfolioMediaService(fixture.databaseUrl,directory);
+ try{
+  const png=(await sharp({create:{width:2,height:2,channels:4,background:{r:33,g:44,b:55,alpha:1}}}).png().toBuffer()).toString("base64");
+  const first=await media.upload({fileName:"Project Hero.png",mimeType:"image/png",base64:png,altText:"Project hero artwork"});
+  assert.deepEqual(await media.resolveAssets(["project hero.PNG"],"image"),[first.id]);
+  assert.deepEqual(await media.resolveAssets([first.id],"image"),[first.id]);
+  await assert.rejects(media.resolveAssets(["missing.png"],"image"),/No active media asset/);
+  await assert.rejects(media.resolveAssets([first.id,first.id],"image"),/Duplicate media asset/);
+  await assert.rejects(media.resolveAssets([first.id],"pdf"),/not a PDF/);
+  const secondPng=(await sharp({create:{width:3,height:3,channels:4,background:{r:32,g:43,b:54,alpha:1}}}).png().toBuffer()).toString("base64");
+  const second=await media.upload({fileName:"Project Hero.png",mimeType:"image/png",base64:secondPng,altText:"Other hero"});
+  assert.notEqual(second.id,first.id);
+  await assert.rejects(media.resolveAssets(["Project Hero.png"],"image"),/ambiguous/);
+  assert.deepEqual(await media.resolveAssets([second.id],"image"),[second.id]);
+ }finally{await media.close();await rm(directory,{recursive:true,force:true});}
+});

@@ -16,6 +16,17 @@ export function portfolioApplication(services: {
     const client = { client: z.string().optional() };
     const recordId = z.string().uuid();
     const contentType = z.enum(Object.keys(PORTFOLIO_CONTENT_TYPES) as [keyof typeof PORTFOLIO_CONTENT_TYPES, ...(keyof typeof PORTFOLIO_CONTENT_TYPES)[]]);
+    const mediaSlots: Record<string, readonly string[]> = {
+        profile: ["portrait", "cv"], contact: [],
+        projects: ["image", "gallery", "artwork", "background"],
+        experience: ["image", "artwork", "background"],
+        posts: ["hero"], collections: ["image"],
+    };
+    const mediaField: Record<string, string> = {
+        portrait: "portraitAssetId", cv: "cvAssetId",
+        image: "imageAssetId", gallery: "galleryAssetIds", hero: "heroAssetId",
+        artwork: "showcase.artworkAssetId", background: "showcase.backgroundAssetId",
+    };
     const tools: ApplicationTool[] = [
         { name: 'ask_portfolio', description: 'Chat about the public portfolio corpus. Scope is fixed server-side and cannot be widened by callers.', inputSchema: askAtlasInputSchema.shape, invoke: x => askPortfolio.ask(x) },
         { name: 'get_contentful_status', description: 'Report the Contentful portfolio integration and derived Fabric corpus status.', inputSchema: {}, invoke: () => contentful.status() },
@@ -27,6 +38,26 @@ export function portfolioApplication(services: {
         { name: 'list_portfolio_entries', description: 'List Portfolio drafts and publication state.', inputSchema: { contentType: contentType.optional() }, invoke: x => portfolio.listEntries(x.contentType) },
         { name: 'get_portfolio_entry', description: 'Read one Portfolio draft and its publication state.', inputSchema: { recordId }, invoke: x => portfolio.getEntry(x.recordId) },
         { name: 'save_portfolio_draft', description: 'Create or replace a Portfolio draft. This never publishes it.', inputSchema: { contentType, recordId: recordId.optional(), data: z.record(z.string(), z.unknown()), ...client }, invoke: x => portfolio.saveDraft(x) },
+        { name: 'patch_portfolio_entry', description: 'Partially update a Portfolio draft with optimistic concurrency protection. Read get_portfolio_entry first and supply its exact updatedAt; null clears an optional field. Dotted showcase keys are supported. Never publishes.', inputSchema: { recordId, expectedUpdatedAt: z.string().datetime(), changes: z.record(z.string(), z.unknown()), ...client }, invoke: x => portfolio.patchDraft(x) },
+        { name: 'preview_portfolio_entry', description: 'Read unpublished draft content resolved into the public website data shape, including media URLs and publish validation. Does not publish or mutate content.', inputSchema: { recordId }, invoke: x => portfolio.previewEntry(x.recordId) },
+        { name: 'set_portfolio_media', description: 'Assign media by exact filename or asset UUID, with optimistic concurrency. Slots depend on content type; gallery accepts an ordered list, other slots accept at most one asset. Empty list removes media. Saves an unpublished draft only.', inputSchema: {
+            recordId, expectedUpdatedAt: z.string().datetime(),
+            slot: z.enum(['image','gallery','artwork','background','hero','portrait','cv']),
+            assets: z.array(z.string().min(1)).max(30), ...client,
+        }, invoke: async x => {
+            const entry = await portfolio.getEntry(x.recordId);
+            if (!mediaSlots[entry.contentType]?.includes(x.slot))
+                throw new Error(`Media slot '${x.slot}' is not available for ${entry.contentType}.`);
+            if (x.slot !== 'gallery' && x.assets.length > 1)
+                throw new Error("Only the gallery slot accepts multiple assets.");
+            const ids = await media.resolveAssets(x.assets, x.slot === 'cv' ? 'pdf' : 'image');
+            const field = mediaField[x.slot]!;
+            return portfolio.patchDraft({
+                recordId: x.recordId, expectedUpdatedAt: x.expectedUpdatedAt,
+                changes: { [field]: x.slot === 'gallery' ? ids : (ids[0] ?? null) },
+                client: x.client,
+            });
+        } },
         { name: 'publish_portfolio_entry', description: 'Validate and explicitly publish an immutable Portfolio revision.', inputSchema: { recordId, ...client }, invoke: x => portfolio.publish(x.recordId, x.client) },
         { name: 'unpublish_portfolio_entry', description: 'Remove an entry from the public Portfolio corpus without deleting its draft.', inputSchema: { recordId }, invoke: x => portfolio.unpublish(x.recordId) },
         { name: 'archive_portfolio_entry', description: 'Archive a Portfolio draft and remove it from publication.', inputSchema: { recordId, ...client }, invoke: x => portfolio.archive(x.recordId, x.client) },
