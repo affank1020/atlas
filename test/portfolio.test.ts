@@ -34,3 +34,16 @@ test("Portfolio media stores originals and creates image delivery variants",asyn
   assert.equal(asset.mimeType,"image/png");assert.equal(asset.altText,"A single test pixel");assert.ok(asset.thumbnailUrl);assert.ok((await media.file(asset.id,"thumbnail")).bytes.length>0);assert.equal((await media.file(asset.id,"original")).mimeType,"image/png");
  }finally{await media.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test("Portfolio hero publishes without an invented tagline",async()=>{
+ const fixture=await databaseFixture();const fabric=createFabric(fixture.databaseUrl,null);
+ const portfolio=new PortfolioService(fixture.catalog,fabric.repository,fixture.databaseUrl);
+ try{
+  const draft=await portfolio.saveDraft({contentType:"profile",data:{firstName:"Atlas",lastName:"Example",description:"Previously an intern at two companies."}});
+  assert.equal(draft.data.tagline,undefined);
+  await portfolio.publish(draft.id,"test-suite");
+  const live=await portfolio.publicContent();
+  assert.equal(live.hero?.firstName,"Atlas");
+  assert.equal(live.hero?.tagline,undefined);
+ }finally{await portfolio.close();await fabric.repository.close();}
+});

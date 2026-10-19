@@ -46,7 +46,7 @@ const entryFromRow = (row: EntryRow): PortfolioEntry => ({
 });
 
 const requiredByType: Record<PortfolioContentType, string[]> = {
-    profile: ["firstName", "lastName", "tagline"], contact: ["email"], projects: ["title", "slug", "summary"],
+    profile: ["firstName", "lastName"], contact: ["email"], projects: ["title", "slug", "summary"],
     experience: ["company", "role", "period"], posts: ["title", "slug", "body"], collections: ["key", "title", "slug", "section"],
 };
 
