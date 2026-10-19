@@ -64,6 +64,7 @@ test("R2 rejects unsafe keys and non-Cloudflare endpoints", async () => {
     await assert.rejects(local.get("../secret"), /Invalid Atlas media object key/);
     assert.throws(() => new R2MediaObjectStore({ ...config, endpoint: "http://127.0.0.1:9000" }), /Cloudflare R2 HTTPS/);
     assert.throws(() => new R2MediaObjectStore({ ...config, endpoint: "https://example.com" }), /Cloudflare R2 HTTPS/);
+    assert.doesNotThrow(() => new R2MediaObjectStore({ ...config, endpoint: "https://0123456789abcdef.eu.r2.cloudflarestorage.com" }));
 });
 
 test("R2 activation is all-or-nothing; local remains default", () => {

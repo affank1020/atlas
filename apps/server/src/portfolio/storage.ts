@@ -53,7 +53,7 @@ export class R2MediaObjectStore implements MediaObjectStore {
         this.request = request;
         this.endpoint = new URL(config.endpoint);
         if (this.endpoint.protocol !== "https:" ||
-            !/^[a-f0-9]+\.r2\.cloudflarestorage\.com$/.test(this.endpoint.hostname) ||
+            !/^[a-f0-9]+\.(?:(?:eu|us|fedramp)\.)?r2\.cloudflarestorage\.com$/.test(this.endpoint.hostname) ||
             this.endpoint.port || this.endpoint.username || this.endpoint.password ||
             this.endpoint.pathname !== "/" || this.endpoint.search || this.endpoint.hash)
             throw new Error("ATLAS_R2_ENDPOINT must be your Cloudflare R2 HTTPS S3 endpoint.");

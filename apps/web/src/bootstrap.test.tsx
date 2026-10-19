@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { Bootstrap } from './AppBootstrap';
-import { BOOTSTRAP_CONCURRENCY, preloadProjects, type BootstrapProgress } from './bootstrap';
+import { BOOTSTRAP_CONCURRENCY, preloadProjects, releaseBootstrapSubscriptions, type BootstrapProgress } from './bootstrap';
 import { atlasApi } from './atlasApi';
 import { createAtlasStore, store } from './store';
 import { getToolRequestCount } from './api';
@@ -17,9 +17,11 @@ const response = (data: unknown, ok = true) => ({ ok, status: ok ? 200 : 500, js
 
 afterEach(() => {
     cleanup();
+    releaseBootstrapSubscriptions(store.dispatch);
     store.dispatch(atlasApi.util.resetApiState());
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.useRealTimers();
 });
 
 test('startup completes real request progress and skips archived projects and heavy endpoints', async () => {
@@ -62,7 +64,7 @@ test('bounded prefetch fills normal query cache for immediate repeat navigation'
     const cachedViews = testStore.dispatch(atlasApi.endpoints.listViews.initiate({ projectId: 'p', includeArchived: true }));
     await Promise.all([cachedProject.unwrap(), cachedStores.unwrap(), cachedViews.unwrap()]);
     expect(getToolRequestCount()).toBe(before);
-    cachedProject.unsubscribe(); cachedStores.unsubscribe(); cachedViews.unsubscribe(); unsubscribeMutations();
+    cachedProject.unsubscribe(); cachedStores.unsubscribe(); cachedViews.unsubscribe(); releaseBootstrapSubscriptions(testStore.dispatch); unsubscribeMutations();
 });
 
 test('an optional failure permits partial start and retry only the failed query', async () => {
@@ -107,5 +109,45 @@ test('mutation invalidation after preload refetches only the affected project', 
     await Promise.all([p.unwrap(), q.unwrap()]);
     expect(calls.filter(call => call === 'get_project:p')).toHaveLength(2);
     expect(calls.filter(call => call === 'get_project:q')).toHaveLength(qBefore);
-    p.unsubscribe(); q.unsubscribe(); unsubscribeMutations();
+    p.unsubscribe(); q.unsubscribe(); releaseBootstrapSubscriptions(testStore.dispatch); unsubscribeMutations();
+});
+
+test('preloaded project data remains available hours later without silent revalidation', async () => {
+    const fetcher = vi.fn(async (url: string, options: RequestInit) => {
+        const name = url.split('/').pop();
+        const arg = JSON.parse(String(options.body));
+        return response(name === 'list_projects' ? projects : name === 'get_project' ? { id: arg.projectId, name: arg.projectId } : []);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const { store: testStore, unsubscribeMutations } = createAtlasStore();
+    try {
+        await preloadProjects(testStore.dispatch, () => {});
+        const initialRequests = fetcher.mock.calls.length;
+        expect(initialRequests).toBe(7);
+
+        // Both mounted and later-unmounted components reuse the initial data
+        // even well beyond the previous 60s freshness and 10m eviction periods.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+        const project = testStore.dispatch(atlasApi.endpoints.getProject.initiate({ projectId: 'p', includeArchived: true }));
+        const views = testStore.dispatch(atlasApi.endpoints.listViews.initiate({ projectId: 'p', includeArchived: true }));
+        const stores = testStore.dispatch(atlasApi.endpoints.listStores.initiate({ projectId: 'q', includeArchived: true }));
+        await Promise.all([project.unwrap(), views.unwrap(), stores.unwrap()]);
+        expect(fetcher).toHaveBeenCalledTimes(initialRequests);
+
+        project.unsubscribe(); views.unsubscribe(); stores.unsubscribe();
+        const revisit = testStore.dispatch(atlasApi.endpoints.getProject.initiate({ projectId: 'p', includeArchived: true }));
+        await revisit.unwrap();
+        expect(fetcher).toHaveBeenCalledTimes(initialRequests);
+
+        // Manual Refresh explicitly overrides the cache.
+        const refreshed = testStore.dispatch(atlasApi.endpoints.getProject.initiate({ projectId: 'p', includeArchived: true }, { forceRefetch: true }));
+        await refreshed.unwrap();
+        expect(fetcher).toHaveBeenCalledTimes(initialRequests + 1);
+        revisit.unsubscribe(); refreshed.unsubscribe();
+    } finally {
+        vi.useRealTimers();
+        releaseBootstrapSubscriptions(testStore.dispatch);
+        unsubscribeMutations();
+    }
 });

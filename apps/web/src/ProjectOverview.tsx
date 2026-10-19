@@ -12,7 +12,7 @@ import type { Project, View } from './types';
 export function ViewContainer({ view, refreshVersion = 0 }: { view: View; refreshVersion?: number }) {
     const { data: rendered, error, isLoading, isFetching, refetch } = useRenderViewQuery(
         { projectId: view.projectId, viewId: view.id, params: {} },
-        { skip: !!view.archivedAt, refetchOnMountOrArgChange: 20 },
+        { skip: !!view.archivedAt },
     );
     const previousRefresh = useRef(refreshVersion);
     useEffect(() => { if (refreshVersion !== previousRefresh.current && !view.archivedAt) void refetch(); previousRefresh.current = refreshVersion; }, [refreshVersion]);

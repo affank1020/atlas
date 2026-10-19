@@ -25,17 +25,51 @@ function tasksFor(projects: Project[]): BootstrapTask[] {
     ] as BootstrapTask[]);
 }
 
-async function fetchTask(dispatch: AppDispatch, task: BootstrapTask, forceRefetch: boolean): Promise<void> {
-    const arg = { projectId: task.projectId, includeArchived: true };
-    const options = { subscribe: false, forceRefetch };
-    switch (task.endpoint) {
-        case 'getProject': await dispatch(atlasApi.endpoints.getProject.initiate(arg, options)).unwrap(); break;
-        case 'listStores': await dispatch(atlasApi.endpoints.listStores.initiate(arg, options)).unwrap(); break;
-        case 'listViews': await dispatch(atlasApi.endpoints.listViews.initiate(arg, options)).unwrap(); break;
+type BootstrapSubscription = { unsubscribe: () => void; unwrap: () => Promise<unknown> };
+// Hold one subscription per essential query for the lifetime of this app session.
+// The WeakMap also isolates standalone stores used by tests.
+const subscriptions = new WeakMap<AppDispatch, Map<string, BootstrapSubscription>>();
+function retained(dispatch: AppDispatch) {
+    let map = subscriptions.get(dispatch);
+    if (!map) { map = new Map(); subscriptions.set(dispatch, map); }
+    return map;
+}
+
+/** Explicit cleanup for tests or an intentionally restarted bootstrap. */
+export function releaseBootstrapSubscriptions(dispatch: AppDispatch): void {
+    const entries = subscriptions.get(dispatch);
+    entries?.forEach(request => request.unsubscribe());
+    entries?.clear();
+    subscriptions.delete(dispatch);
+}
+
+async function retain<T>(dispatch: AppDispatch, key: string, start: () => BootstrapSubscription): Promise<T> {
+    const entries = retained(dispatch);
+    const previous = entries.get(key);
+    if (previous) return await previous.unwrap() as T;
+    const request = start();
+    entries.set(key, request);
+    try { return await request.unwrap() as T; }
+    catch (error) {
+        // Never pin a failed request; a retry should actually send another HTTP call.
+        if (entries.get(key) === request) entries.delete(key);
+        request.unsubscribe();
+        throw error;
     }
 }
 
-/** Populates the ordinary RTK cache with at most four requests in flight. */
+async function fetchTask(dispatch: AppDispatch, task: BootstrapTask, forceRefetch: boolean): Promise<void> {
+    const arg = { projectId: task.projectId, includeArchived: true };
+    const key = `${task.endpoint}:${task.projectId}`;
+    const options = { subscribe: true, forceRefetch };
+    switch (task.endpoint) {
+        case 'getProject': await retain(dispatch, key, () => dispatch(atlasApi.endpoints.getProject.initiate(arg, options))); break;
+        case 'listStores': await retain(dispatch, key, () => dispatch(atlasApi.endpoints.listStores.initiate(arg, options))); break;
+        case 'listViews': await retain(dispatch, key, () => dispatch(atlasApi.endpoints.listViews.initiate(arg, options))); break;
+    }
+}
+
+/** Bootstraps and pins essential project queries with at most four requests in flight. */
 export async function preloadProjects(
     dispatch: AppDispatch,
     onProgress: (progress: BootstrapProgress) => void,
@@ -52,7 +86,7 @@ export async function preloadProjects(
 
     if (!tasks) {
         try {
-            projects = await dispatch(atlasApi.endpoints.listProjects.initiate({ includeArchived: false }, { subscribe: false })).unwrap();
+            projects = await retain<Project[]>(dispatch, 'listProjects:active', () => dispatch(atlasApi.endpoints.listProjects.initiate({ includeArchived: false }, { subscribe: true })));
         } catch (error) {
             const metrics = { durationMs: performance.now() - start, requestCount: getToolRequestCount() - startRequests, activeProjects: 0, completed: 1, total: 1, failed: 1 };
             latestMetrics = metrics;

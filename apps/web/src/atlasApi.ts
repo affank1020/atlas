@@ -35,9 +35,12 @@ export const atlasApi = createApi({
     reducerPath: 'atlasApi',
     baseQuery: fakeBaseQuery<{ message: string }>(),
     tagTypes: ['Projects', 'Project', 'Stores', 'Store', 'Records', 'Views', 'View', 'ViewRender'],
-    keepUnusedDataFor: 600,
-    refetchOnMountOrArgChange: 60,
-    refetchOnFocus: true,
+    // Session-scoped browsing: loaded responses remain in Redux until the browser
+    // reloads. Explicit Refresh and successful writes are the freshness triggers.
+    keepUnusedDataFor: Infinity,
+    refetchOnMountOrArgChange: false,
+    refetchOnFocus: false,
+    refetchOnReconnect: false,
     endpoints: build => ({
         listProjects: build.query<Project[], { includeArchived?: boolean }>({
             queryFn: (arg, api) => read<Project[]>('list_projects', arg, api.signal),
