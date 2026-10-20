@@ -51,3 +51,14 @@ test('credential redaction handles Authorization, key values, JWTs and password-
     );
     assert.doesNotMatch(sanitized, /abcdef12345|topsecret|my pass|affan:pass|eyJhbGci/);
 });
+
+test('redaction handles standalone credential keys, prefixed names and quoted values', () => {
+    const sanitized = redactNodeLog(
+        'TOKEN=standaloneSecret PASSWORD="quoted secret" DB_PASSWORD=databaseSecret ' +
+        "api_key='api secret' nodeCredential=credentialSecret",
+    );
+    assert.doesNotMatch(sanitized, /standaloneSecret|quoted secret|databaseSecret|api secret|credentialSecret/);
+    assert.match(sanitized, /TOKEN=\[REDACTED\]/);
+    assert.match(sanitized, /PASSWORD=\[REDACTED\]/);
+    assert.match(sanitized, /DB_PASSWORD=\[REDACTED\]/);
+});

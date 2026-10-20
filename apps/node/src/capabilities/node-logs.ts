@@ -13,7 +13,7 @@ export function redactNodeLog(text: string): string {
     return text
         // Never expose credentials, authorization headers, connection strings or tokens.
         .replace(/\b(Bearer|Basic)\s+[^\s"'<>]+/gi, '$1 [REDACTED]')
-        .replace(/\b([A-Za-z][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|PRIVATE_KEY)[A-Za-z0-9_]*)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1=[REDACTED]')
+        .replace(/\b((?:[A-Za-z][A-Za-z0-9_]*?)?(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|PRIVATE_KEY)[A-Za-z0-9_]*)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1=[REDACTED]')
         .replace(/\b((?:postgres(?:ql)?|mongodb(?:\+srv)?|redis|amqps?|https?):\/\/)[^\s"'<>@]+@/gi, '$1[REDACTED]@')
         .replace(/\b(eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b/g, '[REDACTED_JWT]')
         .replace(/([?&](?:token|secret|key|password|credential|code)=)[^&#\s]+/gi, '$1[REDACTED]');
