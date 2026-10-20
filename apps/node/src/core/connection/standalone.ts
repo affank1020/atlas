@@ -88,6 +88,10 @@ export class StandaloneNode extends EventEmitter {
             let result: unknown;
             if (request.kind === 'bind') {
                 result = await this.runtime.bind(request.rootPath);
+            } else if (request.kind === 'node_logs') {
+                if (!this.runtime.getCapabilities().includes('node.logs') || !this.runtime.readLogs)
+                    throw new AtlasError('This Node does not offer log access.', 'CAPABILITY_UNAVAILABLE');
+                result = await this.runtime.readLogs(request.source, request.lines);
             } else {
                 const { workspace, operation } = request;
                 if (workspace.nodeId !== this.config.id || workspace.status !== 'active') throw new AtlasError('Workspace is not hosted by this Node.', 'WORKSPACE_DENIED');

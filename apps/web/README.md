@@ -7,30 +7,39 @@ tool bridge—not directly with PostgreSQL.
 
 ## Run locally
 
-Start Atlas first:
+From the monorepo root, install dependencies and start the frontend:
 
 ```bash
-cd ../atlas
 npm install
-npm run dev
+npm run dev:web
 ```
 
-Then start Atlas Web:
+Open `http://127.0.0.1:5173`. When no API URL is configured, development
+runs in **mock mode** by default: seeded demonstration projects, stores,
+records, nodes, workspaces, activity and portfolio content, with no local
+PostgreSQL or Atlas Server required. Mock mode never makes API requests and
+rejects mutations instead of pretending they succeeded. A visible Mock data
+label distinguishes fixtures from live infrastructure. Advanced integrations
+without fixtures intentionally report an unavailable operation.
 
-```bash
-cd ../atlas-ui
-npm install
-npm run dev
-```
-
-Open `http://127.0.0.1:5173`.
-
-By default Atlas Web calls Atlas at `http://127.0.0.1:3000`. To use another
-origin, create `.env` with:
+To force mock mode even if you have an API URL in your environment, set:
 
 ```text
+VITE_ATLAS_API_MODE=mock
+```
+
+To connect to a real Atlas Server (the PostgreSQL database can be local or
+remote), create `apps/web/.env.local` with:
+
+```text
+VITE_ATLAS_API_MODE=live
 VITE_ATLAS_API_URL=http://127.0.0.1:3000
 ```
+
+Then run `npm run dev:server` in another terminal with the server's normal
+database and authentication configuration. An API URL without an explicit
+mode also opts into live mode. **Mock mode only runs in Vite development;**
+production builds always use the real backend.
 
 ## Main workspaces
 

@@ -124,7 +124,15 @@ function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onC
 }
 export function Nodes() {
     const [nodes, setNodes] = useState<AtlasNode[]>([]);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [selectedId, setSelectedId] = useState<string | null>(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('node'));
+    useEffect(() => {
+        const restore = () => {
+            const fromUrl = new URLSearchParams(window.location.hash.split('?')[1] || '').get('node');
+            if (fromUrl) setSelectedId(fromUrl);
+        };
+        window.addEventListener('hashchange', restore);
+        return () => window.removeEventListener('hashchange', restore);
+    }, []);
     const [detail, setDetail] = useState<AtlasNode>();
     const [detailError, setDetailError] = useState('');
     const [detailLoading, setDetailLoading] = useState(false);

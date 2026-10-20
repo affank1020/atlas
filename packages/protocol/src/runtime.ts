@@ -6,6 +6,7 @@ export type NodeOperation = WorkspaceOperation;
 export interface NodeRuntime {
     getCapabilities(): NodeCapability[];
     bind(rootPath: string): Promise<string>;
+    readLogs?(source: 'stdout' | 'stderr', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;
     execute(workspace: Workspace, operation: NodeOperation, input: Record<string, any>): Promise<unknown>;
 }
 export const requiredCapability: Record<NodeOperation, NodeCapability> = {

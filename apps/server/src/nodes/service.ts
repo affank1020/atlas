@@ -46,8 +46,15 @@ export class NodeService {
     async call(name: NodeToolName, input: unknown) {
         const parsed = nodeSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
-        if (name === 'list_nodes') return this.list();
         const x = parsed.data as any;
+        if (name === 'list_nodes') return this.list();
+        if (name === 'read_node_logs') {
+            const node = await this.get(x.nodeId);
+            const runtime = this.runtimes.get(x.nodeId);
+            if (node.status !== 'online' || !runtime) throw new AtlasError('Node is not connected.', 'NODE_OFFLINE');
+            if (!node.capabilities.includes('node.logs') || !runtime.readLogs) throw new AtlasError('Node log retrieval is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
+            return runtime.readLogs(x.source, x.lines);
+        }
         if (name === 'create_node_enrolment') return this.requireIdentity().ticket();
         if (name === 'update_node') return this.requireIdentity().update(x.nodeId, x.name);
         if (name === 'rotate_node_credential') return this.requireIdentity().ticket(x.nodeId, true);

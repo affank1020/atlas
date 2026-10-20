@@ -1,6 +1,6 @@
 import { standaloneViewUrl } from './viewLinks';
 import { useEffect, useMemo, useState } from 'react';
-import { API_BASE } from './api';
+import { API_BASE, IS_MOCK_MODE } from './api';
 import { useListProjectsQuery, useListStoresQuery, useListViewsQuery, useWorkspaceNodesQuery, useWorkspaceStatusQuery } from './atlasApi';
 import { clearRecentWork, rememberWork, useRecentWork } from './recentWork';
 import type { Project } from './types';
@@ -122,7 +122,7 @@ export function WorkspaceHome() {
     };
     return <div className="workspace-home overview-home">
         <header className="page-head overview-heading">
-            <div><h1>Overview</h1><p>Projects, applications, data and infrastructure.</p></div>
+            <div><h1>Home</h1></div>
             <div className="actions"><button className="ghost" onClick={refresh} disabled={projects.isFetching || status.isFetching || nodes.isFetching}>Refresh</button></div>
         </header>
         <div className="overview-metrics" aria-label="Atlas totals">
@@ -143,8 +143,8 @@ export function WorkspaceHome() {
                 <HomeRecent items={recent} kind="View" projectIds={projectIds} />
             </div>
             <div className="overview-content-column">
-                <section className="overview-card" aria-label="Infrastructure status">
-                    <div className="overview-card-head"><h2>Infrastructure</h2><a href="#/infrastructure">Details <span aria-hidden="true">↗</span></a></div>
+                <section className="overview-card" aria-label="System health">
+                    <div className="overview-card-head"><h2>System health</h2><a href="#/monitoring">Details <span aria-hidden="true">↗</span></a></div>
                     <div className="overview-service">
                         <span className="overview-item-main">
                             <strong>Atlas Server</strong>
@@ -207,18 +207,20 @@ export function WorkspaceLibrary({ kind }: { kind: 'views' | 'data' }) {
         {projects.data?.length === 0 && <p className="quiet-empty">Your {kind === 'views' ? 'Views' : 'data'} will appear here once you create a project. <a href="#/projects">Go to projects →</a></p>}
     </>;
 }
-export function InfrastructureNav({ page }: { page: string }) {
-    return <nav className="tabs infrastructure-nav" aria-label="Infrastructure sections">{[['infrastructure', 'Overview'], ['nodes', 'Nodes'], ['activity', 'Activity'], ['fabric', 'Developer']].map(([route, name]) => <a key={route} href={`#/${route}`} className={route === page ? 'active' : ''} aria-current={route === page ? 'page' : undefined}>{name}</a>)}</nav>;
-}
-export function InfrastructureOverview() {
+export function MonitoringOverview() {
     const status = useWorkspaceStatusQuery(undefined, { refetchOnMountOrArgChange: true });
     const nodes = useWorkspaceNodesQuery(undefined, { refetchOnMountOrArgChange: true });
-    return <><WorkspaceHeading title="Infrastructure" copy="The server, nodes and workspaces that keep Atlas running."><button className="ghost" disabled={status.isFetching || nodes.isFetching} onClick={() => { void status.refetch(); void nodes.refetch(); }}>Refresh</button></WorkspaceHeading><QueryNotice loading={status.isLoading || nodes.isLoading} error={status.error || nodes.error} retry={() => { void status.refetch(); void nodes.refetch(); }} />
-        {status.data && <section className="workspace-section"><div className="section-heading"><h2>Atlas Server</h2><span className="badge success">Connected</span></div><dl className="settings-list"><div><dt>Endpoint</dt><dd>{API_BASE}</dd></div><div><dt>Version</dt><dd>{status.data.version}</dd></div><div><dt>Storage</dt><dd>{status.data.storage}</dd></div></dl></section>}
+    return <><WorkspaceHeading title="Monitoring" copy="Server health and connectivity across Atlas."><a className="ghost" href="#/activity">Activity feed →</a><button className="ghost" disabled={status.isFetching || nodes.isFetching} onClick={() => { void status.refetch(); void nodes.refetch(); }}>Refresh</button></WorkspaceHeading><QueryNotice loading={status.isLoading || nodes.isLoading} error={status.error || nodes.error} retry={() => { void status.refetch(); void nodes.refetch(); }} />
+        {status.data && <section className="workspace-section"><div className="section-heading"><h2>Atlas Server</h2><span className={"badge " + (IS_MOCK_MODE ? "muted" : "success")}>{IS_MOCK_MODE ? "Simulated" : "Connected"}</span></div><dl className="settings-list"><div><dt>Endpoint</dt><dd>{IS_MOCK_MODE ? "Local fixture backend" : API_BASE}</dd></div><div><dt>Version</dt><dd>{status.data.version}</dd></div><div><dt>Storage</dt><dd>{status.data.storage}</dd></div></dl></section>}
         <section className="workspace-section"><div className="section-heading"><h2>Remote nodes</h2><a href="#/nodes">Manage nodes & placement →</a></div>{nodes.data?.map(node => <a className="workspace-row" key={node.id} href="#/nodes"><span className="row-copy"><strong>{node.name}</strong><small>{node.hostedWorkspaceCount} workspaces · {node.platform || 'Remote runtime'}</small></span><span className={`badge ${node.status === 'online' ? 'success' : 'muted'}`}>{node.status}</span></a>)}{nodes.data?.length === 0 && <p className="quiet-empty">No remote nodes registered. <a href="#/nodes">Connect a node →</a></p>}</section>
     </>;
 }
 export function WorkspaceSettings() {
     const recent = useRecentWork();
-    return <><WorkspaceHeading title="Settings" copy="Your Atlas connection and workspace preferences." /><dl className="settings-list"><div><dt>Server endpoint</dt><dd>{API_BASE}</dd></div><div><dt>Appearance</dt><dd>Graphite · Atlas purple</dd></div><div><dt>Recent work</dt><dd>Stored for this browser session. <button className="ghost" disabled={!recent.length} onClick={clearRecentWork}>Clear recent work</button></dd></div></dl><p className="hint">Manage project names, descriptions and archiving from each project's Settings tab.</p><a href="#/projects">Browse projects →</a></>;
+    return <><WorkspaceHeading title="Settings" copy="Your Atlas connection and workspace preferences." /><dl className="settings-list"><div><dt>Server endpoint</dt><dd>{IS_MOCK_MODE ? "Local fixture backend (read-only)" : API_BASE}</dd></div><div><dt>Appearance</dt><dd>Graphite · Atlas purple</dd></div><div><dt>Recent work</dt><dd>Stored for this browser session. <button className="ghost" disabled={!recent.length} onClick={clearRecentWork}>Clear recent work</button></dd></div></dl><section className="workspace-section"><div className="section-heading"><h2>Advanced</h2></div><a className="workspace-row" href="#/developer"><span className="row-copy"><strong>Developer tools</strong><small>Inspect retrieval and access experimental features.</small></span><span className="row-arrow" aria-hidden="true">→</span></a></section><p className="hint">Manage project names, descriptions and archiving from each project's Settings tab.</p><a href="#/projects">Browse projects →</a></>;
+}
+
+/** Advanced tools live here instead of in the primary navigation. */
+export function DeveloperHub() {
+    return <><WorkspaceHeading title="Developer tools" copy="Diagnostics and experimental capabilities, separate from the production workspace." /><section className="workspace-section"><div className="workspace-list"><a className="workspace-row" href="#/fabric"><span className="row-copy"><strong>Retrieval inspector</strong><small>Inspect Fabric indexing and search internals.</small></span><span className="row-arrow" aria-hidden="true">→</span></a><a className="workspace-row" href="#/ask-atlas"><span className="row-copy"><strong>Ask Atlas · Experimental</strong><small>Requires a separately configured model runtime; not a production feature.</small></span><span className="row-arrow" aria-hidden="true">→</span></a></div></section><p className="hint"><a href="#/settings">← Back to settings</a></p></>;
 }

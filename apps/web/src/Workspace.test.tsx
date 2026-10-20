@@ -3,9 +3,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Provider } from 'react-redux';
 import { createAtlasStore } from './store';
 import { callTool } from './api';
-import { WorkspaceHome, WorkspaceLibrary, InfrastructureNav } from './Workspace';
+import { WorkspaceHome, WorkspaceLibrary, MonitoringOverview, DeveloperHub, WorkspaceSettings } from './Workspace';
 import { readRecentWork, rememberWork, clearRecentWork } from './recentWork';
-vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
+vi.mock('./api', () => ({ IS_MOCK_MODE: false, API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
 const projects = [{ id: 'p', name: 'Research' }, { id: 'q', name: 'Writing' }];
 beforeEach(() => { sessionStorage.clear(); vi.mocked(callTool).mockReset(); vi.mocked(callTool).mockImplementation(async (name, input) => {
     if (name === 'list_projects') return projects;
@@ -53,11 +53,11 @@ test('Home summarises projects, live infrastructure, workspaces and recent appli
     rememberWork({ href: '#/projects/p/views/v', name: 'Reading list', projectId: 'p', kind: 'View', viewSlug: 'reading' });
     const { store } = createAtlasStore();
     render(<Provider store={store}><WorkspaceHome /></Provider>);
-    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
-    expect(screen.getByText('Projects, applications, data and infrastructure.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(screen.queryByText('Projects, applications, data and infrastructure.')).not.toBeInTheDocument();
     expect(await within(screen.getByRole('region', { name: 'Projects overview' })).findByRole('link', { name: /Research/ })).toHaveAttribute('href', '#/projects/p');
     expect(screen.getByRole('link', { name: /Connected nodes/ })).toHaveAttribute('href', '#/nodes');
-    const infrastructure = screen.getByRole('region', { name: 'Infrastructure status' });
+    const infrastructure = screen.getByRole('region', { name: 'System health' });
     expect(await within(infrastructure).findByText('Atlas Linux VPS')).toBeInTheDocument();
     expect(within(infrastructure).getByText('Connected')).toBeInTheDocument();
     expect(within(infrastructure).getByText('online')).toBeInTheDocument();
@@ -78,7 +78,7 @@ test('Home reports status failures without inventing node or workspace availabil
     });
     const { store } = createAtlasStore();
     render(<Provider store={store}><WorkspaceHome /></Provider>);
-    const infrastructure = screen.getByRole('region', { name: 'Infrastructure status' });
+    const infrastructure = screen.getByRole('region', { name: 'System health' });
     expect(await within(infrastructure).findByText('Unavailable')).toBeInTheDocument();
     expect(await within(infrastructure).findByText('Node status unavailable.', { exact: false })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Hosted workspaces' })).getByText('Open the Nodes view to inspect assignments.')).toBeInTheDocument();
@@ -89,11 +89,22 @@ test('recent work tolerates invalid storage and remains bounded and deduplicated
     expect(readRecentWork()).toHaveLength(8);
     rememberWork(readRecentWork()[3]); expect(readRecentWork()).toHaveLength(8);
 });
-test('infrastructure retains existing operational deep links', () => {
-    render(<InfrastructureNav page="nodes" />);
-    expect(screen.getByRole('link', { name: 'Nodes' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('link', { name: 'Developer' })).toHaveAttribute('href', '#/fabric');
-    expect(screen.getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#/activity');
+test('Monitoring shows system connectivity and links to the separate Activity page', async () => {
+    const { store } = createAtlasStore();
+    render(<Provider store={store}><MonitoringOverview /></Provider>);
+    expect(screen.getByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Activity feed/ })).toHaveAttribute('href', '#/activity');
+    expect(await screen.findByText('Atlas Linux VPS')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Manage nodes/ })).toHaveAttribute('href', '#/nodes');
+});
+test('Developer tools are discoverable through Settings, not the primary sidebar', () => {
+    const { store } = createAtlasStore();
+    render(<Provider store={store}><WorkspaceSettings /></Provider>);
+    expect(screen.getByRole('link', { name: /Developer tools/ })).toHaveAttribute('href', '#/developer');
+    cleanup();
+    render(<DeveloperHub />);
+    expect(screen.getByRole('link', { name: /Retrieval inspector/ })).toHaveAttribute('href', '#/fabric');
+    expect(screen.getByRole('link', { name: /Ask Atlas/ })).toHaveAttribute('href', '#/ask-atlas');
 });
 
 afterEach(() => cleanup());

@@ -12,6 +12,7 @@ import type { ContentfulPortfolioIntegration } from '../integrations/contentful.
 import type { PortfolioService, PortfolioMediaService } from '../portfolio/index.js';
 import { fabricSearchSchema, fabricContextSchema } from '../retrieval/input.js';
 import { callCoreTool } from './core-dispatch.js';
+import { globalSearchInput, searchEverywhere } from './global-search.js';
 import type { ApplicationRegistry } from '../apps/registry.js';
 export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
@@ -38,6 +39,7 @@ export function createDispatcher(services: ApplicationServices) {
         switch (name) {
             case 'ask_atlas': return askAtlas.ask(input);
             case 'search_atlas': return retrieval.search(fabricSearchSchema.parse(input));
+            case 'search_everything': return searchEverywhere({ listProjects: catalog.listProjects.bind(catalog), listStores: catalog.listStores.bind(catalog), views, retrieval, applications, nodes: services.nodes }, globalSearchInput.parse(input));
             case 'request_context': return retrieval.context(fabricContextSchema.parse(input));
         }
         if (name === 'list_applications') {

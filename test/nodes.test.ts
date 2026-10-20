@@ -12,7 +12,7 @@ import { NodeRouter } from '../apps/server/src/nodes/router.js';
 import { requiredCapability, type NodeRuntime, type NodeOperation } from '../apps/server/src/nodes/runtime.js';
 import type { NodeCapability } from '../apps/server/src/nodes/model.js';
 after(cleanupDatabases);
-const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'unity'];
+const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs', 'unity'];
 function runtime(capabilities = all): NodeRuntime {
     return { getCapabilities: () => capabilities, bind: async binding => `node:${binding}`, execute: async (workspace, operation) => ({ nodeId: workspace.nodeId, operation }) };
 }
@@ -124,7 +124,7 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
 });
 
 test('LocalNodeRuntime advertises implemented capabilities without claiming a connected Editor', () => {
-    assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training']);
+    assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs']);
     assert.deepEqual(new LocalNodeRuntime([], undefined, 'darwin').getCapabilities(), all);
 });
 
@@ -135,7 +135,7 @@ test('Linux runtime advertises only file/Git capabilities and blocks process exe
     }
     assert.deepEqual(linux.getCapabilities(), ['workspace.files', 'workspace.git']);
     assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(),
-        ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training']);
+        ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs']);
     const folder = '/invalid-test-linux-workspace';
     await assert.rejects(
         linux.execute({ rootPath: folder } as any, 'workspace_run_dev_task', { task: 'test' }),
