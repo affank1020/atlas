@@ -50,7 +50,7 @@ checksum="$archive.sha256"
 [[ -f "$checksum" && ! -L "$checksum" && ! -L "$archive" ]] || {
   echo 'Missing archive/checksum or unexpected symlink.' >&2; exit 1;
 }
-[[ "$(wc -l < "$checksum")" == 1 ]] || { echo 'Expected a single checksum line.' >&2; exit 1; }
+[[ $(wc -l < "$checksum") -eq 1 ]] || { echo 'Expected a single checksum line.' >&2; exit 1; }
 read -r expected filename < "$checksum"
 [[ "$expected" =~ ^[a-f0-9]{64}$ && "$filename" == "$base" ]] || {
   echo 'Invalid checksum manifest.' >&2; exit 1;

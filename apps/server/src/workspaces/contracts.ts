@@ -10,7 +10,7 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const text = z.string().max(512 * 1024);
 // The Football Application's internal Node operation must not become a generic
 // Workspace tool exposed through MCP or the unscoped HTTP dispatcher.
-const { football_control: _footballControl, ...publicWorkspaceOperations } = workspaceOperationSchemas;
+const { football_control: _footballControl, workspace_git_push_branch: _privatePush, ...publicWorkspaceOperations } = workspaceOperationSchemas;
 export const workspaceSchemas = {
     list_project_workspaces: z.object({ ...project, includeArchived: z.boolean().optional() }).strict(),
     get_workspace: z.object({ ...scope, includeArchived: z.boolean().optional() }).strict(),
@@ -18,6 +18,13 @@ export const workspaceSchemas = {
     update_workspace: z.object({ ...scope, ...client, name: name.optional() }).strict(),
     archive_workspace: z.object({ ...scope, ...client }).strict(),
     ...publicWorkspaceOperations,
+    workspace_git_push_branch: workspaceOperationSchemas.workspace_git_push_branch.omit({ githubToken: true }).strict(),
+    workspace_git_open_pull_request: z.object({ ...scope, ...client,
+        repository: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/),
+        branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/),
+        expectedHead: z.string().regex(/^[a-f0-9]{40}$/),
+        title: z.string().trim().min(5).max(120), body: z.string().max(8000).optional(),
+    }).strict(),
     football_train: workspaceOperationSchemas.football_control.omit({ action: true }).extend({ drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/) }).strict(),
     football_evaluate: workspaceOperationSchemas.football_control.omit({ action: true }).extend({ policyId: z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/) }).strict(),
     football_training_status: workspaceOperationSchemas.football_control.omit({ action: true }).strict(),
@@ -46,6 +53,8 @@ export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
     workspace_git_switch_branch: 'Switch an approved local atlas/* branch with a clean working tree.',
     workspace_git_stage: 'Stage only explicitly named regular files whose SHA-256 matches the inspection.',
     workspace_git_commit: 'Commit exactly the staged files after checking Git tree identity.',
+    workspace_git_push_branch: 'Publish an approved atlas/* branch to an allowlisted GitHub repository using a short-lived server-brokered token; no force push.',
+    workspace_git_open_pull_request: 'Open a draft GitHub PR for the expected remote branch head; no merges.',
     football_train: 'Request headless football training on the bound AI Football Mac. Returns an asynchronous receipt.',
     football_evaluate: 'Request seeded policy inference evaluation on the bound AI Football Mac. Returns an asynchronous receipt.',
     football_training_status: 'List training runs in the bound AI Football workspace.',

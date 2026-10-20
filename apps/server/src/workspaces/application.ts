@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { GitHubBroker } from './github-broker.js';
 import type { WorkspaceTransaction, WorkspaceRepository } from './repository.js';
 import type { CoreService } from '../core/service.js';
 import { AtlasError } from '../shared/errors.js';
@@ -9,7 +10,7 @@ import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 import { workspaceSchemas, type WorkspaceToolName } from './contracts.js';
 
 export class WorkspaceService {
-    constructor(readonly catalog: Pick<CoreService, 'getProject'>, readonly repository: WorkspaceRepository, readonly runtime: NodeRouter) {}
+    constructor(readonly catalog: Pick<CoreService, 'getProject'>, readonly repository: WorkspaceRepository, readonly runtime: NodeRouter, readonly github = new GitHubBroker()) {}
     async call(name: WorkspaceToolName, input: unknown) {
         if (!Object.hasOwn(workspaceSchemas, name)) throw new AtlasError('Unsupported Workspace operation.', 'INVALID_REQUEST');
         const parsed = workspaceSchemas[name].safeParse(input);
@@ -30,6 +31,8 @@ export class WorkspaceService {
         }
         const workspace = await this.repository.get(x.projectId, x.workspaceId, x.includeArchived);
         if (name === 'get_workspace') return workspace;
+        if (name === 'workspace_git_push_branch' || name === 'workspace_git_open_pull_request')
+            this.github.approve(workspace.id, x.repository);
         if (name === 'update_workspace' || name === 'archive_workspace') {
             const db = await this.repository.connect();
             try {
@@ -51,7 +54,7 @@ export class WorkspaceService {
         const nodeOperation = (footballAction ? 'football_control' : name) as WorkspaceOperation;
         const nodeInput = footballAction ? { ...x, action: footballAction } : x;
         const invoke = () => this.runtime.execute(workspace, nodeOperation, nodeInput);
-        const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', workspace_git_create_branch: 'workspace.git_branch_created', workspace_git_switch_branch: 'workspace.git_branch_switched', workspace_git_stage: 'workspace.git_staged', workspace_git_commit: 'workspace.git_committed', unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
+        const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', workspace_git_create_branch: 'workspace.git_branch_created', workspace_git_switch_branch: 'workspace.git_branch_switched', workspace_git_stage: 'workspace.git_staged', workspace_git_commit: 'workspace.git_committed', workspace_git_push_branch: 'workspace.git_pushed', workspace_git_open_pull_request: 'workspace.git_pull_request_created',  unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
         const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed', football_training_status: 'football.jobs_inspected', football_evaluation_status: 'football.evaluation_inspected' } as Record<string, string>)[name];
         if (inspection) {
             // One event per explicit tool call, never per internal file/adapter lookup.
@@ -78,7 +81,12 @@ export class WorkspaceService {
         try {
             // Resolve registry/capabilities before leasing a mutation connection. Otherwise
             // concurrent writers can exhaust the pool and deadlock on Node lookup.
-            const execute = await this.runtime.prepare(workspace, nodeOperation, nodeInput);
+            // Server-only PR creation and server-brokered ephemeral GitHub tokens:
+            // neither operation accepts secrets from MCP nor persists them to audit.
+            const execute = name === 'workspace_git_open_pull_request'
+                ? async () => this.github.createDraftPullRequest(x.repository, x.branch, x.expectedHead, x.title, x.body)
+                : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
+                    ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) } : nodeInput);
             db = await this.repository.connect();
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);
