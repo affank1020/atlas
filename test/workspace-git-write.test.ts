@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { gitWrite } from '../apps/node/src/capabilities/workspace-files/git-write.js';
+import { WorkspaceFiles } from '../apps/node/src/capabilities/workspace-files/files.js';
+function git(root: string, ...args: string[]) {
+ return execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding:'utf8' }).trim();
+}
+test('Git writes require per-root opt in, preserve main, and stage explicit inspected files', async t => {
+ const root=mkdtempSync(path.join(os.tmpdir(),'atlas-git-writes-'));
+ t.after(()=>{rmSync(root,{recursive:true,force:true});});
+ git(root,'init','-b','atlas/bootstrap');
+ git(root,'config','user.name','Test');git(root,'config','user.email','test@example.test');
+ writeFileSync(path.join(root,'README.md'),'initial\n');
+ git(root,'add','README.md');git(root,'commit','-m','initial');
+ git(root,'remote','add','origin','https://github.com/affank1020/portfolio-site.git');
+ const files=new WorkspaceFiles([root]);
+ const old=process.env.ATLAS_GIT_WRITE_ROOTS;
+ t.after(()=>{if(old===undefined)delete process.env.ATLAS_GIT_WRITE_ROOTS;else process.env.ATLAS_GIT_WRITE_ROOTS=old;});
+ await assert.rejects(gitWrite(root,files,'workspace_git_create_branch',{branch:'atlas/test'}),/not approved/);
+ process.env.ATLAS_GIT_WRITE_ROOTS=root;
+ await assert.rejects(gitWrite(root,files,'workspace_git_create_branch',{branch:'main'}),/atlas/);
+ const created=await gitWrite(root,files,'workspace_git_create_branch',{branch:'atlas/test'}) as any;
+ assert.equal(created.branch,'atlas/test');
+ writeFileSync(path.join(root,'README.md'),'updated\n');
+ writeFileSync(path.join(root,'other.txt'),'unrelated\n');
+ const checksum=(await files.read(root,'README.md')).sha256;
+ await assert.rejects(gitWrite(root,files,'workspace_git_stage',{files:[{path:'README.md',expectedSha256:'0'.repeat(64)}]}),/changed/);
+ const staged=await gitWrite(root,files,'workspace_git_stage',{files:[{path:'README.md',expectedSha256:checksum}]}) as any;
+ const committed=await gitWrite(root,files,'workspace_git_commit',{branch:'atlas/test',expectedTree:staged.indexTree,files:['README.md'],message:'Update README'}) as any;
+ assert.equal(committed.branch,'atlas/test');
+ assert.equal(readFileSync(path.join(root,'other.txt'),'utf8'),'unrelated\n');
+ assert.ok(git(root,'status','--porcelain').includes('other.txt'));
+});
