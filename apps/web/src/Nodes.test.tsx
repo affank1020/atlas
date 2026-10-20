@@ -8,6 +8,9 @@ const node = { id: 'node', name: 'Development machine', status: 'online', capabi
 it('renders real Node capabilities and hosted Workspace links, and refreshes presence', async () => {
     vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : node);
     render(<Nodes />);
+    expect(await screen.findByRole('heading', { name: 'Atlas infrastructure' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inspect Development machine' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Development machine' }));
     expect(await screen.findByRole('heading', { name: 'Development machine' })).toBeInTheDocument();
     expect(screen.getByText('Online')).toBeInTheDocument();
     for (const label of ['Filesystem', 'Git', 'Development', 'Unity']) expect(screen.getByText(label)).toBeInTheDocument();
