@@ -16,28 +16,46 @@ export class WorkspaceService {
         const parsed = workspaceSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x: any = parsed.data;
-        await this.catalog.getProject(x.projectId, x.includeArchived);
+        if (name === 'list_github_repositories') return this.github.listRepositories();
+        if (name === 'list_workspaces') return this.repository.listAll(x.includeArchived, x.nodeId);
+        if (x.projectId) await this.catalog.getProject(x.projectId, x.includeArchived);
         if (name === 'list_project_workspaces') return this.repository.list(x.projectId, x.includeArchived);
         if (name === 'create_workspace') {
             const binding = await this.runtime.bindDefault(x.rootPath, x.nodeId);
             const db = await this.repository.connect();
             try {
                 await db.begin();
-                await db.requireActiveProject(x.projectId, true);
+                if (x.projectId) await db.requireActiveProject(x.projectId, true);
                 const workspace = await db.insert({ projectId: x.projectId, name: x.name, ...binding, kind: x.kind });
                 await db.audit(workspace, 'workspace.created', x.client, workspace); await db.commit(); return workspace;
             } catch (e: any) { await db.rollback(); throw e; }
             finally { db.release(); }
         }
-        const workspace = await this.repository.get(x.projectId, x.workspaceId, x.includeArchived);
+        const workspace = x.projectId && name !== 'link_workspace_project' && name !== 'unlink_workspace_project'
+            ? await this.repository.get(x.projectId, x.workspaceId, x.includeArchived)
+            : await this.repository.getById(x.workspaceId, x.includeArchived);
         if (name === 'get_workspace') return workspace;
-        if (name === 'workspace_git_push_branch' || name === 'workspace_git_open_pull_request')
-            this.github.approve(workspace.id, x.repository);
+        if (name === 'link_workspace_project' || name === 'unlink_workspace_project') {
+            const db = await this.repository.connect();
+            try {
+                await db.begin();
+                await db.requireActiveProject(x.projectId, true);
+                await db.lockWorkspace(workspace.id);
+                if (name === 'link_workspace_project') await db.link(workspace.id, x.projectId);
+                else await db.unlink(workspace.id, x.projectId);
+                const updated = await db.getById(workspace.id);
+                await db.audit(updated, name === 'link_workspace_project' ? 'workspace.project_linked' : 'workspace.project_unlinked', x.client,
+                    { workspaceId: workspace.id, projectId: x.projectId });
+                await db.commit();
+                return updated;
+            } catch (error) { await db.rollback(); throw error; } finally { db.release(); }
+        }
         if (name === 'update_workspace' || name === 'archive_workspace') {
             const db = await this.repository.connect();
             try {
                 await db.begin(); await db.lockWorkspace(workspace.id);
-                await db.get(x.projectId, workspace.id, false);
+                if (x.projectId) await db.get(x.projectId, workspace.id, false);
+                else await db.getById(workspace.id, false);
                 const changed = await db.update(workspace.id, x.name, name === 'archive_workspace'); await db.audit(changed, name === 'archive_workspace' ? 'workspace.archived' : 'workspace.updated', x.client, changed); await db.commit(); return changed;
             } catch (e) { await db.rollback(); throw e; } finally { db.release(); }
         }
@@ -91,9 +109,9 @@ export class WorkspaceService {
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);
             // Do not hold a Core project row lock across slow external-tool calls.
-            await db.requireActiveProject(workspace.projectId);
+            if (x.projectId) await db.requireActiveProject(x.projectId);
             await db.lockWorkspace(workspace.id);
-            const current = await db.get(x.projectId, workspace.id, false);
+            const current = x.projectId ? await db.get(x.projectId, workspace.id, false) : await db.getById(workspace.id, false);
             if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath)
                 throw new AtlasError('Workspace binding changed; retry the operation.', 'CONFLICT');
             const result = await execute(current); applied = true;

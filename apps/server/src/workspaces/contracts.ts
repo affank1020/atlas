@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { workspaceOperationSchemas } from '@atlas/protocol/workspace-operations';
 const project = { projectId: z.string().uuid() };
-const scope = { ...project, workspaceId: z.string().uuid() };
+const scope = { projectId: z.string().uuid().optional(), workspaceId: z.string().uuid() };
 const client = { client: z.string().trim().min(1).max(200).optional() };
 const name = z.string().trim().min(1).max(200);
 const file = z.string().min(1).max(4096);
@@ -12,9 +12,13 @@ const text = z.string().max(512 * 1024);
 // Workspace tool exposed through MCP or the unscoped HTTP dispatcher.
 const { football_control: _footballControl, workspace_git_push_branch: _privatePush, ...publicWorkspaceOperations } = workspaceOperationSchemas;
 export const workspaceSchemas = {
+    list_github_repositories: z.object({}).strict(),
+    list_workspaces: z.object({ nodeId: z.string().uuid().optional(), includeArchived: z.boolean().optional() }).strict(),
     list_project_workspaces: z.object({ ...project, includeArchived: z.boolean().optional() }).strict(),
     get_workspace: z.object({ ...scope, includeArchived: z.boolean().optional() }).strict(),
-    create_workspace: z.object({ ...project, ...client, name, rootPath: file, nodeId: z.string().uuid().optional(), kind: z.enum(['generic', 'unity']).default('generic') }).strict(),
+    create_workspace: z.object({ projectId: z.string().uuid().optional(), ...client, name, rootPath: file, nodeId: z.string().uuid().optional(), kind: z.enum(['generic', 'unity']).default('generic') }).strict(),
+    link_workspace_project: z.object({ ...project, workspaceId: z.string().uuid(), ...client }).strict(),
+    unlink_workspace_project: z.object({ ...project, workspaceId: z.string().uuid(), ...client }).strict(),
     update_workspace: z.object({ ...scope, ...client, name: name.optional() }).strict(),
     archive_workspace: z.object({ ...scope, ...client }).strict(),
     ...publicWorkspaceOperations,
@@ -34,9 +38,13 @@ export const workspaceSchemas = {
 };
 export type WorkspaceToolName = keyof typeof workspaceSchemas;
 export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
-    list_project_workspaces: 'List a project’s local workspaces; files remain on disk.',
-    get_workspace: 'Get workspace configuration by project and stable workspace ID.',
-    create_workspace: 'Bind an existing directory beneath ATLAS_WORKSPACE_ROOTS. One active workspace per project.',
+    list_github_repositories: 'Discover the repositories and accounts available to the installed GitHub App.',
+    list_workspaces: 'List independent Workspaces across all Nodes, optionally filtered by Node.',
+    list_project_workspaces: 'List Workspaces associated with a Project; Project association is optional.',
+    get_workspace: 'Get a Workspace by stable ID, optionally verifying its Project association.',
+    create_workspace: 'Register an existing directory on a Node; Project association is optional.',
+    link_workspace_project: 'Associate an existing Workspace with a Project without moving its files.',
+    unlink_workspace_project: 'Remove a Workspace–Project association without removing the Workspace.',
     update_workspace: 'Rename a workspace. To change its root or adapter, archive it and register a new workspace.',
     archive_workspace: 'Detach a workspace without deleting its files.',
     workspace_list_files: 'List a bounded, sorted tree excluding symlinks, secrets and generated directories.',

@@ -136,13 +136,40 @@ export class WorkspaceFiles {
     }
 }
 const exec = promisify(execFile);
-export async function git(root: string, files: WorkspaceFiles, diff = false) {
+/** Verify either a normal Git checkout or a linked worktree whose common Git
+ * directory belongs to a separately approved Workspace root. Never follow
+ * untrusted .git links to an arbitrary location. */
+export async function verifyGitLayout(root: string, files: WorkspaceFiles) {
     await files.resolve(root, '');
-    try {
-        const metadata = await fs.lstat(path.join(root, '.git'));
-        if (!metadata.isDirectory() || metadata.isSymbolicLink()) return { available: false, reason: 'V1 requires an in-workspace .git directory; linked worktrees/submodules are not exposed.' };
-        if (!within(root, await fs.realpath(path.join(root, '.git')))) throw new AtlasError('Git metadata escaped the workspace.');
-    } catch { return { available: false, reason: 'Not a Git repository root.' }; }
+    const dotgit = path.join(root, '.git');
+    const meta = await fs.lstat(dotgit);
+    if (meta.isSymbolicLink()) throw new AtlasError('Git metadata symlink is not permitted.', 'WORKSPACE_DENIED');
+    if (meta.isDirectory()) {
+        if (await fs.realpath(dotgit) !== dotgit) throw new AtlasError('Git metadata is not canonical.', 'WORKSPACE_DENIED');
+        return;
+    }
+    if (!meta.isFile() || meta.nlink !== 1 || meta.size > 2048)
+        throw new AtlasError('Unsupported Git repository layout.', 'WORKSPACE_DENIED');
+    const pointer = (await fs.readFile(dotgit, 'utf8')).trim();
+    const match = /^gitdir: ([^\r\n]+)$/.exec(pointer);
+    if (!match) throw new AtlasError('Unsupported Git repository metadata.', 'WORKSPACE_DENIED');
+    const admin = path.resolve(root, match[1]!);
+    if (await fs.realpath(admin) !== admin || path.basename(path.dirname(admin)) !== 'worktrees')
+        throw new AtlasError('Git worktree metadata is outside a verified worktree.', 'WORKSPACE_DENIED');
+    const common = path.dirname(path.dirname(admin));
+    if (path.basename(common) !== '.git' || await fs.realpath(common) !== common)
+        throw new AtlasError('Untrusted Git common directory.', 'WORKSPACE_DENIED');
+    const parent = path.dirname(common);
+    await files.bind(parent); // Parent checkout must reside in an approved Node filesystem root.
+    if (!(await fs.lstat(common)).isDirectory())
+        throw new AtlasError('Git common directory is not a directory.', 'WORKSPACE_DENIED');
+    const backlink = (await fs.readFile(path.join(admin, 'gitdir'), 'utf8')).trim();
+    if (path.resolve(admin, backlink) !== dotgit)
+        throw new AtlasError('Git worktree backlink is inconsistent.', 'WORKSPACE_DENIED');
+}
+export async function git(root: string, files: WorkspaceFiles, diff = false) {
+    try { await verifyGitLayout(root, files); }
+    catch { return { available: false, reason: 'Not a permitted Git repository or linked worktree.' }; }
     const run = async (args: string[]) => (await exec('/usr/bin/git', ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-C', root, ...args], {
         timeout: 10000, maxBuffer: 1024 * 1024,
         env: { PATH: '/usr/bin:/bin', HOME: '/var/empty', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },

@@ -5,7 +5,7 @@ Workspace Git mutations now use the same authenticated transport and durable aud
 Opt in to local Git writes by configuring `ATLAS_GIT_WRITE_ROOTS` on the Node process, as a comma-separated list of exact, canonical approved Workspace roots. Default is **no Git writes enabled**. On the VPS, include only `/srv/atlas/workspaces/portfolio-site` after deploying a reviewed release. Do not include deployment directories.
 
 Operations:
-- `workspace_git_create_branch`: create a new local `atlas/*` branch from another `atlas/*` branch, clean tree required.
+- `workspace_git_create_branch`: create a new local `atlas/*` branch from any clean checkout, including `main`. Subsequent Git writes still require `atlas/*`.
 - `workspace_git_switch_branch`: switch between local `atlas/*` branches, clean tree required.
 - `workspace_git_stage`: explicitly select up to 40 safe readable files, each with its inspected SHA-256. No wildcard or add-all.
 - `workspace_git_commit`: only commit the enumerated paths if staged file set and Git index tree match the approved request.

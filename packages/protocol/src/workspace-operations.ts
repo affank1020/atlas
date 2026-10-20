@@ -1,5 +1,5 @@
 import { z } from 'zod';
-const scope = { projectId: z.string().uuid(), workspaceId: z.string().uuid() };
+const scope = { projectId: z.string().uuid().optional(), workspaceId: z.string().uuid() };
 const client = { client: z.string().trim().min(1).max(200).optional() };
 const file = z.string().min(1).max(4096);
 const directory = z.string().max(4096).default('');
