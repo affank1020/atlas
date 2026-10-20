@@ -41,6 +41,7 @@ export function Portfolio(){
  const leaveEditor=()=>!dirty||window.confirm("Discard unsaved changes? Your published content will not be affected.");
  useEffect(()=>{if(!dirty)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[dirty]);
  const load=async()=>{await Promise.all([schemaQuery.refetch(),entryQuery.refetch(),dashboardQuery.refetch(),mediaQuery.refetch(),...(selectedId?[revisionQuery.refetch()]:[])]);};
+ const reloadMedia=async()=>{await Promise.all([dashboardQuery.refetch(),mediaQuery.refetch()]);};
  useRouteTiming("portfolio", "portfolio", !!schemaQuery.data && !!entryQuery.data && !!dashboardQuery.data && !!mediaQuery.data);
  const filtered=useMemo(()=>entries.filter(entry=>entry.contentType===type).sort((a,b)=>Number(a.data.order??999)-Number(b.data.order??999)||entryTitle(a).localeCompare(entryTitle(b))),[entries,type]);
  const visible=useMemo(()=>filtered.filter(entry=>entryTitle(entry).toLowerCase().includes(search.toLowerCase())),[filtered,search]);
@@ -100,7 +101,7 @@ export function Portfolio(){
      </div>
     </>:<div className="portfolio-editor-placeholder"><div className="portfolio-placeholder-icon">✦</div><h2>Choose something to edit</h2><p>Select an entry from the library, or create a new one.</p><button className="portfolio-primary-button" onClick={()=>{setCreating(true);setDraft({});}}>Create entry</button></div>}
    </section>
-  </div>:<MediaLibrary media={media} busy={busy} setBusy={setBusy} setError={setError} setNotice={setNotice} reload={load}/>}
+  </div>:<MediaLibrary media={media} busy={busy} setBusy={setBusy} setError={setError} setNotice={setNotice} reload={reloadMedia}/>}
  </div>;
 }
 
@@ -166,15 +167,85 @@ function ShowcaseEditor({value,media,onChange}:{value:unknown;media:Media[];onCh
  </div></fieldset>;
 }
 
-function MediaLibrary({media,busy,setBusy,setError,setNotice,reload}:{media:Media[];busy:string;setBusy:(x:string)=>void;setError:(x:string)=>void;setNotice:(x:string)=>void;reload:()=>Promise<void>}){
- const [file,setFile]=useState<File>(),[alt,setAlt]=useState(""),[caption,setCaption]=useState("");
+type QueuedMedia = {
+ id:string; file:File; altText:string; caption:string;
+ state:"ready"|"uploading"|"uploaded"|"failed"|"invalid"; error?:string;
+};
+const ACCEPTED_MEDIA_TYPES=new Set(["image/jpeg","image/png","image/webp","image/gif","image/avif","application/pdf"]);
+const MAX_MEDIA_SIZE=25*1024*1024;
+const readMediaBase64=(file:File)=>new Promise<string>((resolve,reject)=>{
+ const reader=new FileReader();
+ reader.onload=()=>resolve(String(reader.result).split(",")[1]??"");
+ reader.onerror=()=>reject(reader.error??new Error("Could not read file."));
+ reader.readAsDataURL(file);
+});
+
+export function MediaLibrary({media,busy,setBusy,setError,setNotice,reload}:{media:Media[];busy:string;setBusy:(x:string)=>void;setError:(x:string)=>void;setNotice:(x:string)=>void;reload:()=>Promise<void>}){
+ const [queue,setQueue]=useState<QueuedMedia[]>([]);
  const [uploadOpen,setUploadOpen]=useState(false),[search,setSearch]=useState(""),[showArchived,setShowArchived]=useState(false);
+ const uploading=busy==="upload";
+ const pending=queue.filter(item=>item.state==="ready"||item.state==="failed");
+ const completed=queue.filter(item=>item.state==="uploaded"||item.state==="failed"||item.state==="invalid").length;
  const filtered=media.filter(asset=>(showArchived||asset.status==="active")&&(asset.originalName+" "+(asset.altText??"")+" "+(asset.caption??"")).toLowerCase().includes(search.toLowerCase()));
- const upload=async(e:React.FormEvent)=>{e.preventDefault();if(!file)return;setBusy("upload");setError("");setNotice("");try{const base64=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(",")[1]??"");reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file);});await callTool("upload_portfolio_media",{fileName:file.name,mimeType:file.type,base64,altText:alt,caption});await reload();setFile(undefined);setAlt("");setCaption("");setUploadOpen(false);setNotice("Media uploaded successfully.");}catch(e){setError((e as Error).message);}finally{setBusy("");}};
+ const selectFiles=(files:FileList|null)=>{
+  if(!files)return;
+  setQueue(Array.from(files).map((file,index)=>{
+   const error=!ACCEPTED_MEDIA_TYPES.has(file.type)?"Unsupported file type.":file.size===0?"File is empty.":file.size>MAX_MEDIA_SIZE?"Maximum file size is 25 MB.":undefined;
+   return {id:String(index)+"-"+file.name+"-"+file.lastModified,file,altText:"",caption:"",state:error?"invalid" as const:"ready" as const,error};
+  }));
+ };
+ const editItem=(id:string,values:Partial<QueuedMedia>)=>setQueue(current=>current.map(item=>item.id===id?{...item,...values}:item));
+ const upload=async(e:React.FormEvent)=>{
+  e.preventDefault();
+  if(busy||!pending.length)return;
+  setBusy("upload");setError("");setNotice("");
+  let uploaded=0;
+  const failed:string[]=[];
+  for(const item of pending){
+   editItem(item.id,{state:"uploading",error:undefined});
+   try{
+    const base64=await readMediaBase64(item.file);
+    await callTool("upload_portfolio_media",{fileName:item.file.name,mimeType:item.file.type,base64,altText:item.altText,caption:item.caption});
+    uploaded++;
+    editItem(item.id,{state:"uploaded"});
+   }catch(error){
+    const message=error instanceof Error?error.message:"Upload failed";
+    failed.push(item.file.name);
+    editItem(item.id,{state:"failed",error:message});
+   }
+  }
+  let refreshed=true;
+  try{await reload();}catch{refreshed=false;}
+  const invalid=queue.filter(item=>item.state==="invalid").length;
+  if(!failed.length&&!invalid){
+   setNotice((queue.length===1?"Asset":"All "+queue.length+" assets")+" uploaded successfully."+(refreshed?"":" Refresh to see the latest media."));
+   setQueue([]);setUploadOpen(false);
+  }else{
+   setNotice(uploaded+" uploaded, "+failed.length+" failed"+(invalid?", "+invalid+" invalid":"")+". "+(failed.length?"Retry failed files below.":"Choose valid files to continue.")+(refreshed?"":" Refresh to see the latest media."));
+  }
+  setBusy("");
+ };
  const update=async(asset:Media,values:Record<string,unknown>)=>{setBusy(asset.id);setError("");try{await callTool("update_portfolio_media",{assetId:asset.id,...values});await reload();setNotice("Asset updated.");}catch(e){setError((e as Error).message);}finally{setBusy("");}};
  return <section className="portfolio-media">
-  <header className="portfolio-media-header"><div><p className="eyebrow">Asset manager</p><h2>Media library</h2><p>Images, documents and artwork used throughout your portfolio.</p></div><button className="portfolio-primary-button" onClick={()=>setUploadOpen(current=>!current)}>{uploadOpen?"Close upload":"+ Upload media"}</button></header>
-  {uploadOpen&&<form className="portfolio-upload" onSubmit={upload}><div><h2>Upload a new asset</h2><p>Images get optimised preview variants. Originals stay in Atlas storage.</p></div><label>Choose file<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,application/pdf" required onChange={e=>setFile(e.target.files?.[0])}/></label><label>Alt text<input value={alt} onChange={e=>setAlt(e.target.value)} placeholder="Describe the image"/></label><label>Caption<input value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Optional"/></label><button disabled={!file||busy==="upload"}>{busy==="upload"?"Uploading…":"Upload asset"}</button></form>}
+  <header className="portfolio-media-header"><div><p className="eyebrow">Asset manager</p><h2>Media library</h2><p>Images, documents and artwork used throughout your portfolio.</p></div><button type="button" className="portfolio-primary-button" disabled={uploading} onClick={()=>setUploadOpen(current=>!current)}>{uploadOpen?"Close upload":"+ Upload media"}</button></header>
+  {uploadOpen&&<form className="portfolio-upload" onSubmit={upload}>
+   <div><h2>Upload media</h2><p>Choose one or several images (or PDFs). Originals stay in Atlas storage and images receive optimised previews. Max 25 MB per file.</p></div>
+   <label>Choose files<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,application/pdf" multiple disabled={uploading} onChange={e=>selectFiles(e.currentTarget.files)}/></label>
+   {queue.length>0&&<div className="portfolio-upload-queue">
+    <div className="portfolio-upload-queue-header"><strong>{queue.length} {queue.length===1?"file":"files"} selected</strong><span aria-live="polite">{uploading?"Uploading":completed===queue.length?"Finished":"Ready"} · {completed}/{queue.length}</span></div>
+    <progress className="portfolio-upload-progress" aria-label="Media upload progress" max={queue.length} value={completed}/>
+    {queue.map(item=><div className="portfolio-upload-item" key={item.id}>
+     <div className="portfolio-upload-item-header"><div><b title={item.file.name}>{item.file.name}</b><small>{formatBytes(item.file.size)}</small></div><span className={"portfolio-upload-state "+item.state}>{item.state==="ready"?"Ready":item.state==="uploading"?"Uploading…":item.state==="uploaded"?"Uploaded":item.state==="invalid"?"Invalid":"Failed"}</span></div>
+     {item.error&&<small className="portfolio-upload-error" role="alert">{item.error}</small>}
+     {item.state!=="invalid"&&<div className="portfolio-upload-item-fields">
+      <label>Alt text<input type="text" aria-label={"Alt text for "+item.file.name} value={item.altText} placeholder="Describe this image" disabled={item.state==="uploaded"||uploading} onChange={e=>editItem(item.id,{altText:e.target.value})}/></label>
+      <label>Caption (optional)<input type="text" aria-label={"Caption for "+item.file.name} value={item.caption} placeholder="Optional caption" disabled={item.state==="uploaded"||uploading} onChange={e=>editItem(item.id,{caption:e.target.value})}/></label>
+     </div>}
+    </div>)}
+    <p className="portfolio-upload-hint">Images need alt text before being assigned to a project. You can fill it in here or edit the asset later.</p>
+   </div>}
+   <button type="submit" disabled={!!busy||!pending.length}>{uploading?"Uploading "+(queue.filter(item=>item.state==="uploaded").length+1)+" / "+queue.length+"…":pending.some(item=>item.state==="failed")?"Retry "+pending.length+" "+(pending.length===1?"file":"files"):"Upload "+pending.length+" "+(pending.length===1?"file":"files")}</button>
+  </form>}
   <div className="portfolio-media-toolbar"><div className="portfolio-media-search"><span aria-hidden="true">⌕</span><input aria-label="Search media" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search assets…"/></div><label className="portfolio-show-archived"><input type="checkbox" checked={showArchived} onChange={e=>setShowArchived(e.target.checked)}/> Show archived</label><span className="portfolio-media-count">{filtered.length} {filtered.length===1?"asset":"assets"}</span></div>
   <div className="portfolio-media-grid">{filtered.map(asset=><article key={asset.id} className={asset.status==="archived"?"archived":""}><div className="portfolio-media-preview">{asset.thumbnailUrl?<img src={API_BASE+asset.thumbnailUrl} alt={asset.altText||asset.originalName}/>:<div className="portfolio-pdf">PDF</div>}</div><div className="portfolio-media-card-content"><b title={asset.originalName}>{asset.originalName}</b><small>{formatBytes(asset.byteSize)}{asset.width?" · "+asset.width+" × "+asset.height:""}</small><div className="portfolio-media-card-actions"><a href={API_BASE+asset.url} target="_blank" rel="noreferrer">View original ↗</a><button className="link danger" disabled={busy===asset.id} onClick={()=>void update(asset,{status:asset.status==="active"?"archived":"active"})}>{asset.status==="active"?"Archive":"Restore"}</button></div><details className="portfolio-media-details"><summary>Edit details</summary><label>Alt text<input defaultValue={asset.altText??""} key={asset.id+"alt"+asset.altText} onBlur={e=>{if(e.target.value!==(asset.altText??""))void update(asset,{altText:e.target.value});}}/></label><label>Caption<input defaultValue={asset.caption??""} key={asset.id+"caption"+asset.caption} onBlur={e=>{if(e.target.value!==(asset.caption??""))void update(asset,{caption:e.target.value});}}/></label></details></div></article>)}</div>
   {!filtered.length&&<p className="portfolio-empty">{search?"No matching assets.":"No assets to show."}</p>}
