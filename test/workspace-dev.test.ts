@@ -95,3 +95,31 @@ test('timeout returns a failed result; missing capability, offline or detached N
     assert.equal(audit.filter(event => event.operation === 'workspace.mutation_failed').length, 3);
     await x.nodes.close();
 });
+
+test('automatic scripts are opt-in, discovered from package.json, and never override configured tasks', async () => {
+    const x = await setup();
+    const previous = process.env.ATLAS_NODE_AUTO_SCRIPTS;
+    try {
+        await fs.writeFile(path.join(x.folder, 'package.json'), JSON.stringify({ scripts: {
+            build: 'node -e "process.stdout.write(\\\"built\\\")"',
+            test: 'node -e "process.stdout.write(\\\"tested\\\")"',
+            deploy: 'node -e "process.stdout.write(\\\"unsafe\\\")"',
+        } }));
+        await fs.writeFile(path.join(x.folder, 'package-lock.json'), '{}');
+        process.env.ATLAS_NODE_AUTO_SCRIPTS = '1';
+        const scripts: any[] = await x.workspaces.call('workspace_list_dev_tasks', x.scope);
+        assert.deepEqual(scripts.map(item => item.task).sort(), ['build', 'test']);
+        assert.ok(scripts.every(item => item.source === 'package-script' && item.command.startsWith('npm run ')));
+        assert.equal((await x.run('build')).success, true);
+        await assert.rejects(x.run('deploy'), (error: any) => error.code === 'TASK_UNAVAILABLE');
+        await x.configure({ build: { executable: process.execPath, args: ['-e', 'process.stdout.write("configured")'] } });
+        const preferred: any = await x.run('build');
+        assert.equal(preferred.stdout, 'configured');
+        process.env.ATLAS_NODE_AUTO_SCRIPTS = '0';
+        await assert.rejects(x.run('test'), (error: any) => error.code === 'TASK_UNAVAILABLE');
+    } finally {
+        if (previous === undefined) delete process.env.ATLAS_NODE_AUTO_SCRIPTS;
+        else process.env.ATLAS_NODE_AUTO_SCRIPTS = previous;
+        await x.nodes.close();
+    }
+});

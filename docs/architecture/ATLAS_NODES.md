@@ -31,3 +31,26 @@ Another platform can implement the version 2 WebSocket protocol, store its UUID/
 ## Controlled development tasks
 
 `workspace_list_dev_tasks` lists the owner-configured names. `workspace_run_dev_task` accepts only a name; the caller cannot supply an executable, arguments, cwd, or environment. For the Atlas monorepo, `npm run workspace:register-atlas` registers the root Workspace; `test`, `build`, `typecheck`, `server_build`, `node_build`, and `web_build` are configured. The 2026 migration archived the old Atlas Workspace ID `eb31ca96-2e91-4390-91ad-c908940d3059` and created `df1c2c81-1383-4533-92ed-b512dbd5646b` on the same Node. AI Football Workspace ID `961d0046-eb49-446d-835e-00bec3e46059` was unchanged. For other Workspaces, a trusted operator uses `scripts/configure-workspace-dev-tasks.mjs` with a local JSON configuration. Each task has an executable, argument list and bounded timeout; the Node runs it in the assigned root with `shell:false` and capped output. Nonzero exits and timeouts remain structured task results.
+
+## Opt-in development script discovery (Phase 1)
+
+The Node can discover the common JavaScript scripts `build`, `test`, `lint`,
+`typecheck` and `check` directly from the Workspace root's `package.json`.
+The Node selects npm/pnpm/yarn/bun using an explicit `packageManager` declaration
+or unambiguous regular lockfiles, defaulting to npm when none is present.
+Ambiguous lockfiles, oversized manifests and symlinked manifests are rejected
+for automatic discovery. Caller-supplied shell commands, paths, arguments and
+environment variables remain unsupported.
+
+Discovery and execution reuse `workspace_list_dev_tasks` and
+`workspace_run_dev_task`, with explicit owner-configured tasks taking
+precedence. Existing task configuration and other language ecosystems are
+unchanged. To opt in **on a trusted local Node**, set
+`ATLAS_NODE_AUTO_SCRIPTS=1` in the Node environment and restart it.
+The default is off.
+
+**Security:** package scripts are arbitrary repository-controlled programs.
+A script-name allowlist prevents arbitrary caller argv but is NOT an OS sandbox.
+Do not enable this option on the production VPS or for untrusted repositories
+until isolated runners, restricted filesystem/network access, CPU/RAM limits
+and cleanup are implemented in the Linux Node phase.
