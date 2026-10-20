@@ -1,3 +1,4 @@
+import { rememberWork } from './recentWork';
 import { useRouteTiming } from './performance';
 import { themedViewDocument } from "./viewTheme";
 import { ProjectNav } from "./AppShell";
@@ -31,6 +32,7 @@ export function ViewFrame({rendered,preview=false,embedded=false,mobile=false,ac
 export function ViewPage({projectId,viewId}:{projectId:string;viewId:string}){
     const mutate = useAtlasMutation();
     const [previewActions,setPreviewActions]=useState(false);const isNew=viewId==='new';const storesQuery=useListStoresQuery({projectId});const savedQuery=useGetViewQuery({projectId,viewId,includeArchived:true},{skip:isNew});const stores:Store[]=storesQuery.currentData??[];const [saved,setSaved]=useState<View|undefined>(savedQuery.currentData);const [draft,setDraft]=useState<Draft>(()=>savedQuery.currentData?draftFrom(savedQuery.currentData):blank);const [rendered,setRendered]=useState<ViewRenderResult>();const editing=isNew||!saved?.archivedAt;const [tab,setTab]=useState<keyof Omit<Draft,'name'|'slug'>>('html');const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [mobile,setMobile]=useState(false);const historyQuery=useGetViewHistoryQuery({projectId,viewId},{skip:isNew});const revisions=historyQuery.currentData??[];const [notice,setNotice]=useState('');const request=useRef(0);const initialized=useRef(!!savedQuery.currentData);const [previewDraft,setPreviewDraft]=useState('');
+    useEffect(() => { if (savedQuery.currentData && !savedQuery.currentData.archivedAt) rememberWork({ href: `#/projects/${projectId}/views/${viewId}`, name: savedQuery.currentData.name, projectId, kind: 'View', viewSlug: savedQuery.currentData.slug }); }, [projectId, viewId, savedQuery.currentData?.name]);
     useEffect(()=>{if(savedQuery.currentData){setSaved(savedQuery.currentData);if(!initialized.current){initialized.current=true;setDraft(draftFrom(savedQuery.currentData))}}},[savedQuery.currentData]);
     useEffect(()=>()=>{request.current++},[projectId,viewId]);
     useRouteTiming("view-editor", `${projectId}/${viewId}`, !storesQuery.isLoading && (isNew || !!saved));

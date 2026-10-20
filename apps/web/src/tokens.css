@@ -1,19 +1,19 @@
 /* Atlas Web design contract. Feature styles consume these roles, never raw colors. */
 :root {
   color-scheme: dark;
-  --bg: #15171c;
-  --bg-secondary: #111318;
-  --surface: #191c22;
-  --surface-elevated: #22262e;
-  --surface-hover: #292e38;
-  --border: #303540;
-  --border-strong: #505a6b;
-  --text-primary: #eeede9;
-  --text-secondary: #b7becb;
-  --text-muted: #929cac;
-  --accent: #a0b2ff;
-  --accent-solid: #455bbe;
-  --accent-soft: #252f50;
+  --bg: #19191d;
+  --bg-secondary: #141417;
+  --surface: #202025;
+  --surface-elevated: #28282f;
+  --surface-hover: #303038;
+  --border: #323238;
+  --border-strong: #50505c;
+  --text-primary: #eeedf2;
+  --text-secondary: #bcbac6;
+  --text-muted: #9996a6;
+  --accent: #b8a1ee;
+  --accent-solid: #7253b4;
+  --accent-soft: #30283e;
   --success: #8dd8b0;
   --success-soft: #203a30;
   --warning: #e9be79;
@@ -31,6 +31,6 @@
   --text-xs: .75rem; --text-sm: .8125rem; --text-base: .875rem;
   --text-lg: 1.125rem; --text-title: clamp(1.6rem, 3vw, 2rem);
   --control-sm: 30px; --control-md: 36px; --control-lg: 44px;
-  --transition: 140ms ease;
+  --transition: 160ms cubic-bezier(.2, .75, .3, 1);
   --shadow-dialog: 0 16px 64px var(--shadow-color);
 }

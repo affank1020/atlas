@@ -1,5 +1,5 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { vi, test, expect } from 'vitest';
+import { cleanup, render, screen, fireEvent } from '@testing-library/react';
+import { afterEach, vi, test, expect } from 'vitest';
 import { AppShell, ProjectNav } from './AppShell';
 import { callTool } from './api';
 import { Provider } from 'react-redux';
@@ -10,7 +10,7 @@ test('shell lists real projects, exposes Ask globally, and omits unsupported pri
     render(<Provider store={store}><AppShell page="project" projectId="real-project" contentClass=""><h1>Research overview</h1></AppShell></Provider>);
     expect(await screen.findByRole('link', { name: /Research/ })).toHaveAttribute('href', '#/projects/real-project');
     expect(screen.getByRole('link', { name: /Ask Atlas/ })).toHaveAttribute('href', '#/ask-atlas');
-    expect(screen.getByRole('link', { name: /Nodes/ })).toHaveAttribute('href', '#/nodes');
+    expect(screen.getByRole('link', { name: /Infrastructure/ })).toHaveAttribute('href', '#/infrastructure');
     expect(screen.queryByRole('link', { name: /Sessions/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Portfolio' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Ask Portfolio' })).not.toBeInTheDocument();
@@ -25,3 +25,5 @@ test('project sections retain an overview deep link and indicate the selected se
     expect(screen.getByRole('link', { name: 'Views' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'Workspaces' })).toHaveAttribute('href', '#/projects/p/workspaces');
 });
+
+afterEach(() => cleanup());

@@ -1,6 +1,6 @@
 import { createApi, fakeBaseQuery, defaultSerializeQueryArgs } from '@reduxjs/toolkit/query/react';
 import { callTool, type ToolMutation } from './api';
-import type { AtlasRecord, AuditEvent, Page, Project, Store, View, ViewRenderResult } from './types';
+import type { AtlasStatus, AtlasRecord, AuditEvent, Page, Project, Store, View, ViewRenderResult } from './types';
 
 type ProjectScope = { projectId: string; includeArchived?: boolean };
 type StoreScope = ProjectScope & { storeId: string };
@@ -47,6 +47,12 @@ export const atlasApi = createApi({
     refetchOnFocus: false,
     refetchOnReconnect: false,
     endpoints: build => ({
+        workspaceStatus: build.query<AtlasStatus, void>({
+            queryFn: (_arg, api) => read<AtlasStatus>('get_atlas_status', {}, api.signal),
+        }),
+        workspaceNodes: build.query<import('./Nodes').AtlasNode[], void>({
+            queryFn: (_arg, api) => read<import('./Nodes').AtlasNode[]>('list_nodes', {}, api.signal),
+        }),
         applicationRead: build.query<unknown, { name: ApplicationReadName; input: Record<string, unknown> }>({
             queryFn: ({ name, input }, api) => read(name, input, api.signal),
             providesTags: (_result, _error, { name, input }) => [tag('ApplicationData', name.includes('portfolio') ? 'portfolio' : String(input.projectId ?? 'football'))],
@@ -97,7 +103,7 @@ export const atlasApi = createApi({
     }),
 });
 
-export const { useApplicationReadQuery, useListProjectsQuery, useGetProjectQuery, useListStoresQuery, useGetStoreQuery,
+export const { useWorkspaceStatusQuery, useWorkspaceNodesQuery, useApplicationReadQuery, useListProjectsQuery, useGetProjectQuery, useListStoresQuery, useGetStoreQuery,
     useListRecordsQuery, useListViewsQuery, useGetViewQuery, useGetViewHistoryQuery, useRenderViewQuery, useMutateMutation } = atlasApi;
 
 export function useAtlasMutation() {

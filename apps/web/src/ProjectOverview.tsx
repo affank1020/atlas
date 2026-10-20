@@ -1,3 +1,4 @@
+import { rememberWork } from './recentWork';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityFeed } from './ActivityFeed';
 import { useRenderViewQuery } from './atlasApi';
@@ -29,6 +30,7 @@ export function ViewContainer({ view, refreshVersion = 0 }: { view: View; refres
 
     const archived = !!view.archivedAt;
     const launchUrl = standaloneViewUrl(view);
+    const remember = () => rememberWork({ href: editViewHash(view), name: view.name, projectId: view.projectId, kind: 'View', viewSlug: view.slug });
     return <article ref={element} className={`view-card${archived ? ' view-card-archived' : ''}`} aria-label={view.name}>
         <header className="view-card-head">
             <div className="view-card-heading">
@@ -40,7 +42,7 @@ export function ViewContainer({ view, refreshVersion = 0 }: { view: View; refres
         </header>
         {archived
             ? <div className="view-card-placeholder">This View is archived.</div>
-            : <a className="view-card-launch-surface" href={launchUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open ${view.name} in new tab`}>
+            : <a className="view-card-launch-surface" href={launchUrl} onClick={remember} target="_blank" rel="noopener noreferrer" aria-label={`Open ${view.name} in new tab`}>
                 <div className="view-card-preview" inert aria-hidden="true">
                     {rendered ? <ViewFrame rendered={rendered} preview embedded /> : <div className="view-card-placeholder">{isLoading ? 'Loading preview…' : 'Preview unavailable'}</div>}
                 </div>
@@ -50,7 +52,7 @@ export function ViewContainer({ view, refreshVersion = 0 }: { view: View; refres
         {error && !archived && <p className="view-card-error" role="status">Preview unavailable: {'message' in Object(error) ? String((error as { message: string }).message) : 'Atlas request failed'}</p>}
         <footer className="view-card-footer">
             <span>{archived ? 'Archived View' : 'Live View'}</span>
-            {!archived && <a className="view-card-open" href={launchUrl} target="_blank" rel="noopener noreferrer">Open in new tab <span aria-hidden="true">↗</span></a>}
+            {!archived && <a className="view-card-open" href={launchUrl} onClick={remember} target="_blank" rel="noopener noreferrer">Open in new tab <span aria-hidden="true">↗</span></a>}
         </footer>
     </article>;
 }
