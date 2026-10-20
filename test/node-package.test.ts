@@ -23,6 +23,13 @@ test('Node release contains runtime/protocol but never credentials or Server/Web
         const release = JSON.parse(await readFile(path.join(extracted, 'atlas-node-release.json'), 'utf8'));
         assert.equal(release.commit, commit);
         assert.equal(release.protocol, 2);
+        const manifest = JSON.parse(await readFile(path.join(extracted, 'package.json'), 'utf8'));
+        const lock = JSON.parse(await readFile(path.join(extracted, 'package-lock.json'), 'utf8'));
+        assert.deepEqual(manifest.workspaces, ['apps/node', 'packages/protocol']);
+        for (const forbidden of ['apps/server', 'apps/web', 'packages/view-runtime',
+            'node_modules/handlebars', 'node_modules/@atlas/server']) {
+            assert.ok(!Object.hasOwn(lock.packages, forbidden), forbidden);
+        }
         assert.match(release.install, /--ignore-scripts/);
         assert.ok((await readFile(path.join(extracted, 'apps/node/dist/platforms/desktop/main.js'))).length > 0);
         assert.ok((await readFile(path.join(extracted, 'packages/protocol/dist/node-protocol.js'))).length > 0);

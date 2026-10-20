@@ -41,6 +41,8 @@ jobs:
           tar -xzf "$archive" -C "${RUNNER_TEMP}/atlas-node-package"
           cd "${RUNNER_TEMP}/atlas-node-package"
           npm ci --omit=dev --ignore-scripts --workspace @atlas/node --workspace @atlas/protocol --include-workspace-root=false
+          npm ls --omit=dev --depth=0
+          npm audit --omit=dev --audit-level=high
           node --input-type=module -e "import('@atlas/protocol/node-protocol').then(m => { if (m.NODE_PROTOCOL_VERSION !== 2) process.exit(1); })"
       - uses: actions/upload-artifact@v4
         with:
