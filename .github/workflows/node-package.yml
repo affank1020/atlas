@@ -1,0 +1,52 @@
+name: Atlas Node Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/node/**"
+      - "packages/protocol/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/package-node-release.mjs"
+      - ".github/workflows/node-package.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package standalone Node
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build:node
+      - name: Package immutable Node artifact
+        run: node scripts/package-node-release.mjs
+      - name: Verify archive installs and loads shared protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/atlas-node-package"
+          archive="$(find .build/node-releases -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          test -n "$archive"
+          (cd .build/node-releases && sha256sum -c *.sha256)
+          tar -xzf "$archive" -C "${RUNNER_TEMP}/atlas-node-package"
+          cd "${RUNNER_TEMP}/atlas-node-package"
+          npm ci --omit=dev --ignore-scripts --workspace @atlas/node --workspace @atlas/protocol --include-workspace-root=false
+          node --input-type=module -e "import('@atlas/protocol/node-protocol').then(m => { if (m.NODE_PROTOCOL_VERSION !== 2) process.exit(1); })"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlas-node-${{ github.sha }}
+          path: |
+            .build/node-releases/*.tar.gz
+            .build/node-releases/*.sha256
+          retention-days: 14
+          if-no-files-found: error
