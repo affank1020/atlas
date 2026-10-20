@@ -38,8 +38,6 @@ export class WorkspaceService {
                 const changed = await db.update(workspace.id, x.name, name === 'archive_workspace'); await db.audit(changed, name === 'archive_workspace' ? 'workspace.archived' : 'workspace.updated', x.client, changed); await db.commit(); return changed;
             } catch (e) { await db.rollback(); throw e; } finally { db.release(); }
         }
-        if (name === 'workspace_run_dev_task' && !Object.hasOwn(workspace.devTasks, x.task))
-            throw new AtlasError('Development task is not configured on this Workspace.', 'TASK_UNAVAILABLE');
         const footballActions = {
             football_train: 'launch_headless',
             football_evaluate: 'evaluate',
@@ -90,8 +88,6 @@ export class WorkspaceService {
             const current = await db.get(x.projectId, workspace.id, false);
             if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath)
                 throw new AtlasError('Workspace binding changed; retry the operation.', 'CONFLICT');
-            if (name === 'workspace_run_dev_task' && !Object.hasOwn(current.devTasks, x.task))
-                throw new AtlasError('Development task is not configured on this Workspace.', 'TASK_UNAVAILABLE');
             const result = await execute(current); applied = true;
             const outcome = name === 'unity_run_command' && (result as any)?.isError ? 'editor_error' : name === 'workspace_run_dev_task' && !(result as DevTaskResult).success ? 'failed' : 'completed';
             const devSummary = name === 'workspace_run_dev_task' ? (() => { const run = result as DevTaskResult; return { task: x.task, nodeId: workspace.nodeId, startedAt: run.startedAt, completedAt: run.completedAt, durationMs: run.durationMs, exitCode: run.exitCode, timedOut: run.timedOut, success: run.success, stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated }; })() : {};

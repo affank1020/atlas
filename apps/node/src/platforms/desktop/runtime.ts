@@ -1,4 +1,5 @@
 import { runDevTask } from '../../capabilities/dev/runner.js';
+import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
 import { UnityAdapter } from '../../capabilities/unity/unity.js';
@@ -31,13 +32,22 @@ export class LocalNodeRuntime implements NodeRuntime {
                 case 'workspace_patch_file': return this.files.patch(workspace.rootPath, x.path, x.expectedSha256, x.oldText, x.newText);
                 case 'workspace_delete_file': return this.files.delete(workspace.rootPath, x.path, x.expectedSha256);
                 case 'workspace_list_dev_tasks': {
-                    const tasks = devTasksSchema.parse(workspace.devTasks);
-                    return Object.entries(tasks).map(([task, definition]) => ({ task, command: displayCommand(definition), timeoutMs: definition.timeoutMs }));
+                    const configured = devTasksSchema.parse(workspace.devTasks);
+                    const discovered = await discoverAutoScripts(workspace.rootPath);
+                    return [
+                        ...Object.entries(configured).map(([task, definition]) => ({
+                            task, command: displayCommand(definition), timeoutMs: definition.timeoutMs, source: 'configured',
+                        })),
+                        ...Object.entries(discovered).filter(([task]) => !Object.hasOwn(configured, task)).map(([task, definition]) => ({
+                            task, command: displayCommand(definition), timeoutMs: definition.timeoutMs, source: 'package-script',
+                        })),
+                    ];
                 }
                 case 'workspace_run_dev_task': {
-                    const tasks = devTasksSchema.parse(workspace.devTasks);
-                    const task = Object.hasOwn(tasks, x.task) ? tasks[x.task] : undefined;
-                    if (!task) throw new AtlasError('Development task is not configured on this Workspace.', 'TASK_UNAVAILABLE');
+                    const configured = devTasksSchema.parse(workspace.devTasks);
+                    const task = Object.hasOwn(configured, x.task) ? configured[x.task]
+                        : (await discoverAutoScripts(workspace.rootPath))[x.task];
+                    if (!task) throw new AtlasError('Development task is unavailable or not enabled on this Workspace.', 'TASK_UNAVAILABLE');
                     return runDevTask(workspace, x.task, task, this.shutdown.signal);
                 }
                 case 'workspace_git_status': return git(workspace.rootPath, this.files);
