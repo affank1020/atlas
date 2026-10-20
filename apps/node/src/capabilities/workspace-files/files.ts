@@ -185,7 +185,18 @@ export async function git(root: string, files: WorkspaceFiles, diff = false) {
         if (permitted(relative)) changes.push({ status, path: relative });
     }
     const branch = (await run(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => 'HEAD')).trim();
-    if (!diff) return { available: true, branch, dirty: raw.length > 0, changes: changes.slice(0, 500), truncated: changes.length > 500 };
+    if (!diff) {
+        // Expose only a validated GitHub slug; raw remote URLs can contain secrets.
+        const remote = (await run(['config', '--local', '--get', 'remote.origin.url']).catch(() => '')).trim();
+        const prefixes = ['https://github.com/', 'git@github.com:', 'ssh://git@github.com/'];
+        const prefix = prefixes.find(value => remote.startsWith(value));
+        const tail = prefix ? remote.slice(prefix.length) : '';
+        const slug = tail.endsWith('.git') ? tail.slice(0, -4) : tail;
+        const originRepository = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(slug) ? slug : null;
+        const head = (await run(['rev-parse', 'HEAD'])).trim();
+        return { available: true, branch, head, originRepository,
+            dirty: raw.length > 0, changes: changes.slice(0, 500), truncated: changes.length > 500 };
+    }
     // Only expose diffs for safe current text files; deleted/binary/private paths are omitted.
     const paths: string[] = [];
     for (const entry of changes.slice(0, 100)) { try { await files.read(root, entry.path); paths.push(`:(literal)${entry.path}`); } catch { /* protected/removed files omitted */ } }

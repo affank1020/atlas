@@ -102,7 +102,22 @@ export class WorkspaceService {
             // Server-only PR creation and server-brokered ephemeral GitHub tokens:
             // neither operation accepts secrets from MCP nor persists them to audit.
             const execute = name === 'workspace_git_open_pull_request'
-                ? async () => this.github.createDraftPullRequest(x.repository, x.branch, x.expectedHead, x.title, x.body)
+                ? await (async () => {
+                    // The broker has access to multiple installations. Verify this
+                    // exact Node checkout first, inside the existing mutation lock,
+                    // before allowing a server-side GitHub PR operation.
+                    const inspect = await this.runtime.prepare(workspace, 'workspace_git_status', {});
+                    return async () => {
+                        const git = await inspect() as {
+                            available?: boolean; branch?: string; head?: string; originRepository?: string | null;
+                        };
+                        if (git?.available !== true || git.branch !== x.branch ||
+                            git.head !== x.expectedHead ||
+                            git.originRepository?.toLowerCase() !== x.repository.toLowerCase())
+                            throw new AtlasError('Workspace checkout does not match the requested GitHub PR repository, branch and commit.', 'WORKSPACE_DENIED');
+                        return this.github.createDraftPullRequest(x.repository, x.branch, x.expectedHead, x.title, x.body);
+                    };
+                })()
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
                     ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) } : nodeInput);
             db = await this.repository.connect();

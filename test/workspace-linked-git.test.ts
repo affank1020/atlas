@@ -20,6 +20,7 @@ test('safe linked worktree is visible to Git status without leaving Node-approve
     writeFileSync(path.join(main, 'README.md'), 'original');
     git(main, 'add', 'README.md');
     git(main, 'commit', '-m', 'Initial');
+    git(main, 'remote', 'add', 'origin', 'git@github.com:affank1020/atlas.git');
     git(main, 'worktree', 'add', '-b', 'atlas/rebrand', linked, 'main');
 
     const approved = new WorkspaceFiles([root]);
@@ -28,6 +29,12 @@ test('safe linked worktree is visible to Git status without leaving Node-approve
     if (result.available) {
         assert.equal(result.branch, 'atlas/rebrand');
         assert.equal(result.dirty, false);
+        assert.equal(result.originRepository, 'affank1020/atlas');
+        assert.equal(result.head, git(linked, 'rev-parse', 'HEAD'));
+        git(linked, 'remote', 'set-url', 'origin', 'https://evil.example/token@github.com/affank1020/atlas.git');
+        const hostile = await inspectGit(linked, approved);
+        assert.equal(hostile.available, true);
+        if (hostile.available) assert.equal(hostile.originRepository, null);
     }
     const fake = path.join(root, 'untrusted');
     mkdirSync(fake);
