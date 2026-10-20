@@ -20,6 +20,8 @@ export const workspaceOperationSchemas = {
     workspace_git_switch_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),
     workspace_git_stage: z.object({ ...scope, ...client, files: z.array(z.object({ path: file, expectedSha256: sha256 }).strict()).min(1).max(40) }).strict(),
     workspace_git_commit: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/), expectedTree: z.string().regex(/^[a-f0-9]{40}$/), files: z.array(file).min(1).max(40), message: z.string().trim().min(3).max(200) }).strict(),
+    // githubToken is injected by the Server after GitHub App authorization, never accepted from MCP.
+    workspace_git_push_branch: z.object({ ...scope, ...client, repository: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/), branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/), expectedHead: z.string().regex(/^[a-f0-9]{40}$/), githubToken: z.string().min(20).max(2048) }).strict(),
 
     unity_status: z.object({ ...scope, ...client }).strict(),
     unity_list_commands: z.object({ ...scope, ...client }).strict(),

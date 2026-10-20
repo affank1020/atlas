@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { gitWrite } from '../apps/node/src/capabilities/workspace-files/git-write.js';
@@ -10,7 +10,7 @@ function git(root: string, ...args: string[]) {
  return execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding:'utf8' }).trim();
 }
 test('Git writes require per-root opt in, preserve main, and stage explicit inspected files', async t => {
- const root=mkdtempSync(path.join(os.tmpdir(),'atlas-git-writes-'));
+ const root=realpathSync(mkdtempSync(path.join(os.tmpdir(),'atlas-git-writes-')));
  t.after(()=>{rmSync(root,{recursive:true,force:true});});
  git(root,'init','-b','atlas/bootstrap');
  git(root,'config','user.name','Test');git(root,'config','user.email','test@example.test');
@@ -34,4 +34,13 @@ test('Git writes require per-root opt in, preserve main, and stage explicit insp
  assert.equal(committed.branch,'atlas/test');
  assert.equal(readFileSync(path.join(root,'other.txt'),'utf8'),'unrelated\n');
  assert.ok(git(root,'status','--porcelain').includes('other.txt'));
+ const publish = { branch:'atlas/test', expectedHead:committed.head, repository:'affank1020/portfolio-site', githubToken:'ghs_testOnlyTokenDoesNotGrantPermissions' };
+ const oldRemote = process.env.ATLAS_GIT_REMOTE_ROOTS;
+ t.after(()=>{if(oldRemote===undefined)delete process.env.ATLAS_GIT_REMOTE_ROOTS;else process.env.ATLAS_GIT_REMOTE_ROOTS=oldRemote;});
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',publish),/not approved/);
+ process.env.ATLAS_GIT_REMOTE_ROOTS=root;
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',publish),/not clean/);
+ rmSync(path.join(root,'other.txt'));
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',{...publish,expectedHead:'0'.repeat(40)}),/HEAD changed/);
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',{...publish,repository:'affank1020/atlas'}),/remote does not match/);
 });

@@ -7,11 +7,11 @@ import { permitted, type WorkspaceFiles } from './files.js';
 
 const execute = promisify(execFile);
 const validBranch = (branch: string) => /^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/.test(branch) && !branch.includes('//') && !branch.endsWith('/');
-async function run(root: string, args: string[]) {
+async function run(root: string, args: string[], extras: Record<string, string> = {}, timeout = 10000) {
   const result = await execute('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', root, ...args], {
-    timeout: 10000, maxBuffer: 1024 * 1024,
+    timeout, maxBuffer: 1024 * 1024,
     env: { PATH: '/usr/bin:/bin', HOME: '/var/empty', GIT_CONFIG_NOSYSTEM: '1',
-      GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' },
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0', ...extras },
   });
   return result.stdout.trim();
 }
@@ -53,6 +53,28 @@ export async function gitWrite(root: string, files: WorkspaceFiles, operation: s
     await run(root, ['-c', 'user.name=Atlas Node', '-c', 'user.email=atlas-node@users.noreply.github.com',
       'commit', '--no-gpg-sign', '-m', input.message]);
     return { branch, head: await run(root, ['rev-parse', 'HEAD']) };
+  }
+  if (operation === 'workspace_git_push_branch') {
+    const remoteRoots = (process.env.ATLAS_GIT_REMOTE_ROOTS || '').split(',').map(s => s.trim());
+    if (!remoteRoots.includes(root)) throw new AtlasError('Remote Git publishing is not approved on this Node root.', 'CAPABILITY_UNAVAILABLE');
+    if (branch !== input.branch || await run(root, ['rev-parse', 'HEAD']) !== input.expectedHead)
+      throw new AtlasError('Git branch or HEAD changed since inspection.', 'CONFLICT');
+    if (await run(root, ['status', '--porcelain'])) throw new AtlasError('Working tree is not clean.', 'CONFLICT');
+    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(input.repository) ||
+        await run(root, ['remote', 'get-url', 'origin']) !== `https://github.com/${input.repository}.git`)
+      throw new AtlasError('Git remote does not match approved GitHub repository.', 'WORKSPACE_DENIED');
+    if (typeof input.githubToken !== 'string' || input.githubToken.length < 20)
+      throw new AtlasError('Missing brokered GitHub credential.', 'CAPABILITY_UNAVAILABLE');
+    const basic = Buffer.from(`x-access-token:${input.githubToken}`).toString('base64');
+    // The short-lived token is supplied in child environment, not argv, Git config or a file.
+    // Force Git to refuse redirects so the authenticated request cannot follow an arbitrary host.
+    await run(root, ['-c', 'http.followRedirects=false', 'push', '--porcelain', '--',
+      `https://github.com/${input.repository}.git`, `HEAD:refs/heads/${branch}`], {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    }, 45000);
+    return { repository: input.repository, branch, head: input.expectedHead, pushed: true };
   }
   throw new AtlasError('Unsupported Git operation.', 'INVALID_REQUEST');
 }
