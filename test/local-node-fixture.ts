@@ -13,11 +13,11 @@ import type { WorkspaceAdapter } from '@atlas/protocol/workspace';
 
 /** Integration-only local runtime; production Server never imports Node code. */
 export function localWorkspaceService(catalog: AtlasCatalog, pool: Pool, roots: string[], adapters?: Map<string, WorkspaceAdapter>) {
-  const runtime = new LocalNodeRuntime(roots, adapters);
+  const runtime = new LocalNodeRuntime(roots, adapters, 'darwin');
   return new WorkspaceService(catalog, new PostgresWorkspaceRepository(pool), new NodeRouter(new NodeService(new PostgresNodeRepository(pool), runtime, 'Test Node')));
 }
 export function localHttpServer(databaseUrl: string, roots: string[]) {
-  const services = composeServer(loadServerConfig({ DATABASE_URL: databaseUrl, ATLAS_NODE_EXECUTION: 'remote' }), new LocalNodeRuntime(roots, new Map()));
+  const services = composeServer(loadServerConfig({ DATABASE_URL: databaseUrl, ATLAS_NODE_EXECUTION: 'remote' }), new LocalNodeRuntime(roots, new Map(), 'darwin'));
   startBackgroundWork(services);
   return { http: createHttpTransport(services), services };
 }

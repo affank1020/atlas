@@ -40,7 +40,7 @@ test('Node heartbeat reconnects a WebSocket that remains open but stops replying
         id: nodeId, name: 'Heartbeat test', token: 'test-credential-0000000000000000000000',
         serverUrl: `ws://127.0.0.1:${(server.address() as {port: number}).port}`,
         heartbeatMs: 15, heartbeatTimeoutMs: 90, reconnectMinMs: 10, reconnectMaxMs: 25,
-    }, new LocalNodeRuntime([root], new Map()));
+    }, new LocalNodeRuntime([root], new Map(), 'darwin'));
     try {
         const online = once(node, 'online');
         const errored = once(node, 'connectionError');
@@ -75,7 +75,7 @@ test('standalone Node serves Workspace calls, enforces auth, and fails closed th
     const nodeId = (await services.nodes.repository.getDefault()).id;
     const ticket = await services.identity.ticket(nodeId, true);
     const { credential: token } = await services.identity.enrol({ token: ticket.enrolmentToken, name: 'Test Node', platform: 'test' });
-    const makeNode = () => new StandaloneNode({ id: nodeId, name: 'Remote test Node', token, serverUrl: url, reconnectMinMs: 1000, reconnectMaxMs: 1000 }, new LocalNodeRuntime([root], new Map()));
+    const makeNode = () => new StandaloneNode({ id: nodeId, name: 'Remote test Node', token, serverUrl: url, reconnectMinMs: 1000, reconnectMaxMs: 1000 }, new LocalNodeRuntime([root], new Map(), 'darwin'));
     let node = makeNode();
     node.on('connectionError', message => console.error('Test Node connection:', message));
     const call = async (tool: string, input: unknown) => {
@@ -200,7 +200,7 @@ test('standalone Node reconnects after Atlas Server restart with the same Worksp
     const nodeId = (await services.nodes.repository.getDefault()).id;
     const ticket = await services.identity.ticket(nodeId, true);
     const { credential: token } = await services.identity.enrol({ token: ticket.enrolmentToken, name: 'Test Node', platform: 'test' });
-    const node = new StandaloneNode({ id: nodeId, name: 'Restart test', token, serverUrl: `ws://127.0.0.1:${port}/node/connect`, reconnectMinMs: 20, reconnectMaxMs: 100 }, new LocalNodeRuntime([root], new Map()));
+    const node = new StandaloneNode({ id: nodeId, name: 'Restart test', token, serverUrl: `ws://127.0.0.1:${port}/node/connect`, reconnectMinMs: 20, reconnectMaxMs: 100 }, new LocalNodeRuntime([root], new Map(), 'darwin'));
     try {
         const online = once(node, 'online'); node.start(); await online;
         const project = await fixture.catalog.createProject({ name: 'Restart' });
@@ -233,7 +233,7 @@ test('rotating a live Node credential immediately fences its old session', async
     const nodeId = (await services.nodes.repository.getDefault()).id;
     const ticket = await services.identity.ticket(nodeId, true);
     const { credential } = await services.identity.enrol({ token: ticket.enrolmentToken, name: 'Rotating Node', platform: 'test' });
-    const node = new StandaloneNode({ id: nodeId, name: 'Rotating Node', token: credential, serverUrl: `ws://127.0.0.1:${(http.address() as {port:number}).port}/node/connect`, reconnectMinMs: 1000 }, new LocalNodeRuntime([root], new Map()));
+    const node = new StandaloneNode({ id: nodeId, name: 'Rotating Node', token: credential, serverUrl: `ws://127.0.0.1:${(http.address() as {port:number}).port}/node/connect`, reconnectMinMs: 1000 }, new LocalNodeRuntime([root], new Map(), 'darwin'));
     try {
         const online = once(node, 'online'); node.start(); await online;
         assert.equal(services.nodeGateway!.connectedCount, 1);
