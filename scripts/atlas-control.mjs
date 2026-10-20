@@ -834,6 +834,7 @@ Usage:
   ./atlasctl vps diagnose      Run VPS diagnostics via SSH
   ./atlasctl vps mcp           Check hosted MCP OAuth protection
   ./atlasctl vps node-preflight Read-only Linux host capacity/prerequisite check
+  ./atlasctl vps node-status   Inspect the independent Linux Node service/release
   ./atlasctl vps logs server   Inspect VPS Server logs via SSH
 
 Services: postgres, server, node, web, tunnel, ollama
@@ -892,7 +893,7 @@ async function down(includePostgres, hosted = true) {
 
 const [command = "status", argument] = process.argv.slice(2);
 function vpsCommand(action = "status", service) {
-  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight"]);
+  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight", "node-status"]);
   const targets = new Set(["server", "postgres", "ingress"]);
   if (!valid.has(action) || (service && (!["logs", "follow"].includes(action) || !targets.has(service)))) {
     console.error("Usage: ./atlasctl vps [status|health|https|mcp|nodes|migrations|diagnose|logs|follow|node-preflight] [server|ingress|postgres]");
@@ -919,6 +920,17 @@ function vpsCommand(action = "status", service) {
     });
     process.exitCode = result.status ?? 1;
     if (result.error) console.error("SSH failed: " + result.error.message);
+    return;
+  }
+  if (action === "node-status") {
+    const lifecycle = join(atlasDir, "scripts/linux-node-lifecycle.sh");
+    if (!existsSync(lifecycle)) {
+      console.error("Linux Node lifecycle script is missing."); process.exitCode = 1; return;
+    }
+    const result = spawnSync("ssh", ["-o", "BatchMode=yes", host, "sudo -n bash -s -- status"], {
+      input: readFileSync(lifecycle), stdio: ["pipe", "inherit", "inherit"],
+    });
+    process.exitCode = result.status ?? 1;
     return;
   }
   const script = "cd ~/atlas-deploy && ./atlas-vps.sh " + action + (service ? " " + service : "");
