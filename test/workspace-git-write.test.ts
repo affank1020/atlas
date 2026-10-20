@@ -22,7 +22,7 @@ test('Git writes require per-root opt in, preserve main, and stage explicit insp
  t.after(()=>{if(old===undefined)delete process.env.ATLAS_GIT_WRITE_ROOTS;else process.env.ATLAS_GIT_WRITE_ROOTS=old;});
  await assert.rejects(gitWrite(root,files,'workspace_git_create_branch',{branch:'atlas/test'}),/not approved/);
  process.env.ATLAS_GIT_WRITE_ROOTS=root;
- await assert.rejects(gitWrite(root,files,'workspace_git_create_branch',{branch:'main'}),/atlas/);
+ await assert.rejects(gitWrite(root,files,'workspace_git_create_branch',{branch:'main'}),/Invalid Git branch/);
  const created=await gitWrite(root,files,'workspace_git_create_branch',{branch:'atlas/test'}) as any;
  assert.equal(created.branch,'atlas/test');
  writeFileSync(path.join(root,'README.md'),'updated\n');
