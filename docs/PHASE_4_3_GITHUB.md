@@ -41,3 +41,55 @@ A short-lived GitHub installation token travels through Atlas's authenticated No
 5. Close the smoke-test PR without merging; inspect remote refs and workspace cleanliness. Treat timeouts as **outcome uncertain** and inspect GitHub before retrying.
 
 If anything fails, remove `ATLAS_GIT_REMOTE_ROOTS` from the Node and/or the Workspace allowlist from the Server to disable remote publishing without affecting local Git operations.
+
+
+## Current Phase 4 rollout checklist (20 October 2026)
+
+**Merged implementation:** Atlas main merge `3e9d22be53c314ab78b0057bd2c83590aa1ed562` (PR #14). Successful package run: https://github.com/affank1020/atlas/actions/runs/39456645977. Corresponding release version: `v2.0.0-3e9d22be53c3`.
+
+**First:** merge the separate Compose wiring PR and let Atlas CI/deploy succeed, so the Server container receives the four `ATLAS_GITHUB_*` settings. Leave these values empty until a GitHub App has been created. Do not configure fake credentials or use the ChatGPT integration's GitHub permissions as a substitute.
+
+**Mac (with authenticated `gh` CLI):**
+
+```bash
+set -euo pipefail
+cd ~/Documents/GitRepos/Atlas
+mkdir -p "$HOME/atlas-phase4-node-release"
+gh run download 39456645977 --repo affank1020/atlas \
+  --name atlas-node-3e9d22be53c314ab78b0057bd2c83590aa1ed562 \
+  --dir "$HOME/atlas-phase4-node-release"
+shasum -a 256 "$HOME"/atlas-phase4-node-release/*.tar.gz
+# Confirm digest equals the .sha256 sidecar before transferring.
+```
+
+Transfer the release archive and its companion checksum to a private directory on the VPS using your existing SSH setup. On the VPS (where `scripts/linux-node-release.sh` and `atlas-node-lifecycle` are already installed):
+
+```bash
+set -euo pipefail
+cd "$HOME/atlas-phase4-node-release"
+archive="$(find . -maxdepth 1 -name 'atlas-node-v*.tar.gz' -print -quit)"
+test -n "$archive"
+sha256sum -c "$archive.sha256"
+sudo bash "$HOME/atlas-deploy/scripts/linux-node-release.sh" verify "$archive" "$archive.sha256"
+sudo bash "$HOME/atlas-deploy/scripts/linux-node-release.sh" install "$archive" "$archive.sha256"
+sudo atlas-node-lifecycle plan v2.0.0-3e9d22be53c3
+sudo atlas-node-lifecycle activate v2.0.0-3e9d22be53c3
+sudo atlas-node-lifecycle status
+```
+
+If `$HOME/atlas-deploy/scripts/linux-node-release.sh` does not exist, copy that script from the verified current Atlas main checkout before running it. The existing lifecycle activation command will automatically roll back if the new Node fails registration. Do **not** restart the Atlas Server/PostgreSQL manually for the Node upgrade.
+
+**GitHub App:** Create a private GitHub App owned by the appropriate account, grant only **Contents: read/write** and **Pull requests: read/write**, and install it exclusively on `affank1020/portfolio-site`. Put its numeric App ID, numeric installation ID, and newline-escaped PEM signing key in the VPS's private `atlas-deploy/infra/production.env` file. Add the Workspace-to-repository mapping shown above. Never paste the private key into a chat, shell history, or GitHub issue.
+
+On the Linux Node, retain `ATLAS_GIT_WRITE_ROOTS=/srv/atlas/workspaces/portfolio-site` and add `ATLAS_GIT_REMOTE_ROOTS=/srv/atlas/workspaces/portfolio-site` in its root-owned service environment `/etc/atlas-node/node.env`. Use `sudoedit` and restart **only** `atlas-node.service`. Configure the Server independently by recreating **only** its container using the newly deployed Compose file and the production environment:
+
+```bash
+cd "$HOME/atlas-deploy"
+docker compose --env-file infra/production.env -f infra/docker-compose.production.yml up -d --no-deps --force-recreate --wait server
+```
+
+Do not run `docker compose config` without redirecting its output to a private file: the rendered config contains secrets. Prefer `docker compose ... config -q` for validation.
+
+**Final live smoke:** After both sides are configured and connected, create a new disposable `atlas/*` branch on the existing VPS Workspace, write/inspect an isolated text file, stage by inspected SHA-256, commit by expected Git index tree, push through `workspace_git_push_branch`, then use `workspace_git_open_pull_request` to open a draft PR into `main`. Inspect the remote commit and Atlas audit records before closing the draft without merging. Restore the VPS Workspace to `atlas/bootstrap` afterwards.
+
+**Rollback:** Remove `ATLAS_GIT_REMOTE_ROOTS` or `ATLAS_GITHUB_WORKSPACE_REPOSITORIES` to disable remote writes. If Node activation itself fails, the lifecycle script automatically restores the old version; you can also use `sudo atlas-node-lifecycle rollback`.
