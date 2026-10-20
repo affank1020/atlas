@@ -41,11 +41,24 @@ function ProjectCollection({ project, kind, search }: { project: Project; kind: 
 }
 export function WorkspaceLibrary({ kind }: { kind: 'views' | 'data' }) {
     const projects = useListProjectsQuery({ includeArchived: false });
-    const [selected, setSelected] = useState(''); const [search, setSearch] = useState('');
-    const project = projects.data?.find(p => p.id === selected) ?? projects.data?.[0];
-    return <><WorkspaceHeading title={kind === 'views' ? 'Views' : 'Data'} copy={kind === 'views' ? 'Explore the interfaces built around your projects.' : 'The stores and records behind your work, organised by project.'} /><QueryNotice loading={projects.isLoading} error={projects.error} retry={projects.refetch} />
-        {!!projects.data?.length && <div className="browse-toolbar"><label>Project<select value={project?.id ?? ''} onChange={event => setSelected(event.target.value)}>{projects.data.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label><label>Search<input type="search" placeholder={kind === 'views' ? 'Find a View…' : 'Find a store…'} value={search} onChange={event => setSearch(event.target.value)} /></label></div>}
-        {project && <ProjectCollection key={`${kind}/${project.id}`} kind={kind} project={project} search={search} />}{projects.data?.length === 0 && <p className="quiet-empty">Your {kind === 'views' ? 'Views' : 'data'} will appear here once you create a project. <a href="#/projects">Go to projects →</a></p>}
+    const [selected, setSelected] = useState('');
+    const [search, setSearch] = useState('');
+    // The global library defaults to every project, not the first (Careers).
+    // Each ProjectCollection owns its cached query, so changing the filter
+    // preserves already-loaded results without requesting a global backend API.
+    const visibleProjects = (projects.data ?? []).filter(project => !selected || project.id === selected);
+    return <>
+        <WorkspaceHeading title={kind === 'views' ? 'Views' : 'Data'} copy={kind === 'views' ? 'Explore the interfaces built around your projects.' : 'The stores and records behind your work, organised by project.'} />
+        <QueryNotice loading={projects.isLoading} error={projects.error} retry={projects.refetch} />
+        {!!projects.data?.length && <div className="browse-toolbar">
+            <label>Project<select value={selected} onChange={event => setSelected(event.target.value)}>
+                <option value="">All projects</option>
+                {projects.data.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select></label>
+            <label>Search<input type="search" placeholder={kind === 'views' ? 'Find a View…' : 'Find a store…'} value={search} onChange={event => setSearch(event.target.value)} /></label>
+        </div>}
+        {visibleProjects.map(project => <ProjectCollection key={`${kind}/${project.id}`} kind={kind} project={project} search={search} />)}
+        {projects.data?.length === 0 && <p className="quiet-empty">Your {kind === 'views' ? 'Views' : 'data'} will appear here once you create a project. <a href="#/projects">Go to projects →</a></p>}
     </>;
 }
 export function InfrastructureNav({ page }: { page: string }) {
