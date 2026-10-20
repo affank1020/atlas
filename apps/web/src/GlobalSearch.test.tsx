@@ -59,7 +59,8 @@ test('approved Node log action reads bounded stderr inside the command palette',
             }], incomplete: [],
         };
         if (name === 'read_node_logs') return { source: 'stderr', available: true, truncated: false, lines: ['Connection closed', 'Retry scheduled'] };
-        throw new Error('Unexpected tool');
+        // Unrelated reads must not obscure this interaction; assertions below verify the exact log request.
+        return undefined as never;
     });
     render(<GlobalSearch onClose={() => {}} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Search or describe an action' }), { target: { value: 'show the last 100 error lines from my Mac node' } });

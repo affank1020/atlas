@@ -4,7 +4,7 @@ import { AppShell, ProjectNav } from './AppShell';
 import { callTool } from './api';
 import { Provider } from 'react-redux';
 import { store } from './store';
-vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
+vi.mock('./api', () => ({ IS_MOCK_MODE: false, API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
 test('shell exposes focused navigation and keeps experimental tools out of the header', async () => {
     vi.mocked(callTool).mockResolvedValue([{ id: 'real-project', name: 'Research' }]);
     render(<Provider store={store}><AppShell page="project" projectId="real-project" contentClass=""><h1>Research overview</h1></AppShell></Provider>);

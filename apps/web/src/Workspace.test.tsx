@@ -5,7 +5,7 @@ import { createAtlasStore } from './store';
 import { callTool } from './api';
 import { WorkspaceHome, WorkspaceLibrary, MonitoringOverview, DeveloperHub, WorkspaceSettings } from './Workspace';
 import { readRecentWork, rememberWork, clearRecentWork } from './recentWork';
-vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
+vi.mock('./api', () => ({ IS_MOCK_MODE: false, API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
 const projects = [{ id: 'p', name: 'Research' }, { id: 'q', name: 'Writing' }];
 beforeEach(() => { sessionStorage.clear(); vi.mocked(callTool).mockReset(); vi.mocked(callTool).mockImplementation(async (name, input) => {
     if (name === 'list_projects') return projects;

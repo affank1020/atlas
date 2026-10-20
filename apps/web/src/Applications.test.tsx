@@ -7,7 +7,7 @@ import { ProjectApplications, ApplicationWindow } from './Applications';
 import { callTool } from './api';
 import { readRecentWork } from './recentWork';
 
-vi.mock('./api', () => ({ callTool: vi.fn(), onToolMutation: () => () => {} }));
+vi.mock('./api', () => ({ IS_MOCK_MODE: false, callTool: vi.fn(), onToolMutation: () => () => {} }));
 vi.mock('./Portfolio', () => ({ Portfolio: () => <div>Portfolio publishing UI</div> }));
 const manifest = {
     type: 'portfolio', slug: 'portfolio', name: 'Portfolio',
