@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Nodes, WorkspaceHost } from './Nodes';
 import { callTool } from './api';
@@ -9,24 +9,27 @@ it('renders real Node capabilities and hosted Workspace links, and refreshes pre
     vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : node);
     render(<Nodes />);
     expect(await screen.findByRole('heading', { name: 'Atlas infrastructure' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Inspect Development machine' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect Development machine' }));
-    expect(await screen.findByRole('heading', { name: 'Development machine' })).toBeInTheDocument();
-    expect(screen.getByText('Online')).toBeInTheDocument();
-    for (const label of ['Filesystem', 'Git', 'Development', 'Unity']) expect(screen.getByText(label)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Football' })).toHaveAttribute('href', '#/projects/project/workspaces');
-    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : { ...node, status: 'offline' });
+    const selectNode = await screen.findByRole('button', { name: 'Inspect Development machine' });
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'get_node')).toHaveLength(0);
+    fireEvent.click(selectNode);
+    const inspector = await screen.findByRole('complementary', { name: 'Node details' });
+    expect(within(inspector).getByRole('heading', { name: 'Development machine' })).toBeInTheDocument();
+    expect(within(inspector).getByText('Online')).toBeInTheDocument();
+    expect(callTool).toHaveBeenCalledWith('get_node', { nodeId: node.id });
+    for (const label of ['Filesystem', 'Git', 'Development', 'Unity']) expect(within(inspector).getByText(label)).toBeInTheDocument();
+    expect(await within(inspector).findByRole('link', { name: 'Football' })).toHaveAttribute('href', '#/projects/project/workspaces');
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [{ ...node, status: 'offline' }] : { ...node, status: 'offline' });
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(await screen.findByText('Offline')).toBeInTheDocument();
+    expect(await within(inspector).findByText('Offline')).toBeInTheDocument();
 });
 it('handles empty registry and retries errors without fabricated data', async () => {
     vi.mocked(callTool).mockRejectedValue(new Error('Registry unavailable'));
     render(<Nodes />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Registry unavailable');
-    expect(screen.queryByText('Online')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Inspect / })).not.toBeInTheDocument();
     vi.mocked(callTool).mockResolvedValue([]);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(await screen.findByText('No Nodes registered.')).toBeInTheDocument();
+    expect(await screen.findByText('No nodes registered')).toBeInTheDocument();
 });
 it('shows unavailable hosts and clears stale host details when ownership changes', async () => {
     vi.mocked(callTool).mockResolvedValue({ ...node, status: 'unavailable' });
@@ -40,8 +43,8 @@ it('shows unavailable hosts and clears stale host details when ownership changes
 it('issues a one-time enrolment code without displaying a Node credential', async () => {
     vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [] : name === 'create_node_enrolment' ? { enrolmentToken: 'temporary-code', expiresAt: '2026-10-07T10:00:00Z', nodeId: null } : null);
     render(<Nodes />);
-    expect(await screen.findByText('No Nodes registered.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Enrol Node' }));
+    expect(await screen.findByText('No nodes registered')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Enrol node/ }));
     expect(await screen.findByText('temporary-code')).toBeInTheDocument();
     expect(callTool).toHaveBeenCalledWith('create_node_enrolment', {});
     expect(screen.queryByText(/ATLAS_NODE_CREDENTIAL/)).not.toBeInTheDocument();
