@@ -1,5 +1,4 @@
 import { nodeSchemas, type NodeToolName } from '../../nodes/contracts.js';
-import { sessionSchemas, sessionDescriptions, type SessionToolName } from '../../server/sessions.js';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { workspaceSchemas, workspaceDescriptions, type WorkspaceToolName } from "../../workspaces/contracts.js";
@@ -44,7 +43,6 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     }
 
     for (const name of Object.keys(workspaceSchemas) as WorkspaceToolName[]) tool(name, workspaceDescriptions[name], workspaceSchemas[name].shape);
-    for (const name of Object.keys(sessionSchemas) as SessionToolName[]) tool(name, sessionDescriptions[name], sessionSchemas[name].shape);
 
     const nodeDescriptions: Record<NodeToolName, string> = {
         list_nodes: 'List persistent Nodes with live status, capabilities, credential state and Workspace counts.',

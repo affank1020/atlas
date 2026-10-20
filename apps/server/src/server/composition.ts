@@ -5,7 +5,6 @@ import { NodeRouter } from '../nodes/router.js';
 import { PostgresNodeRepository } from '../infrastructure/database/nodes.js';
 import { PostgresWorkspaceRepository } from "../infrastructure/database/workspaces.js";
 import { CoreService } from '../core/service.js';
-import { SessionService } from './sessions.js';
 import { ViewService } from '../views/service.js';
 import { AtlasStore } from '../infrastructure/database/postgres.js';
 import { createFabric } from '../fabric/index.js';
@@ -27,7 +26,6 @@ import type { NodeRuntime } from '../nodes/runtime.js';
 export function composeServer(config: ServerConfig = loadServerConfig(), executionHost?: NodeRuntime) {
     const repository = new AtlasStore(config.databaseUrl);
     const catalog = new CoreService(repository);
-    const sessions = new SessionService(repository.pool);
     const fabric = createFabric(config.databaseUrl, new OllamaEmbeddingProvider(config.retrieval.embeddingModel, config.ai.baseUrl));
     const retrieval = new RetrievalService(fabric.search, fabric.context, fabric.authority);
     const askAtlas = createAskAtlas(catalog, retrieval, undefined, config.ai.baseUrl);
@@ -43,7 +41,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media]);
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football)]);
-    const services = { config, catalog, sessions, nodes, identity, nodeGateway, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, applications, lifecycle };
+    const services = { config, catalog, nodes, identity, nodeGateway, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

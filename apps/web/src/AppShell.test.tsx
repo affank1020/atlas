@@ -11,7 +11,7 @@ test('shell lists real projects, exposes Ask globally, and omits unsupported pri
     expect(await screen.findByRole('link', { name: /Research/ })).toHaveAttribute('href', '#/projects/real-project');
     expect(screen.getByRole('link', { name: /Ask Atlas/ })).toHaveAttribute('href', '#/ask-atlas');
     expect(screen.getByRole('link', { name: /Nodes/ })).toHaveAttribute('href', '#/nodes');
-    expect(screen.getByRole('link', { name: /Sessions/ })).toHaveAttribute('href', '#/sessions');
+    expect(screen.queryByRole('link', { name: /Sessions/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Portfolio' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Ask Portfolio' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Agents' })).not.toBeInTheDocument();

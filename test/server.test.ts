@@ -17,14 +17,9 @@ test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () =
     const bridge = await fetch(`http://127.0.0.1:${address.port}/api/tools/get_atlas_status`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(bridge.status, 200); assert.equal((await bridge.json() as any).version, "2.0.0");
     assert.ok(names.includes("preview_view"));assert.ok(names.includes("get_view_history"));
-    assert.ok(names.includes("sessions_create")); assert.ok(names.includes("sessions_join")); assert.ok(names.includes("sessions_sync"));
-    const createdSession=await client.callTool({name:"sessions_create",arguments:{title:"Transport test",objective:"Test cross-chat coordination"}});
-    const session=(createdSession.structuredContent as any).result;
-    assert.equal(session.briefing.participant.role,"coordinator");
-    const joinedSession=await client.callTool({name:"sessions_join",arguments:{sessionId:session.sessionId}});
-    assert.equal((joinedSession.structuredContent as any).result.briefing.participant.role,"worker");
-    const untrusted=await fetch(`http://127.0.0.1:${address.port}/api/tools/sessions_list`,{method:"POST",headers:{"content-type":"application/json",origin:"https://untrusted.example"},body:"{}"});
-    assert.equal(untrusted.status,403);
+    assert.ok(!names.some(name => name.startsWith('sessions_')));
+    const removedSessionTool=await fetch(`http://127.0.0.1:${address.port}/api/tools/sessions_list`,{method:"POST",headers:{"content-type":"application/json"},body:"{}"});
+    assert.equal(removedSessionTool.status,404);
     for(const endpoint of ["/api/tools/create_project","/mcp"]){
         const denied: Response=await fetch(`http://127.0.0.1:${address.port}${endpoint}`,{method:"POST",headers:{"content-type":"application/json",origin:"null"},body:JSON.stringify({name:"Untrusted View write"})});
         assert.equal(denied.status,403);assert.equal((await denied.json() as any).error,"VIEW_ORIGIN_DENIED");
