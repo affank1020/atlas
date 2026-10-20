@@ -833,6 +833,7 @@ Usage:
   ./atlasctl vps status        Check VPS Docker services via SSH
   ./atlasctl vps diagnose      Run VPS diagnostics via SSH
   ./atlasctl vps mcp           Check hosted MCP OAuth protection
+  ./atlasctl vps node-preflight Read-only Linux host capacity/prerequisite check
   ./atlasctl vps logs server   Inspect VPS Server logs via SSH
 
 Services: postgres, server, node, web, tunnel, ollama
@@ -891,10 +892,10 @@ async function down(includePostgres, hosted = true) {
 
 const [command = "status", argument] = process.argv.slice(2);
 function vpsCommand(action = "status", service) {
-  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose"]);
+  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight"]);
   const targets = new Set(["server", "postgres", "ingress"]);
   if (!valid.has(action) || (service && (!["logs", "follow"].includes(action) || !targets.has(service)))) {
-    console.error("Usage: ./atlasctl vps [status|health|https|mcp|nodes|migrations|diagnose|logs|follow] [server|ingress|postgres]");
+    console.error("Usage: ./atlasctl vps [status|health|https|mcp|nodes|migrations|diagnose|logs|follow|node-preflight] [server|ingress|postgres]");
     process.exitCode = 2;
     return;
   }
@@ -902,6 +903,22 @@ function vpsCommand(action = "status", service) {
   if (!/^[a-zA-Z0-9._@-]+$/.test(host)) {
     console.error("ATLAS_VPS_SSH_HOST must be a simple SSH host alias or user@host.");
     process.exitCode = 2;
+    return;
+  }
+  // Stream the read-only preflight from this checkout over SSH. It does
+  // not depend on deploying scripts to the VPS and cannot read credentials.
+  if (action === "node-preflight") {
+    const preflight = join(atlasDir, "scripts/linux-node-preflight.sh");
+    if (!existsSync(preflight)) {
+      console.error("Node preflight script is missing from this checkout.");
+      process.exitCode = 1;
+      return;
+    }
+    const result = spawnSync("ssh", ["-o", "BatchMode=yes", host, "bash -s -- --report"], {
+      input: readFileSync(preflight), stdio: ["pipe", "inherit", "inherit"],
+    });
+    process.exitCode = result.status ?? 1;
+    if (result.error) console.error("SSH failed: " + result.error.message);
     return;
   }
   const script = "cd ~/atlas-deploy && ./atlas-vps.sh " + action + (service ? " " + service : "");

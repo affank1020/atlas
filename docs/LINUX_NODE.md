@@ -48,3 +48,23 @@ journalctl -u atlas-node -n 40 --no-pager
 Confirm the distinct Linux Node appears online in Atlas with capabilities
 `workspace.files` and `workspace.git`; check the macOS Node stays online.
 Then test a disposable project workspace and demonstrate filesystem isolation.
+
+## Read-only VPS preflight and verified release staging
+
+Before provisioning, run `bash scripts/linux-node-preflight.sh --check` **on the
+VPS** (or `--json` for a machine-readable report). It only reads memory,
+swap, free root disk, CPU count and availability of Node.js, Git and systemd.
+The initial thresholds (768 MiB free RAM and 3 GiB free disk) are minimum
+screening criteria, not proof of sufficient resources for code builds.
+
+A verified Node release can be checked without privilege using:
+```bash
+bash scripts/linux-node-release.sh verify atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+```
+On Linux, an administrator can stage the verified artifact without activating:
+```bash
+sudo bash scripts/linux-node-release.sh install atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+```
+This explicitly **does not** change the `current` symlink or restart systemd.
+Review the available previous release and independent Node identity before
+manually activating anything. The MacBook Node remains independent.

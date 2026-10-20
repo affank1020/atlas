@@ -295,4 +295,9 @@ test("invalid local flags and commands return usage errors, while VPS exit statu
   const vps = item.run(["vps", "status"], { ATLAS_CONTROL_TEST_SSH_STATUS: "7" });
   assert.equal(vps.status, 7);
   assert.match(readFileSync(item.commandLog, "utf8"), /ssh -o BatchMode=yes ovh cd ~\/atlas-deploy && \.\/atlas-vps\.sh status/);
+  // The test fixture intentionally has no host preflight script. Fail closed
+  // instead of reaching over SSH with missing or unintended content.
+  const preflight = item.run(["vps", "node-preflight"], { ATLAS_CONTROL_TEST_SSH_STATUS: "7" });
+  assert.equal(preflight.status, 1);
+  assert.match(preflight.stderr, /preflight script is missing/);
 });
