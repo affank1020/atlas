@@ -5,6 +5,7 @@ import { cleanup, render as rtlRender, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ProjectApplications, ApplicationWindow } from './Applications';
 import { callTool } from './api';
+import { readRecentWork } from './recentWork';
 
 vi.mock('./api', () => ({ callTool: vi.fn(), onToolMutation: () => () => {} }));
 vi.mock('./Portfolio', () => ({ Portfolio: () => <div>Portfolio publishing UI</div> }));
@@ -13,7 +14,7 @@ const manifest = {
     description: 'Manage portfolio content', projectId: 'project-portfolio',
 };
 
-beforeEach(() => { vi.resetAllMocks(); });
+beforeEach(() => { vi.resetAllMocks(); sessionStorage.clear(); });
 afterEach(cleanup);
 
 test('Applications are launchable in a new tab from the owning Project', async () => {
@@ -30,6 +31,7 @@ test('A launched Application renders a dedicated page without the project View h
     vi.mocked(callTool).mockImplementation(async name => (name === 'list_projects' ? [] : manifest) as never);
     render(<ApplicationWindow projectId="project-portfolio" slug="portfolio" />);
     expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
+    expect(readRecentWork()[0]).toMatchObject({ name: 'Portfolio', kind: 'Application', href: '#/projects/project-portfolio/applications/portfolio' });
     expect(screen.getByRole('link', { name: /Project Applications/ })).toHaveAttribute('href', '#/projects/project-portfolio/applications');
     expect(callTool).toHaveBeenCalledWith('get_application', { projectId: 'project-portfolio', slug: 'portfolio' }, expect.any(AbortSignal));
 });
