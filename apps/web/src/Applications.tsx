@@ -57,7 +57,7 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
     return <div className="application-window">
         <header className="application-window-bar">
             <a href={`#/projects/${projectId}/applications`} className="application-back">← Project Applications</a>
-            <button onClick={() => void refetch()}>Refresh application</button><span className="application-window-brand">Atlas / {application?.name ?? 'Application'}</span>
+            {slug !== 'portfolio' && <button onClick={() => void refetch()}>Refresh application</button>}<span className="application-window-brand">Atlas / {application?.name ?? 'Application'}</span>
         </header>
         <main className="application-window-main">
             {busy && <p role="status" className="application-status">Loading Application…</p>}
