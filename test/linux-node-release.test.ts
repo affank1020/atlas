@@ -52,7 +52,7 @@ test('Linux verifier accepts a valid artifact and rejects corruption and symlink
         const bytes = await (await import('node:fs/promises')).readFile(archive);
         await writeFile(signature, createHash('sha256').update(bytes).digest('hex') + '  ' + name + '\n');
     };
-    const verify = () => spawnSync('bash', [script, 'verify', archive, signature], { encoding: 'utf8' });
+    const verify = () => spawnSync('bash', ['scripts/linux-node-release.sh', 'verify', archive, signature], { encoding: 'utf8' });
     pack();
     await sign();
     const ok = verify();
