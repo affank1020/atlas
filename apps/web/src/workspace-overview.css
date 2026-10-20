@@ -1,0 +1,164 @@
+
+/* Atlas Home: high-density operational overview. Scoped to avoid changing project views. */
+.app-shell .workspace-home.overview-home {
+  max-width: 1280px;
+}
+.app-shell .overview-home .overview-heading {
+  margin-bottom: 30px;
+}
+.app-shell .overview-home .overview-heading h1 {
+  font-size: clamp(1.55rem, 2.4vw, 2rem);
+  margin-bottom: 6px;
+}
+.app-shell .overview-home .overview-heading p { font-size: .88rem; }
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 30px;
+}
+.overview-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  min-height: 130px;
+  padding: 21px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  color: var(--text-primary);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.overview-metric:hover { border-color: var(--border-strong); background: var(--surface-elevated); }
+.overview-metric > span {
+  font-size: .72rem;
+  color: var(--text-secondary);
+}
+.overview-metric > strong {
+  font-size: clamp(1.6rem, 2.15vw, 2rem);
+  letter-spacing: -.055em;
+  font-weight: 620;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.overview-metric strong em { font-size: .82rem; font-weight: 450; color: var(--text-muted); font-style: normal; letter-spacing: 0; }
+.overview-metric > small { font-size: .7rem; color: var(--text-muted); }
+.overview-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(310px, .85fr);
+  gap: 20px;
+  align-items: start;
+}
+.overview-content-column { display: grid; min-width: 0; gap: 20px; align-content: start; }
+.app-shell .overview-card {
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 23px 24px;
+}
+.overview-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 17px;
+}
+.overview-card-head h2 {
+  font-size: .89rem;
+  font-weight: 610;
+  margin: 0;
+  color: var(--text-primary);
+  letter-spacing: -.015em;
+}
+.overview-card-head a,
+.overview-card-bottom-link {
+  font-size: .72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.overview-card-head a:hover,
+.overview-card-bottom-link:hover { color: var(--accent); }
+.overview-card-head a span { margin-left: 4px; }
+.overview-card-subtitle { color: var(--text-muted); font-size: .73rem; margin: -7px 0 14px; }
+.app-shell .overview-projects .home-project-grid { gap: 10px; }
+.app-shell .overview-projects .home-project-card {
+  min-height: 122px;
+  padding: 17px 18px;
+  border-radius: 11px;
+  border-color: var(--border);
+}
+.app-shell .overview-projects .home-project-symbol { margin-bottom: 12px; }
+.app-shell .overview-projects .home-project-card strong { font-size: .8rem; }
+.app-shell .overview-projects .home-project-card small { line-height: 1.4; }
+.overview-compact-list { display: grid; }
+.overview-compact-row {
+  display: flex;
+  gap: 15px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+.overview-compact-row:last-child { border-bottom: 0; }
+.overview-compact-row:hover { color: var(--accent); }
+.overview-compact-row > span:last-child { flex: none; color: var(--text-muted); font-size: .78rem; }
+.overview-item-main { display: grid; min-width: 0; gap: 4px; }
+.overview-item-main strong { font-size: .78rem; font-weight: 560; overflow-wrap: anywhere; }
+.overview-item-main small { font-size: .68rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.overview-muted, .overview-list-more { font-size: .73rem; line-height: 1.65; color: var(--text-muted); margin: 14px 0 0; }
+.overview-service {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 13px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.overview-service:first-of-type { padding-top: 3px; }
+.overview-service .overview-item-main { flex: 1; }
+.overview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  font-size: .69rem;
+  text-transform: capitalize;
+  color: var(--text-muted);
+}
+.overview-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.overview-status.online { color: var(--success); }
+.overview-status.offline { color: var(--danger); }
+.overview-status.pending { color: var(--text-muted); }
+.overview-card-bottom-link { display: inline-flex; gap: 10px; margin-top: 17px; }
+.overview-card-feature { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; }
+.overview-card-feature strong { font-size: 1.75rem; font-weight: 610; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
+.overview-card-feature span { color: var(--text-muted); font-size: .7rem; }
+.overview-inline-button { border: 0; background: transparent; padding: 0; min-height: 0; font-size: inherit; font-weight: inherit; color: var(--accent); }
+.overview-data-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 10px; }
+.overview-data-summary > div { min-width: 0; display: grid; gap: 6px; }
+.overview-data-summary strong { font-size: 1.25rem; font-weight: 610; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.overview-data-summary span { font-size: .68rem; color: var(--text-muted); }
+@media (max-width: 1160px) {
+  .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-content-grid { grid-template-columns: minmax(0, 1fr); }
+  .overview-content-column { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .overview-content-column > .overview-projects { grid-column: 1/-1; }
+}
+@media (max-width: 700px) {
+  .overview-metrics { gap: 10px; margin-bottom: 22px; }
+  .overview-metric { min-height: 118px; padding: 17px 18px; }
+  .overview-content-column { grid-template-columns: 1fr; gap: 13px; }
+  .overview-content-column > .overview-projects { grid-column: auto; }
+  .overview-content-grid { gap: 13px; }
+  .app-shell .overview-card { padding: 19px; }
+}
+@media (max-width: 430px) {
+  .overview-metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .overview-metric { padding: 16px 13px; }
+  .overview-metric > strong { font-size: 1.55rem; }
+  .app-shell .overview-projects .home-project-grid { grid-template-columns: 1fr; }
+}

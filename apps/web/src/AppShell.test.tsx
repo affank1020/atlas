@@ -1,4 +1,4 @@
-import { cleanup, render, screen, fireEvent } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent, within } from '@testing-library/react';
 import { afterEach, vi, test, expect } from 'vitest';
 import { AppShell, ProjectNav } from './AppShell';
 import { callTool } from './api';
@@ -11,6 +11,17 @@ test('shell lists real projects, exposes Ask globally, and omits unsupported pri
     expect(await screen.findByRole('link', { name: /Research/ })).toHaveAttribute('href', '#/projects/real-project');
     expect(screen.getByRole('link', { name: /Ask Atlas/ })).toHaveAttribute('href', '#/ask-atlas');
     expect(screen.getByRole('link', { name: /Infrastructure/ })).toHaveAttribute('href', '#/infrastructure');
+    const sidebar = screen.getByRole('complementary', { name: 'Atlas navigation' });
+    const header = screen.getByRole('banner');
+    const brand = within(header).getByRole('link', { name: 'atlas' });
+    expect(brand).toHaveAttribute('href', '#/');
+    expect(brand.querySelector('.brand-symbol')).not.toBeInTheDocument();
+    expect(brand.querySelector('.brand-period')).toHaveTextContent('.');
+    expect(brand.querySelector('.brand-period')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(header).getByRole('link', { name: 'Browse projects' })).toHaveAttribute('href', '#/projects');
+    expect(within(header).getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#/activity');
+    expect(within(sidebar).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '#/projects');
+    expect(within(sidebar).queryByText('Workspace')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Sessions/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Portfolio' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Ask Portfolio' })).not.toBeInTheDocument();

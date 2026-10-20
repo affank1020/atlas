@@ -1,4 +1,5 @@
 import { useRouteTiming } from './performance';
+import { rememberWork } from './recentWork';
 import { useEffect, useRef, lazy, Suspense, type ComponentType } from 'react';
 import { useApplicationRead, useListProjectsQuery } from './atlasApi';
 const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
@@ -35,7 +36,7 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
             {applications.map(app => <article className="application-card" key={app.slug}>
                 <div className="application-card-icon" aria-hidden="true">{app.name.slice(0, 2).toUpperCase()}</div>
                 <div className="application-card-details"><h3>{app.name}</h3><p>{app.description}</p><small>{app.type} Application</small></div>
-                <a className="button application-launch" href={`#/projects/${projectId}/applications/${app.slug}`} target="_blank" rel="noopener noreferrer" aria-label={`Launch ${app.name} in a new tab`}>Launch ↗</a>
+                <a className="button application-launch" href={`#/projects/${projectId}/applications/${app.slug}`} target="_blank" rel="noopener noreferrer" onClick={() => rememberWork({ href: `#/projects/${projectId}/applications/${app.slug}`, name: app.name, projectId, kind: 'Application' })} aria-label={`Launch ${app.name} in a new tab`}>Launch ↗</a>
             </article>)}
         </div>
     </section>;
@@ -53,6 +54,9 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
     }, [application]);
     useRouteTiming("application-manifest", `${projectId}/${slug}`, !!application);
     const currentApplication = application?.projectId === projectId && application.slug === slug ? application : undefined;
+    useEffect(() => {
+        if (currentApplication) rememberWork({ href: `#/projects/${projectId}/applications/${slug}`, name: currentApplication.name, projectId, kind: 'Application' });
+    }, [projectId, slug, currentApplication?.name]);
     const Component = currentApplication ? applicationComponents[currentApplication.type] : undefined;
     return <div className="application-window">
         <header className="application-window-bar">
