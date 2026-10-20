@@ -46,3 +46,19 @@ or Linux development execution is enabled by this phase.
 The integration tests use temporary directories and mocked systemd actions.
 Run on Linux to exercise lifecycle state transitions and rollback. Validate
 health/restart behavior on a nonproduction host before changing live software.
+
+## Release discovery (operator-run, nonprivileged)
+
+From a Mac checkout with authenticated GitHub CLI, use
+`bash scripts/atlas-node-release-check.sh --check` to discover the latest
+successful main-branch packaging run, or
+`bash scripts/atlas-node-release-check.sh --download /path/to/empty-directory`
+to download and verify the archive checksum. This does not deploy or restart the
+VPS Node. GitHub Actions artifacts expire after their configured retention
+period; rerun the packaging workflow if the latest artifact has expired.
+
+After separately reviewing the source and running the Linux installer to stage a
+new version, use `sudo atlas-node-lifecycle plan vVERSION-SHA` and then the
+explicit `activate` command. Do not reinstall the current version or activate
+the old vulnerable release. The updater is deliberately not yet an unattended
+remote-root process.
