@@ -1,8 +1,8 @@
 /* Atlas Web design contract. Feature styles consume these roles, never raw colors. */
 :root {
   color-scheme: dark;
-  --bg: #19191d;
-  --bg-secondary: #141417;
+  --bg: #0c0d10;
+  --bg-secondary: #0c0d10;
   --surface: #202025;
   --surface-elevated: #28282f;
   --surface-hover: #303038;

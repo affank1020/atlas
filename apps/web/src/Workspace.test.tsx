@@ -14,20 +14,37 @@ beforeEach(() => { sessionStorage.clear(); vi.mocked(callTool).mockReset(); vi.m
     if (name === 'get_atlas_status') return { version: '2.0', storage: 'Postgres' };
     return [];
 }); });
-test('library only loads the selected collection and reuses it when revisited', async () => {
+test('global Views library starts with all projects and keeps cached results when filtered', async () => {
     const { store } = createAtlasStore();
     render(<Provider store={store}><WorkspaceLibrary kind="views" /></Provider>);
-    expect(await screen.findByRole('link', { name: /Reading list/ })).toHaveAttribute('href', 'http://localhost:3000/projects/p/views/reading');
+    const links = await screen.findAllByRole('link', { name: /Reading list/ });
+    expect(links).toHaveLength(2);
+    expect(links.map(link => link.getAttribute('href'))).toEqual([
+        'http://localhost:3000/projects/p/views/reading',
+        'http://localhost:3000/projects/q/views/reading',
+    ]);
+    expect(screen.getByLabelText('Project')).toHaveValue('');
     expect(callTool).not.toHaveBeenCalledWith('list_stores', expect.anything(), expect.anything());
-    fireEvent.click(screen.getByRole('link', { name: /Reading list/ }));
+    fireEvent.click(links[0]);
     expect(readRecentWork()[0]).toMatchObject({ name: 'Reading list', kind: 'View' });
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'q' } });
-    await waitFor(() => expect(screen.getByRole('link', { name: /Reading list/ })).toHaveAttribute('href', 'http://localhost:3000/projects/q/views/reading'));
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p' } });
-    await waitFor(() => expect(screen.getByRole('link', { name: /Reading list/ })).toHaveAttribute('href', 'http://localhost:3000/projects/p/views/reading'));
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Reading list/ })).toHaveLength(1));
+    expect(screen.getByRole('link', { name: /Reading list/ })).toHaveAttribute('href', 'http://localhost:3000/projects/q/views/reading');
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: '' } });
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Reading list/ })).toHaveLength(2));
     expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'list_views')).toHaveLength(2);
-    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'missing' } });
-    expect(screen.getByText('No matches. Try another search.')).toBeInTheDocument();
+});
+
+test('global Data library includes stores from every project by default', async () => {
+    const { store } = createAtlasStore();
+    render(<Provider store={store}><WorkspaceLibrary kind="data" /></Provider>);
+    const links = await screen.findAllByRole('link', { name: /Notes/ });
+    expect(links.map(link => link.getAttribute('href'))).toEqual([
+        '#/projects/p/stores/s/records', '#/projects/q/stores/s/records',
+    ]);
+    expect(callTool).not.toHaveBeenCalledWith('list_views', expect.anything(), expect.anything());
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'q' } });
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Notes/ })).toHaveLength(1));
 });
 test('Home shows genuine recent work and clears it without losing projects', async () => {
     rememberWork({ href: '#/projects/p', name: 'Research', projectId: 'p', kind: 'Project' });
