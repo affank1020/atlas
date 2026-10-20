@@ -4,7 +4,8 @@ Atlas Nodes are compiled independently of Atlas Server and Web. The packaging
 job `.github/workflows/node-package.yml` runs on relevant changes to main
 and can also be dispatched manually.
 
-The job builds `@atlas/protocol` and `@atlas/node`, packages the compiled
+The job builds `@atlas/protocol` and `@atlas/node`, regenerates an isolated
+Node-only npm lockfile (no Server/Web workspaces or Handlebars), packages the compiled
 code and required npm workspace manifests, and uploads a tarball + SHA-256
 checksum as GitHub Actions artifacts (14-day retention). This is a **build
 artifact, not an automatic deployment or a GitHub Release**.

@@ -48,7 +48,7 @@ if tar -tvzf "$archive" | awk '{t=substr($0,1,1); if (t!="-" && t!="d") bad=1} E
   echo 'Archive contains links or non-regular entries.' >&2
   exit 1
 fi
-for path in package.json package-lock.json atlas-node-release.json apps/node/package.json apps/server/package.json apps/web/package.json packages/protocol/package.json packages/view-runtime/package.json; do
+for path in package.json package-lock.json atlas-node-release.json apps/node/package.json packages/protocol/package.json; do
   grep -Fxq "./$path" <<< "$listing" ||
     { echo "Missing required Node bundle file: $path" >&2; exit 1; }
 done

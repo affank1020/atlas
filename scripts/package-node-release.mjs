@@ -17,11 +17,8 @@ import { fileURLToPath } from 'node:url';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(process.argv[2] ?? join(repo, '.build/node-releases'));
 const required = [
-    'package.json', 'package-lock.json',
     'apps/node/package.json', 'apps/node/dist',
-    'apps/server/package.json', 'apps/web/package.json',
     'packages/protocol/package.json', 'packages/protocol/dist',
-    'packages/view-runtime/package.json',
 ];
 const version = JSON.parse(await readFile(join(repo, 'apps/node/package.json'), 'utf8')).version;
 if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/.test(version))
@@ -37,6 +34,31 @@ try {
         const destination = join(stage, item);
         await mkdir(dirname(destination), { recursive: true });
         await cp(join(repo, item), destination, { recursive: true, force: false });
+    }
+    // Generate a Node-only npm workspace graph. The monorepo's root lockfile
+    // also describes Server and Web, so copying it would leak unrelated
+    // dependencies into the release and make npm ls report missing workspaces.
+    const manifest = {
+        name: 'atlas-node-release',
+        version,
+        private: true,
+        type: 'module',
+        workspaces: ['apps/node', 'packages/protocol'],
+    };
+    await writeFile(join(stage, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
+    execFileSync('npm', [
+        'install', '--package-lock-only', '--omit=dev', '--ignore-scripts',
+        '--no-audit', '--no-fund',
+    ], { cwd: stage, stdio: 'pipe', timeout: 120_000 });
+    const releaseLock = JSON.parse(await readFile(join(stage, 'package-lock.json'), 'utf8'));
+    for (const excluded of [
+        'apps/server', 'apps/web', 'packages/view-runtime',
+        'node_modules/@atlas/server', 'node_modules/@atlas/web',
+        'node_modules/handlebars',
+    ]) {
+        if (Object.hasOwn(releaseLock.packages ?? {}, excluded)) {
+            throw new Error('Unexpected Server/Web package in Node release: ' + excluded);
+        }
     }
     const release = {
         application: '@atlas/node',
