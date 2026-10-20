@@ -89,15 +89,15 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
     const inputs: Record<NodeOperation, object> = {
         workspace_list_files: {}, workspace_read_file: { path: 'a' }, workspace_search_files: { query: 'q' },
         workspace_create_file: { path: 'a', text: 'content' }, workspace_patch_file: { path: 'a', expectedSha256: 'a'.repeat(64), oldText: 'old', newText: 'new' },
-        workspace_delete_file: { path: 'a', expectedSha256: 'a'.repeat(64) }, workspace_list_dev_tasks: {}, workspace_run_dev_task: { task: 'test' }, workspace_git_status: {}, workspace_git_diff: {},
+        workspace_delete_file: { path: 'a', expectedSha256: 'a'.repeat(64) }, workspace_list_dev_tasks: {}, workspace_run_dev_task: { task: 'test' }, workspace_git_status: {}, workspace_git_diff: {}, workspace_git_list_worktrees: {},
         workspace_git_create_branch: { branch: 'atlas/test' }, workspace_git_switch_branch: { branch: 'atlas/test' },
         workspace_git_stage: { files: [{ path: 'a', expectedSha256: 'a'.repeat(64) }] },
         workspace_git_commit: { branch: 'atlas/test', expectedTree: 'a'.repeat(40), files: ['a'], message: 'Test commit' },
         workspace_git_push_branch: { repository: 'affank1020/portfolio-site', branch: 'atlas/test', expectedHead: 'a'.repeat(40) },
         unity_status: {}, unity_list_commands: {}, unity_run_command: { command: 'editor_play', parameters: {} },
     };
-    for (const operation of Object.keys(requiredCapability).filter(op => op !== 'football_control') as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
-    assert.equal(invoked.length, 18);
+    for (const operation of Object.keys(requiredCapability).filter(op => !['football_control', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree'].includes(op)) as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
+    assert.equal(invoked.length, 19);
     // Internal first-party Application commands reach the owning Node through NodeRouter,
     // but are intentionally not exposed by WorkspaceService's generic public API.
     await assert.rejects(service.call('football_control' as any, { ...scope, action: 'drills' }), (e: any) => e.code === 'INVALID_REQUEST');

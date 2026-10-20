@@ -70,10 +70,16 @@ export class WorkspaceService {
         if (footballAction && (x.projectId !== 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7' || workspace.kind !== 'unity' || workspace.status !== 'active'))
             throw new AtlasError('Football MCP actions require the active AI Football Unity Workspace.', 'WORKSPACE_UNAVAILABLE');
         const nodeOperation = (footballAction ? 'football_control' : name) as WorkspaceOperation;
-        const nodeInput = footballAction ? { ...x, action: footballAction } : x;
+        const target = name === 'workspace_git_remove_worktree'
+            ? await this.repository.getById(x.targetWorkspaceId) : undefined;
+        if (target && (target.nodeId !== workspace.nodeId || target.id === workspace.id ||
+            target.kind !== 'generic'))
+            throw new AtlasError('Worktree must be a different active Workspace on the same Node.', 'WORKSPACE_DENIED');
+        const nodeInput = footballAction ? { ...x, action: footballAction }
+            : target ? { ...x, targetPath: target.rootPath } : x;
         const invoke = () => this.runtime.execute(workspace, nodeOperation, nodeInput);
-        const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', workspace_git_create_branch: 'workspace.git_branch_created', workspace_git_switch_branch: 'workspace.git_branch_switched', workspace_git_stage: 'workspace.git_staged', workspace_git_commit: 'workspace.git_committed', workspace_git_push_branch: 'workspace.git_pushed', workspace_git_open_pull_request: 'workspace.git_pull_request_created',  unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
-        const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed', football_training_status: 'football.jobs_inspected', football_evaluation_status: 'football.evaluation_inspected' } as Record<string, string>)[name];
+        const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', workspace_git_create_branch: 'workspace.git_branch_created', workspace_git_switch_branch: 'workspace.git_branch_switched', workspace_git_stage: 'workspace.git_staged', workspace_git_commit: 'workspace.git_committed', workspace_git_push_branch: 'workspace.git_pushed', workspace_git_clone_repository: 'workspace.git_repository_cloned', workspace_git_create_worktree: 'workspace.git_worktree_created', workspace_git_remove_worktree: 'workspace.git_worktree_removed', workspace_git_open_pull_request: 'workspace.git_pull_request_created',  unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
+        const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', workspace_git_list_worktrees: 'workspace.git_worktrees_listed', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed', football_training_status: 'football.jobs_inspected', football_evaluation_status: 'football.evaluation_inspected' } as Record<string, string>)[name];
         if (inspection) {
             // One event per explicit tool call, never per internal file/adapter lookup.
             // Do not persist file contents, diffs, search text/results or command parameters.
@@ -119,7 +125,16 @@ export class WorkspaceService {
                     };
                 })()
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
-                    ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) } : nodeInput);
+                    ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) }
+                    : name === 'workspace_git_clone_repository'
+                        ? { ...nodeInput, githubToken: await this.github.repositoryReadToken(x.repository) }
+                        : nodeInput);
+            // Resolve the Node's filesystem binder before acquiring a DB connection.
+            // The post-creation bind must not re-query Nodes while the mutation
+            // transaction is holding the pool and Workspace locks.
+            const checkoutRuntime = (name === 'workspace_git_create_worktree' ||
+                name === 'workspace_git_clone_repository')
+                ? await this.runtime.resolve(workspace.nodeId, 'workspace.files') : undefined;
             db = await this.repository.connect();
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);
@@ -129,7 +144,37 @@ export class WorkspaceService {
             const current = x.projectId ? await db.get(x.projectId, workspace.id, false) : await db.getById(workspace.id, false);
             if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath)
                 throw new AtlasError('Workspace binding changed; retry the operation.', 'CONFLICT');
-            const result = await execute(current); applied = true;
+            if (target) {
+                await db.lockWorkspace(target.id);
+                const latest = await db.getById(target.id);
+                if (latest.nodeId !== target.nodeId || latest.rootPath !== target.rootPath)
+                    throw new AtlasError('Target worktree binding changed.', 'CONFLICT');
+            }
+            let result: any = await execute(current); applied = true;
+            if (name === 'workspace_git_create_worktree' || name === 'workspace_git_clone_repository') {
+                // Only register the new checkout after the Node has created and
+                // verified it. A database failure leaves it intact for recovery.
+                const boundPath = await checkoutRuntime!.bind(result.rootPath);
+                const expectedPath = name === 'workspace_git_clone_repository'
+                    ? workspace.rootPath.replace(/\/$/, '') + '/' + x.directoryName : x.targetPath;
+                if (boundPath !== expectedPath || result.rootPath !== expectedPath)
+                    throw new AtlasError('Created checkout binding changed.', 'CONFLICT');
+                const registered = await db.insert({ nodeId: workspace.nodeId,
+                    // A manager directory is infrastructure, not the cloned repo's Project.
+                    // Clones start independent unless explicitly scoped; feature worktrees
+                    // inherit their source Project if no Project was supplied.
+                    projectId: name === 'workspace_git_clone_repository'
+                        ? (x.projectId ?? null) : (x.projectId ?? workspace.projectId),
+                    rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic' });
+                await db.audit(registered, 'workspace.created', x.client,
+                    { sourceWorkspaceId: workspace.id, branch: result.branch, repository: result.repository });
+                result = { ...result, workspace: registered };
+            }
+            if (name === 'workspace_git_remove_worktree' && target) {
+                await db.update(target.id, undefined, true);
+                await db.audit(target, 'workspace.archived', x.client,
+                    { sourceWorkspaceId: workspace.id, preservedBranch: result.preservedBranch });
+            }
             const outcome = name === 'unity_run_command' && (result as any)?.isError ? 'editor_error' : name === 'workspace_run_dev_task' && !(result as DevTaskResult).success ? 'failed' : 'completed';
             const devSummary = name === 'workspace_run_dev_task' ? (() => { const run = result as DevTaskResult; return { task: x.task, nodeId: workspace.nodeId, startedAt: run.startedAt, completedAt: run.completedAt, durationMs: run.durationMs, exitCode: run.exitCode, timedOut: run.timedOut, success: run.success, stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated }; })() : {};
             await db.audit(workspace, operation, x.client, { ...metadata, outcome, ...(outcome === 'editor_error' && { error: 'Unity reported an Editor error.' }), ...devSummary, ...(name.startsWith('workspace_') && name !== 'workspace_run_dev_task' ? { result } : {}) });

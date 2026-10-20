@@ -12,12 +12,21 @@ const schemas: string[] = [];
 const stores: AtlasStore[] = [];
 export async function databaseFixture(throughMigration?: string) {
     const schema = `atlas_test_${randomUUID().replaceAll("-", "")}`; schemas.push(schema);
-    const admin = new Pool({ connectionString: baseUrl });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const client = await admin.connect();
-    try { await client.query(`SET search_path TO ${schema},public`); for(const file of (await readdir(path.join(process.cwd(),"apps/server/migrations"))).filter((x)=>x.endsWith(".sql") && (!throughMigration || x <= throughMigration)).sort()) await client.query(await readFile(path.join(process.cwd(),"apps/server/migrations",file),"utf8")); } finally { client.release(); await admin.end(); }
+    // A hosted Mac Node may not have its disposable local PostgreSQL running.
+    // Fail promptly rather than leaving a test waiting for a DB connection indefinitely.
+    const admin = new Pool({ connectionString: baseUrl, connectionTimeoutMillis: 5_000 });
+    try {
+        await admin.query(`CREATE SCHEMA ${schema}`);
+        const client = await admin.connect();
+        try {
+            await client.query(`SET search_path TO ${schema},public`);
+            for (const file of (await readdir(path.join(process.cwd(), "apps/server/migrations")))
+                .filter(x => x.endsWith(".sql") && (!throughMigration || x <= throughMigration)).sort())
+                await client.query(await readFile(path.join(process.cwd(), "apps/server/migrations", file), "utf8"));
+        } finally { client.release(); }
+    } finally { await admin.end(); }
     const url = new URL(baseUrl); url.searchParams.set("options", `-csearch_path=${schema}`);
     const store = new AtlasStore(url.toString()); stores.push(store);
     return { catalog: new AtlasCatalog(store), store, databaseUrl: url.toString() };
 }
-export async function cleanupDatabases() { await Promise.all(stores.map((store)=>store.close().catch(()=>undefined))); const admin=new Pool({connectionString:baseUrl}); try { for(const schema of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); } finally { await admin.end(); } }
+export async function cleanupDatabases() { await Promise.all(stores.map((store)=>store.close().catch(()=>undefined))); const admin=new Pool({connectionString:baseUrl,connectionTimeoutMillis:5_000}); try { for(const schema of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); } finally { await admin.end(); } }

@@ -120,3 +120,41 @@ test('one trusted Git development root approves nested repositories without per-
  const publish={branch:'atlas/feature',repository:'affank1020/atlas',expectedHead:git(root,'rev-parse','HEAD'),githubToken:''};
  await assert.rejects(gitWrite(root,approved,'workspace_git_push_branch',publish),/Missing brokered GitHub credential/);
 });
+
+test('verified linked worktrees can stage and commit while keeping main unchanged', async t => {
+ const root=realpathSync(mkdtempSync(path.join(os.tmpdir(),'atlas-linked-writes-')));
+ t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const parent=path.join(root,'parent'),linked=path.join(root,'feature');
+ mkdirSync(parent);
+ git(parent,'init','-b','main');
+ git(parent,'config','user.name','Test');git(parent,'config','user.email','test@example.test');
+ writeFileSync(path.join(parent,'README.md'),'initial\n');
+ git(parent,'add','README.md');git(parent,'commit','-m','initial');
+ git(parent,'worktree','add','-b','atlas/linked-test',linked,'HEAD');
+ git(parent,'remote','add','origin','https://github.com/affank1020/atlas.git');
+ const previous=process.env.ATLAS_GIT_TRUSTED_ROOTS;
+ process.env.ATLAS_GIT_TRUSTED_ROOTS=root;
+ t.after(()=>{ if(previous===undefined) delete process.env.ATLAS_GIT_TRUSTED_ROOTS;
+   else process.env.ATLAS_GIT_TRUSTED_ROOTS=previous; });
+ const files=new WorkspaceFiles([root]);
+ writeFileSync(path.join(linked,'README.md'),'feature content\n');
+ const inspected=await files.read(linked,'README.md');
+ const staged:any=await gitWrite(linked,files,'workspace_git_stage',{
+   files:[{path:'README.md',expectedSha256:inspected.sha256}]});
+ const committed:any=await gitWrite(linked,files,'workspace_git_commit',{
+   branch:'atlas/linked-test',expectedTree:staged.indexTree,files:['README.md'],message:'Feature change'});
+ assert.equal(committed.branch,'atlas/linked-test');
+ // A linked worktree must get through layout checks and reach the normal
+ // origin/token publishing safeguards, without making a live network request.
+ const expectedHead=git(linked,'rev-parse','HEAD');
+ await assert.rejects(gitWrite(linked,files,'workspace_git_push_branch',{
+   repository:'affank1020/other',branch:'atlas/linked-test',
+   expectedHead,githubToken:'not-a-real-token-with-enough-length'
+ }),/origin does not match/);
+ await assert.rejects(gitWrite(linked,files,'workspace_git_push_branch',{
+   repository:'affank1020/atlas',branch:'atlas/linked-test',
+   expectedHead,githubToken:''
+ }),/Missing brokered GitHub credential/);
+ assert.equal(readFileSync(path.join(parent,'README.md'),'utf8'),'initial\n');
+ assert.equal(readFileSync(path.join(linked,'README.md'),'utf8'),'feature content\n');
+});

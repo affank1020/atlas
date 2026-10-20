@@ -91,3 +91,95 @@ test('draft PR publication rejects a workspace whose origin, branch, or HEAD doe
     assert.equal(success.number, 19);
     assert.equal(brokerCalls, 1);
 });
+
+test('managed worktree creation auto-registers an independent Workspace and removal archives it', async t => {
+    const { execFileSync } = await import('node:child_process');
+    const { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { LocalNodeRuntime } = await import('../apps/node/src/platforms/desktop/runtime.js');
+    const parent = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'atlas-workspace-managed-')));
+    const original = process.env.ATLAS_GIT_TRUSTED_ROOTS;
+    process.env.ATLAS_GIT_TRUSTED_ROOTS = parent;
+    t.after(() => {
+        if (original === undefined) delete process.env.ATLAS_GIT_TRUSTED_ROOTS;
+        else process.env.ATLAS_GIT_TRUSTED_ROOTS = original;
+        rmSync(parent, { recursive: true, force: true });
+    });
+    const source = path.join(parent, 'source');
+    mkdirSync(source);
+    const git = (...args: string[]) => execFileSync('/usr/bin/git', ['-C', source, ...args], { encoding: 'utf8' }).trim();
+    git('init', '-b', 'main');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.test');
+    writeFileSync(path.join(source, 'README.md'), 'initial');
+    git('add', 'README.md'); git('commit', '-m', 'initial');
+
+    const { catalog, store } = await databaseFixture();
+    const runtime = new LocalNodeRuntime([parent], new Map(), 'linux');
+    const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const originalWorkspace: any = await svc.call('create_workspace',
+        { name: 'Main checkout', rootPath: source, kind: 'generic' });
+    const dest = path.join(parent, 'feature-checkout');
+    const created: any = await svc.call('workspace_git_create_worktree', {
+        workspaceId: originalWorkspace.id, name: 'Feature checkout',
+        branch: 'atlas/test-feature', targetPath: dest,
+    });
+    assert.equal(created.workspace.rootPath, dest);
+    assert.equal(created.workspace.name, 'Feature checkout');
+    assert.notEqual(created.workspace.id, originalWorkspace.id);
+    const entries: any = await svc.call('workspace_git_list_worktrees', { workspaceId: originalWorkspace.id });
+    assert.equal(entries.worktrees.length, 2);
+    const registered: any[] = await svc.call('list_workspaces', {});
+    assert.equal(registered.length, 2);
+
+    const removed: any = await svc.call('workspace_git_remove_worktree', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
+        expectedHead: created.head,
+    });
+    assert.equal(removed.preservedBranch, 'atlas/test-feature');
+    assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 1);
+    assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 2);
+    assert.equal(git('rev-parse', 'refs/heads/atlas/test-feature'), created.head);
+});
+
+test('authenticated repository cloning registers the new Workspace without exposing tokens', async () => {
+    const { catalog, store } = await databaseFixture();
+    const repository = 'affank1020/atlas';
+    const credential = 'ghs_readonly_test_only_credential';
+    let observedToken = '';
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async (_workspace, operation, input) => {
+            assert.equal(operation, 'workspace_git_clone_repository');
+            observedToken = input.githubToken;
+            return { rootPath: '/trusted/checkout', repository,
+                head: 'a'.repeat(40), branch: 'main' };
+        },
+    };
+    const broker = { repositoryReadToken: async (requested: string) => {
+        assert.equal(requested, repository);
+        return credential;
+    } } as any;
+    const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')), broker);
+    const managerProject = await catalog.createProject({ name: 'Infrastructure manager' });
+    const parent: any = await svc.call('create_workspace',
+        { projectId: managerProject.id, name: 'Trusted development root', rootPath: '/trusted', kind: 'generic' });
+    await assert.rejects(svc.call('workspace_git_clone_repository', {
+        workspaceId: parent.id, repository, directoryName: 'checkout', githubToken: credential,
+    }), /Unrecognized key/);
+    const created: any = await svc.call('workspace_git_clone_repository', {
+        workspaceId: parent.id, repository, directoryName: 'checkout', name: 'Atlas clone',
+    });
+    assert.equal(observedToken, credential);
+    assert.equal(created.workspace.rootPath, '/trusted/checkout');
+    assert.equal(created.workspace.name, 'Atlas clone');
+    assert.equal(created.workspace.projectId, null, 'New repositories must not inherit their manager directory Project');
+    assert.equal((await svc.call('list_project_workspaces', { projectId: managerProject.id }) as any[]).length, 1);
+    assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 2);
+    const history = await catalog.auditHistory({ workspaceId: parent.id });
+    assert.equal(JSON.stringify(history).includes(credential), false);
+});

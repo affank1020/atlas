@@ -98,12 +98,12 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
         const additivePortfolio = ['patch_portfolio_entry', 'preview_portfolio_entry', 'set_portfolio_media'];
         const gitWrites = ['workspace_git_create_branch', 'workspace_git_switch_branch', 'workspace_git_stage', 'workspace_git_commit', 'workspace_git_push_branch', 'workspace_git_open_pull_request'];
-        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites, 'search_everything', 'read_node_logs', 'list_github_repositories', 'list_workspaces', 'link_workspace_project', 'unlink_workspace_project'].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites, 'search_everything', 'read_node_logs', 'workspace_git_list_worktrees', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'list_github_repositories', 'list_workspaces', 'link_workspace_project', 'unlink_workspace_project'].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
         const create = stable.find(item => item.name === 'create_workspace');
         if (create) delete (create.inputSchema as any).properties.nodeId;
         const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
-        // Workspace V2 removes the requirement to pass a Project ID while
-        // preserving support for all existing Project-scoped callers.
+        // Workspace V2 makes projectId optional for legacy Workspace/Unity tools.
+        // All previous parameters and their types remain compatible.
         for (const item of expected) {
             if (['create_workspace', 'get_workspace', 'update_workspace', 'archive_workspace'].includes(item.name) ||
                 item.name.startsWith('workspace_') || item.name.startsWith('unity_')) {
