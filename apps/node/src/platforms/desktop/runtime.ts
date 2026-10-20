@@ -2,6 +2,7 @@ import { runDevTask } from '../../capabilities/dev/runner.js';
 import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
+import { gitWrite } from '../../capabilities/workspace-files/git-write.js';
 import { UnityAdapter } from '../../capabilities/unity/unity.js';
 import { footballControl } from '../../capabilities/football.js';
 import { footballValidation } from '../../capabilities/football-validation.js';
@@ -68,6 +69,10 @@ export class LocalNodeRuntime implements NodeRuntime {
                 }
                 case 'workspace_git_status': return git(workspace.rootPath, this.files);
                 case 'workspace_git_diff': return git(workspace.rootPath, this.files, true);
+                case 'workspace_git_create_branch':
+                case 'workspace_git_switch_branch':
+                case 'workspace_git_stage':
+                case 'workspace_git_commit': return gitWrite(workspace.rootPath, this.files, name, x);
                 case 'unity_status': return adapter ? adapter.status(workspace) : { available: false, state: 'no_adapter' };
                 case 'unity_list_commands': return adapter ? adapter.capabilities(workspace) : { available: false, state: 'no_adapter', commands: [] };
                 case 'unity_run_command': if (!adapter) throw new AtlasError('Workspace has no available Unity adapter.', 'ADAPTER_UNAVAILABLE'); return adapter.invoke(workspace, x.command, x.parameters);

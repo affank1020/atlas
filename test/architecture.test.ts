@@ -97,7 +97,8 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         const { tools } = await client.listTools();
         const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
         const additivePortfolio = ['patch_portfolio_entry', 'preview_portfolio_entry', 'set_portfolio_media'];
-        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2, ...additivePortfolio].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        const gitWrites = ['workspace_git_create_branch', 'workspace_git_switch_branch', 'workspace_git_stage', 'workspace_git_commit'];
+        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
         const create = stable.find(item => item.name === 'create_workspace');
         if (create) delete (create.inputSchema as any).properties.nodeId;
         const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
@@ -106,6 +107,7 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         assert.deepEqual(tools.filter(tool => additivePortfolio.includes(tool.name)).map(tool => tool.name), additivePortfolio);
         assert.deepEqual(tools.filter(tool => ['list_applications', 'get_application'].includes(tool.name)).map(tool => tool.name), ['list_applications', 'get_application']);
         assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name), v2);
+        assert.deepEqual(tools.filter(tool => gitWrites.includes(tool.name)).map(tool => tool.name), gitWrites);
         assert.deepEqual(tools.filter(tool => ['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task'].includes(tool.name)).map(tool => tool.name), ['workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_nodes', 'get_node']);
     } finally { await client.close(); await server.close(); }
 });

@@ -16,6 +16,11 @@ export const workspaceOperationSchemas = {
     workspace_run_dev_task: z.object({ ...scope, ...client, task: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/) }).strict(),
     workspace_git_status: z.object({ ...scope, ...client }).strict(),
     workspace_git_diff: z.object({ ...scope, ...client }).strict(),
+    workspace_git_create_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),
+    workspace_git_switch_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),
+    workspace_git_stage: z.object({ ...scope, ...client, files: z.array(z.object({ path: file, expectedSha256: sha256 }).strict()).min(1).max(40) }).strict(),
+    workspace_git_commit: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/), expectedTree: z.string().regex(/^[a-f0-9]{40}$/), files: z.array(file).min(1).max(40), message: z.string().trim().min(3).max(200) }).strict(),
+
     unity_status: z.object({ ...scope, ...client }).strict(),
     unity_list_commands: z.object({ ...scope, ...client }).strict(),
     unity_run_command: z.object({ ...scope, ...client, command: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,199}$/), parameters: z.record(z.string(), z.unknown()).default({}).refine(x => JSON.stringify(x).length <= 65536, 'Parameters exceed 64 KiB') }).strict(),
