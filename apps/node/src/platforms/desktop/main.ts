@@ -1,7 +1,8 @@
 import { config as loadEnv } from 'dotenv';
-import { hostname, homedir } from 'node:os';
+import { hostname } from 'node:os';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
+import { installedNodeVersion, nodeStatusPath } from '../../core/node-installation.js';
 import { z } from 'zod';
 import { loadWorkspaceConfig, loadUnityConfig } from '../../core/config.js';
 import { LocalNodeRuntime } from './runtime.js';
@@ -29,11 +30,11 @@ if (process.env.ATLAS_NODE_UNITY_ENABLED === '1') {
     adapters.set('unity', new UnityAdapter(files, new UnityCliConnection(unity.binary), unity.approvedCommands));
 }
 const runtime = new LocalNodeRuntime(roots, adapters);
-const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || undefined, serverUrl: serverUrl.toString(), token }, runtime);
-// Local, credential-free status for the macOS UI. It is intentionally
-// independent of Atlas Hosted so a disconnected Node can still be inspected.
-const statusDir = join(homedir(), 'Library', 'Application Support', 'Atlas');
-const statusPath = join(statusDir, 'node-status.json');
+const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
+// Local, credential-free diagnostics; preserve the macOS menu-bar UI path.
+// The Linux service uses XDG_STATE_HOME (or ~/.local/state) instead.
+const statusPath = nodeStatusPath();
+const statusDir = dirname(statusPath);
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'stopping';
 let connectionState: ConnectionState = 'connecting';
 let detail = '';
