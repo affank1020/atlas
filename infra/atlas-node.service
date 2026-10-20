@@ -1,0 +1,43 @@
+# Atlas Linux Node (conservative first deployment)
+# Install to /etc/systemd/system/atlas-node.service after creating an
+# unprivileged atlas-node account and an independent Node identity.
+# Keep service credentials in /etc/atlas-node/node.env (root-owned, 0600).
+[Unit]
+Description=Atlas Linux Workspace Node
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=atlas-node
+Group=atlas-node
+WorkingDirectory=/opt/atlas-node/current
+EnvironmentFile=/etc/atlas-node/node.env
+Environment=NODE_ENV=production
+Environment=ATLAS_NODE_AUTO_SCRIPTS=0
+ExecStart=/usr/bin/node /opt/atlas-node/current/apps/node/dist/platforms/desktop/main.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/atlas/workspaces /var/lib/atlas-node
+StateDirectory=atlas-node
+UMask=0077
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+SystemCallArchitectures=native
+TasksMax=64
+MemoryMax=384M
+CPUQuota=50%
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

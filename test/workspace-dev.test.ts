@@ -19,7 +19,7 @@ async function setup() {
     const { catalog, store } = await databaseFixture();
     const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-dev-')); folders.push(folder);
     const project = await catalog.createProject({ name: 'Development' });
-    const nodes = new NodeService(new PostgresNodeRepository(store.pool), new LocalNodeRuntime([folder], new Map()), 'Test Node');
+    const nodes = new NodeService(new PostgresNodeRepository(store.pool), new LocalNodeRuntime([folder], new Map(), 'darwin'), 'Test Node');
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool), new NodeRouter(nodes));
     const workspace: any = await workspaces.call('create_workspace', { projectId: project.id, name: 'Dev', rootPath: folder });
     async function configure(tasks: Record<string, { executable: string; args: string[]; timeoutMs?: number; passEnvironment?: string[] }>) {

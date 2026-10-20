@@ -15,13 +15,29 @@ export class LocalNodeRuntime implements NodeRuntime {
     close() { this.shutdown.abort(); }
     readonly files: WorkspaceFiles;
     readonly adapters: Map<string, WorkspaceAdapter>;
-    constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>) {
+    private readonly platform: NodeJS.Platform;
+    constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>, platform: NodeJS.Platform = process.platform) {
+        this.platform = platform;
         this.files = new WorkspaceFiles(roots);
-        this.adapters = adapters ?? new Map([["unity", new UnityAdapter(this.files)]]);
+        // The Linux Node is intentionally not a Unity/football host. A Linux
+        // development sandbox is not ready, so no dev execution is advertised.
+        this.adapters = platform === 'linux' ? new Map()
+            : adapters ?? new Map([["unity", new UnityAdapter(this.files)]]);
     }
-    getCapabilities(): NodeCapability[] { return ["workspace.files", "workspace.git", "workspace.dev", "football.training", ...(this.adapters.has("unity") ? ["unity" as const] : [])]; }
+    getCapabilities(): NodeCapability[] {
+        const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
+        if (this.platform === 'linux') return shared;
+        return [...shared, "workspace.dev", "football.training", ...(this.adapters.has("unity") ? ["unity" as const] : [])];
+    }
     bind(rootPath: string) { return this.files.bind(rootPath); }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {
+        // Defence in depth even for direct runtime callers: do not let a
+        // forged remote request execute development or macOS-only operations.
+        if (this.platform === 'linux' &&
+            (name === 'workspace_run_dev_task' || name === 'workspace_list_dev_tasks' ||
+             name.startsWith('unity_') || name === 'football_control')) {
+            throw new AtlasError('Capability is not available on this Linux Node.', 'CAPABILITY_UNAVAILABLE');
+        }
         const adapter = workspace.adapter ? this.adapters.get(workspace.adapter) : undefined;
             await this.files.resolve(workspace.rootPath, '');
             switch (name) {

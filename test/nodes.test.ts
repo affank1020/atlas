@@ -112,6 +112,23 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
 });
 
 test('LocalNodeRuntime advertises implemented capabilities without claiming a connected Editor', () => {
-    assert.deepEqual(new LocalNodeRuntime([], new Map()).getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training']);
-    assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), all);
+    assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training']);
+    assert.deepEqual(new LocalNodeRuntime([], undefined, 'darwin').getCapabilities(), all);
+});
+
+test('Linux runtime advertises only file/Git capabilities and blocks process execution', async () => {
+    const linux = new LocalNodeRuntime([], undefined, 'linux');
+    if (process.platform === 'linux') {
+        assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), ['workspace.files', 'workspace.git']);
+    }
+    assert.deepEqual(linux.getCapabilities(), ['workspace.files', 'workspace.git']);
+    assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(),
+        ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training']);
+    const folder = '/invalid-test-linux-workspace';
+    await assert.rejects(
+        linux.execute({ rootPath: folder } as any, 'workspace_run_dev_task', { task: 'test' }),
+        (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+    await assert.rejects(
+        linux.execute({ rootPath: folder } as any, 'football_control', { action: 'status' }),
+        (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
 });
