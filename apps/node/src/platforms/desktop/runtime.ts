@@ -1,4 +1,5 @@
 import { runDevTask } from '../../capabilities/dev/runner.js';
+import { readAtlasNodeLog } from '../../capabilities/node-logs.js';
 import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
@@ -28,9 +29,10 @@ export class LocalNodeRuntime implements NodeRuntime {
     getCapabilities(): NodeCapability[] {
         const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
         if (this.platform === 'linux') return shared;
-        return [...shared, "workspace.dev", "football.training", ...(this.adapters.has("unity") ? ["unity" as const] : [])];
+        return [...shared, "workspace.dev", "football.training", "node.logs", ...(this.adapters.has("unity") ? ["unity" as const] : [])];
     }
     bind(rootPath: string) { return this.files.bind(rootPath); }
+    async readLogs(source: 'stdout' | 'stderr', lines: number) { return readAtlasNodeLog(source, lines, this.platform); }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {
         // Defence in depth even for direct runtime callers: do not let a
         // forged remote request execute development or macOS-only operations.

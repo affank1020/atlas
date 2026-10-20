@@ -5,12 +5,12 @@ import { callTool } from './api';
 import { Provider } from 'react-redux';
 import { store } from './store';
 vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', callTool: vi.fn(), onToolMutation: vi.fn(() => () => {}) }));
-test('shell lists real projects, exposes Ask globally, and omits unsupported primitives', async () => {
+test('shell exposes focused navigation and keeps experimental tools out of the header', async () => {
     vi.mocked(callTool).mockResolvedValue([{ id: 'real-project', name: 'Research' }]);
     render(<Provider store={store}><AppShell page="project" projectId="real-project" contentClass=""><h1>Research overview</h1></AppShell></Provider>);
     expect(await screen.findByRole('link', { name: /Research/ })).toHaveAttribute('href', '#/projects/real-project');
-    expect(screen.getByRole('link', { name: /Ask Atlas/ })).toHaveAttribute('href', '#/ask-atlas');
-    expect(screen.getByRole('link', { name: /Infrastructure/ })).toHaveAttribute('href', '#/infrastructure');
+    expect(screen.queryByRole('link', { name: /Ask Atlas/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Infrastructure/ })).not.toBeInTheDocument();
     const sidebar = screen.getByRole('complementary', { name: 'Atlas navigation' });
     const header = screen.getByRole('banner');
     const brand = within(header).getByRole('link', { name: 'atlas' });
@@ -18,8 +18,13 @@ test('shell lists real projects, exposes Ask globally, and omits unsupported pri
     expect(brand.querySelector('.brand-symbol')).not.toBeInTheDocument();
     expect(brand.querySelector('.brand-period')).toHaveTextContent('.');
     expect(brand.querySelector('.brand-period')).toHaveAttribute('aria-hidden', 'true');
-    expect(within(header).getByRole('link', { name: 'Browse projects' })).toHaveAttribute('href', '#/projects');
+    expect(within(header).getByRole('button', { name: 'Search Atlas' })).toBeInTheDocument();
     expect(within(header).getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#/activity');
+    expect(within(header).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
+    expect(within(sidebar).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Activity' })).not.toBeInTheDocument();
+    expect(within(sidebar).getByRole('link', { name: 'Nodes' })).toHaveAttribute('href', '#/nodes');
+    expect(within(sidebar).getByRole('link', { name: 'Monitoring' })).toHaveAttribute('href', '#/monitoring');
     expect(within(sidebar).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '#/projects');
     expect(within(sidebar).queryByText('Workspace')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Sessions/ })).not.toBeInTheDocument();
@@ -27,6 +32,15 @@ test('shell lists real projects, exposes Ask globally, and omits unsupported pri
     expect(screen.queryByRole('link', { name: 'Ask Portfolio' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Agents' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Automations' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Search Atlas' }));
+    expect(screen.getByRole('dialog', { name: 'Search Atlas' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Search or describe an action' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Search Atlas' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Search Atlas' })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(screen.getByRole('dialog', { name: 'Search Atlas' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close search' }));
+    expect(screen.queryByRole('dialog', { name: 'Search Atlas' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
     expect(screen.getByRole('button', { name: 'Close menu' })).toHaveAttribute('aria-expanded', 'true');
 });

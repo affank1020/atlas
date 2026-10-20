@@ -2,6 +2,7 @@ import { useRouteTiming } from './performance';
 import { rememberWork } from './recentWork';
 import { useEffect, useRef, lazy, Suspense, type ComponentType } from 'react';
 import { useApplicationRead, useListProjectsQuery } from './atlasApi';
+import { IS_MOCK_MODE } from './api';
 const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
 import './applications.css';
@@ -61,7 +62,7 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
     return <div className="application-window">
         <header className="application-window-bar">
             <a href={`#/projects/${projectId}/applications`} className="application-back">← Project Applications</a>
-            {slug !== 'portfolio' && <button onClick={() => void refetch()}>Refresh application</button>}<span className="application-window-brand">Atlas / {application?.name ?? 'Application'}</span>
+            {slug !== 'portfolio' && <button onClick={() => void refetch()}>Refresh application</button>}<span className="application-window-brand">Atlas{IS_MOCK_MODE ? " · Mock data" : ""} / {application?.name ?? 'Application'}</span>
         </header>
         <main className="application-window-main">
             {busy && <p role="status" className="application-status">Loading Application…</p>}

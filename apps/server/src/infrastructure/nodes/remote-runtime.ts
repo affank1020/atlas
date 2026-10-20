@@ -16,6 +16,10 @@ export class RemoteNodeRuntime implements NodeRuntime {
         if (typeof value !== 'string') throw new AtlasError('Node returned an invalid binding.', 'NODE_PROTOCOL');
         return value;
     }); }
+    readLogs(source: 'stdout' | 'stderr', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }> {
+        if (!this.capabilities.includes('node.logs')) return Promise.reject(new AtlasError('Node logs are not available.', 'CAPABILITY_UNAVAILABLE'));
+        return this.request({ kind: 'node_logs', source, lines }, 15_000) as Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;
+    }
     execute(workspace: Workspace, operation: NodeOperation, input: Record<string, any>): Promise<unknown> {
         const taskTimeout = operation === 'workspace_run_dev_task' ? workspace.devTasks[input.task]?.timeoutMs ?? (input.task === 'test' ? 600_000 : 120_000) : 0;
         const validation = operation === 'football_control' && ['validation_python', 'validation_editor', 'validation_physics'].includes(input.action);

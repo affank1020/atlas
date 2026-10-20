@@ -1,5 +1,7 @@
 import { diagnostics } from './performance';
 const API_BASE = (import.meta.env.VITE_ATLAS_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:3000" : window.location.origin)).replace(/\/$/, "");
+/** Frontend-only development uses seeded fixtures unless a real backend is explicitly chosen. */
+export const IS_MOCK_MODE = import.meta.env.DEV && (import.meta.env.VITE_ATLAS_API_MODE === 'mock' || (import.meta.env.MODE !== 'test' && import.meta.env.VITE_ATLAS_API_MODE !== 'live' && !import.meta.env.VITE_ATLAS_API_URL));
 
 class ToolRequestError extends Error {
     constructor(message: string, readonly status: number) { super(message); }
@@ -15,6 +17,12 @@ export const getToolRequestCount = () => toolRequestCount;
 
 /** Low-level transport. RTK Query owns caching for migrated reads. */
 export async function callTool<T>(name: string, input: Record<string, unknown> = {}, signal?: AbortSignal, notifyMutation = true): Promise<T> {
+    if (IS_MOCK_MODE) {
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const { mockTool } = await import('./mockTools');
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        return mockTool<T>(name, input);
+    }
     const timeoutMs = name === "workspace_run_dev_task" ? 660_000 : ["football_validate_python", "football_validate_editor_gates", "football_validate_physics_smoke"].includes(name) ? 210_000 : name === "ask_atlas" || name === "ask_portfolio" ? 240_000 : name === "football_index_policy" ? 70_000 : 30_000;
     let response: Response;
     try {

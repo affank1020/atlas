@@ -8,6 +8,7 @@ import { askAtlasInputSchema } from "../../ai/ask-atlas/input.js";
 import { AtlasError } from "../../shared/errors.js";
 import { atlasStatus } from "../../status.js";
 import { fabricSearchSchema, fabricContextSchema } from "../../retrieval/input.js";
+import { globalSearchInput } from "../../server/global-search.js";
 import type { TransportServices } from "../../server/dispatch.js";
 const field = z.object({ name: z.string(), type: z.enum(["string", "number", "boolean", "date", "datetime", "enum", "array", "object"]), required: z.boolean().optional(), enumValues: z.array(z.string()).optional(), default: z.unknown().optional(), description: z.string().optional() });
 const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
@@ -47,6 +48,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     const nodeDescriptions: Record<NodeToolName, string> = {
         list_nodes: 'List persistent Nodes with live status, capabilities, credential state and Workspace counts.',
         get_node: 'Inspect one Node, its assigned Workspaces and recent activity without exposing credentials.',
+        read_node_logs: 'Read a bounded, redacted tail from one connected Node’s predefined Atlas stdout or stderr log. No paths or shell commands.',
         create_node_enrolment: 'Issue a one-use Node enrolment token valid for ten minutes.',
         update_node: 'Rename a persistent Node.',
         rotate_node_credential: 'Invalidate a Node credential and issue a one-use reenrolment token. Disconnects the Node.',
@@ -92,6 +94,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     tool("get_audit_history", "Read immutable audit history filtered by ownership or operation.", auditInput);
     tool("get_recent_activity", "Read recent Atlas activity, including workspace inspections and mutations, optionally scoped to a project, workspace, store or record.", auditInput);
     tool("search_atlas", "Search active Atlas records using lexical, semantic, or hybrid retrieval.", fabricSearchSchema.shape);
+    tool("search_everything", "Search active Atlas projects, applications, views, stores, record contents, nodes and workspaces. Read-only, with links and partial-coverage diagnostics.", globalSearchInput.shape);
     tool("request_context", "Retrieve a bounded, authority-aware Atlas evidence pack.", fabricContextSchema.shape);
     tool("ask_atlas", "Chat about Atlas records using fresh evidence and optional conversation history.", askAtlasInputSchema.shape);
     tool('list_applications', 'List launchable first-party Applications in a Project.', { projectId: z.string().uuid() });
