@@ -835,6 +835,7 @@ Usage:
   ./atlasctl vps mcp           Check hosted MCP OAuth protection
   ./atlasctl vps node-preflight Read-only Linux host capacity/prerequisite check
   ./atlasctl vps node-status   Inspect the independent Linux Node service/release
+  ./atlasctl vps node-upgrade  Verify, transfer and safely activate the latest main Node release
   ./atlasctl vps logs server   Inspect VPS Server logs via SSH
 
 Services: postgres, server, node, web, tunnel, ollama
@@ -893,10 +894,10 @@ async function down(includePostgres, hosted = true) {
 
 const [command = "status", argument] = process.argv.slice(2);
 function vpsCommand(action = "status", service) {
-  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight", "node-status"]);
+  const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight", "node-status", "node-upgrade"]);
   const targets = new Set(["server", "postgres", "ingress"]);
   if (!valid.has(action) || (service && (!["logs", "follow"].includes(action) || !targets.has(service)))) {
-    console.error("Usage: ./atlasctl vps [status|health|https|mcp|nodes|migrations|diagnose|logs|follow|node-preflight] [server|ingress|postgres]");
+    console.error("Usage: ./atlasctl vps [status|health|https|mcp|nodes|migrations|diagnose|logs|follow|node-preflight|node-status|node-upgrade] [server|ingress|postgres]");
     process.exitCode = 2;
     return;
   }
@@ -920,6 +921,16 @@ function vpsCommand(action = "status", service) {
     });
     process.exitCode = result.status ?? 1;
     if (result.error) console.error("SSH failed: " + result.error.message);
+    return;
+  }
+  if (action === "node-upgrade") {
+    const upgrade = join(atlasDir, "scripts/atlas-node-upgrade.sh");
+    if (!existsSync(upgrade)) {
+      console.error("Linux Node upgrade script is missing."); process.exitCode = 1; return;
+    }
+    const result = spawnSync("/bin/bash", [upgrade], { cwd: atlasDir, stdio: "inherit" });
+    process.exitCode = result.status ?? 1;
+    if (result.error) console.error("Node upgrade failed: " + result.error.message);
     return;
   }
   if (action === "node-status") {

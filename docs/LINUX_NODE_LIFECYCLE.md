@@ -4,6 +4,31 @@ The Linux Node runs independently of Atlas Server and PostgreSQL. Install and
 audit a checksum-verified release first with \`scripts/linux-node-release.sh\`.
 Each immutable release is stored beneath \`/opt/atlas-node/releases\`.
 
+## One-command, operator-initiated upgrade (recommended)
+
+From a Mac checkout with GitHub CLI authenticated and the existing SSH alias
+`ovh` configured:
+
+```bash
+./atlasctl vps node-upgrade
+```
+
+This selects the latest successfully packaged `main` Node release, downloads
+and verifies its checksum, transfers the artifact through SSH, stages the
+immutable release, invokes the existing lifecycle activation and confirms the
+new Node reconnects. Only `atlas-node.service` is restarted; Node identity,
+credentials, Atlas Server, Web and PostgreSQL are unchanged.
+
+The VPS sudo prompt can appear once. If validation, transfer, installation or
+activation fails, the command exits unsuccessfully; lifecycle activation retains
+its automatic rollback. Run `./atlasctl vps node-status` to check current
+version and connection. For a different configured SSH host use the existing
+`ATLAS_VPS_SSH_HOST` environment override. The command does not configure
+GitHub App publishing credentials and does not run unattended.
+
+The manual verify/install/plan/activate commands below remain available for
+recovery or constrained environments.
+
 ## Status, activation and rollback
 
 The initial install has a \`/opt/atlas-node/current\` symlink and a running
