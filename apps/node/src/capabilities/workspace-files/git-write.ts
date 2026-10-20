@@ -15,24 +15,43 @@ async function run(root: string, args: string[], extras: Record<string, string> 
   });
   return result.stdout.trim();
 }
+async function approvedGitRoot(root: string, legacyVariable: string) {
+  // Existing exact opt-ins continue to work. A trusted development directory can
+  // now be configured ONCE for many Git repositories, but is never implicit.
+  const exact = (process.env[legacyVariable] || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (exact.includes(root)) return true;
+  const parents = (process.env.ATLAS_GIT_TRUSTED_ROOTS || '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const parent of parents) {
+    if (!path.isAbsolute(parent)) continue;
+    try {
+      const canonical = await realpath(parent);
+      // Do not accept a configured symbolic-link alias as an approval root.
+      if (canonical !== parent) continue;
+      if (root === canonical || root.startsWith(canonical + path.sep)) return true;
+    } catch { /* A missing approved root grants nothing. */ }
+  }
+  return false;
+}
 export async function gitWrite(root: string, files: WorkspaceFiles, operation: string, input: Record<string, any>) {
   await files.resolve(root, '');
-  const approved = (process.env.ATLAS_GIT_WRITE_ROOTS || '').split(',').map(s => s.trim());
-  if (!approved.includes(root)) throw new AtlasError('Git writes are not approved for this workspace.', 'CAPABILITY_UNAVAILABLE');
+  if (!await approvedGitRoot(root, 'ATLAS_GIT_WRITE_ROOTS'))
+    throw new AtlasError('Git writes are not approved for this workspace.', 'CAPABILITY_UNAVAILABLE');
   const meta = await lstat(path.join(root, '.git'));
   if (!meta.isDirectory() || meta.isSymbolicLink() || await realpath(path.join(root, '.git')) !== path.join(root, '.git'))
     throw new AtlasError('Unsupported Git repository layout.', 'WORKSPACE_DENIED');
   if (await run(root, ['rev-parse', '--show-toplevel']) !== root)
     throw new AtlasError('Workspace is not the Git repository root.', 'WORKSPACE_DENIED');
   const branch = await run(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-  if (!validBranch(branch)) throw new AtlasError('Git writes require an atlas/* branch.', 'CONFLICT');
   if (input.branch && !validBranch(input.branch)) throw new AtlasError('Invalid Git branch.', 'INVALID_REQUEST');
+  // A clean main checkout may create/switch to an approved atlas/* branch.
+  // Staging, committing and publishing still require an atlas/* checkout.
   if (operation === 'workspace_git_create_branch' || operation === 'workspace_git_switch_branch') {
     if (await run(root, ['status', '--porcelain'])) throw new AtlasError('Working tree is not clean.', 'CONFLICT');
     if (operation === 'workspace_git_create_branch') await run(root, ['switch', '-c', input.branch]);
     else await run(root, ['switch', input.branch]);
     return { branch: input.branch, head: await run(root, ['rev-parse', 'HEAD']) };
   }
+  if (!validBranch(branch)) throw new AtlasError('Git writes require an atlas/* branch.', 'CONFLICT');
   if (operation === 'workspace_git_stage') {
     const selected = input.files as { path: string, expectedSha256: string }[];
     if (new Set(selected.map(f => f.path)).size !== selected.length) throw new AtlasError('Duplicate Git paths.', 'INVALID_REQUEST');
@@ -55,14 +74,25 @@ export async function gitWrite(root: string, files: WorkspaceFiles, operation: s
     return { branch, head: await run(root, ['rev-parse', 'HEAD']) };
   }
   if (operation === 'workspace_git_push_branch') {
-    const remoteRoots = (process.env.ATLAS_GIT_REMOTE_ROOTS || '').split(',').map(s => s.trim());
-    if (!remoteRoots.includes(root)) throw new AtlasError('Remote Git publishing is not approved on this Node root.', 'CAPABILITY_UNAVAILABLE');
+    if (!await approvedGitRoot(root, 'ATLAS_GIT_REMOTE_ROOTS'))
+      throw new AtlasError('Remote Git publishing is not approved on this Node root.', 'CAPABILITY_UNAVAILABLE');
     if (branch !== input.branch || await run(root, ['rev-parse', 'HEAD']) !== input.expectedHead)
       throw new AtlasError('Git branch or HEAD changed since inspection.', 'CONFLICT');
     if (await run(root, ['status', '--porcelain'])) throw new AtlasError('Working tree is not clean.', 'CONFLICT');
-    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(input.repository) ||
-        await run(root, ['remote', 'get-url', 'origin']) !== `https://github.com/${input.repository}.git`)
-      throw new AtlasError('Git remote does not match approved GitHub repository.', 'WORKSPACE_DENIED');
+    // Inspect the literal origin rather than the possibly rewritten URL; macOS
+    // checkouts often use SSH. The actual push still goes to GitHub over HTTPS
+    // using the Server-brokered installation token, never the user's SSH key.
+    const repository = input.repository;
+    if (typeof repository !== 'string' || !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
+      throw new AtlasError('Invalid approved GitHub repository.', 'WORKSPACE_DENIED');
+    const origin = await run(root, ['config', '--local', '--get', 'remote.origin.url']);
+    const allowedOrigins = [
+      `https://github.com/${repository}`, `https://github.com/${repository}.git`,
+      `git@github.com:${repository}`, `git@github.com:${repository}.git`,
+      `ssh://git@github.com/${repository}`, `ssh://git@github.com/${repository}.git`,
+    ];
+    if (!allowedOrigins.includes(origin))
+      throw new AtlasError('Git origin does not match approved GitHub repository.', 'WORKSPACE_DENIED');
     if (typeof input.githubToken !== 'string' || input.githubToken.length < 20)
       throw new AtlasError('Missing brokered GitHub credential.', 'CAPABILITY_UNAVAILABLE');
     const basic = Buffer.from(`x-access-token:${input.githubToken}`).toString('base64');

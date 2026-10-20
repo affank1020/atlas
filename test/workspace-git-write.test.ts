@@ -42,5 +42,81 @@ test('Git writes require per-root opt in, preserve main, and stage explicit insp
  await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',publish),/not clean/);
  rmSync(path.join(root,'other.txt'));
  await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',{...publish,expectedHead:'0'.repeat(40)}),/HEAD changed/);
- await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',{...publish,repository:'affank1020/atlas'}),/remote does not match/);
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',{...publish,repository:'affank1020/atlas'}),/origin does not match/);
+});
+
+test('clean main checkout can create/switch to an atlas/* branch, but cannot write directly to main', async t => {
+ const root=realpathSync(mkdtempSync(path.join(os.tmpdir(),'atlas-git-main-')));
+ t.after(()=>rmSync(root,{recursive:true,force:true}));
+ git(root,'init','-b','main');
+ git(root,'config','user.name','Test');git(root,'config','user.email','test@example.test');
+ writeFileSync(path.join(root,'README.md'),'initial\n');
+ git(root,'add','README.md');git(root,'commit','-m','initial');
+ const files=new WorkspaceFiles([root]);
+ const old=process.env.ATLAS_GIT_WRITE_ROOTS;
+ t.after(()=>{if(old===undefined)delete process.env.ATLAS_GIT_WRITE_ROOTS;else process.env.ATLAS_GIT_WRITE_ROOTS=old;});
+ process.env.ATLAS_GIT_WRITE_ROOTS=root;
+ await assert.rejects(gitWrite(root,files,'workspace_git_stage',{files:[{path:'README.md',expectedSha256:'0'.repeat(64)}]}),/require an atlas/);
+ await assert.rejects(gitWrite(root,files,'workspace_git_create_branch',{branch:'main'}),/Invalid Git branch/);
+ const created=await gitWrite(root,files,'workspace_git_create_branch',{branch:'atlas/first-feature'}) as any;
+ assert.equal(created.branch,'atlas/first-feature');
+ assert.equal(git(root,'branch','--show-current'),'atlas/first-feature');
+ await assert.rejects(gitWrite(root,files,'workspace_git_switch_branch',{branch:'main'}),/Invalid Git branch/);
+ git(root,'switch','main');
+ const switched=await gitWrite(root,files,'workspace_git_switch_branch',{branch:'atlas/first-feature'}) as any;
+ assert.equal(switched.branch,'atlas/first-feature');
+});
+
+test('Mac SSH origins must exactly match the approved GitHub repository', async t => {
+ const root=realpathSync(mkdtempSync(path.join(os.tmpdir(),'atlas-git-ssh-')));
+ t.after(()=>rmSync(root,{recursive:true,force:true}));
+ git(root,'init','-b','atlas/bootstrap');
+ git(root,'config','user.name','Test');git(root,'config','user.email','test@example.test');
+ writeFileSync(path.join(root,'README.md'),'initial\n');
+ git(root,'add','README.md');git(root,'commit','-m','initial');
+ git(root,'remote','add','origin','git@github.com:affank1020/atlas.git');
+ const files=new WorkspaceFiles([root]);
+ const oldWrite=process.env.ATLAS_GIT_WRITE_ROOTS, oldRemote=process.env.ATLAS_GIT_REMOTE_ROOTS;
+ t.after(()=>{
+  if(oldWrite===undefined)delete process.env.ATLAS_GIT_WRITE_ROOTS;else process.env.ATLAS_GIT_WRITE_ROOTS=oldWrite;
+  if(oldRemote===undefined)delete process.env.ATLAS_GIT_REMOTE_ROOTS;else process.env.ATLAS_GIT_REMOTE_ROOTS=oldRemote;
+ });
+ process.env.ATLAS_GIT_WRITE_ROOTS=root;process.env.ATLAS_GIT_REMOTE_ROOTS=root;
+ const publish={branch:'atlas/bootstrap',expectedHead:git(root,'rev-parse','HEAD'),
+  repository:'affank1020/atlas',githubToken:''};
+ // A matching origin reaches the token validation, with no network push.
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',publish),/Missing brokered GitHub credential/);
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',{...publish,repository:'affank1020/portfolio-site'}),/origin does not match/);
+ git(root,'remote','set-url','origin','ssh://git@github.com/affank1020/atlas.git');
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',publish),/Missing brokered GitHub credential/);
+ git(root,'remote','set-url','origin','git@github.com.evil.example:affank1020/atlas.git');
+ await assert.rejects(gitWrite(root,files,'workspace_git_push_branch',publish),/origin does not match/);
+});
+
+test('one trusted Git development root approves nested repositories without per-repository env entries', async t => {
+ const parent=realpathSync(mkdtempSync(path.join(os.tmpdir(),'atlas-trusted-git-')));
+ const root=realpathSync(mkdtempSync(path.join(parent,'repo-')));
+ const other=realpathSync(mkdtempSync(path.join(os.tmpdir(),'atlas-outside-git-')));
+ t.after(()=>{rmSync(parent,{recursive:true,force:true});rmSync(other,{recursive:true,force:true});});
+ for (const dir of [root,other]) {
+  git(dir,'init','-b','main');
+  git(dir,'config','user.name','Test');git(dir,'config','user.email','test@example.test');
+  writeFileSync(path.join(dir,'README.md'),'initial\\n');
+  git(dir,'add','README.md');git(dir,'commit','-m','initial');
+  git(dir,'remote','add','origin','https://github.com/affank1020/atlas.git');
+ }
+ const prior={trusted:process.env.ATLAS_GIT_TRUSTED_ROOTS,write:process.env.ATLAS_GIT_WRITE_ROOTS,remote:process.env.ATLAS_GIT_REMOTE_ROOTS};
+ t.after(()=>{
+  for(const [envKey,previous] of [['ATLAS_GIT_TRUSTED_ROOTS',prior.trusted],['ATLAS_GIT_WRITE_ROOTS',prior.write],['ATLAS_GIT_REMOTE_ROOTS',prior.remote]] as const) {
+   if (previous===undefined) delete process.env[envKey]; else process.env[envKey]=previous;
+  }
+ });
+ delete process.env.ATLAS_GIT_WRITE_ROOTS;delete process.env.ATLAS_GIT_REMOTE_ROOTS;
+ process.env.ATLAS_GIT_TRUSTED_ROOTS=parent;
+ const approved=new WorkspaceFiles([parent]);
+ const created=await gitWrite(root,approved,'workspace_git_create_branch',{branch:'atlas/feature'}) as any;
+ assert.equal(created.branch,'atlas/feature');
+ await assert.rejects(gitWrite(other,new WorkspaceFiles([other]),'workspace_git_create_branch',{branch:'atlas/denied'}),/not approved/);
+ const publish={branch:'atlas/feature',repository:'affank1020/atlas',expectedHead:git(root,'rev-parse','HEAD'),githubToken:''};
+ await assert.rejects(gitWrite(root,approved,'workspace_git_push_branch',publish),/Missing brokered GitHub credential/);
 });
