@@ -70,10 +70,18 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
     const { store, catalog } = await databaseFixture();
     const invoked: string[] = [];
     const local = runtime();
-    local.execute = async (workspace, operation) => { invoked.push(`${workspace.nodeId}:${operation}`); return { ok: true }; };
+    local.execute = async (workspace, operation, input) => {
+        if (operation === 'workspace_git_push_branch') assert.equal(input.githubToken, 'ghs_testOnlyBrokeredToken123456789');
+        invoked.push(`${workspace.nodeId}:${operation}`);
+        return { ok: true };
+    };
     const nodes = new NodeService(new PostgresNodeRepository(store.pool), local, 'Local');
     const router = new NodeRouter(nodes);
-    const service = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool), router);
+    const github = {
+        approve: () => undefined,
+        installationToken: async () => 'ghs_testOnlyBrokeredToken123456789',
+    };
+    const service = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool), router, github as any);
     const project = await catalog.createProject({ name: 'Routed' });
     const workspace: any = await service.call('create_workspace', { projectId: project.id, name: 'Opaque', rootPath: 'opaque', kind: 'unity' });
     await store.pool.query("UPDATE workspaces SET dev_tasks=$1 WHERE id=$2", [{ test: { executable: 'node', args: [], timeoutMs: 1000 } }, workspace.id]);
@@ -85,10 +93,11 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
         workspace_git_create_branch: { branch: 'atlas/test' }, workspace_git_switch_branch: { branch: 'atlas/test' },
         workspace_git_stage: { files: [{ path: 'a', expectedSha256: 'a'.repeat(64) }] },
         workspace_git_commit: { branch: 'atlas/test', expectedTree: 'a'.repeat(40), files: ['a'], message: 'Test commit' },
+        workspace_git_push_branch: { repository: 'affank1020/portfolio-site', branch: 'atlas/test', expectedHead: 'a'.repeat(40) },
         unity_status: {}, unity_list_commands: {}, unity_run_command: { command: 'editor_play', parameters: {} },
     };
     for (const operation of Object.keys(requiredCapability).filter(op => op !== 'football_control') as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
-    assert.equal(invoked.length, 17);
+    assert.equal(invoked.length, 18);
     // Internal first-party Application commands reach the owning Node through NodeRouter,
     // but are intentionally not exposed by WorkspaceService's generic public API.
     await assert.rejects(service.call('football_control' as any, { ...scope, action: 'drills' }), (e: any) => e.code === 'INVALID_REQUEST');

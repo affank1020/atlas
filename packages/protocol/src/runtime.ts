@@ -17,6 +17,7 @@ export const requiredCapability: Record<NodeOperation, NodeCapability> = {
     workspace_git_status: 'workspace.git', workspace_git_diff: 'workspace.git',
     workspace_git_create_branch: 'workspace.git', workspace_git_switch_branch: 'workspace.git',
     workspace_git_stage: 'workspace.git', workspace_git_commit: 'workspace.git',
+    workspace_git_push_branch: 'workspace.git',
 
     unity_status: 'unity', unity_list_commands: 'unity', unity_run_command: 'unity',
     football_control: 'football.training',

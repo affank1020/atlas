@@ -74,7 +74,8 @@ export class LocalNodeRuntime implements NodeRuntime {
                 case 'workspace_git_create_branch':
                 case 'workspace_git_switch_branch':
                 case 'workspace_git_stage':
-                case 'workspace_git_commit': return gitWrite(workspace.rootPath, this.files, name, x);
+                case 'workspace_git_commit':
+                case 'workspace_git_push_branch': return gitWrite(workspace.rootPath, this.files, name, x);
                 case 'unity_status': return adapter ? adapter.status(workspace) : { available: false, state: 'no_adapter' };
                 case 'unity_list_commands': return adapter ? adapter.capabilities(workspace) : { available: false, state: 'no_adapter', commands: [] };
                 case 'unity_run_command': if (!adapter) throw new AtlasError('Workspace has no available Unity adapter.', 'ADAPTER_UNAVAILABLE'); return adapter.invoke(workspace, x.command, x.parameters);
