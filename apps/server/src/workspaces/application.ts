@@ -16,6 +16,18 @@ export class WorkspaceService {
         const parsed = workspaceSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x: any = parsed.data;
+        // Public checkoutId is a server-only alias for the historical physical
+        // workspaceId. Keep the Node v2 wire contract strict and unchanged.
+        // Both forms together (including equal IDs) are rejected by the
+        // external schema, rather than silently choosing one.
+        if (x.checkoutId !== undefined) {
+            x.workspaceId = x.checkoutId;
+            delete x.checkoutId;
+        }
+        if (x.targetCheckoutId !== undefined) {
+            x.targetWorkspaceId = x.targetCheckoutId;
+            delete x.targetCheckoutId;
+        }
         if (name === 'list_github_repositories') return this.github.listRepositories();
         if (name === 'list_workspaces') return this.repository.listAll(x.includeArchived, x.nodeId);
         if (name === 'list_logical_workspaces') return this.repository.listLogical(x.includeArchived);
