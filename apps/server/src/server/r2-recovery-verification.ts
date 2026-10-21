@@ -5,6 +5,9 @@ import { ObjectNotFound, type R2StorageConfig } from './file-storage.js';
 const FILE_KEY = /^files-[a-f0-9]{32}-[a-f0-9]{64}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+// PostgreSQL uuid permits values outside UUIDv1-v8, including nil UUIDs.
+// Pagination must traverse ALL such rows even when metadata validation fails.
+const CURSOR_UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 export const R2_RECOVERY_DEFAULT_FILES = 3;
 export const R2_RECOVERY_MAX_FILES = 10;
 export const R2_RECOVERY_MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -54,12 +57,12 @@ export function parseRecoveryVerifyArgs(args: string[]): { maxFiles: number; cur
     if (options.length > 1 || cursors.length > 1 ||
         args.filter(x => x === '--dry-run').length !== 1 ||
         args.length !== 1 + options.length + cursors.length)
-        throw new Error('Usage: --dry-run [--max-files=1..10] [--cursor=files-...]');
+        throw new Error('Usage: --dry-run [--max-files=1..10] [--cursor=file-uuid]');
     const maxFiles = options.length ? Number(options[0]!.slice('--max-files='.length)) : R2_RECOVERY_DEFAULT_FILES;
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > R2_RECOVERY_MAX_FILES)
         throw new Error('Recovery verification checks 1 to 10 files per invocation.');
     const cursor = cursors[0]?.slice('--cursor='.length);
-    if (cursor !== undefined && cursor !== '' && !FILE_KEY.test(cursor))
+    if (cursor !== undefined && !CURSOR_UUID.test(cursor))
         throw new Error('Invalid R2 recovery cursor.');
     return { maxFiles, ...(cursor !== undefined ? { cursor } : {}) };
 }
@@ -96,16 +99,15 @@ export async function verifyR2Recovery(input: {
     const maxFiles = input.maxFiles ?? R2_RECOVERY_DEFAULT_FILES;
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > R2_RECOVERY_MAX_FILES)
         throw new Error('Invalid R2 recovery verification limit.');
-    if (input.cursor !== undefined && input.cursor !== '' && !FILE_KEY.test(input.cursor))
+    if (input.cursor !== undefined && !CURSOR_UUID.test(input.cursor))
         throw new Error('Invalid R2 recovery cursor.');
 
     const query = await input.database.query<FileRow>(
         'SELECT id,storage_key,checksum,byte_size FROM atlas_files ' +
-        // NULL means an uncursored complete-catalogue start, including
-        // schema-allowed empty keys. An explicitly supplied empty cursor
-        // resumes *after* the empty-key record if it filled the first page;
-        // it must not restart the initial scan or claim full coverage.
-        'WHERE ($1::text IS NULL OR storage_key > $1) ORDER BY storage_key ASC LIMIT $2',
+        // Stable UUID primary-key pagination is independent of storage_key.
+        // The schema allows empty, malformed or arbitrarily long object keys;
+        // none can become an unusable cursor or silently hide later records.
+        'WHERE ($1::uuid IS NULL OR id > $1::uuid) ORDER BY id ASC LIMIT $2',
         [input.cursor ?? null,maxFiles+1]);
     if (query.rows.length > maxFiles+1) throw new Error('Recovery metadata query exceeded its bound.');
     const rows = query.rows.slice(0,maxFiles);
@@ -136,7 +138,7 @@ export async function verifyR2Recovery(input: {
         if (primary.state === 'valid' && backup.state === 'valid') result.verifiedBoth++;
         else if (result.failureFileIds.length < 10) result.failureFileIds.push(row.id);
     }
-    if (rows.length && remaining) result.nextCursor = rows[rows.length-1]!.storage_key;
+    if (rows.length && remaining) result.nextCursor = rows[rows.length-1]!.id;
     const issues = result.primaryMissing + result.backupMissing + result.primaryCorrupt +
         result.backupCorrupt + result.invalidMetadata;
     result.status = issues ? 'failed' : result.checked === 0 && result.entireCatalogChecked ? 'empty' :
