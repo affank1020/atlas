@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
                 shareTarget = model.shareTarget,
                 onEditShareTarget = model::editShareTarget,
                 shareStatus = model.shareStatus,
-                sharePending = model.shareStatus.startsWith("Waiting for"),
+                sharePending = model.sharePending,
                 onSend = model::sendCurrentDraft,
             )
         }
@@ -259,6 +259,7 @@ private fun SendContent(
     OutlinedTextField(
         value = session.draft,
         onValueChange = onEditDraft,
+        enabled = !sharePending,
         label = { Text("Text or link") },
         modifier = Modifier.fillMaxWidth().testTag("share-draft"),
         minLines = 3,
@@ -267,6 +268,7 @@ private fun SendContent(
     OutlinedTextField(
         value = shareTarget,
         onValueChange = onEditShareTarget,
+        enabled = !sharePending,
         label = { Text("Receiving Node ID") },
         modifier = Modifier.fillMaxWidth().testTag("share-target"),
         singleLine = true,

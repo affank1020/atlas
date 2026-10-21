@@ -67,6 +67,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
     var shareStatus by mutableStateOf("Nothing sent yet")
         private set
+    var sharePending by mutableStateOf(false)
+        private set
 
     var pairedNode by mutableStateOf(vault.load())
         private set
@@ -142,6 +144,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         socket = null
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
+            sharePending = false
             shareStatus = "Connection closed; delivery was not confirmed."
         }
         connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · app in background"
@@ -165,6 +168,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             connectionStatus = event.detail
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
+                                sharePending = false
                                 shareStatus = "Connection lost; delivery was not confirmed."
                             }
                             // Close stale WebSockets before attempting a new connection.
@@ -179,6 +183,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                     if (!foreground || generation != connectionGeneration) return@post
                     if (reply.requestId != pendingShareRequestId) return@post
                     pendingShareRequestId = null
+                    sharePending = false
                     shareStatus = when {
                         reply.errorCode != null -> when (reply.errorCode) {
                             "SHARE_DENIED" -> "This receiving Node is not approved in Atlas."
@@ -211,7 +216,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun editShareTarget(value: String) {
-        shareTarget = value.trim().take(36)
+        if (!sharePending) shareTarget = value.trim().take(36)
     }
 
     fun sendCurrentDraft() {
@@ -228,9 +233,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val deliveryId = UUID.randomUUID().toString()
         val payload = shareMessage(requestId, deliveryId, target, text)
         pendingShareRequestId = requestId
+        sharePending = true
         shareStatus = "Waiting for the receiving Node's approval…"
         if (ws?.send(payload) != true) {
             pendingShareRequestId = null
+            sharePending = false
             shareStatus = "Could not send; delivery was not confirmed."
         }
     }
@@ -244,6 +251,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         unrecoverableIdentity = false
         connectionStatus = "Not enrolled"
         shareTarget = ""
+        sharePending = false
         shareStatus = "Nothing sent yet"
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
@@ -270,7 +278,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun navigate(destination: Section) { session = session.navigate(destination) }
     fun editDraft(value: String) {
         session = session.editDraft(value)
-        shareStatus = "Nothing sent yet"
+        if (!sharePending) shareStatus = "Nothing sent yet"
     }
 
     fun receive(intent: Intent?) {
@@ -285,6 +293,6 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             else -> ShareDelivery(nextId, text = text)
         }
         session = session.importShare(delivery)
-        shareStatus = "Nothing sent yet"
+        if (!sharePending) shareStatus = "Nothing sent yet"
     }
 }
