@@ -114,9 +114,9 @@ test('source ancestry, not publication time, chooses latest when old A finishes 
 
 test('publisher only promotes stable builds at current main and serializes overlapping jobs', () => {
     const workflow = readFileSync('.github/workflows/node-package.yml', 'utf8');
-    assert.match(workflow, /group: atlas-node-release-publication/);
-    assert.match(workflow, /cancel-in-progress: false/);
-    assert.match(workflow, /if \\[\\[ "\\$version" == \\*-\\* \\]\\]/);
-    assert.match(workflow, /main_head=.*gh api/);
-    assert.match(workflow, /"\\$main_head" != "\\$GITHUB_SHA"/);
+    assert.ok(workflow.includes('group: atlas-node-release-publication'));
+    assert.ok(workflow.includes('cancel-in-progress: false'));
+    assert.ok(workflow.includes('if [[ "$version" == *-* ]]'));
+    assert.ok(workflow.includes('main_head="$(gh api'));
+    assert.ok(workflow.includes('if [[ "$main_head" != "$GITHUB_SHA" ]]'));
 });
