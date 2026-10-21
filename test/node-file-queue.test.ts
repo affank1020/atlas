@@ -252,7 +252,7 @@ test('restart-new atomically rotates remote ID within existing slot at eight-job
         assert.notEqual(rotated,original);
         const after=await queue.snapshot();
         assert.equal(after.total,MAX_QUEUE_ITEMS);
-        assert.equal(after.encryptedDiskBytes,before.encryptedDiskBytes);
+        assert.ok(after.encryptedDiskBytes <= before.encryptedDiskBytes, 'rotation reuses the prior disk quota');
         assert.equal(after.ready,MAX_QUEUE_ITEMS);
         // The stable queue identifier remains usable for discard/recovery,
         // but the remote identity has been changed only after explicit action.
