@@ -57,3 +57,18 @@ test('Linux journal bounds output to whole, redacted log lines', async () => {
     assert.ok(output.lines.every(line => line.startsWith('2026-10-21T21:00:00')));
     assert.doesNotMatch(output.lines.join('\n'), /confidential-\d+/);
 });
+
+test('Linux journal retains readable earlier entries when the newest entry exceeds output cap', async () => {
+    const earlier = [
+        '2026-10-21T21:01:00 atlas-node: first safe entry',
+        '2026-10-21T21:01:01 atlas-node: second safe entry',
+    ];
+    const oversized = '2026-10-21T21:01:02 atlas-node: ' + 'x'.repeat(52 * 1024);
+    const result = await readAtlasLinuxJournal(3, async () => ({
+        stdout: [...earlier, oversized].join('\n') + '\n', stderr: '',
+    }));
+    assert.equal(result.available, true);
+    assert.equal(result.truncated, true);
+    assert.deepEqual(result.lines, earlier);
+    assert.ok(Buffer.byteLength(result.lines.join('\n'), 'utf8') <= 48 * 1024);
+});
