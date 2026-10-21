@@ -27,6 +27,19 @@ test('Web uploads raw File bytes with private owner metadata, without base64 enc
     });
 });
 
+test('Web preserves long Unicode filenames in binary upload headers', async () => {
+    const fileName = '漢'.repeat(251) + '.png';
+    const file = new File(['screen'], fileName, { type: 'image/png' });
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ fileName }), { status: 201 }));
+    vi.stubGlobal('fetch', fetcher);
+    const owner = { kind: 'project' as const, id: '00000000-0000-4000-8000-000000000001' };
+    await uploadFile(owner, file);
+    const headers = (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers['x-atlas-file-name']).toBe(encodeURIComponent(fileName));
+    expect(headers['x-atlas-file-name'].length).toBeGreaterThan(1024);
+    expect(fileName.length).toBe(255);
+});
+
 test('Web rejects empty and oversized files before sending a request', async () => {
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);

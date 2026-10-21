@@ -5,6 +5,10 @@ import { AtlasError } from '../../shared/errors.js';
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_BODY_BYTES = 35 * 1024 * 1024;
+// A 255-character filename can expand to 9 percent-encoded bytes per UTF-16
+// code unit (e.g. CJK characters). The decoded name is still validated by
+// AtlasFilesService.upload, including its 255-character limit.
+const MAX_ENCODED_FILE_NAME_LENGTH = 255 * 9;
 const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive']);
 const BINARY_HEADERS = 'content-type,x-atlas-owner-kind,x-atlas-owner-id,x-atlas-file-name,x-atlas-file-type';
 
@@ -46,7 +50,7 @@ async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: File
     };
     const owner = readOwner({ kind: header('x-atlas-owner-kind', 20), id: header('x-atlas-owner-id', 120) });
     let fileName: string;
-    try { fileName = decodeURIComponent(header('x-atlas-file-name', 1024)); }
+    try { fileName = decodeURIComponent(header('x-atlas-file-name', MAX_ENCODED_FILE_NAME_LENGTH)); }
     catch { throw new AtlasError('Invalid binary upload file name.'); }
     const mimeType = header('x-atlas-file-type', 120);
     const length = request.headers['content-length'];

@@ -99,6 +99,21 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         const binaryFile = await binaryUpload.json() as { id: string; visibility: string };
         assert.equal(binaryFile.visibility, 'private');
         assert.deepEqual(Buffer.from(await (await post('download', { owner, fileId: binaryFile.id })).arrayBuffer()), binary);
+
+        // Regression: valid Unicode names can expand past the old 1024-character
+        // header limit, while still fitting the service's 255-character name limit.
+        const unicodeName = '漢'.repeat(251) + '.png';
+        assert.equal(unicodeName.length, 255);
+        assert.ok(encodeURIComponent(unicodeName).length > 1024);
+        const unicodeResponse = await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST',
+            headers: { ...binaryHeaders, 'x-atlas-file-name': encodeURIComponent(unicodeName) },
+            body: binary,
+        });
+        assert.equal(unicodeResponse.status, 201);
+        const unicodeFile = await unicodeResponse.json() as { id: string; fileName: string };
+        assert.equal(unicodeFile.fileName, unicodeName);
+        assert.deepEqual(Buffer.from(await (await post('download', { owner, fileId: unicodeFile.id })).arrayBuffer()), binary);
         assert.equal((await fetch(`${url}/api/files/upload-binary`, {
             method: 'POST', headers: { ...binaryHeaders, 'x-atlas-file-name': '%invalid' }, body: binary,
         })).status, 400);
@@ -120,7 +135,7 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         assert.equal(uploaded.status, 201);
         const file = await uploaded.json() as { id: string; visibility: string };
         assert.equal(file.visibility, 'private', 'client cannot request public visibility');
-        assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 2);
+        assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 3);
         const result = await post('download', { owner, fileId: file.id });
         assert.equal(result.status, 200);
         assert.equal(result.headers.get('content-type'), 'application/octet-stream');
@@ -131,6 +146,7 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         assert.equal((await post('upload', { owner, fileName: 'invalid', mimeType: 'text/plain', base64: '%%%'})).status, 400);
         assert.equal((await post('archive', { owner, fileId: file.id })).status, 200);
         assert.equal((await post('archive', { owner, fileId: binaryFile.id })).status, 200);
+        assert.equal((await post('archive', { owner, fileId: unicodeFile.id })).status, 200);
         assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 0);
         assert.equal((await post('download', { owner, fileId: file.id })).status, 404);
     } finally {
