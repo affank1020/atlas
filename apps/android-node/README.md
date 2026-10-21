@@ -105,3 +105,9 @@ The recipient picker is temporarily **manual** because native Nodes must not
 reuse Atlas Web's Basic Auth/admin-only API to list devices. A scoped Node
 directory with per-peer permissions is planned. Real-device acceptance testing
 comes after the relay, Mac receiver and this sender have all passed review.
+
+While a send awaits acknowledgement, a second Android Share intent is held
+in a volatile deferred slot, rather than replacing the on-screen text that
+was actually submitted. After the acknowledgement, **Load newest shared item**
+explicitly switches to the new draft. If several incoming shares arrive
+while pending, only the most recent is retained (no background queue).
