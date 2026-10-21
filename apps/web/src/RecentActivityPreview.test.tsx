@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { RecentActivityPreview } from './RecentActivityPreview';
 import { callTool } from './api';
@@ -21,14 +21,15 @@ test('project preview uses a bounded server-side scope and deep link', async () 
 
 test('checkout preview does not leak stale activity from another scope', async () => {
     let finishFirst!: (value: unknown) => void;
-    vi.mocked(callTool).mockImplementation((_name, params) => params.checkoutId === 'old'
+    vi.mocked(callTool).mockImplementation((_name, params) => params?.checkoutId === 'old'
         ? new Promise(resolve => { finishFirst = resolve; }) as never
         : Promise.resolve({ items: [], total: 0, limit: 4, offset: 0 }) as never);
     const { rerender } = render(<RecentActivityPreview title="Recent checkout activity" filters={{ checkoutId: 'old' }} count={4} />);
     rerender(<RecentActivityPreview title="Recent checkout activity" filters={{ checkoutId: 'new' }} count={4} />);
     await waitFor(() => expect(screen.getByText('No recorded activity for this scope.')).toBeInTheDocument());
-    finishFirst({ items: [{ id: 'old-event', occurredAt: '2026-10-20T10:00:00Z', client: 'legacy', operation: 'workspace.file_patched' }], total: 1, limit: 4, offset: 0 });
-    expect(screen.queryByText(/Old event/)).not.toBeInTheDocument();
+    await act(async () => { finishFirst({ items: [{ id: 'old-event', occurredAt: '2026-10-20T10:00:00Z', client: 'legacy', operation: 'workspace.file_patched', resulting: { path: 'secret-old-checkout.ts' } }], total: 1, limit: 4, offset: 0 }); });
+    await waitFor(() => expect(screen.getByText('No recorded activity for this scope.')).toBeInTheDocument());
+    expect(screen.queryByText(/secret-old-checkout/)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /View all/ })).toHaveAttribute('href', '#/monitoring?tab=activity&checkoutId=new');
 });
 

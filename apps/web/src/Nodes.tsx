@@ -45,9 +45,9 @@ function platformName(value: string | undefined) {
     if (value === 'win32') return 'Windows';
     return value || 'Unknown OS';
 }
-function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onChange, onTicket }: {
+function NodeInspector({ node, detail, loading, detailError, nodes, revision, onClose, onChange, onTicket }: {
     node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string;
-    nodes: AtlasNode[]; onClose: () => void;
+    nodes: AtlasNode[]; revision: number; onClose: () => void;
     onChange: (action: () => Promise<unknown>, success: string) => Promise<void>;
     onTicket: (value: {enrolmentToken: string; expiresAt: string; nodeId: string | null}) => void;
 }) {
@@ -89,7 +89,7 @@ function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onC
             </li>)}</ul> : <p className="node-inspector-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : 'Select to load workspace details.'}</p>}
         </section>
         <div className="node-inspector-section">
-            <RecentActivityPreview title="Recent activity" filters={{ nodeId: node.id }} count={4} compact />
+            <RecentActivityPreview title="Recent activity" filters={{ nodeId: node.id }} count={4} compact refreshVersion={revision} />
             <a className="monitoring-context-link" href={monitoringHash('logs', { nodeId: node.id })}>Open Node logs in Monitoring ↗</a>
         </div>
         <details className="node-inspector-advanced">
@@ -218,7 +218,7 @@ export function Nodes() {
                 <footer className="node-network-footer"><span><i className="node-legend-dot online" /> Online</span><span><i className="node-legend-dot offline" /> Offline / unavailable</span><span className="node-network-tip">Select a node to inspect <span aria-hidden="true">↗</span></span></footer>
             </section>
             {selected && <NodeInspector key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
-                detailError={detailError} loading={detailLoading} nodes={nodes} onClose={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />}
+                detailError={detailError} loading={detailLoading} nodes={nodes} revision={revision} onClose={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />}
         </div>
     </div>;
 }
