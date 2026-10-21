@@ -59,6 +59,11 @@ class MainActivity : ComponentActivity() {
                 onForget = model::forget,
                 onNavigate = model::navigate,
                 onEditDraft = model::editDraft,
+                shareTarget = model.shareTarget,
+                onEditShareTarget = model::editShareTarget,
+                shareStatus = model.shareStatus,
+                sharePending = model.shareStatus.startsWith("Waiting for"),
+                onSend = model::sendCurrentDraft,
             )
         }
     }
@@ -103,6 +108,11 @@ internal fun AtlasCompanion(
     onForget: () -> Unit,
     onNavigate: (Section) -> Unit,
     onEditDraft: (String) -> Unit,
+    shareTarget: String,
+    onEditShareTarget: (String) -> Unit,
+    shareStatus: String,
+    sharePending: Boolean,
+    onSend: () -> Unit,
 ) {
     MaterialTheme(colorScheme = atlasScheme) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -132,6 +142,11 @@ internal fun AtlasCompanion(
                             onPair = onPair,
                             onForget = onForget,
                             onEditDraft = onEditDraft,
+                            shareTarget = shareTarget,
+                            onEditShareTarget = onEditShareTarget,
+                            shareStatus = shareStatus,
+                            sharePending = sharePending,
+                            onSend = onSend,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -149,6 +164,11 @@ internal fun AtlasCompanion(
                             onPair = onPair,
                             onForget = onForget,
                             onEditDraft = onEditDraft,
+                            shareTarget = shareTarget,
+                            onEditShareTarget = onEditShareTarget,
+                            shareStatus = shareStatus,
+                            sharePending = sharePending,
+                            onSend = onSend,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
@@ -182,6 +202,11 @@ private fun CompanionContent(
     onPair: (String, String, String) -> Unit,
     onForget: () -> Unit,
     onEditDraft: (String) -> Unit,
+    shareTarget: String,
+    onEditShareTarget: (String) -> Unit,
+    shareStatus: String,
+    sharePending: Boolean,
+    onSend: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -195,14 +220,15 @@ private fun CompanionContent(
                 node, connection, pairing, pairingError, recoveryNodeId,
                 unreadableIdentity, onClearRecovery, onPair,
             )
-            Section.SEND -> SendContent(session, onEditDraft)
+            Section.SEND -> SendContent(session, node, connection, onEditDraft,
+                shareTarget, onEditShareTarget, shareStatus, sharePending, onSend)
             Section.INBOX -> InfoCard(
                 "No incoming items",
                 "The receiving inbox will become available after device capability routing is implemented.",
             )
             Section.SETTINGS -> {
                 InfoCard("App version", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-                InfoCard("Node protocol", "Atlas Node protocol v2 — device capabilities pending")
+                InfoCard("Node protocol", "Atlas Node protocol v2 — outbound text sharing")
                 if (node != null) {
                     InfoCard("Credentials", "Node credentials are encrypted using Android Keystore.")
                     Button(onClick = onForget) { Text("Forget this Node on device") }
@@ -217,7 +243,17 @@ private fun CompanionContent(
 }
 
 @Composable
-private fun SendContent(session: CompanionSession, onEditDraft: (String) -> Unit) {
+private fun SendContent(
+    session: CompanionSession,
+    node: StoredNode?,
+    connection: String,
+    onEditDraft: (String) -> Unit,
+    shareTarget: String,
+    onEditShareTarget: (String) -> Unit,
+    shareStatus: String,
+    sharePending: Boolean,
+    onSend: () -> Unit,
+) {
     if (session.error != null) InfoCard("Share not imported", session.error)
     InfoCard("Share to Atlas", "Text and links from Android's Share menu appear here.")
     OutlinedTextField(
@@ -228,11 +264,23 @@ private fun SendContent(session: CompanionSession, onEditDraft: (String) -> Unit
         minLines = 3,
         maxLines = 8,
     )
-    Button(onClick = {}, enabled = false) {
-        Text("Send — pairing required")
-    }
+    OutlinedTextField(
+        value = shareTarget,
+        onValueChange = onEditShareTarget,
+        label = { Text("Receiving Node ID") },
+        modifier = Modifier.fillMaxWidth().testTag("share-target"),
+        singleLine = true,
+    )
+    Button(
+        onClick = onSend,
+        enabled = node != null && connection == "Online" &&
+            validNodeId(shareTarget) && !shareTarget.equals(node.nodeId, ignoreCase = true) &&
+            session.draft.isNotBlank() && !sharePending,
+        modifier = Modifier.testTag("share-submit"),
+    ) { Text(if (sharePending) "Waiting for approval…" else "Send to selected Node") }
+    InfoCard("Delivery status", shareStatus)
     Text(
-        "Draft only. No content is transmitted or queued until the secure device protocol is ready.",
+        "The recipient must be approved in Atlas Server and online. No share is delivered until the receiving user accepts it. Target selection is manual in this first version.",
         style = MaterialTheme.typography.bodySmall,
     )
 }
@@ -264,7 +312,7 @@ private fun DevicePairing(
     if (node != null) {
         InfoCard("Paired Node", node.name + " · " + node.nodeId)
         InfoCard("Connection", connection)
-        InfoCard("Capabilities", "Connected Node identity only. Device sharing is not enabled yet.")
+        InfoCard("Capabilities", "Outbound text sharing. Recipient approval is required.")
         return
     }
     InfoCard("Not enrolled", "Create a one-time Node enrolment ticket in Atlas Web, then enter it here.")

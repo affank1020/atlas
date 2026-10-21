@@ -1,6 +1,7 @@
 package dev.affankhan.atlas.node
 
 import android.app.Application
+import java.util.UUID
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
@@ -61,6 +62,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var reconnectDelayMs = 1_000L
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
+    private var pendingShareRequestId: String? = null
+    var shareTarget by mutableStateOf("")
+        private set
+    var shareStatus by mutableStateOf("Nothing sent yet")
+        private set
 
     var pairedNode by mutableStateOf(vault.load())
         private set
@@ -134,6 +140,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pendingRetry = null
         cancelBackgroundSocket(socket)
         socket = null
+        if (pendingShareRequestId != null) {
+            pendingShareRequestId = null
+            shareStatus = "Connection closed; delivery was not confirmed."
+        }
         connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · app in background"
     }
 
@@ -143,7 +153,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val generation = ++connectionGeneration
         connectionStatus = "Connecting"
         socket = try {
-            transport.connect(node, BuildConfig.VERSION_NAME) { event ->
+            transport.connect(node, BuildConfig.VERSION_NAME, { event ->
                 handler.post {
                     if (!foreground || generation != connectionGeneration) return@post
                     when (event) {
@@ -153,6 +163,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         }
                         is ConnectionEvent.Offline -> {
                             connectionStatus = event.detail
+                            if (pendingShareRequestId != null) {
+                                pendingShareRequestId = null
+                                shareStatus = "Connection lost; delivery was not confirmed."
+                            }
                             // Close stale WebSockets before attempting a new connection.
                             socket?.cancel()
                             socket = null
@@ -160,7 +174,24 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         }
                     }
                 }
-            }
+            }, { reply ->
+                handler.post {
+                    if (!foreground || generation != connectionGeneration) return@post
+                    if (reply.requestId != pendingShareRequestId) return@post
+                    pendingShareRequestId = null
+                    shareStatus = when {
+                        reply.errorCode != null -> when (reply.errorCode) {
+                            "SHARE_DENIED" -> "This receiving Node is not approved in Atlas."
+                            "SHARE_TARGET_UNAVAILABLE" -> "Receiving Node is offline or not ready."
+                            "SHARE_RATE_LIMIT", "SHARE_BUSY" -> "Too many shares; try again later."
+                            "NODE_TIMEOUT" -> "Recipient did not confirm the share in time."
+                            else -> "Share was not accepted by Atlas."
+                        }
+                        reply.accepted == true -> "Recipient accepted and copied the text."
+                        else -> "Recipient declined the share."
+                    }
+                }
+            })
         } catch (_: Exception) {
             connectionStatus = "Could not connect to Atlas."
             scheduleRetry()
@@ -179,6 +210,31 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000)
     }
 
+    fun editShareTarget(value: String) {
+        shareTarget = value.trim().take(36)
+    }
+
+    fun sendCurrentDraft() {
+        val target = shareTarget.trim()
+        val text = session.draft
+        val ws = socket
+        if (!foreground || connectionStatus != "Online" || pairedNode == null ||
+            pendingShareRequestId != null || !validNodeId(target) || text.isBlank() ||
+            text.length > MAX_SHARE_CHARACTERS || target.equals(pairedNode?.nodeId, ignoreCase = true)) {
+            shareStatus = "Pair your Node, connect, and enter a different valid destination Node ID."
+            return
+        }
+        val requestId = UUID.randomUUID().toString()
+        val deliveryId = UUID.randomUUID().toString()
+        val payload = shareMessage(requestId, deliveryId, target, text)
+        pendingShareRequestId = requestId
+        shareStatus = "Waiting for the receiving Node's approval…"
+        if (ws?.send(payload) != true) {
+            pendingShareRequestId = null
+            shareStatus = "Could not send; delivery was not confirmed."
+        }
+    }
+
     fun forget() {
         val wasForeground = foreground
         stopConnection()
@@ -187,6 +243,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pairingError = null
         unrecoverableIdentity = false
         connectionStatus = "Not enrolled"
+        shareTarget = ""
+        shareStatus = "Nothing sent yet"
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
         foreground = wasForeground
@@ -210,7 +268,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
 
     fun navigate(destination: Section) { session = session.navigate(destination) }
-    fun editDraft(value: String) { session = session.editDraft(value) }
+    fun editDraft(value: String) {
+        session = session.editDraft(value)
+        shareStatus = "Nothing sent yet"
+    }
 
     fun receive(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return
@@ -224,5 +285,6 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             else -> ShareDelivery(nextId, text = text)
         }
         session = session.importShare(delivery)
+        shareStatus = "Nothing sent yet"
     }
 }

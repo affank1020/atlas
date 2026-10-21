@@ -34,6 +34,11 @@ class SharesheetUiTest {
                 onForget = {},
                 onNavigate = { state = state.navigate(it) },
                 onEditDraft = { state = state.editDraft(it) },
+                shareTarget = "",
+                onEditShareTarget = {},
+                shareStatus = "Nothing sent yet",
+                sharePending = false,
+                onSend = {},
             )
         }
     }
