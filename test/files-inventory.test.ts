@@ -92,8 +92,7 @@ test('R2 inventory signs ListObjectsV2, safely paginates and preserves opaque co
 test('Existing but empty local root is a legitimate complete empty inventory', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-file-audit-empty-'));
     try {
-        const pool = { query: async () => { throw new Error('no metadata query needed for empty inventory'); } }
-            as unknown as Pick<Pool, 'query'>;
+        const pool = { query: async () => { throw new Error('no metadata query needed for empty inventory'); } } as unknown as Pick<Pool, 'query'>;
         const report = await auditAtlasFiles({ pool, localRoot: root, now });
         assert.equal(report.local.scanned, 0);
         assert.equal(report.local.candidateOrphans, 0);
