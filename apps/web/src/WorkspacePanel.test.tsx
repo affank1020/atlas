@@ -29,6 +29,20 @@ it('shows Git and Unity health and loads a read-only preview', async () => {
     expect(screen.getByText('editor_play · Approved')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Agent.cs' }));
     expect(await screen.findByText('class Agent {}')).toBeInTheDocument();
+    expect(api.callTool).toHaveBeenCalledWith('workspace_read_file', {
+        projectId: 'project', checkoutId: workspace.id, path: 'Agent.cs',
+    });
+    for (const name of ['workspace_list_dev_tasks', 'workspace_git_status',
+        'workspace_list_files', 'unity_list_commands']) {
+        expect(api.callTool).toHaveBeenCalledWith(name, expect.objectContaining({
+            projectId: 'project', checkoutId: workspace.id,
+        }));
+    }
+    for (const [name, input] of api.callTool.mock.calls) {
+        if (!['workspace_list_dev_tasks', 'workspace_git_status', 'workspace_list_files',
+            'workspace_read_file', 'unity_list_commands'].includes(name)) continue;
+        expect(input).not.toHaveProperty('workspaceId');
+    }
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
     await waitFor(() => expect(api.callTool.mock.calls.filter(x => x[0] === 'list_project_workspaces')).toHaveLength(2));
@@ -63,5 +77,7 @@ it('runs an owner-configured task and shows structured failure output', async ()
     fireEvent.click(await screen.findByRole('button', { name: 'Run test' }));
     expect(await screen.findByText('test · Failed · 4.2s')).toBeInTheDocument();
     expect(screen.getByText('Errors')).toBeInTheDocument();
-    expect(api.callTool).toHaveBeenCalledWith('workspace_run_dev_task', { projectId: 'project', workspaceId: 'workspace', task: 'test' });
+    expect(api.callTool).toHaveBeenCalledWith('workspace_run_dev_task', { projectId: 'project', checkoutId: 'workspace', task: 'test' });
+    expect(api.callTool.mock.calls.find(([name]) => name === 'workspace_run_dev_task')?.[1])
+        .not.toHaveProperty('workspaceId');
 });
