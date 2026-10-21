@@ -165,19 +165,25 @@ export class R2ObjectStore implements ObjectStore {
             });
             return decoded;
         };
-        const objects = contents.map((match): ListedFileObject => {
+        const objects = contents.flatMap((match): ListedFileObject[] => {
             const encodedKey = tag(match[1]!, "Key");
             let key: string;
             try { key = decodeURIComponent(encodedKey); }
-            catch { throw new Error("Invalid R2 inventory key encoding."); }
-            if (!/^files-[a-f0-9]{32}-[a-f0-9]{64}$/.test(key))
-                throw new Error("R2 inventory returned an unexpected file key.");
+            catch {
+                // The bucket can contain unrelated keys with malformed percent
+                // sequences. They aren't Atlas Files inventory candidates.
+                return [];
+            }
+            // S3's prefix is deliberately broader than the server-generated
+            // key format. Ignore out-of-scope files without stopping the scan;
+            // raw Contents count and continuation tokens still bound paging.
+            if (!/^files-[a-f0-9]{32}-[a-f0-9]{64}$/.test(key)) return [];
             const rawSize = tag(match[1]!, "Size");
             const modifiedAt = new Date(tag(match[1]!, "LastModified"));
             const size = Number(rawSize);
             if (!/^\d+$/.test(rawSize) || !Number.isSafeInteger(size) || !Number.isFinite(modifiedAt.getTime()))
                 throw new Error("Invalid R2 inventory metadata.");
-            return { key, size, modifiedAt };
+            return [{ key, size, modifiedAt }];
         });
         const truncation = tag(xml, "IsTruncated");
         if (truncation !== "true" && truncation !== "false") throw new Error("Invalid R2 truncation flag.");
