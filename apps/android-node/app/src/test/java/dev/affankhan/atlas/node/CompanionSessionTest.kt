@@ -5,6 +5,28 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CompanionSessionTest {
+    @Test fun newSharedTextWaitsUntilPreviousDeliveryHasResolved() {
+        var session = CompanionSession().receiveShare(ShareDelivery(1, "A submitted"), sending = false)
+        session = session.receiveShare(ShareDelivery(2, "B arrived"), sending = true)
+        assertEquals("A submitted", session.draft)
+        assertEquals("B arrived", session.deferredShare?.text)
+        assertEquals(1L, session.lastDeliveryId)
+        session = session.loadDeferredShare()
+        assertEquals("B arrived", session.draft)
+        assertEquals(2L, session.lastDeliveryId)
+        assertEquals(null, session.deferredShare)
+    }
+
+    @Test fun newestPendingShareIsStagedWithoutOverwritingSentDraft() {
+        val session = CompanionSession()
+            .receiveShare(ShareDelivery(1, "A submitted"), sending = false)
+            .receiveShare(ShareDelivery(2, "B arrived"), sending = true)
+            .receiveShare(ShareDelivery(3, "C arrived"), sending = true)
+        assertEquals("A submitted", session.draft)
+        assertEquals("C arrived", session.deferredShare?.text)
+        assertEquals("C arrived", session.loadDeferredShare().draft)
+    }
+
     @Test fun sameContentNewDeliveryReopensSendAndResetsEdits() {
         var session = CompanionSession().importShare(ShareDelivery(1, "https://example.com"))
         session = session.editDraft("modified").navigate(Section.DEVICES)
