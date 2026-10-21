@@ -3,6 +3,14 @@
  * must persist uploadId across retries, and must only use approved local or
  * HTTPS Atlas Server addresses. This is not yet a resumable upload protocol.
  */
+/** Only the HTTP status crosses the queue boundary, never private response text. */
+export class NodeFileTransferError extends Error {
+    constructor(readonly httpStatus: number) {
+        super('Atlas Node transfer failed (HTTP ' + httpStatus + ').');
+        this.name = 'NodeFileTransferError';
+    }
+}
+
 export async function uploadNodeFileOnce(input: {
     serverUrl: string; nodeId: string; credential: string; workspaceId: string;
     uploadId: string; fileName: string; mimeType: string; bytes: Uint8Array;
@@ -38,7 +46,7 @@ export async function uploadNodeFileOnce(input: {
     });
     if (!response.ok) {
         // Do not echo request headers, tokens or raw server errors to logs.
-        throw new Error(`Atlas Node file upload failed (HTTP ${response.status}).`);
+        throw new NodeFileTransferError(response.status);
     }
     return response.json() as Promise<{ file: { id: string; checksum: string }; replayed: boolean }>;
 }
@@ -83,7 +91,7 @@ export async function uploadNodeFileResumable(input: {
             signal: AbortSignal.timeout(120_000),
             redirect: 'error',
         });
-        if (!response.ok) throw new Error(`Atlas Node transfer ${action} failed (HTTP ${response.status}).`);
+        if (!response.ok) throw new NodeFileTransferError(response.status);
         return response.json() as Promise<any>;
     }
     const checksum = createHash('sha256').update(input.bytes).digest('hex');

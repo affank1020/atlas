@@ -223,6 +223,54 @@
   not a production-ready unattended expiry policy. Node file uploads remain
   disabled until live R2 and recovery verification are completed.
 
+## Encrypted offline Node upload queue (desktop / headless Nodes)
+
+- The macOS and Linux Node now have an **opt-in** durable local queue.
+  It is **disabled by default** with `ATLAS_NODE_FILE_QUEUE_ENABLED=0`.
+  Turning it on in a Node alone does not enable server uploads; the separate
+  Atlas Server flag `ATLAS_NODE_FILES_ENABLED` remains **off by default**.
+- The local Node CLI provides explicit admission of a selected file only:
+  `npm run build:node`, then
+  `npm run files:node:enqueue -- <workspace-uuid> <file-path> <MIME-type> [display-name]`.
+  Inspect aggregate counts with `npm run files:node:queue-status`.
+  With the queue enabled, the desktop Node flushes up to four jobs serially
+  after authenticated WebSocket registration and once per minute while online.
+  No Node RPC, webhook, browser request or folder watcher can enqueue data.
+- Selected payloads and file names are stored in authenticated
+  **AES-256-GCM encrypted** queue records, in a `0700` directory with `0600`
+  files beneath the Node's local status directory (Application Support on
+  macOS, XDG state on Linux). Encryption keys derive via HKDF from the
+  existing enrolled Node credential and Node ID; **credentials and keys are
+  never written to queue files**. Credential rotation/loss makes queued
+  content unreadable, not recoverable by falling back to plaintext.
+- The queue is bounded to **8 pending files, 128 MiB encrypted disk bytes,
+  25 MiB per file**. Admission uses an exclusive short-lived producer lock and
+  file-sync plus atomic rename; an interrupted writer may leave a hidden
+  temporary file that requires operator inspection. A stale `.enqueue-lock`
+  must be reviewed and removed manually, never automatically stolen.
+  There is no multi-process upload-worker lease: run only one Node service
+  instance per queue directory. Avoid filesystem backups of these private
+  capture bytes unless appropriately encrypted and retention-controlled.
+- Every job retains its original UUID and bytes through network failures and
+  process restarts. The existing authenticated resumable HTTP protocol reports
+  received 1-MiB chunks, so retries resend only missing chunks. Transient
+  errors get exponential retry backoff from 30 seconds to 1 hour, persisted
+  across restarts. HTTP 400/401/403/404/409/413/507 pause delivery for manual
+  inspection rather than looping on denied/expired IDs.
+- A blocked upload is *never* silently re-identified: check Atlas Files and
+  server receipts first to avoid duplicating an ambiguously completed upload.
+  Only with explicit operator action, run
+  `npm run files:node:queue-restart -- <upload-uuid>` to issue a new UUID;
+  `npm run files:node:queue-discard -- <upload-uuid>` discards the
+  encrypted local copy. Neither command removes remote Atlas Files.
+- **Android is not integrated here.** The current Android app has no
+  authorized binary-send workflow, and its future offline queue must use
+  Android Keystore and scoped app storage rather than reuse Node.js
+  filesystem/credential-handling code. This PR does not add permissions,
+  auto-capture, or background work to Android.
+- This is not a production-enablement PR. Live R2 roundtrip, backup and
+  restore verification remain prerequisites.
+
 ## Safe inventory reconciliation — read-only
 
 - Build the server once (`npm run build:server`), then run
