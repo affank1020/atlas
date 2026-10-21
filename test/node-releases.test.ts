@@ -101,6 +101,9 @@ test('source ancestry, not publication time, chooses latest when old A finishes 
     assert.deepEqual(result.releases.slice(0, 2).map(x => x.commit), [newer.slice(0, 12), newer.slice(0, 12)]);
     assert.deepEqual(result.releases.slice(0, 2).map(x => x.platform), ['linux', 'darwin']);
     assert.equal(urls.filter(url => url.includes('/compare/')).length, 1);
+    const refreshed = await listNodeReleases(true, fetcher);
+    assert.equal(refreshed.releases[0]!.sourceCommit, newer);
+    assert.equal(urls.filter(url => url.includes('/compare/')).length, 1, 'immutable ancestry must be reused across refreshes');
 
     // An unavailable or divergent Git ancestry check must not invent a latest build.
     resetNodeReleaseCacheForTests();
