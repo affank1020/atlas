@@ -21,6 +21,16 @@ export type NodeRelease = {
     provenance: 'unverified';
 };
 type Catalogue = { state: 'ready' | 'unavailable'; releases: NodeRelease[]; checkedAt: string; error?: string };
+export type LinuxNodeUpdatePlan = {
+    nodeId: string;
+    status: 'unsupported' | 'offline' | 'unavailable' | 'current' | 'ahead' | 'unknown' | 'candidate';
+    reason: string;
+    candidate: NodeRelease | null;
+    canInstall: false;
+    canActivate: false;
+    provenanceVerified: false;
+};
+
 
 function useSoftwareCatalogue() {
     const [catalogue, setCatalogue] = useState<Catalogue>();
@@ -66,6 +76,15 @@ export function releaseUpdateState(installed: string | null | undefined, release
 
 export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const { catalogue, error, loading } = useSoftwareCatalogue();
+    const [preflight, setPreflight] = useState<{ nodeId: string; result?: LinuxNodeUpdatePlan; error?: string; busy?: boolean }>();
+    const currentPreflight = preflight?.nodeId === node.id ? preflight : undefined;
+    function checkReadiness() {
+        const nodeId = node.id;
+        setPreflight({ nodeId, busy: true });
+        void callTool<LinuxNodeUpdatePlan>('plan_node_update', { nodeId })
+            .then(result => setPreflight({ nodeId, result }))
+            .catch(cause => setPreflight({ nodeId, error: cause instanceof Error ? cause.message : String(cause) }));
+    }
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
     const status = catalogue?.state === 'ready' ? releaseUpdateState(node.version, catalogue.releases, node.platform) : 'unknown';
     return <section className="node-detail-card node-detail-software" aria-label="Node software">
@@ -78,6 +97,13 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             <div><dt>Update control</dt><dd>Not enabled for this Node</dd></div>
         </dl>
         {(error || catalogue?.state === 'unavailable') && <p className="node-detail-empty" role="status">Release lookup unavailable.</p>}
+        {node.platform === 'linux' && <div className="node-software-preflight">
+            <button className="ghost" type="button" onClick={checkReadiness} disabled={currentPreflight?.busy === true}>
+                {currentPreflight?.busy ? 'Checking…' : 'Check Linux update eligibility'}
+            </button>
+            {currentPreflight?.result && <p role="status"><strong>{currentPreflight.result.status === 'candidate' ? 'Candidate identified' : 'No update approved'}:</strong> {currentPreflight.result.reason} <span>Update execution is not enabled.</span></p>}
+            {currentPreflight?.error && <p role="alert">Unable to check update eligibility: {currentPreflight.error}</p>}
+        </div>}
         <a href="#/nodes/software">View downloads and release notes →</a>
     </section>;
 }
