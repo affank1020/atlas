@@ -166,14 +166,27 @@ export class WorkspaceService {
                             target.id, workspace.id, target.rootPath);
                         if (!expectedBranch)
                             throw new AtlasError('Only an Atlas-created worktree can be removed through Atlas.', 'WORKSPACE_DENIED');
-                        // Never trust the caller to provide the branch or target
-                        // path. The Node independently checks both Git identity
-                        // and the expected branch before any filesystem deletion.
                         // This path bypasses NodeRouter.prepare to avoid Node
-                        // re-resolution under database locks. Still strip
-                        // server-only catalogue fields for strict Node v2.
+                        // re-resolution under database locks. Strip server-only
+                        // fields for strict Node v2 before both Git inspection
+                        // and destructive retirement.
                         const { logicalWorkspaceId: _logicalWorkspaceId, ...nodeCheckout } = current;
-                        return removeRuntime!.execute(nodeCheckout, nodeOperation, { ...nodeInput, expectedBranch });
+                        const git = await removeRuntime!.execute(nodeCheckout, 'workspace_git_status', {
+                            workspaceId: nodeCheckout.id,
+                        }) as { available?: boolean; originRepository?: string | null };
+                        if (git?.available !== true || !git.originRepository)
+                            throw new AtlasError('Cannot verify the source GitHub repository; local files were preserved.', 'WORKSPACE_DENIED');
+                        // Git ancestry alone cannot prove a squash-merged PR.
+                        // Fail closed if the exact feature HEAD was not merged
+                        // into the current default branch on GitHub.
+                        const mergedPullRequest = await this.github.verifyMergedPullRequest(
+                            git.originRepository, expectedBranch, x.expectedHead);
+                        // The Node still independently checks branch, HEAD,
+                        // provenance and local changes before removing files.
+                        const removal = await removeRuntime!.execute(nodeCheckout, nodeOperation, {
+                            ...nodeInput, expectedBranch,
+                        });
+                        return { ...(removal as object), mergedPullRequest };
                     }
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
                     ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) }
