@@ -1,8 +1,8 @@
 import { useRouteTiming } from './performance';
 import { rememberWork } from './recentWork';
 import { useEffect, useRef, lazy, Suspense, type ComponentType } from 'react';
-import { useApplicationRead, useListProjectsQuery } from './atlasApi';
-import { IS_MOCK_MODE } from './api';
+import { useApplicationRead } from './atlasApi';
+import { AtlasTopBar } from './AtlasTopBar';
 const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
 import './applications.css';
@@ -44,7 +44,6 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
 }
 
 export function ApplicationWindow({ projectId, slug }: { projectId?: string; slug: string }) {
-    useListProjectsQuery({ includeArchived: false });
     const { data: application, error: queryError, isLoading: busy, refetch } = useApplicationRead<ApplicationManifest>('get_application', projectId ? { projectId, slug } : { slug });
     const error = queryError?.message ?? '';
     useEffect(() => {
@@ -60,13 +59,14 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
     }, [projectId, slug, currentApplication?.name]);
     const Component = currentApplication ? applicationComponents[currentApplication.type] : undefined;
     return <div className="application-window">
-        <header className="application-window-bar">
+        <AtlasTopBar page="application" context={<nav className="application-breadcrumb" aria-label="Application location">
             <a href={projectId ? `#/projects/${projectId}/applications` : '#/applications'} className="application-back">← {projectId ? 'Project Applications' : 'All Applications'}</a>
-            {slug !== 'portfolio' && <button onClick={() => void refetch()}>Refresh application</button>}<span className="application-window-brand">Atlas{IS_MOCK_MODE ? " · Mock data" : ""} / {application?.name ?? 'Application'}</span>
-        </header>
+            <span className="application-breadcrumb-separator" aria-hidden="true">/</span>
+            <span className="application-window-name" title={application?.name ?? slug}>{application?.name ?? 'Application'}</span>
+        </nav>} />
         <main className="application-window-main">
             {busy && <p role="status" className="application-status">Loading Application…</p>}
-            {error && <div role="alert" className="notice error">{error}</div>}
+            {error && <div role="alert" className="notice error">{error} <button type="button" className="ghost" onClick={() => void refetch()}>Retry</button></div>}
             {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
             {Component && !busy && <Suspense fallback={<p role="status">Loading application interface…</p>}><Component /></Suspense>}
         </main>
