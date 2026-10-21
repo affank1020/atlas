@@ -107,6 +107,9 @@ export function parseNodeReleases(body: unknown): NodeRelease[] {
  * within each stable SemVer. If ancestry cannot be proven, fail closed:
  * never recommend a possible downgrade by guessing from publication time.
  */
+const ancestryCache = new Map<string, 'ahead' | 'behind'>();
+// Immutable Git commits have immutable ancestry; cache comparisons across
+// refreshes to avoid exhausting GitHub's unauthenticated request quota.
 export async function orderNodeReleases(releases: NodeRelease[], fetcher: typeof fetch): Promise<NodeRelease[]> {
     const groups = new Map<string, NodeRelease[]>();
     for (const release of releases) {
@@ -117,20 +120,25 @@ export async function orderNodeReleases(releases: NodeRelease[], fetcher: typeof
     const ordered: NodeRelease[] = [];
     for (const [, group] of [...groups].sort(([a], [b]) => compareVersions(a, b))) {
         const builds = group.filter(item => item.platform === 'linux');
-        if (builds.length > 10) throw new Error('Too many same-version builds to verify safely.');
         let newest = builds[0];
         if (!newest) continue;
         for (const candidate of builds.slice(1)) {
             if (candidate.sourceCommit === newest.sourceCommit) continue;
-            const response = await fetcher(SOURCE_COMPARE + newest.sourceCommit + '...' + candidate.sourceCommit, {
-                headers: REQUEST_HEADERS,
-                signal: AbortSignal.timeout(7000),
-            });
-            if (!response.ok) throw new Error('GitHub commit comparison failed.');
-            const comparison: unknown = await response.json();
-            const status = comparison && typeof comparison === 'object' && 'status' in comparison ? comparison.status : undefined;
+            const compareUrl = SOURCE_COMPARE + newest.sourceCommit + '...' + candidate.sourceCommit;
+            let status: unknown = ancestryCache.get(compareUrl);
+            if (!status) {
+                const response = await fetcher(compareUrl, {
+                    headers: REQUEST_HEADERS,
+                    signal: AbortSignal.timeout(7000),
+                });
+                if (!response.ok) throw new Error('GitHub commit comparison failed.');
+                const comparison: unknown = await response.json();
+                status = comparison && typeof comparison === 'object' && 'status' in comparison ? comparison.status : undefined;
+                if (status !== 'ahead' && status !== 'behind') throw new Error('Cannot establish release source ancestry.');
+                if (ancestryCache.size >= 256) ancestryCache.delete(ancestryCache.keys().next().value!);
+                ancestryCache.set(compareUrl, status);
+            }
             if (status === 'ahead') newest = candidate; // head descended from base
-            else if (status !== 'behind') throw new Error('Cannot establish release source ancestry.');
         }
         ordered.push(...group.filter(item => item.sourceCommit === newest.sourceCommit));
         ordered.push(...group.filter(item => item.sourceCommit !== newest.sourceCommit));
@@ -140,7 +148,7 @@ export async function orderNodeReleases(releases: NodeRelease[], fetcher: typeof
 
 let cached: { expires: number; result: NodeReleaseCatalogue } | undefined;
 let pending: Promise<NodeReleaseCatalogue> | undefined;
-export function resetNodeReleaseCacheForTests() { cached = undefined; pending = undefined; }
+export function resetNodeReleaseCacheForTests() { cached = undefined; pending = undefined; ancestryCache.clear(); }
 
 /** Fail visibly if GitHub is unavailable; never promote a debug APK or workflow artifact. */
 export async function listNodeReleases(refresh = false, fetcher: typeof fetch = fetch): Promise<NodeReleaseCatalogue> {
