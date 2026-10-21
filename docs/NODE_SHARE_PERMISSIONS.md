@@ -8,7 +8,7 @@ time. Revoke access using the same panel. Grants are audited and enforced on
 every submission without restarting Atlas Server.
 
 The underlying `node_share_approvals` PostgreSQL table is created by migration
-`025_node_share_approvals.sql`. A Node credential revocation also removes
+`026_node_share_approvals.sql`. A Node credential revocation also removes
 its managed incoming/outgoing approvals. At most 64 directional grants may
 exist. Grants provide **neither** Workspace rights nor an automatic right to
 read the clipboard. The destination must be online with

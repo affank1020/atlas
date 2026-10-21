@@ -153,6 +153,31 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'workspace_list_files': result = { entries: [{ path: 'README.md', type: 'file' }, { path: 'src', type: 'directory' }], truncated: false }; break;
         case 'workspace_read_file': result = { path: input.path, text: '# Demo workspace\nThis is an illustrative local fixture, not a real repository.' }; break;
         case 'unity_list_commands': result = { available: true, state: 'ready', commands: [] }; break;
+        case 'query_monitoring_activity': {
+            const filtered = activity.filter(event => {
+                const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
+                const category = event.operation.startsWith('workspace.git_') ? 'git' : event.operation.startsWith('workspace.file_') ? 'files'
+                    : event.operation.startsWith('workspace.dev_') ? 'dev' : event.operation.startsWith('workspace.unity_') ? 'unity'
+                    : event.operation.startsWith('workspace.') ? 'workspace' : event.operation.startsWith('view.') ? 'view' : 'core';
+                const outcome = event.operation.endsWith('_failed') || details.outcome === 'failed' || details.success === false ? 'failed' : event.operation === 'workspace.mutation_requested' ? 'pending' : 'completed';
+                return (!projectId || event.projectId === projectId)
+                    && (!workspaceId || event.workspaceId === workspaceId)
+                    && (!input.checkoutId || event.workspaceId === input.checkoutId)
+                    && (!storeId || event.storeId === storeId)
+                    && (!input.nodeId || details.nodeId === input.nodeId)
+                    && (!input.client || event.client.toLowerCase() === String(input.client).toLowerCase())
+                    && (!input.operation || event.operation === input.operation)
+                    && (!input.category || category === input.category)
+                    && (!input.outcome || outcome === input.outcome)
+                    && (!input.search || [event.operation, event.client, details.error, details.task].some(value => String(value ?? '').toLowerCase().includes(String(input.search).toLowerCase())))
+                    && (!input.from || event.occurredAt >= String(input.from))
+                    && (!input.to || event.occurredAt <= String(input.to));
+            }).sort((a,b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
+            const offset = Math.max(0, Number(input.offset) || 0);
+            const limit = Math.min(100, Math.max(1, Number(input.limit) || 30));
+            result = { items: filtered.slice(offset, offset + limit), total: filtered.length, limit, offset };
+            break;
+        }
         case 'get_recent_activity': case 'get_audit_history':
             result = activity.filter(event => (!projectId || event.projectId === projectId) && (!workspaceId || event.workspaceId === workspaceId))
                 .slice(0, Number(input.limit) || 200); break;

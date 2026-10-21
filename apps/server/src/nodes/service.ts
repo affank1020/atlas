@@ -5,6 +5,7 @@ import type { NodeRepository } from './repository.js';
 import { NodeIdentity } from './identity.js';
 import type { NodeShareApprovals, ShareAuditClient } from './share-approvals.js';
 import { listNodeReleases } from './releases.js';
+import { buildNodeUpdatePlan } from './update-plan.js';
 import type { NodeRuntime } from './runtime.js';
 
 /** Durable registry plus ephemeral runtime attachments. No transport implementation lives here. */
@@ -53,6 +54,17 @@ export class NodeService {
         if (name === 'list_node_share_approvals') return this.requireShareApprovals().list();
         if (name === 'update_node_share_approval') return this.requireShareApprovals().update(x, caller);
         if (name === 'list_node_releases') return listNodeReleases(x.refresh === true);
+        if (name === 'plan_node_update') {
+            const node = await this.get(x.nodeId);
+            // Do not query GitHub for Nodes that are categorically unsupported
+            // or disconnected; they cannot be sent an update in this phase.
+            const unsupported = node.platform !== 'linux' || node.metadata.runtime !== 'remote'
+                || node.credentialState !== 'active' || node.status !== 'online';
+            const catalogue = unsupported
+                ? { state: 'unavailable' as const, releases: [] }
+                : await listNodeReleases(x.refresh === true);
+            return buildNodeUpdatePlan(node, catalogue);
+        }
         if (name === 'read_node_logs') {
             const node = await this.get(x.nodeId);
             const runtime = this.runtimes.get(x.nodeId);

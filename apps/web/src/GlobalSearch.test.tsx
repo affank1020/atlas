@@ -43,34 +43,22 @@ test('Node activity results are clearly distinguished from raw server logs', asy
     fireEvent.change(screen.getByRole('textbox', { name: 'Search or describe an action' }), { target: { value: 'check logs for my Mac node' } });
     const node = await screen.findByRole('link', { name: /Inspect MacBook activity/ }, { timeout: 3000 });
     expect(node).toHaveAttribute('href', '#/nodes?node=n');
-    expect(screen.getByText(/Node log access is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/Node log access is unavailable/)).not.toBeInTheDocument();
     expect(within(screen.getByRole('dialog', { name: 'Search Atlas' })).getByText(/Some sources could not be searched/)).toBeInTheDocument();
 });
 
-test('approved Node log action reads bounded stderr inside the command palette', async () => {
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'search_everything') return {
-            query: 'show the last 100 error lines from my Mac node',
-            results: [{
-                kind: 'node', id: 'node-1', title: 'Read MacBook error logs',
-                description: 'Latest 100 lines · stderr', context: 'MacBook / macOS',
-                href: '#/nodes?node=node-1', score: 120,
-                action: { type: 'read_node_logs', nodeId: 'node-1', source: 'stderr', lines: 100 },
-            }], incomplete: [],
-        };
-        if (name === 'read_node_logs') return { source: 'stderr', available: true, truncated: false, lines: ['Connection closed', 'Retry scheduled'] };
-        // Unrelated reads must not obscure this interaction; assertions below verify the exact log request.
-        return undefined as never;
+test('node log search routes to the unified Monitoring log viewer', async () => {
+    vi.mocked(callTool).mockResolvedValue({
+        query: 'show the last 100 error lines from my Mac node',
+        results: [{
+            kind: 'node', id: 'node-1', title: 'Read MacBook error logs',
+            description: 'Latest 100 lines · stderr', context: 'MacBook / macOS',
+            href: '#/monitoring?tab=logs&nodeId=node-1', score: 120,
+        }], incomplete: [],
     });
     render(<GlobalSearch onClose={() => {}} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Search or describe an action' }), { target: { value: 'show the last 100 error lines from my Mac node' } });
-    const button = await screen.findByRole('button', { name: /Read MacBook error logs/ }, { timeout: 3000 });
+    const link = await screen.findByRole('link', { name: /Read MacBook error logs/ }, { timeout: 3000 });
+    expect(link).toHaveAttribute('href', '#/monitoring?tab=logs&nodeId=node-1');
     expect(callTool).not.toHaveBeenCalledWith('read_node_logs', expect.anything());
-    fireEvent.click(button);
-    expect(await screen.findByText(/Connection closed/)).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Node logs' })).toBeInTheDocument();
-    expect(screen.getByText(/Retry scheduled/)).toBeInTheDocument();
-    expect(callTool).toHaveBeenCalledWith('read_node_logs', { nodeId: 'node-1', source: 'stderr', lines: 100 });
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.queryByRole('region', { name: 'Node logs' })).not.toBeInTheDocument();
 });

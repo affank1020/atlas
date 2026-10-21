@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AtlasNode } from './Nodes';
 import './node-software.css';
@@ -21,6 +21,16 @@ export type NodeRelease = {
     provenance: 'unverified';
 };
 type Catalogue = { state: 'ready' | 'unavailable'; releases: NodeRelease[]; checkedAt: string; error?: string };
+export type LinuxNodeUpdatePlan = {
+    nodeId: string;
+    status: 'unsupported' | 'offline' | 'unavailable' | 'current' | 'ahead' | 'unknown' | 'candidate';
+    reason: string;
+    candidate: NodeRelease | null;
+    canInstall: false;
+    canActivate: false;
+    provenanceVerified: false;
+};
+
 
 function useSoftwareCatalogue() {
     const [catalogue, setCatalogue] = useState<Catalogue>();
@@ -66,6 +76,34 @@ export function releaseUpdateState(installed: string | null | undefined, release
 
 export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const { catalogue, error, loading } = useSoftwareCatalogue();
+    // The same Node ID can be re-enrolled, disconnected or upgraded while this
+    // detail card stays mounted. Eligibility applies to the observed runtime
+    // snapshot, not the identity alone.
+    const nodeSnapshot = JSON.stringify([node.id, node.platform, node.version, node.status, node.credentialState]);
+    const requestGeneration = useRef(0);
+    const [preflight, setPreflight] = useState<{ snapshot: string; result?: LinuxNodeUpdatePlan; error?: string; busy?: boolean }>();
+    const currentPreflight = preflight?.snapshot === nodeSnapshot ? preflight : undefined;
+    useEffect(() => {
+        setPreflight(undefined);
+        // Reject outstanding results when this snapshot changes or unmounts.
+        return () => { requestGeneration.current += 1; };
+    }, [nodeSnapshot]);
+    function checkReadiness() {
+        const nodeId = node.id;
+        const snapshot = nodeSnapshot;
+        const generation = ++requestGeneration.current;
+        setPreflight({ snapshot, busy: true });
+        void callTool<LinuxNodeUpdatePlan>('plan_node_update', { nodeId })
+            .then(result => {
+                if (requestGeneration.current !== generation) return;
+                setPreflight(current => current?.snapshot === snapshot ? { snapshot, result } : current);
+            })
+            .catch(cause => {
+                if (requestGeneration.current !== generation) return;
+                setPreflight(current => current?.snapshot === snapshot
+                    ? { snapshot, error: cause instanceof Error ? cause.message : String(cause) } : current);
+            });
+    }
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
     const status = catalogue?.state === 'ready' ? releaseUpdateState(node.version, catalogue.releases, node.platform) : 'unknown';
     return <section className="node-detail-card node-detail-software" aria-label="Node software">
@@ -78,6 +116,13 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             <div><dt>Update control</dt><dd>Not enabled for this Node</dd></div>
         </dl>
         {(error || catalogue?.state === 'unavailable') && <p className="node-detail-empty" role="status">Release lookup unavailable.</p>}
+        {node.platform === 'linux' && <div className="node-software-preflight">
+            <button className="ghost" type="button" onClick={checkReadiness} disabled={currentPreflight?.busy === true}>
+                {currentPreflight?.busy ? 'Checking…' : 'Check Linux update eligibility'}
+            </button>
+            {currentPreflight?.result && <p role="status"><strong>{currentPreflight.result.status === 'candidate' ? 'Candidate identified' : 'No update approved'}:</strong> {currentPreflight.result.reason} <span>Update execution is not enabled.</span></p>}
+            {currentPreflight?.error && <p role="alert">Unable to check update eligibility: {currentPreflight.error}</p>}
+        </div>}
         <a href="#/nodes/software">View downloads and release notes →</a>
     </section>;
 }
