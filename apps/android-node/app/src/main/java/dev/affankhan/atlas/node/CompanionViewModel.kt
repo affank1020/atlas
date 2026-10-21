@@ -158,12 +158,15 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun forget() {
+        val wasForeground = foreground
         stopConnection()
         vault.clear()
         pairedNode = null
         pairingError = null
         connectionStatus = "Not enrolled"
-        foreground = false
+        // Forgetting while the Activity is open must not prevent a new pair
+        // from opening its socket immediately after enrolment.
+        foreground = wasForeground
     }
 
     override fun onCleared() {
