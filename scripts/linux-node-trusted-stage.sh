@@ -63,7 +63,8 @@ verify_archive() {
     --cert-identity 'https://github.com/affank1020/atlas/.github/workflows/node-package.yml@refs/heads/main' \
     --source-ref refs/heads/main \
     --source-digest "$source_sha" \
-    --predicate-type https://slsa.dev/provenance/v1 >/dev/null ||
+    --predicate-type https://slsa.dev/provenance/v1 \
+    --deny-self-hosted-runners >/dev/null ||
     die "Build-provenance verification failed. Release was not installed."
   echo "Verified GitHub build provenance for source $source_sha."
 }
