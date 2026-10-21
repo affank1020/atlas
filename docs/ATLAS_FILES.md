@@ -358,9 +358,12 @@ recovery point are required for full disaster recovery.
   `ATLAS_R2_RECOVERY_ACCESS_KEY_ID`, and
   `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY` for **a distinct backup bucket**.
   Supply read-only R2 GET permissions to both sets of credentials when
-  running the drill. Missing/partial backup settings or the same source and
-  destination bucket **abort the check**; it never silently falls back to
-  reading the source twice.
+  running the drill. The **backup access-key ID and secret must each differ**
+  from the primary credentials even when using a different bucket; configure
+  separately scoped read-only backup tokens rather than granting a primary
+  credential access to recovery storage. Missing/partial backup settings,
+  credential reuse, or the same source and destination bucket **abort the
+  check**; it never silently falls back to reading the source twice.
 - Run `npm run build:server`, then
   `npm run files:r2:verify-recovery` on a trusted host. The script adds
   `--dry-run` automatically. An optional
@@ -371,8 +374,11 @@ recovery point are required for full disaster recovery.
   row can return `status: "passed"`. Every sampled or subsequent cursor run
   remains `partial` even when all inspected bytes are correct, because it
   cannot by itself prove whole-catalogue coverage.
-- All `atlas_files` rows, including archived entries, are eligible. The
-  command selects up to 11 metadata rows for bounded pagination, then performs
+- All `atlas_files` rows, including archived entries and corrupted
+  records with even an empty storage key, are included in the uncursored
+  scan. Invalid metadata counts as a failure rather than being skipped from
+  a superficially complete report. The command selects up to 11 metadata
+  rows for bounded pagination, then performs
   at most **two signed GETs per checked file**: one from primary R2, one from
   its separately configured recovery bucket. Both responses are streamed with
   a hard 25-MiB per-object read cap and checked against the committed SHA-256
