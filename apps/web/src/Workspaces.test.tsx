@@ -83,10 +83,12 @@ test('publishing and creating feature worktrees use the selected checkoutId', as
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_push_branch', {
         checkoutId: repo.id, repository: 'example/atlas', branch: 'atlas/feature', expectedHead: sha,
     }));
-    await waitFor(() => expect(within(inspector).getByRole('button', { name: 'Open draft PR' })).toBeEnabled());
+    // The form requires a nonempty title before the button can be enabled.
+    // Populate it first, then wait for the post-push checkout refresh.
     fireEvent.change(within(inspector).getByLabelText('Pull request title'), {
         target: { value: 'Finish checkout selector migration' },
     });
+    await waitFor(() => expect(within(inspector).getByRole('button', { name: 'Open draft PR' })).toBeEnabled());
     fireEvent.click(within(inspector).getByRole('button', { name: 'Open draft PR' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_open_pull_request', {
         checkoutId: repo.id, repository: 'example/atlas', branch: 'atlas/feature',
