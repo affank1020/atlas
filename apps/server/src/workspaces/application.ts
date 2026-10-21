@@ -208,6 +208,15 @@ export class WorkspaceService {
             db = await this.repository.connect();
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);
+            if (name === 'workspace_git_create_worktree') {
+                // Recognition moves every member of a provisional logical group
+                // while holding that group's advisory lock. Take the SAME lock
+                // before locking the source checkout or touching the Node:
+                // otherwise the new checkout's FK to the old group can deadlock
+                // against recognition's bulk checkout update, leaving a real
+                // Git worktree on disk without an Atlas registration.
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
+            }
             // Do not hold a Core project row lock across slow external-tool calls.
             if (x.projectId) await db.requireActiveProject(x.projectId);
             await db.lockWorkspace(workspace.id);
@@ -240,7 +249,7 @@ export class WorkspaceService {
                     // A feature worktree inherits the source's logical identity.
                     // A fresh clone joins the globally verified repository identity.
                     ...(name === 'workspace_git_create_worktree'
-                        ? { logicalWorkspaceId: workspace.logicalWorkspaceId }
+                        ? { logicalWorkspaceId: current.logicalWorkspaceId }
                         : { repository: x.repository }) });
                 await db.audit(registered, 'workspace.created', x.client, {
                     sourceWorkspaceId: workspace.id, branch: result.branch,
