@@ -76,6 +76,29 @@ test('Workspace V2 supports Project-independent registration and multiple option
     assert.equal((await svc.call('get_workspace', { workspaceId: ws.id }) as any).projectId, p2.id);
 });
 
+test('renaming a single-checkout local Workspace updates its logical browser name', async () => {
+    const { catalog, store } = await databaseFixture();
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async () => ({ available: false }),
+    };
+    const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const ws: any = await svc.call('create_workspace', {
+        name: 'Old name', rootPath: '/trusted/rename-test', kind: 'generic',
+    });
+    assert.equal((await svc.call('list_logical_workspaces', {}) as any[])[0].name, 'Old name');
+    const updated: any = await svc.call('update_workspace', { workspaceId: ws.id, name: 'New name' });
+    assert.equal(updated.name, 'New name');
+    const groups = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].name, 'New name');
+    assert.equal(groups[0].checkouts[0].name, 'New name');
+    assert.equal(groups[0].id, ws.logicalWorkspaceId);
+    assert.equal((await svc.call('get_workspace', { workspaceId: ws.id }) as any).name, 'New name');
+});
+
 test('verified Git origins unify distinct checkout bindings without changing their IDs or Node paths', async () => {
     const { catalog, store } = await databaseFixture();
     const runtime: ExecutionHost = {
@@ -220,6 +243,7 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     git('config', 'user.email', 'test@example.test');
     writeFileSync(path.join(source, 'README.md'), 'initial');
     git('add', 'README.md'); git('commit', '-m', 'initial');
+    git('remote', 'add', 'origin', 'https://github.com/affank1020/atlas.git');
 
     const { catalog, store } = await databaseFixture();
     const localNode = new LocalNodeRuntime([parent], new Map(), 'linux');
@@ -232,8 +256,18 @@ test('managed worktree creation auto-registers an independent Workspace and remo
             return localNode.execute(checkout, operation, input);
         },
     };
+    let prMerged = false;
+    let verified = 0;
+    const broker = { verifyMergedPullRequest: async (repository: string, branch: string, head: string) => {
+        verified++;
+        assert.equal(repository, 'affank1020/atlas');
+        assert.equal(branch, 'atlas/test-feature');
+        assert.match(head, /^[a-f0-9]{40}$/);
+        if (!prMerged) throw new Error('No merged PR matches this exact branch HEAD');
+        return { number: 42, url: 'https://github.com/affank1020/atlas/pull/42' };
+    } } as any;
     const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
-        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')), broker);
     const originalWorkspace: any = await svc.call('create_workspace',
         { name: 'Main checkout', rootPath: source, kind: 'generic' });
     const dest = path.join(parent, 'feature-checkout');
@@ -249,6 +283,36 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     const registered: any[] = await svc.call('list_workspaces', {});
     assert.equal(registered.length, 2);
 
+    // The source has not yet been recognised, so its new managed worktree
+    // belongs to the same provisional local identity.
+    const provisional = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(provisional.length, 1);
+    assert.deepEqual(provisional[0].checkouts.map((w: any) => w.id).sort(),
+        [originalWorkspace.id, created.workspace.id].sort());
+    const recognised: any = await svc.call('attach_checkout_repository', {
+        workspaceId: originalWorkspace.id,
+    });
+    const logical = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(logical.length, 1);
+    assert.equal(logical[0].repository, 'affank1020/atlas');
+    assert.equal(recognised.logicalWorkspaceId, logical[0].id);
+    assert.deepEqual(logical[0].checkouts.map((w: any) => w.id).sort(),
+        [originalWorkspace.id, created.workspace.id].sort(),
+        'Recognising a source must also move its existing Atlas-managed worktrees');
+    assert.equal((await svc.call('get_workspace', { workspaceId: created.workspace.id }) as any)
+        .logicalWorkspaceId, recognised.logicalWorkspaceId);
+
+    // Reject unmerged feature retirement BEFORE passing removal to the Node.
+    await assert.rejects(svc.call('workspace_git_remove_worktree', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
+        expectedHead: created.head,
+    }), /No merged PR matches/);
+    assert.equal(verified, 1);
+    assert.equal((await svc.call('get_workspace', { workspaceId: created.workspace.id }) as any).status, 'active');
+    const { existsSync } = await import('node:fs');
+    assert.equal(existsSync(dest), true, 'Unmerged feature working directory must survive');
+    prMerged = true;
+
     // Even a clean Atlas-created worktree cannot be deleted if its branch has
     // changed since registration. Preserve it and allow switching back.
     execFileSync('/usr/bin/git', ['-C', dest, 'switch', '-c', 'atlas/switched'], { encoding: 'utf8' });
@@ -263,6 +327,8 @@ test('managed worktree creation auto-registers an independent Workspace and remo
         expectedHead: created.head,
     });
     assert.equal(removed.preservedBranch, 'atlas/test-feature');
+    assert.equal(removed.mergedPullRequest.number, 42);
+    assert.ok(verified >= 2);
     assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 1);
     assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 2);
     assert.equal(git('rev-parse', 'refs/heads/atlas/test-feature'), created.head);
