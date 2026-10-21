@@ -18,6 +18,13 @@ test('only published, checksum-addressed desktop artifacts enter the catalogue',
     assert.deepEqual(entries.map(x => x.platform), ['linux', 'darwin']);
     assert.equal(entries[0]!.sha256, sha);
     assert.equal(entries[0]!.protocol, 2);
+    // A correctly named, immutable release is NOT proof of signed build provenance.
+    // No attestation endpoint is queried, so even an unsigned manual publication
+    // must never be labelled attested in the public catalogue.
+    assert.equal(entries[0]!.provenance, 'unverified');
+    assert.equal(Object.hasOwn(entries[0]!, 'signature'), false);
+    const manualRelease = parseNodeReleases([{ ...good, body: 'Manually published; no attestation exists.' }]);
+    assert.equal(manualRelease[0]!.provenance, 'unverified');
     for (const patch of [
         { draft: true }, { prerelease: true }, { immutable: false }, { tag_name: 'android-v0.1.0' },
         { assets: good.assets.slice(0, 1) },
