@@ -81,11 +81,11 @@ export class AtlasFilesService {
                 [id,owner.kind,owner.id,storageKey,checksum,fileName,input.mimeType,input.bytes.length,visibility,input.client ?? "atlas-files"]);
             return fileRow(result.rows[0]!);
         } catch (error) {
-            // The PUT might have succeeded even when its acknowledgement failed.
-            // The key is server-generated and unique to this attempt. Never mask
-            // the original failure, but surface cleanup failures to operators.
-            try { await this.objects.delete(storageKey); }
-            catch { console.error("Atlas Files failed to clean up an uncommitted object."); }
+            // A PUT or INSERT may have committed despite a lost acknowledgement.
+            // Verify durable metadata before deleting; on database uncertainty
+            // retain the object rather than risking destruction of a valid file.
+            try { await this.discardUncommitted({ id, checksum }); }
+            catch { console.error("Atlas Files could not confirm/clean an uncommitted object."); }
             throw error;
         }
     }
