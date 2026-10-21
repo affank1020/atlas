@@ -68,7 +68,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const { catalogue, error, loading } = useSoftwareCatalogue();
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
     const status = catalogue?.state === 'ready' ? releaseUpdateState(node.version, catalogue.releases, node.platform) : 'unknown';
-    return <section className="node-inspector-section" aria-label="Node software">
+    return <section className="node-detail-card node-detail-software" aria-label="Node software">
         <h3>Software</h3>
         <dl className="node-software-summary">
             <div><dt>Installed</dt><dd>{node.version || 'Not reported'}</dd></div>
@@ -77,7 +77,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             <div><dt>Last successful update</dt><dd>Not recorded</dd></div>
             <div><dt>Update control</dt><dd>Not enabled for this Node</dd></div>
         </dl>
-        {(error || catalogue?.state === 'unavailable') && <p className="node-inspector-empty" role="status">Release lookup unavailable.</p>}
+        {(error || catalogue?.state === 'unavailable') && <p className="node-detail-empty" role="status">Release lookup unavailable.</p>}
         <a href="#/nodes/software">View downloads and release notes →</a>
     </section>;
 }

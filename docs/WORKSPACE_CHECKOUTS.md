@@ -103,6 +103,24 @@ step. The existing `get_workspace` and `list_workspaces` tool names are
 retained; checkout selection is explicit via parameters, not an implicit
 logical Workspace lookup.
 
+### Atlas Web checkout selectors
+
+The Workspaces browser and the Project Workspace panel now send `checkoutId`
+for status, file previews, Git operations, owner-defined dev tasks, repository
+recognition and PR workflows. Worktree retirement uses both `checkoutId` for
+the source and `targetCheckoutId` for the managed feature checkout; the server
+still resolves the destructive target path and revalidates retirement safety.
+
+The browser's existing `#/workspaces?workspace=...` deep links remain valid for
+both logical and physical selections. A logical Workspace can have several
+Node-bound checkouts; choosing a Node changes the physical `checkoutId` sent
+to the API. Project association controls continue to use `logicalWorkspaceId`
+because they apply to the entire logical Workspace, not a single Node.
+
+The Node placement tool `assign_workspace_node` and audit history filters
+continue using `workspaceId` because they have separate, unchanged contracts.
+Older third-party MCP/HTTP clients also remain compatible.
+
 ## Limitations before a later cleanup
 
 - Migration `021_logical_workspace_project_links.sql` makes optional Project
@@ -143,7 +161,7 @@ logical Workspace lookup.
   Git repository identities with only archived checkouts are retained.
 
 Do not remove old checkout rows or force-delete directories during this
-transition. **Backup PostgreSQL before migration 020.** Verify the union of
+transition. **Backup PostgreSQL before migration 021.** Verify the union of
 Project IDs on Portfolio Site (Mac and Linux), that original checkout IDs remain
 addressable, that Project-scoped tools still work, and that a fresh managed
 worktree inherits Project associations. Do not drop the legacy association

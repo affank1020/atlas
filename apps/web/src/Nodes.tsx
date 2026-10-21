@@ -4,7 +4,7 @@ import { NodeSoftwareSummary } from './NodeSoftware';
 import './workspaces.css';
 export type AtlasNode = {
     id: string; name: string; status: 'online' | 'offline' | 'unavailable';
-    platform?: string; version?: string | null; credentialState?: string; credentialUpdatedAt?: string | null;
+    platform?: string; deviceType?: 'phone' | 'tablet'; version?: string | null; credentialState?: string; credentialUpdatedAt?: string | null;
     capabilities: string[]; lastSeen: string | null; hostedWorkspaceCount: number;
     workspaces?: { id: string; projectId: string | null; name: string; kind: string }[];
     activity?: {operation: string; createdAt: string}[];
@@ -32,7 +32,7 @@ function topologyPoints(count: number): NodePoint[] {
     if (count === 2) return [{ x: 175, y: 300 }, { x: 825, y: 300 }];
     return Array.from({ length: count }, (_, index) => {
         const angle = -Math.PI / 2 + (index * 2 * Math.PI) / count;
-        return { x: 500 + 325 * Math.cos(angle), y: 300 + 205 * Math.sin(angle) };
+        return { x: 500 + 300 * Math.cos(angle), y: 300 + 205 * Math.sin(angle) };
     });
 }
 function formatWhen(value: string | null | undefined) {
@@ -42,87 +42,105 @@ function platformName(value: string | undefined) {
     if (value === 'darwin') return 'macOS';
     if (value === 'linux') return 'Linux';
     if (value === 'win32') return 'Windows';
+    if (value === 'android') return 'Android';
     return value || 'Unknown OS';
 }
-function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onChange, onTicket }: {
-    node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string;
-    nodes: AtlasNode[]; onClose: () => void;
+
+function nodeIcon(node: AtlasNode) {
+    if (node.platform === 'android') return node.deviceType === 'tablet' ? '▭' : '▯';
+    return node.platform === 'darwin' ? '⌘' : node.platform === 'linux' ? '▤' : '▣';
+}
+function nodePlatformLabel(node: AtlasNode) {
+    return node.platform === 'android' && node.deviceType ? `Android ${node.deviceType}` : platformName(node.platform);
+}
+
+function NodeSummary({ node, detail, nodes, loading, unavailable, onClear, onChange, onTicket }: {
+    node?: AtlasNode; detail?: AtlasNode; nodes: AtlasNode[]; loading: boolean; unavailable: boolean; onClear: () => void;
     onChange: (action: () => Promise<unknown>, success: string) => Promise<void>;
     onTicket: (value: {enrolmentToken: string; expiresAt: string; nodeId: string | null}) => void;
 }) {
-    const current = detail || node;
-    return <aside className="node-inspector" aria-label="Node details">
-        <header className="node-inspector-head">
-            <span className="eyebrow">Node inspector</span>
-            <button className="node-inspector-close" aria-label="Close node details" onClick={onClose}>×</button>
-        </header>
-        <div className="node-inspector-identity">
-            <span className={'node-inspector-machine ' + (node.status === 'online' ? 'is-online' : '')} aria-hidden="true">▣</span>
-            <h2>{node.name}</h2>
-            <div className="node-inspector-state"><NodeStatus status={node.status} /><span>{platformName(node.platform)}</span></div>
-        </div>
-        <dl className="node-inspector-stats">
-            <div><dt>Workspaces</dt><dd>{current.hostedWorkspaceCount}</dd></div>
-            <div><dt>Last seen</dt><dd>{node.lastSeen ? new Date(node.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Never'}</dd></div>
-        </dl>
-        {loading && <p className="node-inspector-notice" role="status">Loading node details…</p>}
-        {detailError && <p className="node-inspector-notice" role="alert">Some details could not be loaded: {detailError}</p>}
-        <section className="node-inspector-section">
-            <h3>Capabilities <span>{current.capabilities.length}</span></h3>
-            <NodeCapabilities capabilities={current.capabilities} />
-        </section>
-        <NodeSoftwareSummary node={current} />
-        <section className="node-inspector-section">
-            <h3>Hosted workspaces <span>{current.hostedWorkspaceCount}</span></h3>
-            {detail?.workspaces?.length ? <ul className="node-workspace-list">{detail.workspaces.map(workspace => <li key={workspace.id}>
-                <a href={'#/workspaces?workspace=' + encodeURIComponent(workspace.id)}>{workspace.name}</a>
-                <select aria-label={'Assign ' + workspace.name + ' to Node'} value={node.id} onChange={event => {
-                    const target = event.target.value;
-                    if (target === node.id) return;
-                    if (window.confirm('Move ' + workspace.name + ' to ' + nodes.find(item => item.id === target)?.name + '?')) {
-                        void onChange(() => callTool('assign_workspace_node', { projectId: workspace.projectId, workspaceId: workspace.id, nodeId: target, expectedNodeId: node.id }), 'Workspace placement updated.');
-                    }
-                }}>
-                    <option value={node.id}>{node.name}</option>
-                    {nodes.filter(target => target.id !== node.id && target.credentialState === 'active').map(target => <option value={target.id} key={target.id}>{target.name}</option>)}
-                </select>
-            </li>)}</ul> : <p className="node-inspector-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : 'Select to load workspace details.'}</p>}
-        </section>
-        <section className="node-inspector-section">
-            <h3>Recent activity</h3>
-            {detail?.activity?.length ? <ul className="node-activity-list">{detail.activity.map((item, index) => <li key={item.createdAt + '-' + index}><span>{item.operation}</span><time>{formatWhen(item.createdAt)}</time></li>)}</ul> : <p className="node-inspector-empty">{loading ? 'Loading activity…' : 'No recent activity.'}</p>}
-        </section>
-        <details className="node-inspector-advanced">
-            <summary>Technical details</summary>
-            <dl>
-                <div><dt>Node ID</dt><dd><code>{node.id}</code></dd></div>
-                <div><dt>Runtime version</dt><dd>{node.version || 'Not reported'}</dd></div>
-                <div><dt>Credential</dt><dd>{node.credentialState || 'Unknown'}</dd></div>
-                <div><dt>Credential updated</dt><dd>{formatWhen(node.credentialUpdatedAt)}</dd></div>
-                <div><dt>Last connected</dt><dd>{formatWhen(node.lastSeen)}</dd></div>
+    const online = nodes.filter(item => item.status === 'online').length;
+    const disconnected = nodes.length - online;
+    return <aside className="node-summary" aria-label={node ? 'Selected node' : 'Node health overview'}>
+        {node ? <>
+            <header className="node-summary-top">
+                <span className="eyebrow">Selected node</span>
+                <button className="node-summary-clear" type="button" aria-label="Clear node selection" onClick={onClear}>×</button>
+            </header>
+            <span className="node-summary-machine" aria-hidden="true">{nodeIcon(node)}</span>
+            <h2 className="node-summary-name">{node.name}</h2>
+            <div className="node-summary-state"><NodeStatus status={node.status} /><span>{nodePlatformLabel(node)}</span></div>
+            <dl className="node-summary-metrics node-summary-selected-metrics">
+                <div><dt>Workspaces</dt><dd>{detail?.hostedWorkspaceCount ?? node.hostedWorkspaceCount}</dd></div>
+                <div><dt>Last seen</dt><dd className="node-summary-time">{formatWhen(node.lastSeen)}</dd></div>
             </dl>
-        </details>
-        <details className="node-inspector-advanced node-inspector-manage">
-            <summary>Manage node</summary>
-            <p>Changes here affect this runtime and its assigned workspaces.</p>
-            <div className="node-management-actions">
-                <button className="ghost" onClick={() => {
-                    const name = window.prompt('Node name', node.name);
-                    if (name?.trim()) void onChange(() => callTool('update_node', { nodeId: node.id, name: name.trim() }), 'Node renamed.');
-                }}>Rename</button>
-                <button className="ghost" onClick={() => {
-                    if (window.confirm('Rotate ' + node.name + "'s credential? Its current connection will close.")) {
-                        void onChange(async () => { onTicket(await callTool('rotate_node_credential', { nodeId: node.id })); }, 'Credential rotated. Enrol this Node again with the one-time code.');
-                    }
-                }}>Rotate credential</button>
-                <button className="ghost danger" onClick={() => {
-                    if (window.confirm('Revoke ' + node.name + '? Its current connection will close and assigned workspaces will be offline.')) {
-                        void onChange(() => callTool('revoke_node', { nodeId: node.id }), 'Node credential revoked.');
-                    }
-                }}>Revoke</button>
-            </div>
-        </details>
+            <section className="node-summary-capabilities" aria-label="Capabilities">
+                <h3>Capabilities</h3>
+                <NodeCapabilities capabilities={detail?.capabilities ?? node.capabilities} />
+            </section>
+            <section className="node-summary-manage" aria-label="Manage node">
+                <h3>Manage node</h3>
+                <div className="node-management-actions">
+                    <button className="ghost" onClick={() => {
+                        const name = window.prompt('Node name', node.name);
+                        if (name?.trim()) void onChange(() => callTool('update_node', { nodeId: node.id, name: name.trim() }), 'Node renamed.');
+                    }}>Rename</button>
+                    <button className="ghost" onClick={() => {
+                        if (window.confirm('Rotate ' + node.name + "'s credential? Its current connection will close.")) {
+                            void onChange(async () => { onTicket(await callTool('rotate_node_credential', { nodeId: node.id })); }, 'Credential rotated. Enrol this Node again with the one-time code.');
+                        }
+                    }}>Rotate credential</button>
+                    <button className="ghost danger" onClick={() => {
+                        if (window.confirm('Revoke ' + node.name + '? Its current connection will close and assigned workspaces will be offline.')) {
+                            void onChange(() => callTool('revoke_node', { nodeId: node.id }), 'Node credential revoked.');
+                        }
+                    }}>Revoke</button>
+                </div>
+            </section>
+        </> : <>
+            <span className="eyebrow">Status overview</span>
+            <h2>{loading && !nodes.length ? 'Connecting to nodes…' : unavailable ? 'Status unavailable' : !nodes.length ? 'No nodes connected' : !disconnected ? 'All nodes online' : online + ' of ' + nodes.length + ' online'}</h2>
+            <p className="node-summary-description">{unavailable ? 'Unable to load node health. Use Refresh to try again.' : !nodes.length ? 'Enrol a runtime to start monitoring your nodes here.' : disconnected ? 'Some runtimes are offline or unavailable. Select a node to inspect it.' : 'All registered runtimes are currently connected.'}</p>
+            <dl className="node-summary-metrics">
+                <div><dt>Online</dt><dd>{unavailable || (loading && !nodes.length) ? '—' : online}</dd></div>
+                <div><dt>Offline / unavailable</dt><dd>{unavailable || (loading && !nodes.length) ? '—' : disconnected}</dd></div>
+            </dl>
+        </>}
     </aside>;
+}
+
+function NodeDetails({ node, detail, loading, detailError }: {
+    node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string;
+}) {
+    const current = detail || node;
+    return <section className="node-details" aria-label="Selected node details">
+        <div className="node-details-heading"><h2>Node details</h2><span>{node.name}</span></div>
+        {loading && <p className="node-detail-notice" role="status">Loading node details…</p>}
+        {detailError && <p className="node-detail-notice" role="alert">Some details could not be loaded: {detailError}</p>}
+        <div className="node-detail-grid">
+            <section className="node-detail-card node-detail-workspaces">
+                <h3>Hosted workspaces <span>{current.hostedWorkspaceCount}</span></h3>
+                {detail?.workspaces?.length ? <ul className="node-workspace-list">{detail.workspaces.map(workspace => <li key={workspace.id}>
+                    <a href={'#/workspaces?workspace=' + encodeURIComponent(workspace.id)}>{workspace.name}</a>
+                </li>)}</ul> : <p className="node-detail-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : detailError ? 'Workspace details unavailable.' : 'Loading workspace details…'}</p>}
+            </section>
+            <section className="node-detail-card node-detail-activity">
+                <h3>Recent activity</h3>
+                {detail?.activity?.length ? <ul className="node-activity-list">{detail.activity.map((item, index) => <li key={item.createdAt + '-' + index}><span>{item.operation}</span><time>{formatWhen(item.createdAt)}</time></li>)}</ul> : <p className="node-detail-empty">{loading ? 'Loading activity…' : detailError ? 'Activity unavailable.' : 'No recent activity.'}</p>}
+            </section>
+            <section className="node-detail-card node-detail-technical">
+                <h3>Technical details</h3>
+                <dl className="node-technical-list">
+                    <div><dt>Node ID</dt><dd><code>{node.id}</code></dd></div>
+                    <div><dt>Runtime version</dt><dd>{node.version || 'Not reported'}</dd></div>
+                    <div><dt>Credential</dt><dd>{node.credentialState || 'Unknown'}</dd></div>
+                    <div><dt>Credential updated</dt><dd>{formatWhen(node.credentialUpdatedAt)}</dd></div>
+                    <div><dt>Last connected</dt><dd>{formatWhen(node.lastSeen)}</dd></div>
+                </dl>
+            </section>
+            <NodeSoftwareSummary node={current} />
+        </div>
+    </section>;
 }
 export function Nodes() {
     const [nodes, setNodes] = useState<AtlasNode[]>([]);
@@ -139,6 +157,7 @@ export function Nodes() {
     const [detailError, setDetailError] = useState('');
     const [detailLoading, setDetailLoading] = useState(false);
     const [error, setError] = useState('');
+    const [registryError, setRegistryError] = useState(false);
     const [busy, setBusy] = useState(true);
     const [revision, setRevision] = useState(0);
     const [ticket, setTicket] = useState<{enrolmentToken: string; expiresAt: string; nodeId: string | null} | null>(null);
@@ -147,11 +166,12 @@ export function Nodes() {
         let live = true;
         setBusy(true);
         setError('');
+        setRegistryError(false);
         callTool<AtlasNode[]>('list_nodes').then(list => {
             if (!live) return;
             setNodes(list);
             setSelectedId(current => current && list.some(node => node.id === current) ? current : null);
-        }).catch(error => { if (live) setError(error instanceof Error ? error.message : String(error)); })
+        }).catch(error => { if (live) { setError(error instanceof Error ? error.message : String(error)); setRegistryError(true); } })
           .finally(() => { if (live) setBusy(false); });
         return () => { live = false; };
     }, [revision]);
@@ -179,7 +199,7 @@ export function Nodes() {
     const points = topologyPoints(nodes.length);
     const online = nodes.filter(node => node.status === 'online').length;
     return <div className="nodes-page">
-        <header className="page-head"><div><p className="eyebrow">Infrastructure / topology</p><h1>Node network</h1><p>Your Atlas control plane and connected workspace runtimes.</p></div>
+        <header className="page-head"><div><h1>Nodes</h1></div>
             <div className="actions"><a className="ghost" href="#/nodes/software">Software</a><button onClick={() => void enrol()}>+ Enrol node</button><button className="ghost" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh</button></div>
         </header>
         {error && <p className="node-page-notice" role="alert">{error}</p>}
@@ -188,14 +208,12 @@ export function Nodes() {
             <div><strong>One-time enrolment code</strong><p>Use on the Node host before {new Date(ticket.expiresAt).toLocaleString()}. The private credential is issued during enrolment.</p>
             <code>{ticket.enrolmentToken}</code></div><button className="ghost" onClick={() => setTicket(null)}>Dismiss</button>
         </section>}
-        <div className={'node-topology-layout' + (selected ? ' has-selection' : '')}>
+        <div className="node-topology-layout">
             <section className="node-network" aria-label="Node topology">
-                <div className="node-network-header"><div><span className="eyebrow">Network overview</span><h2>Atlas infrastructure</h2></div>
-                    <span className="node-network-count"><span className="node-network-status-dot" /> {busy ? 'Connecting…' : online + ' online / ' + nodes.length + ' nodes'}</span>
+                <div className="node-network-header"><h2>Map</h2>
+                    <span className="node-network-count"><span className={'node-network-status-dot' + (online ? '' : ' is-offline')} /> {busy ? 'Connecting…' : online + ' online / ' + nodes.length + ' nodes'}</span>
                 </div>
                 <div className="node-graph">
-                    <div className="node-orbit node-orbit-one" aria-hidden="true" />
-                    <div className="node-orbit node-orbit-two" aria-hidden="true" />
                     <svg className="node-connections" viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true">
                         {nodes.map((node, index) => <g key={node.id}>
                             <line x1="500" y1="300" x2={points[index].x} y2={points[index].y} className={'node-connection ' + (node.status === 'online' ? 'is-online' : 'is-offline') + (node.id === selectedId ? ' is-selected' : '')} />
@@ -204,21 +222,22 @@ export function Nodes() {
                     </svg>
                     <div className="node-server" aria-label="Atlas server control plane">
                         <span className="node-server-emblem" aria-hidden="true"><span>Ａ</span></span>
-                        <strong>Atlas Server</strong><small>CONTROL PLANE</small><span className="node-server-running"><i /> Central server</span>
+                        <strong>Atlas Server</strong>
                     </div>
                     {nodes.map((node, index) => <button key={node.id} className={'node-graph-card ' + node.status + (selectedId === node.id ? ' is-selected' : '')} style={{ left: (points[index].x / 10) + '%', top: (points[index].y / 6) + '%' }}
                         aria-label={'Inspect ' + node.name} aria-pressed={selectedId === node.id} onClick={() => setSelectedId(node.id)}>
-                        <span className="node-graph-machine" aria-hidden="true">{node.platform === 'darwin' ? '⌘' : node.platform === 'linux' ? '▤' : '▣'}</span>
-                        <span className="node-graph-info"><strong title={node.name}>{node.name}</strong><small>{platformName(node.platform)} · {node.hostedWorkspaceCount} workspaces</small></span>
+                        <span className="node-graph-machine" aria-hidden="true">{nodeIcon(node)}</span>
+                        <span className="node-graph-info"><strong title={node.name}>{node.name}</strong><small>{nodePlatformLabel(node)}</small></span>
                         <span className={'node-graph-presence ' + node.status} aria-hidden="true" />
                     </button>)}
                     {busy && !nodes.length && <p className="node-graph-loading" role="status">Loading nodes…</p>}
                     {!busy && !nodes.length && <div className="node-graph-empty"><strong>No nodes registered</strong><span>Enrol a runtime to connect it to Atlas.</span></div>}
                 </div>
-                <footer className="node-network-footer"><span><i className="node-legend-dot online" /> Online</span><span><i className="node-legend-dot offline" /> Offline / unavailable</span><span className="node-network-tip">Select a node to inspect <span aria-hidden="true">↗</span></span></footer>
+                <footer className="node-network-footer"><span><i className="node-legend-dot online" /> Online</span><span><i className="node-legend-dot offline" /> Offline / unavailable</span></footer>
             </section>
-            {selected && <NodeInspector key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
-                detailError={detailError} loading={detailLoading} nodes={nodes} onClose={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />}
+            <NodeSummary node={selected} detail={detail?.id === selected?.id ? detail : undefined} nodes={nodes} loading={busy} unavailable={registryError} onClear={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />
         </div>
+        {selected && <NodeDetails key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
+            detailError={detailError} loading={detailLoading} />}
     </div>;
 }

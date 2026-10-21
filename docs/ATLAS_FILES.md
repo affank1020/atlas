@@ -116,11 +116,9 @@
   future desktop/mobile capture queues. The native client must persist the
   upload UUID until the server acknowledges it and retry with the same UUID.
   Non-local Node HTTP transfers require HTTPS.
-- **Not yet resumable:** each request still contains a full file; chunked
-  checkpoints, offline queue persistence, retry scheduling, concurrency limits
-  across multiple server replicas, and complete R2 backup/recovery remain future
-  work. Do not enable the feature on production until R2 has been configured
-  and verified, and the endpoint has been code reviewed.
+- The one-shot route still sends a complete file. A separate resumable
+  protocol is described below; persistent mobile offline queues, retry
+  scheduling, R2 backup/recovery and production enablement remain future work.
 
 ## Mobile-node readiness
 
@@ -135,6 +133,51 @@
   credentials onto Nodes or expose private Files endpoints publicly.
 - Before depending on R2 for mobile assets, configure R2 privately and verify
   live round-trip upload/download, storage metrics, backup and restore.
+
+## Resumable native Node transfers (feature-flagged)
+
+- `POST /node/files/resumable/{init,status,chunk,complete,abort}` accepts
+  authenticated native Node requests only; all routes use the existing
+  `ATLAS_NODE_FILES_ENABLED` gate (default **off**), Node bearer credential,
+  active assigned Workspace check, and no CORS. The original one-shot route
+  remains supported.
+- A caller persists a stable upload UUID and SHA-256 of the **entire** file.
+  `init` reserves a transfer for one Node and one Workspace, including
+  immutable filename, MIME type, byte length and checksum. `status` returns
+  received chunk indexes; the native Node helper sends only missing 1-MiB
+  chunks, each authenticated and SHA-256-verified. A duplicated chunk with
+  different data conflicts rather than overwriting saved bytes.
+- Checkpoints are stored as PostgreSQL `bytea` rows in
+  `node_file_transfer_parts`, not temporary R2 objects. This makes
+  interrupted transfers recoverable across server restarts and replicas,
+  with a strict **25 MiB** file limit and **64 MiB active staging reservation**
+  per Workspace. Actual database/WAL usage can exceed raw byte totals.
+- `complete` requires all chunks and re-verifies the whole-file checksum.
+  It durably claims the session, **releases its PostgreSQL client**, and only
+  then invokes Node ingest (1 GiB retained-data quota, private Files object,
+  receipt-based idempotency). Final checkpoint recording uses a fresh
+  transaction, avoiding connection-pool deadlocks with concurrent completions.
+  A crashed finalizer can be reclaimed after a 10-minute claim lease, and
+  the existing ingest receipt deduplicates retries. Temporary chunk rows
+  are removed on success; a duplicate completion returns the same file ID.
+  `abort` explicitly frees staging for unfinished active transfers.
+- Updating a Workspace's Node assignment, archived timestamp, or status
+  transactionally removes unfinished checkpoints and their chunk bytes via
+  a database trigger, even when the old Node can no longer authenticate.
+  Completed Files and receipts are unaffected.
+- Active transfers do not automatically expire. Lost/abandoned sessions
+  can exhaust the 64 MiB staging allowance until explicitly aborted, except
+  when their Workspace is moved/archived. A stalled `finalizing` claim can
+  be retried after 10 minutes, but cannot clean itself without a retry.
+  Add a reviewed expiry/reconciliation policy before production enablement.
+  There is **no background queue, retry scheduler or automatic garbage
+  collection** in this PR. Client storage of upload UUID and original bytes
+  remains the responsibility of the future native mobile offline queue.
+- These PostgreSQL checkpoints are intended for bounded screenshots and
+  documents, not large videos or high-volume media. Larger assets should
+  eventually use an explicitly reviewed, protected R2 multipart protocol.
+- Continue to keep `ATLAS_NODE_FILES_ENABLED=false` in production until
+  reviewed R2 backup/restore and end-to-end native-node security testing.
 
 ## Safe inventory reconciliation — read-only
 

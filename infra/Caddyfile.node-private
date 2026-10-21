@@ -7,7 +7,7 @@
 }
 
 :8080 {
-    @node path /node/connect /node/enrol /node/files/upload
+    @node path /node/connect /node/enrol /node/files/upload /node/files/resumable/*
     handle @node {
         reverse_proxy server:3000
     }
