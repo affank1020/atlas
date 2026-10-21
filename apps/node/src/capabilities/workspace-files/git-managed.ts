@@ -194,7 +194,8 @@ async function assertNoHiddenTrackedFiles(targetPath: string) {
     }
 }
 
-export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
+/** Read-only inspection; deletion repeats these checks immediately before Git removal. */
+export async function preflightManagedWorktreeRetirement(root: string, files: WorkspaceFiles,
     targetPath: string, expectedHead: string, expectedBranch: string) {
     const entries = await allWorktrees(root, files);
     if (!branchAllowed(expectedBranch)) throw new AtlasError('Invalid expected managed branch.', 'WORKSPACE_DENIED');
@@ -212,6 +213,13 @@ export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
     await assertNoHiddenTrackedFiles(targetPath);
     await assertNoActiveWorkingDirectories(targetPath);
     const estimatedReclaimedBytes = await estimateCheckoutBytes(targetPath);
+    return { eligible: true, rootPath: targetPath, head: expectedHead,
+        branch: target.branch, estimatedReclaimedBytes };
+}
+
+export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
+    targetPath: string, expectedHead: string, expectedBranch: string) {
+    const preflight = await preflightManagedWorktreeRetirement(root, files, targetPath, expectedHead, expectedBranch);
     // No --force, no recursive fs deletion and NO branch deletion. A failed Git
     // removal preserves local data; successful Git removal deletes the checkout.
     await run(root, ['worktree', 'remove', targetPath]);
@@ -225,7 +233,7 @@ export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
             throw new AtlasError('Could not verify removal of the local directory.', 'OUTCOME_UNCERTAIN');
     }
-    return { removed: true, rootPath: targetPath, preservedBranch: target.branch, head: expectedHead, estimatedReclaimedBytes };
+    return { removed: true, rootPath: targetPath, preservedBranch: preflight.branch, head: expectedHead, estimatedReclaimedBytes: preflight.estimatedReclaimedBytes };
 }
 
 /** A repository-management Workspace is rooted at an explicitly configured

@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
 /** Object keys are generated server-side; callers never choose arbitrary filesystem paths. */
@@ -12,6 +12,8 @@ const safeKey = (key: string) => {
 export interface ObjectStore {
     put(key: string, bytes: Buffer, mimeType: string): Promise<void>;
     get(key: string): Promise<Buffer>;
+    /** Idempotent removal used only for a uniquely generated, uncommitted object. */
+    delete(key: string): Promise<void>;
 }
 
 export class ObjectNotFound extends Error {
@@ -24,6 +26,11 @@ export class LocalObjectStore implements ObjectStore {
         await mkdir(this.root, { recursive: true });
         await writeFile(path.join(this.root, safeKey(key)), bytes, { flag: "wx" }).catch(error => {
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        });
+    }
+    async delete(key: string) {
+        await unlink(path.join(this.root, safeKey(key))).catch(error => {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         });
     }
     async get(key: string) {
@@ -62,7 +69,7 @@ export class R2ObjectStore implements ObjectStore {
         if (!config.accessKeyId || !config.secretAccessKey) throw new Error("R2 credentials are required.");
     }
 
-    private async perform(method: "PUT" | "GET", key: string, bytes?: Buffer, mimeType?: string): Promise<Response> {
+    private async perform(method: "PUT" | "GET" | "DELETE", key: string, bytes?: Buffer, mimeType?: string): Promise<Response> {
         const requestUrl = new URL(`${encodeURIComponent(this.config.bucket)}/${encodeURIComponent(safeKey(key))}`, this.endpoint);
         const timestamp = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
         const date = timestamp.slice(0, 8);
@@ -90,12 +97,18 @@ export class R2ObjectStore implements ObjectStore {
     }
     async put(key: string, bytes: Buffer, mimeType: string) { await this.perform("PUT", key, bytes, mimeType); }
     async get(key: string) { return Buffer.from(await (await this.perform("GET", key)).arrayBuffer()); }
+    async delete(key: string) { await this.perform("DELETE", key); }
 }
 
 /** Legacy local objects remain readable after switching new uploads to R2. */
 export class R2WithLocalFallback implements ObjectStore {
     constructor(readonly remote: ObjectStore, readonly local: ObjectStore) {}
     async put(key: string, bytes: Buffer, mimeType: string) { await this.remote.put(key, bytes, mimeType); }
+    async delete(key: string) {
+        // Clean both stores; R2 may be active alongside legacy local objects.
+        await this.remote.delete(key);
+        await this.local.delete(key);
+    }
     async get(key: string) {
         try { return await this.remote.get(key); }
         catch (error) {

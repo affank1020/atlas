@@ -125,3 +125,10 @@
 .wm-project-add button { font-size:.74rem; }
 .wm-selected-checkout { border-top:1px solid var(--border); padding-top:17px; }
 .wm-selected-checkout .eyebrow { margin:0 0 11px; }
+
+/* Retirement preflight is explicit; destructive action only appears when ready. */
+.wm-retire-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:7px; flex:none; }
+.wm-retirement-ready { color:var(--success) !important; }
+.wm-retirement-blocked { color:var(--danger) !important; }
+.wm-retire-confirm { color:var(--danger); }
+@media(max-width:610px) { .wm-tree { flex-wrap:wrap; } .wm-retire-actions { width:100%; justify-content:flex-start; } }

@@ -31,6 +31,8 @@ services:
       ATLAS_HOST: 0.0.0.0
       ATLAS_PORT: "3000"
       ATLAS_NODE_EXECUTION: remote
+      # Node-authenticated file intake is disabled until production R2 is verified.
+      ATLAS_NODE_FILES_ENABLED: ${ATLAS_NODE_FILES_ENABLED:-false}
       ATLAS_TRUSTED_INGRESS: "true"
       ATLAS_MCP_RESOURCE: ${ATLAS_MCP_RESOURCE:-}
       ATLAS_MCP_OAUTH_ISSUER: ${ATLAS_MCP_OAUTH_ISSUER:-}

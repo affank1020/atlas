@@ -73,6 +73,55 @@
   garbage collection, establish and test off-site backups, database/object
   reconciliation, a minimum retention period, and a dry-run operation.
 
+## Native Node upload foundation (opt-in)
+
+- `POST /node/files/upload` accepts one binary file from an enrolled Atlas
+  Node. It is **disabled by default** (`ATLAS_NODE_FILES_ENABLED=false`)
+  and does not grant access to any other Files API operation.
+- This endpoint is deliberately outside Caddy's *human* Basic Auth, like
+  `/node/connect`, but it **requires** the existing per-Node Bearer credential.
+  Browser Origin headers are denied; no CORS is provided. The Server validates
+  the credential **before reading upload bytes**, then rechecks the active
+  credential and Workspace placement in a database transaction before saving.
+- Required request headers: `Authorization: Bearer <Node credential>`,
+  `Content-Type: application/octet-stream`, `X-Atlas-Node-Id`,
+  `X-Atlas-Workspace-Id`, `X-Atlas-Upload-Id` (stable UUID),
+  `X-Atlas-File-Name` (percent-encoded), and `X-Atlas-File-Type`.
+  The body is raw bytes. Success returns `{ file, replayed }`.
+  A new upload returns HTTP 201; an exact retry returns HTTP 200.
+- A Node can upload **only to a currently active Workspace assigned to it**.
+  Projects, applications and other Nodes' Workspaces are not valid targets.
+  Files remain private, and every upload is capped at 25 MiB.
+- Retries must reuse the original upload ID. A durable PostgreSQL receipt
+  prevents duplicate Files records when the response to an earlier success is
+  lost. Reusing an upload ID with different bytes, metadata or Workspace is
+  rejected with HTTP 409. Receipt IDs are scoped per Node. A transaction-scoped
+  receipt lock precedes the Workspace quota lock to serialize concurrent
+  uploads even across multiple Workspaces on the same Node.
+- Node-initiated uploads have a conservative **1 GiB lifetime cap per Workspace**,
+  including archived files, so uploads cannot silently exhaust the VPS.
+- On object-store or metadata failures, Atlas attempts idempotent deletion of
+  the uniquely generated, uncommitted object. If receipt insertion or COMMIT
+  fails after the object PUT, Atlas first rolls back and checks the durable
+  Files metadata on an independent database connection before deleting. If
+  it cannot prove the object is uncommitted, Atlas deliberately retains the
+  bytes and logs a cleanup warning rather than risk destroying a committed
+  file. Both local storage and R2 support signed object DELETE.
+  Regression tests inject SQL failures after the PUT.
+- **Crash safety is not yet complete.** Sudden power loss, ambiguous remote
+  writes, or an unavailable object store can still leave untracked bytes;
+  physical object reconciliation and backups remain necessary before
+  switching this feature on in production.
+- `apps/node/src/core/file-transfer.ts` provides a transport primitive for
+  future desktop/mobile capture queues. The native client must persist the
+  upload UUID until the server acknowledges it and retry with the same UUID.
+  Non-local Node HTTP transfers require HTTPS.
+- **Not yet resumable:** each request still contains a full file; chunked
+  checkpoints, offline queue persistence, retry scheduling, concurrency limits
+  across multiple server replicas, and complete R2 backup/recovery remain future
+  work. Do not enable the feature on production until R2 has been configured
+  and verified, and the endpoint has been code reviewed.
+
 ## Mobile-node readiness
 
 - Screenshot and document bytes now have a binary transport that mobile and

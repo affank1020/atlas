@@ -47,6 +47,52 @@ test('Workspaces browse independent directories across Nodes and follow deep lin
     expect(within(inspector).getByRole('button', { name: 'Push feature branch to GitHub' })).toBeEnabled();
 });
 
+test('retirement requires successful read-only preflight before enabling deletion', async () => {
+    const feature = { ...repo, id: 'feature', name: 'Temporary worktree',
+        rootPath: '/srv/atlas/workspaces/temp-feature' };
+    let eligible = false;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [repo, feature];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main',
+            head: sha, dirty: false, originRepository: 'affank1020/atlas' };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [
+            { rootPath: repo.rootPath, branch: 'main', head: sha },
+            { rootPath: feature.rootPath, branch: 'atlas/feature', head: sha },
+        ] };
+        if (name === 'workspace_git_retirement_preflight')
+            return eligible ? { eligible: true, estimatedReclaimedBytes: 4096,
+                mergedPullRequest: { number: 42, url: 'https://github.com/affank1020/atlas/pull/42' } }
+                : { eligible: false, reason: 'No merged PR' };
+        if (name === 'workspace_git_remove_worktree')
+            return { removed: true, estimatedReclaimedBytes: 4096 };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas/ }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const check = await within(inspector).findByRole('button', { name: 'Check eligibility' });
+    expect(within(inspector).queryByRole('button', { name: 'Retire' })).not.toBeInTheDocument();
+    fireEvent.click(check);
+    expect(await within(inspector).findByText(/Not ready: No merged PR/)).toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'workspace_git_remove_worktree')).toBe(false);
+
+    eligible = true;
+    fireEvent.click(check);
+    expect(await within(inspector).findByText(/Ready · merged PR #42/)).toBeInTheDocument();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+        fireEvent.click(within(inspector).getByRole('button', { name: 'Retire' }));
+        await waitFor(() => expect(vi.mocked(callTool).mock.calls.some(([name, input]) =>
+            name === 'workspace_git_remove_worktree' &&
+            (input as any).workspaceId === repo.id &&
+            (input as any).targetWorkspaceId === feature.id &&
+            (input as any).expectedHead === sha)).toBe(true));
+    } finally { confirm.mockRestore(); }
+});
+
 test('logical repository appears once while Mac and VPS checkouts remain selectable', async () => {
     const mac = { ...repo, id: 'mac', nodeId: 'mac-node', name: 'Portfolio Site', rootPath: '/mac/portfolio' };
     const vps = { ...repo, id: 'vps', name: 'Portfolio Site (VPS)', rootPath: '/srv/portfolio' };
@@ -346,6 +392,7 @@ test('provenance-protected retirement uses Workspace IDs and expected commit, ne
         if (name === 'list_workspaces') return [manager, repo, feature];
         if (name === 'list_github_repositories') return { repositories: [] };
         if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha, dirty: false, originRepository: 'example/atlas' };
+        if (name === 'workspace_git_retirement_preflight') return { eligible: true, estimatedReclaimedBytes: 1048576, mergedPullRequest: { number: 42, url: 'https://github.com/affank1020/atlas/pull/42' } };
         if (name === 'workspace_git_remove_worktree') return { removed: true, estimatedReclaimedBytes: 1048576 };
         if (name === 'workspace_git_list_worktrees') return { worktrees: [
             { rootPath: repo.rootPath, branch: 'main', head: sha },
@@ -358,11 +405,12 @@ test('provenance-protected retirement uses Workspace IDs and expected commit, ne
     await screen.findByText('3 Workspaces');
     fireEvent.click(screen.getByRole('button', { name: /Atlas/ }));
     const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    fireEvent.click(await within(inspector).findByRole('button', { name: 'Check eligibility' }));
     fireEvent.click(await within(inspector).findByRole('button', { name: 'Retire' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_remove_worktree', {
         workspaceId: 'repo', targetWorkspaceId: 'feature', expectedHead: sha,
     }));
-    expect(vi.mocked(confirm)).toHaveBeenCalledWith(expect.stringContaining('DELETEs the local checkout folder'));
+    expect(vi.mocked(confirm)).toHaveBeenCalledWith(expect.stringContaining('Retire Feature?'));
     expect(await screen.findByText(/estimated reclaimed/)).toBeInTheDocument();
     vi.unstubAllGlobals();
 });

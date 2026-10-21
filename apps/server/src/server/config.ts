@@ -67,6 +67,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
             issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
+        nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },

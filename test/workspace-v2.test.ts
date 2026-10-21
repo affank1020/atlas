@@ -679,7 +679,7 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     const broker = { verifyMergedPullRequest: async (repository: string, branch: string, head: string) => {
         verified++;
         assert.equal(repository, 'affank1020/atlas');
-        assert.equal(branch, 'atlas/test-feature');
+        assert.ok(['atlas/test-feature', 'atlas/child-feature'].includes(branch));
         assert.match(head, /^[a-f0-9]{40}$/);
         if (!prMerged) throw new Error('No merged PR matches this exact branch HEAD');
         return { number: 42, url: 'https://github.com/affank1020/atlas/pull/42' };
@@ -729,7 +729,29 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     assert.equal((await svc.call('get_workspace', { workspaceId: created.workspace.id }) as any).status, 'active');
     const { existsSync } = await import('node:fs');
     assert.equal(existsSync(dest), true, 'Unmerged feature working directory must survive');
+    // Preflight reports merged-PR evidence without mutating the checkout.
+    const notMerged: any = await svc.call('workspace_git_retirement_preflight', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
+        expectedHead: created.head,
+    });
+    assert.equal(notMerged.eligible, false);
+    assert.ok(notMerged.reason, 'A failed preflight must supply a safe blocker reason');
+    assert.equal(existsSync(dest), true);
     prMerged = true;
+    const ready: any = await svc.call('workspace_git_retirement_preflight', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
+        expectedHead: created.head,
+    });
+    assert.equal(ready.eligible, true);
+    assert.equal(ready.mergedPullRequest.number, 42);
+    assert.equal(existsSync(dest), true, 'Preflight must leave checkout and registration untouched');
+
+    // A descendant's original creation source may later be archived. Removal
+    // must then work from any active checkout sharing the Git common directory.
+    const childPath = path.join(parent, 'child-checkout');
+    const child: any = await svc.call('workspace_git_create_worktree', {
+        workspaceId: created.workspace.id, branch: 'atlas/child-feature', targetPath: childPath,
+    });
 
     // Even a clean Atlas-created worktree cannot be deleted if its branch has
     // changed since registration. Preserve it and allow switching back.
@@ -746,9 +768,23 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     });
     assert.equal(removed.preservedBranch, 'atlas/test-feature');
     assert.equal(removed.mergedPullRequest.number, 42);
+    assert.equal(existsSync(childPath), true);
+    // The child was created from the just-archived feature; originalWorkspace
+    // was never its creation source, but is a valid live repository checkout.
+    const childReady: any = await svc.call('workspace_git_retirement_preflight', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: child.workspace.id,
+        expectedHead: child.head,
+    });
+    assert.equal(childReady.eligible, true);
+    const childRemoval: any = await svc.call('workspace_git_remove_worktree', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: child.workspace.id,
+        expectedHead: child.head,
+    });
+    assert.equal(childRemoval.preservedBranch, 'atlas/child-feature');
+    assert.equal(existsSync(childPath), false);
     assert.ok(verified >= 2);
     assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 1);
-    assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 2);
+    assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 3);
     assert.equal(git('rev-parse', 'refs/heads/atlas/test-feature'), created.head);
 
     // Registering an existing clean atlas/* worktree does NOT make it managed.
