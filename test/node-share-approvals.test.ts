@@ -5,6 +5,15 @@ import { databaseFixture, cleanupDatabases } from './database.js';
 import { NodeIdentity } from '../apps/server/src/nodes/identity.js';
 import { NodeShareApprovals } from '../apps/server/src/nodes/share-approvals.js';
 import { DeviceShareRelay } from '../apps/server/src/infrastructure/nodes/share-relay.js';
+import { NodeService } from '../apps/server/src/nodes/service.js';
+import { PostgresNodeRepository } from '../apps/server/src/infrastructure/database/nodes.js';
+import { createDispatcher } from '../apps/server/src/server/dispatch.js';
+import { createMcpTransport } from '../apps/server/src/api/mcp/index.js';
+import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
+import { portfolioApplication } from '../apps/server/src/apps/portfolio-definition.js';
+import { footballTrainingApplication } from '../apps/server/src/apps/football-training.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 after(cleanupDatabases);
 
@@ -76,4 +85,47 @@ test('environment approvals remain read-only and visible, not implicitly revoked
     assert.equal(await shares.allowed(a,b),true);
     await assert.rejects(shares.update({sourceNodeId:a,targetNodeId:b,enabled:false}),
         (err:any)=>err.code==='SHARE_ENV_MANAGED');
+});
+
+test('MCP share permission mutations have transport-authored audit provenance', async () => {
+    const f = await databaseFixture();
+    const identity = new NodeIdentity(f.store.pool);
+    const a = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Android',platform:'android'});
+    const b = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Mac',platform:'darwin'});
+    const sharing = new NodeShareApprovals(f.store.pool);
+    const nodes = new NodeService(new PostgresNodeRepository(f.store.pool),undefined,'Local Node',identity,sharing);
+    const applications = new ApplicationRegistry([
+        portfolioApplication({portfolio:{} as any,media:{} as any,askPortfolio:{} as any,contentful:{} as any}),
+        footballTrainingApplication({call:async()=>null} as any),
+    ]);
+    const services = {nodes,applications} as any;
+    const dispatch = createDispatcher(services);
+    const server = createMcpTransport({...services,dispatch});
+    const client = new Client({name:'node-permission-audit-test',version:'1'});
+    const [clientTransport,serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+        await server.connect(serverTransport);
+        await client.connect(clientTransport);
+        const result = await client.callTool({name:'update_node_share_approval',
+            arguments:{sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:true}});
+        assert.notEqual(result.isError,true,JSON.stringify(result));
+        const rows = await f.store.pool.query(
+            "SELECT client,operation,after_state FROM audit_events WHERE operation='node.share.approved'");
+        assert.equal(rows.rowCount,1);
+        assert.equal(rows.rows[0].client,'atlas-mcp');
+        assert.equal(rows.rows[0].after_state.sourceNodeId,a.nodeId);
+        // Even an input that purports to come from the web cannot override
+        // the transport's server-owned provenance.
+        const rejected = await client.callTool({name:'update_node_share_approval',
+            arguments:{sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false,client:'atlas-web'}});
+        assert.equal(rejected.isError,true);
+        await dispatch('update_node_share_approval',
+            {sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false},'atlas-http');
+        const revoked = await f.store.pool.query(
+            "SELECT client FROM audit_events WHERE operation='node.share.revoked'");
+        assert.equal(revoked.rows[0].client,'atlas-http');
+    } finally {
+        await client.close();
+        await server.close();
+    }
 });

@@ -44,7 +44,8 @@ it('renders immutable environment grants without offering revoke', async () => {
     expect(screen.getByText('Read-only')).toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Revoke access'})).not.toBeInTheDocument();
 });
-\nit('treats a rejected permissions read as unknown, never as a missing approval', async () => {
+
+it('treats a rejected permissions read as unknown, never as a missing approval', async () => {
     let attempts = 0;
     vi.mocked(callTool).mockImplementation(async name => {
         if (name !== 'list_node_share_approvals') throw new Error('A write must not be offered');
