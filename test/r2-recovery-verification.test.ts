@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import test from 'node:test';
+import test, { after } from 'node:test';
+import { databaseFixture, cleanupDatabases } from './database.js';
+
+after(cleanupDatabases);
 import type { Pool } from 'pg';
 import { ObjectNotFound, R2ObjectStore } from '../apps/server/src/server/file-storage.js';
 import {
@@ -23,7 +26,7 @@ function database(rows:Row[]) {
         assert.match(sql,/^SELECT id,storage_key,checksum,byte_size FROM atlas_files/);
         const [cursor,limit]=params as [string,number];
         assert.ok(limit<=11 && limit>=2);
-        return {rows:sorted.filter(x=>x.storage_key>cursor).slice(0,limit)};
+        return {rows:sorted.filter(x=>cursor === '' || x.storage_key>cursor).slice(0,limit)};
     }} as unknown as Pick<Pool,'query'>;
     return {db,calls};
 }
@@ -54,6 +57,18 @@ test('Recovery configs must be independent and complete; CLI refuses mutation fl
         ...backupEnv,ATLAS_R2_RECOVERY_ENDPOINT:primaryConfig.endpoint,
         ATLAS_R2_RECOVERY_BUCKET:primaryConfig.bucket,
     },primaryConfig),/must differ/);
+    // Distinct buckets—even in different accounts—must not reuse a token
+    // identity or secret: the two stores must have separate credentials.
+    assert.throws(()=>loadRecoveryR2Config({
+        ...backupEnv,ATLAS_R2_RECOVERY_ACCESS_KEY_ID:primaryConfig.accessKeyId,
+        ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY:primaryConfig.secretAccessKey,
+    },primaryConfig),/different access-key ID and secret/);
+    assert.throws(()=>loadRecoveryR2Config({
+        ...backupEnv,ATLAS_R2_RECOVERY_ACCESS_KEY_ID:primaryConfig.accessKeyId,
+    },primaryConfig),/different access-key ID and secret/);
+    assert.throws(()=>loadRecoveryR2Config({
+        ...backupEnv,ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY:primaryConfig.secretAccessKey,
+    },primaryConfig),/different access-key ID and secret/);
     assert.deepEqual(parseRecoveryVerifyArgs(['--dry-run']),{maxFiles:3});
     assert.deepEqual(parseRecoveryVerifyArgs(['--cursor='+fixture().storage_key,'--max-files=5','--dry-run']).maxFiles,5);
     for(const args of [
@@ -149,6 +164,58 @@ test('bad metadata is not used to build an arbitrary R2 object GET',async()=>{
     assert.equal(report.invalidMetadata,1);
     assert.equal(report.status,'failed');
     assert.equal(requests.length,0);
+});
+
+test('initial uncursored scan includes schema-allowed empty storage keys and never claims success',async()=>{
+    const invalid=fixture(Buffer.from('broken imported metadata'));
+    invalid.storage_key='';
+    const goodBytes=Buffer.from('recoverable real object');
+    const good=fixture(goodBytes);
+    const primaryCalls:string[]=[],backupCalls:string[]=[];
+    const {db,calls}=database([good,invalid]);
+    const objects=new Map([[good.storage_key,goodBytes]]);
+    const result=await verifyR2Recovery({
+        database:db,primary:store(objects,primaryCalls),backup:store(objects,backupCalls),
+    });
+    assert.equal(result.checked,2);
+    assert.equal(result.invalidMetadata,1);
+    assert.equal(result.verifiedBoth,1);
+    assert.equal(result.entireCatalogChecked,true);
+    assert.equal(result.status,'failed','invalid row must never yield a passed backup drill');
+    assert.deepEqual(result.failureFileIds,[invalid.id]);
+    assert.deepEqual(primaryCalls,[good.storage_key]);
+    assert.deepEqual(backupCalls,[good.storage_key]);
+    assert.equal(calls[0]?.params[0],'');
+    assert.match(calls[0]!.sql,/\$1 = '' OR storage_key > \$1/);
+});
+
+test('real migrated PostgreSQL schema permits empty storage key and the verifier flags it',async()=>{
+    const fixtureDb=await databaseFixture();
+    const goodBytes=Buffer.from('file accessible in separate R2 stores');
+    const good=fixture(goodBytes);
+    const broken=fixture(Buffer.from('empty metadata key'));
+    broken.storage_key='';
+    const ownerId=randomUUID();
+    for (const row of [good,broken]) {
+        await fixtureDb.store.pool.query(
+            `INSERT INTO atlas_files (id,owner_kind,owner_id,storage_key,checksum,file_name,
+                mime_type,byte_size,visibility,created_by) VALUES
+                ($1,'workspace',$2,$3,$4,'document.bin','application/octet-stream',$5,'private','test')`,
+            [row.id,ownerId,row.storage_key,row.checksum,row.byte_size],
+        );
+    }
+    const source=new Map([[good.storage_key,goodBytes]]);
+    const report=await verifyR2Recovery({
+        database:fixtureDb.store.pool,
+        primary:store(source,[]),
+        backup:store(source,[]),
+    });
+    assert.equal(report.checked,2);
+    assert.equal(report.verifiedBoth,1);
+    assert.equal(report.invalidMetadata,1);
+    assert.equal(report.status,'failed');
+    assert.equal(report.entireCatalogChecked,true);
+    assert.deepEqual(report.failureFileIds,[broken.id]);
 });
 
 test('network/auth failures abort verification and empty catalogue is not backup proof',async()=>{
