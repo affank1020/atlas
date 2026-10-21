@@ -36,6 +36,13 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
         const result = await this.connection.query(`SELECT id FROM projects WHERE id=$1 AND archived_at IS NULL${lock ? ' FOR UPDATE' : ''}`, [projectId]);
         if (!result.rowCount) throw new AtlasError('Project is archived.', 'NOT_FOUND');
     }
+    /** Unlink is a cleanup action and may target an archived Project.
+     * Ensure that the Project still exists, including under the row lock. */
+    async requireProject(projectId: string, lock = false) {
+        const result = await this.connection.query(
+            `SELECT id FROM projects WHERE id=$1${lock ? ' FOR UPDATE' : ''}`, [projectId]);
+        if (!result.rowCount) throw new AtlasError('Project not found.', 'NOT_FOUND');
+    }
     async lockWorkspace(id: string) { await this.connection.query('SELECT id FROM workspaces WHERE id=$1 FOR NO KEY UPDATE', [id]); }
     async lockExecution(binding: string) { await this.connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [binding]); }
     async managedWorktreeBranch(workspaceId: string, sourceWorkspaceId: string, rootPath: string): Promise<string | null> {
