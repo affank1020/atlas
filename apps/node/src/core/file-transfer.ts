@@ -3,6 +3,14 @@
  * must persist uploadId across retries, and must only use approved local or
  * HTTPS Atlas Server addresses. This is not yet a resumable upload protocol.
  */
+/** Only the HTTP status crosses the queue boundary, never private response text. */
+export class NodeFileTransferError extends Error {
+    constructor(readonly httpStatus: number) {
+        super('Atlas Node transfer failed (HTTP ' + httpStatus + ').');
+        this.name = 'NodeFileTransferError';
+    }
+}
+
 export async function uploadNodeFileOnce(input: {
     serverUrl: string; nodeId: string; credential: string; workspaceId: string;
     uploadId: string; fileName: string; mimeType: string; bytes: Uint8Array;
@@ -38,7 +46,7 @@ export async function uploadNodeFileOnce(input: {
     });
     if (!response.ok) {
         // Do not echo request headers, tokens or raw server errors to logs.
-        throw new Error(`Atlas Node file upload failed (HTTP ${response.status}).`);
+        throw new NodeFileTransferError(response.status);
     }
     return response.json() as Promise<{ file: { id: string; checksum: string }; replayed: boolean }>;
 }
@@ -55,7 +63,7 @@ export async function uploadNodeFileOnce(input: {
 export async function uploadNodeFileResumable(input: {
     serverUrl: string; nodeId: string; credential: string; workspaceId: string;
     uploadId: string; fileName: string; mimeType: string; bytes: Uint8Array;
-}, request: typeof fetch = fetch): Promise<{ fileId: string; replayed: boolean }> {
+}, request: typeof fetch = fetch, signal?: AbortSignal): Promise<{ fileId: string; replayed: boolean }> {
     const { createHash } = await import('node:crypto');
     const url = new URL(input.serverUrl);
     if (url.pathname !== '/node/connect' || url.search || url.hash || !['wss:', 'ws:'].includes(url.protocol))
@@ -73,6 +81,9 @@ export async function uploadNodeFileResumable(input: {
         'x-atlas-upload-id': input.uploadId,
     };
     async function post(action: string, payload: Record<string, unknown> | Uint8Array, extra: Record<string,string> = {}) {
+        // Stop must interrupt both in-flight HTTP and subsequent chunk retries.
+        // The original stable upload UUID remains valid for a later process.
+        signal?.throwIfAborted();
         url.pathname = '/node/files/resumable/' + action;
         const binary = payload instanceof Uint8Array;
         const response = await request(url.toString(), {
@@ -80,10 +91,10 @@ export async function uploadNodeFileResumable(input: {
             headers: { ...headers, 'content-type': binary ? 'application/octet-stream' : 'application/json',
                 ...extra },
             body: binary ? new Uint8Array(payload) : JSON.stringify(payload),
-            signal: AbortSignal.timeout(120_000),
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
             redirect: 'error',
         });
-        if (!response.ok) throw new Error(`Atlas Node transfer ${action} failed (HTTP ${response.status}).`);
+        if (!response.ok) throw new NodeFileTransferError(response.status);
         return response.json() as Promise<any>;
     }
     const checksum = createHash('sha256').update(input.bytes).digest('hex');

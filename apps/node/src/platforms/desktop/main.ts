@@ -10,6 +10,7 @@ import { UnityAdapter, UnityCliConnection } from '../../capabilities/unity/unity
 import { StandaloneNode } from '../../core/connection/standalone.js';
 import { WorkspaceFiles } from '../../capabilities/workspace-files/files.js';
 import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
+import { NodeOfflineFileQueue } from '../../core/file-queue.js';
 
 loadEnv({ path: process.env.ATLAS_NODE_ENV_FILE || '.env.node', quiet: true });
 const id = z.string().uuid().parse(process.env.ATLAS_NODE_ID);
@@ -35,6 +36,25 @@ const shareReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_SH
     ? new MacShareReceiver() : undefined;
 const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver);
 const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
+const offlineQueue = process.env.ATLAS_NODE_FILE_QUEUE_ENABLED === '1'
+    ? new NodeOfflineFileQueue({nodeId:id,credential:token,serverUrl:serverUrl.toString()})
+    : undefined;
+let queueInterval: ReturnType<typeof setInterval> | undefined;
+function drainOfflineQueue() {
+    if (!offlineQueue || !node.isOnline) return;
+    void offlineQueue.flush().then(result => {
+        // Aggregate diagnostics only; never log file contents, names or secrets.
+        if (result.delivered) console.log('Atlas Node delivered ' + result.delivered + ' queued file(s).');
+        if (result.blocked || result.unreadable)
+            console.warn('Atlas Node has blocked or unreadable uploads; inspect local queue status.');
+    }).catch(() => {
+        console.error('Atlas Node offline file queue cannot be read or flushed.');
+    });
+}
+if (offlineQueue) {
+    queueInterval = setInterval(drainOfflineQueue,60_000);
+    queueInterval.unref();
+}
 // Local, credential-free diagnostics; preserve the macOS menu-bar UI path.
 // The Linux service uses XDG_STATE_HOME (or ~/.local/state) instead.
 const statusPath = nodeStatusPath();
@@ -66,6 +86,7 @@ function setConnectionState(state: ConnectionState, message = '') {
 node.on('online', () => {
     setConnectionState('connected');
     console.log(`Atlas Node ${id} connected to Atlas Server.`);
+    drainOfflineQueue();
 });
 node.on('offline', () => console.log(`Atlas Node ${id} disconnected; reconnecting.`));
 node.on('socketClosed', (code: number, reason: string) => {
@@ -85,6 +106,13 @@ const stop = async () => {
     if (stopping) return;
     stopping = true;
     setConnectionState('stopping');
+    if (queueInterval) clearInterval(queueInterval);
+    // Stop the queue FIRST: abort its active HTTP request and wait for the
+    // cross-process mutation lock to be released within the service deadline.
+    if (offlineQueue) {
+        try { await offlineQueue.stop(); }
+        catch { console.error('Atlas Node failed to stop its offline queue cleanly; inspect the local lock.'); }
+    }
     await node.stop();
     process.exitCode = 0;
 };

@@ -223,6 +223,87 @@
   not a production-ready unattended expiry policy. Node file uploads remain
   disabled until live R2 and recovery verification are completed.
 
+## Encrypted offline Node upload queue (desktop / headless Nodes)
+
+- The macOS and Linux Node now have an **opt-in** durable local queue.
+  It is **disabled by default** with `ATLAS_NODE_FILE_QUEUE_ENABLED=0`.
+  Turning it on in a Node alone does not enable server uploads; the separate
+  Atlas Server flag `ATLAS_NODE_FILES_ENABLED` remains **off by default**.
+- The local Node CLI provides explicit admission of a selected file only:
+  `npm run build:node`, then
+  `npm run files:node:enqueue -- <workspace-uuid> <file-path> <MIME-type> [display-name]`.
+  Inspect aggregate counts with `npm run files:node:queue-status`.
+  With the queue enabled, the desktop Node flushes up to four jobs serially
+  after authenticated WebSocket registration and once per minute while online.
+  No Node RPC, webhook, browser request or folder watcher can enqueue data.
+- Selected payloads and file names are stored in authenticated
+  **AES-256-GCM encrypted** queue records, in a `0700` directory with `0600`
+  files beneath the Node's local status directory (Application Support on
+  macOS, XDG state on Linux). Encryption keys derive via HKDF from the
+  existing enrolled Node credential and Node ID; **credentials and keys are
+  never written to queue files**. Credential rotation/loss makes queued
+  content unreadable, not recoverable by falling back to plaintext.
+- The queue is bounded to **8 pending files, 128 MiB encrypted disk bytes,
+  25 MiB per file**. Admission uses an exclusive cross-process mutation lock and
+  file-sync plus atomic rename; an interrupted writer may leave a hidden
+  temporary file that requires operator inspection. A stale `.queue-lock`
+  must be reviewed and removed manually, never automatically stolen.
+  There is no multi-process upload-worker lease: run only one Node service
+  instance per queue directory. Avoid filesystem backups of these private
+  capture bytes unless appropriately encrypted and retention-controlled.
+- Every job retains its original UUID and bytes through network failures and
+  process restarts. The existing authenticated resumable HTTP protocol reports
+  received 1-MiB chunks, so retries resend only missing chunks. Transient
+  errors get exponential retry backoff from 30 seconds to 1 hour, persisted
+  across restarts. HTTP 400/401/403/404/409/413/507 pause delivery for manual
+  inspection rather than looping on denied/expired IDs.
+- A blocked upload is *never* silently re-identified: check Atlas Files and
+  server receipts first to avoid duplicating an ambiguously completed upload.
+  Only with explicit operator action, run
+  `npm run files:node:queue-restart -- <queue-uuid>` to rotate the remote
+  upload UUID **inside the existing encrypted queue file**. The stable local
+  queue UUID does not change, and the command returns both `queueId` and
+  `uploadId`. This is an atomic single-record replacement, not a second
+  queue slot, so it works when the 8-file or 128-MiB quota is already full.
+  `npm run files:node:queue-discard -- <queue-uuid>` discards the
+  encrypted local copy. Neither command removes remote Atlas Files.
+- A shared, exclusive `.queue-lock` serializes the Node worker and local
+  enqueue/restart/discard commands **even across processes**. A CLI operation
+  against an in-flight sender fails with a clear busy error: retry once it
+  finishes. A successful discard therefore prevents subsequent retries but
+  cannot retract an already-sent HTTP request. On SIGTERM/SIGINT, the desktop
+  Node first aborts its in-flight resumable HTTP request and **awaits the
+  queue's lock-release cleanup** before closing its Node connection; stopped
+  jobs retain the same UUID for idempotent recovery after restart.
+  This is designed to complete within Linux systemd's 20-second stop budget.
+  A sudden SIGKILL, machine reset, or sender that ignores abort can still
+  leave the lock behind; inspect its state before manual removal. Do not
+  automatically steal a lock merely because its timestamp is old.
+- A queue record's **file bytes are fsynced before atomic rename**, and the
+  containing directory is fsynced after every job rename, retry-state update,
+  explicit discard and successful delivery deletion. The lock's normal removal
+  also syncs the directory. The command does not acknowledge a queue mutation
+  as durable if a directory-sync operation fails; in that case the rename may
+  already have happened and the operator must inspect queue status instead of
+  blindly re-enqueuing the same payload. Directory fsync must be supported by
+  the underlying filesystem (tested on Linux CI); unsupported filesystems
+  fail closed. Hardware write caches and nonlocal/network filesystems can
+  impose weaker durability guarantees, so use local supported filesystems.
+- If a job cannot be decrypted (credential rotation or corruption), `status`
+  reports an `unreadable` count and the worker skips it to continue healthy
+  jobs. Explicit `discard <queue-uuid>` works on a safely checked private
+  regular queue file **without decryption**. No unreadable bytes are sent or
+  silently deleted. The scheduler scans all eight bounded entries and handles
+  up to four *ready* jobs per pass, so blocked/deferred entries cannot starve
+  later work.
+- **Android is not integrated here.** The current Android app has no
+  authorized binary-send workflow, and its future offline queue must use
+  Android Keystore and scoped app storage rather than reuse Node.js
+  filesystem/credential-handling code. This PR does not add permissions,
+  auto-capture, or background work to Android.
+- This is not a production-enablement PR. Live R2 roundtrip, backup and
+  restore verification remain prerequisites.
+
 ## Safe inventory reconciliation — read-only
 
 - Build the server once (`npm run build:server`), then run
