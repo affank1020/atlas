@@ -28,8 +28,10 @@ test('Node-native Files uploads enforce identity, Workspace ownership and idempo
     const workspaceId = randomUUID();
     const otherWorkspaceId = randomUUID();
     const db = fixture.store.pool;
-    await db.query(`INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id)
-        VALUES($1,$2,'Mobile','/mobile','generic',NULL,$3),($4,$2,'Other','/other','generic',NULL,$5)`,
+    await db.query("INSERT INTO logical_workspaces(id,name) VALUES($1,'Mobile'),($2,'Other')",
+        [workspaceId, otherWorkspaceId]);
+    await db.query(`INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id)
+        VALUES($1,$2,'Mobile','/mobile','generic',NULL,$3,$1),($4,$2,'Other','/other','generic',NULL,$5,$4)`,
         [workspaceId, project.id, node.nodeId, otherWorkspaceId, other.nodeId]);
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-node-files-'));
     const files = new AtlasFilesService(fixture.databaseUrl, root);
@@ -104,8 +106,9 @@ test('Node-native Files cannot exceed a Workspace quota, including archived byte
     const ticket = await identity.ticket();
     const node = await identity.enrol({ token: ticket.enrolmentToken, name: 'Quota Node', platform: 'test' });
     const workspaceId = randomUUID();
-    await fixture.store.pool.query(`INSERT INTO workspaces(id,name,root_path,kind,adapter,node_id)
-        VALUES($1,'Quota','/quota','generic',NULL,$2)`, [workspaceId, node.nodeId]);
+    await fixture.store.pool.query("INSERT INTO logical_workspaces(id,name) VALUES($1,'Quota')", [workspaceId]);
+    await fixture.store.pool.query(`INSERT INTO workspaces(id,name,root_path,kind,adapter,node_id,logical_workspace_id)
+        VALUES($1,'Quota','/quota','generic',NULL,$2,$1)`, [workspaceId, node.nodeId]);
     const fakeId = randomUUID(), fakeKey = 'files-' + fakeId.replaceAll('-', '') + '-' + 'a'.repeat(64);
     await fixture.store.pool.query(`INSERT INTO atlas_files(id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,visibility,status,created_by)
         VALUES($1,'workspace',$2,$3,$4,'retained.bin','application/octet-stream',$5,'private','archived','test')`,
