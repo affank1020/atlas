@@ -37,7 +37,7 @@ CREATE TABLE node_file_transfer_parts (
 
 -- Workspace changes must not strand bytes owned by a previous Node.
 -- The trigger runs in the same transaction as any reassignment/archive,
-// including actions outside NodeIdentity.assign and admin tooling.
+-- including actions outside NodeIdentity.assign and admin tooling.
 CREATE OR REPLACE FUNCTION node_file_transfer_invalidate_workspace()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
