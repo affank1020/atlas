@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { AuditService } from '../apps/server/src/core/audit.js';
+import type { AtlasRepository } from '../apps/server/src/core/repository.js';
+import type { AuditEvent } from '../apps/server/src/types.js';
+
+test('snapshot Monitoring category filters honour original mutations and preserve immutable wrappers', async () => {
+    const operations: Array<{ audit: AuditEvent['operation']; original?: string; outcome?: string }> = [
+        { audit: 'workspace.mutation_failed', original: 'workspace.git_committed', outcome: 'failed_or_uncertain' },
+        { audit: 'workspace.mutation_failed', original: 'workspace.file_patched', outcome: 'failed_or_uncertain' },
+        { audit: 'workspace.mutation_failed', original: 'workspace.dev_invoked', outcome: 'failed_or_uncertain' },
+        { audit: 'workspace.mutation_requested', original: 'workspace.git_committed' },
+        { audit: 'workspace.mutation_failed', original: 'view.updated', outcome: 'failed_or_uncertain' },
+        { audit: 'workspace.mutation_failed', outcome: 'failed_or_uncertain' },
+        { audit: 'workspace.mutation_failed', original: 'workspace.git_invalid;DROP TABLE audit_events', outcome: 'failed_or_uncertain' },
+        { audit: 'project.created' },
+    ];
+    const events: AuditEvent[] = operations.map(({ audit, original, outcome }, i) => ({
+        id: String(i), occurredAt: new Date(Date.UTC(2026, 9, 21, 10, i)).toISOString(),
+        client: 'test', projectId: 'p', operation: audit,
+        resulting: { ...(original !== undefined && { operation: original }), ...(outcome !== undefined && { outcome }) },
+    }));
+    const repository = { snapshot: async () => ({ auditEvents: events }) } as unknown as AtlasRepository;
+    const audit = new AuditService(repository);
+    for (const [category, expectedOperation] of [
+        ['git', 'workspace.git_committed'],
+        ['files', 'workspace.file_patched'],
+        ['dev', 'workspace.dev_invoked'],
+    ] as const) {
+        const result = await audit.monitoring({ projectId: 'p', category, outcome: 'failed', limit: 1 });
+        assert.equal(result.total, 1, category);
+        assert.equal(result.items.length, 1);
+        assert.equal(result.items[0].operation, 'workspace.mutation_failed');
+        assert.deepEqual((result.items[0].resulting as { operation?: string })?.operation, expectedOperation);
+    }
+    const gitPending = await audit.monitoring({ category: 'git', outcome: 'pending' });
+    assert.equal(gitPending.total, 1);
+    assert.equal(gitPending.items[0].operation, 'workspace.mutation_requested');
+    const invalid = await audit.monitoring({ category: 'workspace', outcome: 'failed' });
+    assert.equal(invalid.total, 3, 'Missing, foreign and malformed operations retain wrapper category');
+    const native = await audit.monitoring({ category: 'core', outcome: 'completed' });
+    assert.equal(native.total, 1);
+    assert.equal(native.items[0].operation, 'project.created');
+});

@@ -96,6 +96,14 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     const auditInput = { workspaceId: z.string().uuid().optional(), projectId: z.string().uuid().optional(), storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), operation: z.enum(["workspace.file_listed", "workspace.file_read", "workspace.files_searched", "workspace.git_status", "workspace.git_diff", "workspace.unity_status", "workspace.unity_commands", "workspace.created", "workspace.updated", "workspace.archived", "workspace.file_created", "workspace.file_patched", "workspace.file_deleted", "workspace.unity_invoked", "workspace.dev_invoked", "workspace.dev_tasks_listed", "workspace.dev_tasks_configured", "workspace.mutation_requested", "workspace.mutation_failed", "project.created", "project.updated", "project.archived", "store.created", "store.updated", "store.schema_updated", "store.archived", "record.created", "record.updated", "record.archived", "view.created", "view.updated", "view.archived"]).optional(), limit: z.number().int().min(1).max(200).optional() };
     tool("get_audit_history", "Read immutable audit history filtered by ownership or operation.", auditInput);
     tool("get_recent_activity", "Read recent Atlas activity, including workspace inspections and mutations, optionally scoped to a project, workspace, store or record.", auditInput);
+    tool("query_monitoring_activity", "Read a paginated, server-filtered page of immutable Atlas audit activity. Unlike recent activity, filtering is applied before pagination.", {
+        projectId: z.string().uuid().optional(), workspaceId: z.string().uuid().optional(), checkoutId: z.string().uuid().optional(),
+        storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), nodeId: z.string().uuid().optional(),
+        operation: z.string().max(120).optional(), category: z.enum(['core','view','node','workspace','files','git','dev','unity']).optional(),
+        client: z.string().max(200).optional(), outcome: z.enum(['completed','pending','failed']).optional(),
+        search: z.string().max(200).optional(), from: z.string().datetime().optional(), to: z.string().datetime().optional(),
+        limit: z.number().int().min(1).max(100).default(30), offset: z.number().int().min(0).max(10000).default(0),
+    });
     tool("search_atlas", "Search active Atlas records using lexical, semantic, or hybrid retrieval.", fabricSearchSchema.shape);
     tool("search_everything", "Search active Atlas projects, applications, views, stores, record contents, nodes and workspaces. Read-only, with links and partial-coverage diagnostics.", globalSearchInput.shape);
     tool("request_context", "Retrieve a bounded, authority-aware Atlas evidence pack.", fabricContextSchema.shape);
