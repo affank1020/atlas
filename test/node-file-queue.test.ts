@@ -358,7 +358,14 @@ test('subprocess SIGTERM during an upload releases the queue lock before service
         const [code]=await Promise.race([terminated,new Promise<never>((_,reject)=>setTimeout(
             ()=>reject(new Error('Queue subprocess exceeded shutdown deadline')),8000))]);
         assert.equal(code,0,errors.slice(0,300));
-        assert.equal((await readdir(join(root,'queue'))).includes('.queue-lock'),false);
+        const observed=JSON.parse(await readFile(join(root,'queue','.child-shutdown-observed.json'),'utf8'))
+            as {root:string;after:string[]};
+        const entries=await readdir(join(root,'queue'));
+        assert.equal(observed.root,join(root,'queue'));
+        assert.equal(observed.after.includes('.queue-lock'),false,
+            'child did not release its lock before exit');
+        assert.equal(entries.includes('.queue-lock'),false,
+            'parent sees stale lock after stopped child: '+JSON.stringify({observed,entries,output}));
         assert.equal((await queue.snapshot()).ready,1);
         const sent:string[]=[];
         const recovered=new NodeOfflineFileQueue(identity,join(root,'queue'),async job=>{
