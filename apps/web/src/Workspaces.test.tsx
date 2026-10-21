@@ -12,6 +12,12 @@ const repo = { id: 'repo', nodeId: 'node', projectId: null, name: 'Atlas',
     rootPath: '/srv/atlas/workspaces/atlas', kind: 'generic', status: 'active' };
 const sha = 'a'.repeat(40);
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(res => { resolve = res; });
+    return { promise, resolve };
+}
+
 beforeEach(() => {
     location.hash = '/workspaces';
     vi.mocked(callTool).mockReset().mockImplementation(async (name) => {
@@ -87,4 +93,85 @@ test('provenance-protected retirement uses Workspace IDs and expected commit, ne
         workspaceId: 'repo', targetWorkspaceId: 'feature', expectedHead: sha,
     }));
     vi.unstubAllGlobals();
+});
+
+test('initial loading shows four Workspace skeleton rows and a deep-link inspector placeholder', async () => {
+    const workspaces = deferred<(typeof repo)[]>();
+    location.hash = '/workspaces?workspace=repo';
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return workspaces.promise;
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    expect(browser).toHaveAttribute('aria-busy', 'true');
+    expect(browser.querySelectorAll('.wm-row-skeleton')).toHaveLength(4);
+    expect(inspector.querySelector('.wm-inspector-skeleton')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading Nodes and Workspaces');
+
+    workspaces.resolve([manager, repo]);
+    expect(await within(browser).findByText('Atlas')).toBeInTheDocument();
+    await waitFor(() => expect(browser.querySelectorAll('.wm-row-skeleton')).toHaveLength(0));
+    expect(browser).toHaveAttribute('aria-busy', 'false');
+});
+
+test('a slow GitHub catalogue does not delay Workspace browsing', async () => {
+    const catalogue = deferred<{ repositories: { repository: string; private: boolean; defaultBranch: string; archived: boolean }[] }>();
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [manager, repo];
+        if (name === 'list_github_repositories') return catalogue.promise;
+        return {};
+    });
+    render(<Workspaces />);
+    expect(await screen.findByText('2 Workspaces')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '+ Add repository' }));
+    const region = screen.getByRole('region', { name: 'Provision repository' });
+    expect(within(region).getByRole('option', { name: 'Loading repositories…' })).toBeInTheDocument();
+    catalogue.resolve({ repositories: [{ repository: 'example/atlas', private: true, defaultBranch: 'main', archived: false }] });
+    expect(await within(region).findByRole('option', { name: 'example/atlas · Private' })).toBeInTheDocument();
+});
+
+test('Git inspection has skeletons and refresh keeps existing checkout details visible', async () => {
+    const firstGit = deferred<{ available: boolean; branch: string; head: string; dirty: boolean; originRepository: string }>();
+    const firstTrees = deferred<{ worktrees: { rootPath: string; head: string; branch: string }[] }>();
+    const refreshGit = deferred<{ available: boolean; branch: string; head: string; dirty: boolean; originRepository: string }>();
+    const refreshTrees = deferred<{ worktrees: { rootPath: string; head: string; branch: string }[] }>();
+    let inspections = 0;
+    let treeInspections = 0;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [manager, repo];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return ++inspections === 1 ? firstGit.promise : refreshGit.promise;
+        if (name === 'workspace_git_list_worktrees') return ++treeInspections === 1 ? firstTrees.promise : refreshTrees.promise;
+        return {};
+    });
+    render(<Workspaces />);
+    await screen.findByText('2 Workspaces');
+    fireEvent.click(screen.getByRole('button', { name: /Atlas/ }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    expect(inspector.querySelector('.wm-git-skeleton')).toBeInTheDocument();
+    expect(inspector.querySelector('.wm-trees-skeleton')).toBeInTheDocument();
+    expect(inspector).toHaveAttribute('aria-busy', 'true');
+
+    firstGit.resolve({ available: true, branch: 'atlas/feature', head: sha, dirty: false, originRepository: 'example/atlas' });
+    firstTrees.resolve({ worktrees: [{ rootPath: repo.rootPath, head: sha, branch: 'atlas/feature' }] });
+    expect((await within(inspector).findAllByText('atlas/feature')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(inspector.querySelector('.wm-git-skeleton')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(inspections).toBe(2));
+    expect(within(inspector).getAllByText('atlas/feature').length).toBeGreaterThan(0);
+    expect(inspector.querySelector('.wm-git-skeleton')).not.toBeInTheDocument();
+    expect(screen.getByText('2 Workspaces')).toBeInTheDocument();
+    expect(screen.queryByText('Loading Nodes and Workspaces…')).not.toBeInTheDocument();
+
+    refreshGit.resolve({ available: true, branch: 'atlas/feature', head: sha, dirty: false, originRepository: 'example/atlas' });
+    refreshTrees.resolve({ worktrees: [{ rootPath: repo.rootPath, head: sha, branch: 'atlas/feature' }] });
+    await waitFor(() => expect(inspector).toHaveAttribute('aria-busy', 'false'));
 });
