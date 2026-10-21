@@ -121,6 +121,9 @@ test('unqualified journal document queries preserve Fabric and catalogue retriev
         ['Find my research journal', 'research journal'],
         ['journal article', 'journal article'],
         ['Find my systemd documentation', 'systemd documentation'],
+        ['Find my systemd service configuration', 'systemd service configuration'],
+        ['Find the systemd unit documentation', 'systemd unit documentation'],
+        ['Find the systemd journal configuration', 'systemd journal configuration'],
     ]) {
         const intent = interpretSearch(query);
         assert.equal(intent.intent, null, query);
@@ -129,6 +132,7 @@ test('unqualified journal document queries preserve Fabric and catalogue retriev
         const results = await searchEverywhere(deps, { query });
         assert.ok(results.results.some(hit => hit.kind === 'record' && hit.id === 'journal-note'), query);
     }
-    assert.deepEqual(retrieved, ['research journal', 'journal article', 'systemd documentation']);
-    assert.equal(catalogCalls, 3, 'Document searches must continue loading the project catalogue');
+    assert.deepEqual(retrieved, ['research journal', 'journal article', 'systemd documentation',
+        'systemd service configuration', 'systemd unit documentation', 'systemd journal configuration']);
+    assert.equal(catalogCalls, 6, 'Document searches must continue loading the project catalogue');
 });
