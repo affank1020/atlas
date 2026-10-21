@@ -27,7 +27,8 @@ function FileGlyph({ mimeType }: { mimeType: string }) {
 /** One admin-facing browser for the shared Files metadata and private object store. */
 export function Files() {
     const projects = useListProjectsQuery({ includeArchived: false });
-    const workspaces = useApplicationRead<WorkspaceChoice[]>('list_workspaces');
+    // Refresh the retained owner catalogue whenever Files is opened.
+    const workspaces = useApplicationRead<WorkspaceChoice[]>('list_workspaces', {}, true);
     const apps = useApplicationRead<ApplicationManifest[]>('list_all_applications');
     const [kind, setKind] = useState<FileOwner['kind']>('project');
     const [selectedId, setSelectedId] = useState('');
@@ -45,7 +46,8 @@ export function Files() {
             ? (projects.data ?? []).map(item => ({ id: item.id, name: item.name }))
             : kind === 'workspace'
                 ? (workspaces.data ?? []).filter(item => !item.status || item.status === 'active').map(item => ({ id: item.id, name: item.name }))
-                : (apps.data ?? []).filter(item => (apps.data ?? []).filter(candidate => candidate.slug === item.slug).length === 1)
+                : (apps.data ?? []).filter(item => (!item.projectId || (projects.data ?? []).some(project => project.id === item.projectId)) &&
+                    (apps.data ?? []).filter(candidate => candidate.slug === item.slug).length === 1)
                     .map(item => ({ id: item.slug, name: item.name }));
         return values.sort((a, b) => a.name.localeCompare(b.name));
     }, [kind, projects.data, workspaces.data, apps.data]);
@@ -67,7 +69,12 @@ export function Files() {
         return () => { active = false; };
     }, [owner?.kind, owner?.id, version]);
 
-    const reload = () => setVersion(current => current + 1);
+    const reload = () => {
+        setVersion(current => current + 1);
+        // Refresh owner catalogues too; otherwise a new/retired workspace may
+        // remain invisible even when the Files list itself was refreshed.
+        void projects.refetch(); void workspaces.refetch(); void apps.refetch();
+    };
     const loadingOwners = projects.isLoading || workspaces.isLoading || apps.isLoading;
     const ownerError = projects.error || workspaces.error || apps.error;
     const visible = entries.filter(item => `${item.fileName} ${item.mimeType}`.toLowerCase().includes(search.trim().toLowerCase()));
@@ -119,7 +126,7 @@ export function Files() {
         <header className="files-page-header">
             <div><h1>Files</h1><p>Private storage for your projects, workspaces and applications.</p></div>
             <div className="files-actions">
-                <button type="button" className="ghost" disabled={busy || mutating || !owner} onClick={reload}>↻ Refresh</button>
+                <button type="button" className="ghost" disabled={busy || mutating || projects.isFetching || workspaces.isFetching || apps.isFetching} onClick={reload}>↻ Refresh</button>
                 <button type="button" disabled={!owner || mutating || busy} onClick={() => uploadInput.current?.click()}>{mutating ? 'Working…' : 'Upload files'}</button>
                 <input ref={uploadInput} type="file" multiple className="files-hidden-input" aria-label="Choose files to upload" onChange={event => void onUpload(event.target.files)} />
             </div>

@@ -9,7 +9,9 @@ vi.mock('./atlasApi', () => ({
     useApplicationRead: (name: string) => ({
         data: name === 'list_workspaces'
             ? [{ id: '00000000-0000-4000-8000-000000000002', name: 'Mac Repo', status: 'active' }]
-            : [{ slug: 'portfolio', name: 'Portfolio', projectId: null }],
+            : [{ slug: 'portfolio', name: 'Portfolio', projectId: null },
+                { slug: 'research-app', name: 'Research App', projectId },
+                { slug: 'old-app', name: 'Archived App', projectId: '00000000-0000-4000-8000-000000000099' }],
         isLoading: false, error: null, refetch: vi.fn(),
     }),
 }));
@@ -55,6 +57,15 @@ test('Files browser changes ownership scope without listing another owners files
     }));
     expect(await screen.findByText('No files yet')).toBeInTheDocument();
     expect(uploadFile).not.toHaveBeenCalled();
+});
+
+test('Files excludes application owners belonging to archived projects', async () => {
+    vi.mocked(listFiles).mockResolvedValue([]);
+    render(<Files />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Owner type' }), { target: { value: 'application' } });
+    expect(await screen.findByRole('option', { name: 'Portfolio' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Research App' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Archived App' })).not.toBeInTheDocument();
 });
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
