@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type ShellIconName = 'home' | 'projects' | 'applications' | 'views' | 'data' | 'infrastructure' | 'nodes' | 'monitoring' | 'activity' | 'settings' | 'search' | 'sparkles' | 'user';
+export type ShellIconName = 'home' | 'projects' | 'applications' | 'views' | 'data' | 'infrastructure' | 'nodes' | 'workspaces' | 'monitoring' | 'activity' | 'settings' | 'search' | 'sparkles' | 'user';
 export function ShellIcon({ name }: { name: ShellIconName }) {
     const drawings: Record<ShellIconName, ReactNode> = {
         home: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" /><path d="M9 21v-8h6v8" /></>,
@@ -10,6 +10,7 @@ export function ShellIcon({ name }: { name: ShellIconName }) {
         data: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3" /></>,
         infrastructure: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="8.5" y="14" width="7" height="7" rx="1.5" /><path d="M6.5 10v2h12v-2M12 12v2" /></>,
         nodes: <><rect x="9" y="2.5" width="6" height="6" rx="1.5" /><rect x="2.5" y="16" width="6" height="6" rx="1.5" /><rect x="15.5" y="16" width="6" height="6" rx="1.5" /><path d="M12 8.5v4M5.5 16v-3.5h13V16" /></>,
+        workspaces: <><path d="M4 6h7l2 3h7v10H4z" /><path d="M4 9h16M8 14h8m-8 3h5" /></>,
         monitoring: <><path d="M3 12h4l2.5-5 4 10 2.5-5H21" /></>,
         activity: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
         settings: <><path d="M9.8 2.8h4.4l.6 2.2a7.6 7.6 0 0 1 1.8 1l2.2-.6L21 9.2l-1.6 1.6a8 8 0 0 1 0 2.4l1.6 1.6-2.2 3.8-2.2-.6a7.6 7.6 0 0 1-1.8 1l-.6 2.2H9.8L9.2 19a7.6 7.6 0 0 1-1.8-1l-2.2.6L3 14.8l1.6-1.6a8 8 0 0 1 0-2.4L3 9.2l2.2-3.8 2.2.6a7.6 7.6 0 0 1 1.8-1z" /><circle cx="12" cy="12" r="3" /></>,

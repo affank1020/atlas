@@ -24,7 +24,7 @@ export function ProjectRows({ projects }: { projects: Project[] }) {
     )}</div>;
 }
 
-type HostedWorkspace = { id: string; projectId: string; name: string; nodeId: string; nodeName: string };
+type HostedWorkspace = { id: string; projectId: string | null; name: string; nodeId: string; nodeName: string };
 const workspaceDetailsCache = new Map<string, AtlasNode>();
 
 function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects, onDetailsUnavailable }: { nodes: AtlasNode[] | undefined; nodesUnavailable: boolean; refreshKey: number; projects: Project[]; onDetailsUnavailable: (value: boolean) => void }) {
@@ -68,13 +68,13 @@ function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects, onDetai
     const projectNames = useMemo(() => new Map(projects.map(p => [p.id, p.name])), [projects]);
     const total = nodes?.reduce((sum, node) => sum + node.hostedWorkspaceCount, 0);
     return <section className="overview-card" aria-label="Hosted workspaces">
-        <div className="overview-card-head"><h2>Workspaces</h2><a href="#/projects">Projects <span aria-hidden="true">↗</span></a></div>
+        <div className="overview-card-head"><h2>Workspaces</h2><a href="#/workspaces">Browse <span aria-hidden="true">↗</span></a></div>
         <div className="overview-card-feature"><strong>{total ?? '—'}</strong><span>Hosted across {nodes?.length ?? '—'} nodes</span></div>
         {loading && <p className="overview-muted" role="status">Loading workspace details…</p>}
         {!loading && items.length === 0 && <p className="overview-muted">{failed ? 'Open the Nodes view to inspect assignments.' : 'No workspaces currently assigned.'}</p>}
         <div className="overview-compact-list">{!loading && items.slice(0, 5).map(workspace =>
-            <a key={workspace.id} href={`#/projects/${workspace.projectId}/workspaces`} className="overview-compact-row">
-                <span className="overview-item-main"><strong>{workspace.name}</strong><small>{projectNames.get(workspace.projectId) ?? workspace.nodeName}</small></span>
+            <a key={workspace.id} href={`#/workspaces?workspace=${encodeURIComponent(workspace.id)}`} className="overview-compact-row">
+                <span className="overview-item-main"><strong>{workspace.name}</strong><small>{projectNames.get(workspace.projectId ?? '') ?? workspace.nodeName}</small></span>
                 <span aria-hidden="true">↗</span>
             </a>)}</div>
         {items.length > 5 && <p className="overview-list-more">+{items.length - 5} more workspaces</p>}

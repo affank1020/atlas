@@ -62,7 +62,7 @@ test('Home combines recent applications and views in last-used order', async () 
     expect(await within(infrastructure).findByText('Atlas Linux VPS')).toBeInTheDocument();
     expect(within(infrastructure).getByText('Connected')).toBeInTheDocument();
     expect(within(infrastructure).getByText('online')).toBeInTheDocument();
-    expect(await within(screen.getByRole('region', { name: 'Hosted workspaces' })).findByRole('link', { name: /Research workspace/ })).toHaveAttribute('href', '#/projects/p/workspaces');
+    expect(await within(screen.getByRole('region', { name: 'Hosted workspaces' })).findByRole('link', { name: /Research workspace/ })).toHaveAttribute('href', '#/workspaces?workspace=ws');
     const recentlyUsed = screen.getByRole('region', { name: 'Recently used' });
     expect(within(recentlyUsed).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual([
         'http://localhost:3000/projects/p/views/reading',

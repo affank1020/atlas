@@ -23,7 +23,7 @@ export async function callTool<T>(name: string, input: Record<string, unknown> =
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         return mockTool<T>(name, input);
     }
-    const timeoutMs = name === "workspace_run_dev_task" ? 660_000 : ["football_validate_python", "football_validate_editor_gates", "football_validate_physics_smoke"].includes(name) ? 210_000 : name === "ask_atlas" || name === "ask_portfolio" ? 240_000 : name === "football_index_policy" ? 70_000 : 30_000;
+    const timeoutMs = name === "workspace_run_dev_task" ? 660_000 : ["workspace_git_clone_repository", "workspace_git_push_branch", "workspace_git_create_worktree", "workspace_git_remove_worktree", "workspace_git_open_pull_request"].includes(name) ? 120_000 : ["football_validate_python", "football_validate_editor_gates", "football_validate_physics_smoke"].includes(name) ? 210_000 : name === "ask_atlas" || name === "ask_portfolio" ? 240_000 : name === "football_index_policy" ? 70_000 : 30_000;
     let response: Response;
     try {
         toolRequestCount++;

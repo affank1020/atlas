@@ -130,6 +130,12 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'get_node':
             result = { ...nodes.find(node => node.id === nodeId), workspaces: workspaces.filter(w => w.nodeId === nodeId),
                 activity: activity.filter(a => workspaces.some(w => w.nodeId === nodeId && w.id === a.workspaceId)).map(a => ({ operation: a.operation, createdAt: a.occurredAt })) }; break;
+        case 'list_workspaces': result = workspaces.filter(w => !nodeId || w.nodeId === nodeId); break;
+        case 'list_github_repositories': result = { repositories: [
+            { repository: 'example/atlas-demo', private: true, defaultBranch: 'main', archived: false },
+            { repository: 'example/portfolio-demo', private: false, defaultBranch: 'main', archived: false },
+        ] }; break;
+        case 'workspace_git_list_worktrees': result = { worktrees: [] }; break;
         case 'list_project_workspaces': result = workspaces.filter(w => w.projectId === projectId); break;
         case 'get_workspace': result = workspaces.find(w => w.projectId === projectId && w.id === workspaceId); break;
         case 'workspace_git_status': result = { available: true, branch: 'demo/main', dirty: false, changes: [], truncated: false }; break;

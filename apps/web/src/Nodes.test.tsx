@@ -17,7 +17,7 @@ it('renders real Node capabilities and hosted Workspace links, and refreshes pre
     expect(within(inspector).getByText('Online')).toBeInTheDocument();
     expect(callTool).toHaveBeenCalledWith('get_node', { nodeId: node.id });
     for (const label of ['Filesystem', 'Git', 'Development', 'Unity']) expect(within(inspector).getByText(label)).toBeInTheDocument();
-    expect(await within(inspector).findByRole('link', { name: 'Football' })).toHaveAttribute('href', '#/projects/project/workspaces');
+    expect(await within(inspector).findByRole('link', { name: 'Football' })).toHaveAttribute('href', '#/workspaces?workspace=workspace');
     vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [{ ...node, status: 'offline' }] : { ...node, status: 'offline' });
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(await within(inspector).findByText('Offline')).toBeInTheDocument();
