@@ -369,14 +369,16 @@ recovery point are required for full disaster recovery.
   `--dry-run` automatically. An optional
   `npm run files:r2:verify-recovery -- --max-files=5` checks 5 catalogue
   entries, maximum 10. To continue a bounded catalogue walk, pass the exact
-  returned `nextCursor` using `--cursor=<opaque-files-key>`. If
-  the first page contains only an invalid empty storage key, the returned
-  cursor is the empty string; pass `--cursor=` to continue *after* it.
-  A supplied cursor, including an empty cursor, never counts as an initial
+  returned `nextCursor` using `--cursor=<file-uuid>`. Recovery scans page by
+  the immutable PostgreSQL file UUID, **not** by the R2 storage key, so
+  malformed or empty storage keys can be counted as failures without
+  preventing later files from being checked. No arbitrary storage key is
+  accepted as a CLI cursor. A supplied cursor never counts as an initial
   full-catalogue scan. Only the initial run **without** a cursor that
-  reaches the end and verifies every row can return `status: "passed"`. Every sampled or subsequent cursor run
-  remains `partial` even when all inspected bytes are correct, because it
-  cannot by itself prove whole-catalogue coverage.
+  reaches the end and verifies every row can return `status: "passed"`.
+  Every sampled or subsequent cursor run remains `partial` even when all
+  inspected bytes are correct, because it cannot by itself prove whole-catalogue
+  coverage.
 - All `atlas_files` rows, including archived entries and corrupted
   records with even an empty storage key, are included in the uncursored
   scan. Invalid metadata counts as a failure rather than being skipped from
