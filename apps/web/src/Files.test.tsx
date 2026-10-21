@@ -1,0 +1,60 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, test, vi } from 'vitest';
+import { Files } from './Files';
+import { archiveFile, downloadFile, listFiles, uploadFile } from './filesApi';
+
+const projectId = '00000000-0000-4000-8000-000000000001';
+vi.mock('./atlasApi', () => ({
+    useListProjectsQuery: () => ({ data: [{ id: projectId, name: 'Research' }], isLoading: false, error: null, refetch: vi.fn() }),
+    useApplicationRead: (name: string) => ({
+        data: name === 'list_workspaces'
+            ? [{ id: '00000000-0000-4000-8000-000000000002', name: 'Mac Repo', status: 'active' }]
+            : [{ slug: 'portfolio', name: 'Portfolio', projectId: null }],
+        isLoading: false, error: null, refetch: vi.fn(),
+    }),
+}));
+vi.mock('./filesApi', () => ({
+    listFiles: vi.fn(),
+    uploadFile: vi.fn(),
+    downloadFile: vi.fn(),
+    archiveFile: vi.fn(),
+}));
+
+const saved = {
+    id: '00000000-0000-4000-8000-000000000003',
+    owner: { kind: 'project', id: projectId },
+    fileName: 'research.pdf', mimeType: 'application/pdf',
+    byteSize: 100, checksum: 'demo', visibility: 'private', status: 'active',
+    createdAt: '2026-10-21T13:00:00.000Z', updatedAt: '2026-10-21T13:00:00.000Z',
+};
+
+test('Files browser lists private scoped files and invokes download and archive', async () => {
+    vi.mocked(listFiles).mockResolvedValue([saved] as never);
+    vi.mocked(downloadFile).mockResolvedValue(undefined);
+    vi.mocked(archiveFile).mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<Files />);
+    expect(await screen.findByText('research.pdf')).toBeInTheDocument();
+    expect(vi.mocked(listFiles)).toHaveBeenCalledWith({ kind: 'project', id: projectId });
+    expect(screen.getByText('Private')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Download research.pdf' }));
+    await waitFor(() => expect(downloadFile).toHaveBeenCalledWith({ kind: 'project', id: projectId }, saved));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive research.pdf' }));
+    await waitFor(() => expect(archiveFile).toHaveBeenCalledWith({ kind: 'project', id: projectId }, saved.id));
+    expect(screen.queryByText('research.pdf')).not.toBeInTheDocument();
+    confirm.mockRestore();
+});
+
+test('Files browser changes ownership scope without listing another owners files', async () => {
+    vi.mocked(listFiles).mockResolvedValue([]);
+    render(<Files />);
+    await waitFor(() => expect(listFiles).toHaveBeenCalledWith({ kind: 'project', id: projectId }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Owner type' }), { target: { value: 'workspace' } });
+    await waitFor(() => expect(listFiles).toHaveBeenCalledWith({
+        kind: 'workspace', id: '00000000-0000-4000-8000-000000000002',
+    }));
+    expect(await screen.findByText('No files yet')).toBeInTheDocument();
+    expect(uploadFile).not.toHaveBeenCalled();
+});
+
+afterEach(() => { cleanup(); vi.clearAllMocks(); });

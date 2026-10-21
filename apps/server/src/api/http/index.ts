@@ -1,4 +1,5 @@
 import { timed } from '../../shared/performance.js';
+import { serveFilesRequest } from './files.js';
 import { nodeSchemas } from '../../nodes/contracts.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -48,6 +49,7 @@ export function createHttpTransport(services: ServerServices) {
             return;
         }
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
+        if (await serveFilesRequest(request, response, services)) return;
         if (request.method === "POST" && request.url === "/integrations/contentful/webhook") {
             const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
             const rawBody = Buffer.concat(chunks).toString("utf8");

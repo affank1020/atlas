@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 
-export type ShellIconName = 'home' | 'projects' | 'applications' | 'views' | 'data' | 'infrastructure' | 'nodes' | 'workspaces' | 'monitoring' | 'activity' | 'settings' | 'search' | 'sparkles' | 'user';
+export type ShellIconName = 'home' | 'projects' | 'applications' | 'views' | 'data' | 'files' | 'infrastructure' | 'nodes' | 'workspaces' | 'monitoring' | 'activity' | 'settings' | 'search' | 'sparkles' | 'user';
 export function ShellIcon({ name }: { name: ShellIconName }) {
     const drawings: Record<ShellIconName, ReactNode> = {
         home: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" /><path d="M9 21v-8h6v8" /></>,
         projects: <><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></>,
         applications: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
         views: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M9 9v11" /></>,
+        files: <><path d="M3 6h7l2.5 3H21v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M3 9h18" /></>,
         data: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3" /></>,
         infrastructure: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="8.5" y="14" width="7" height="7" rx="1.5" /><path d="M6.5 10v2h12v-2M12 12v2" /></>,
         nodes: <><rect x="9" y="2.5" width="6" height="6" rx="1.5" /><rect x="2.5" y="16" width="6" height="6" rx="1.5" /><rect x="15.5" y="16" width="6" height="6" rx="1.5" /><path d="M12 8.5v4M5.5 16v-3.5h13V16" /></>,

@@ -1,39 +1,58 @@
-# Atlas Files — shared storage foundation (PR 1)
+# Atlas Files — shared object storage and private browser
 
-## Status and contract
+## Foundation (merged in PR #25)
 
-This is the **internal backend foundation**, not a newly exposed files API or UI.
-It does not require additional Cloudflare services or change the Portfolio publishing contract.
+- `apps/server/src/server/file-storage.ts` is the shared byte/object adapter,
+  supporting local storage and optionally private Cloudflare R2.
+- `apps/server/src/server/atlas-files.ts` stores Files metadata in PostgreSQL
+  (`018_atlas_files.sql`) and enforces owner-scoped reads, downloads and archives.
+- A file belongs to exactly one project, workspace or application. Owner IDs and
+  object keys are validated and storage keys are generated only by the server.
+- Existing Portfolio media remain separate: public `/api/media/:id/:variant`
+  routes, processing, metadata, SQL and legacy-local fallback are unchanged.
 
-- `apps/server/src/server/file-storage.ts` is the shared byte/object adapter. It
-  supports local disk and optional private Cloudflare R2, using server-generated,
-  strictly validated object keys.
-- `apps/server/src/server/atlas-files.ts` stores new File metadata in PostgreSQL,
-  scoped to a project, workspace or application owner. Every read, listing and
-  archive requires a matching owner scope; private is the default visibility.
-- `apps/server/migrations/018_atlas_files.sql` introduces an additive table;
-  it does **not** move existing Portfolio media metadata.
-- Portfolio's `/api/media/:id/:variant` URLs, image processing, SQL tables and
-  legacy local fallback remain unchanged. The Portfolio storage module is a
-  compatibility re-export of the shared byte adapter.
+## Private Files HTTP API and UI (this worktree)
 
-## Current limits and security
+- `#/files` is the Atlas Web Files browser. It lists existing projects,
+  workspaces and applications, and lets the admin upload, download and archive
+  their private files, with per-owner search and skeleton loading states.
+- The endpoints `POST /api/files/{list,upload,download,archive}` accept JSON
+  with `owner: { kind, id }`. Upload uses `{ fileName, mimeType, base64 }`;
+  download and archive require `fileId`.
+- These routes are deliberately **not MCP tools**, and are **not public Portfolio
+  routes**. Production /api/files/* is covered by Caddy's existing admin Basic
+  Auth, and Atlas Server is bound to the container network and VPS loopback,
+  not exposed directly on a public port. Do not add /api/files/* to the public
+  Caddy matcher. Outside the single-admin deployment, add application-user
+  sessions/permissions before enabling these routes.
+- The server checks that the requested project, workspace or application exists
+  and is active, then AtlasFilesService scopes every file query to that owner.
+  There is one administrative identity for all owners, not tenant-based access
+  controls. File IDs cannot be used to read another owner's objects.
+- Only the **private** visibility can be created through the API, regardless of
+  submitted JSON. Downloads are attachments with `application/octet-stream`,
+  `no-store`, `nosniff` and a restrictive CSP. The responses never include
+  object keys, R2 credentials or raw bucket URLs.
+- Non-approved browser origins, opaque-origin sandboxed Views and cross-site
+  POSTs are denied. For local Vite live development, only explicitly allowed
+  `ATLAS_WORKSPACE_ORIGINS` receive non-wildcard CORS.
+- Uploads are buffered and limited to **25 MiB per file** (35 MiB HTTP JSON
+  body limit). The client uploads multiple selected files sequentially. These
+  are not direct-to-R2 uploads or a bulk streaming API.
+- Development without Cloudflare keys stores the new Files bytes in the
+  configured `ATLAS_MEDIA_DIR`. When all four existing `ATLAS_R2_*` variables
+  are set, new Files uploads use the configured private R2 bucket.
 
-The generic service has no HTTP/MCP endpoints yet. Only trusted server-side
-integrations should call it after independently checking the caller's rights to
-the requested owner. The `visibility` field is metadata, **not** a permission
-to expose an R2 bucket or object publicly. Keep all buckets private.
+## Limitations and further work
 
-Uploads currently accept buffered data up to 25 MiB. Bulk artifact streaming,
-presigned uploads, downloads and a Files UI are out of scope for this PR.
-An archive updates PostgreSQL metadata only: object retention, physical garbage
-collection and verified backup lifecycle policies are separate follow-up work.
-Scope names and ownership records are not automatically reconciled to deleted
-projects or workspaces yet.
-
-## Follow-up
-
-PR 2 should add authenticated APIs and central authorisation checks before
-introducing direct-to-R2 uploads, public CDN delivery, private downloads or an
-interactive Files browser. Never point a public DNS hostname at the existing
-private Portfolio bucket without separating public and private assets first.
+- Archive updates PostgreSQL metadata only. It **does not delete bytes** from
+  R2 or local storage. There is no retention timer, physical garbage collection,
+  automatic backup, quota enforcement or per-owner storage billing yet.
+- No public CDN delivery, presigned uploads or client-side R2 credentials.
+  Public assets must be separated from private Files before a public R2
+  hostname or CDN is enabled.
+- Portfolio's existing media rows are not automatically migrated into the
+  generic Files catalogue.
+- Cloudflare GraphQL Analytics integration is independent of the R2 S3 keys.
+  `ATLAS_CF_ACCOUNT_ID` and `ATLAS_CF_ANALYTICS_TOKEN` remain optional
+  read-only inputs to Data page storage metrics.

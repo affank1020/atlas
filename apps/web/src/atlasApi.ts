@@ -122,7 +122,7 @@ export function useAtlasMutation() {
 }
 
 // Explicit allowlist: operational commands can never accidentally enter this cache.
-export type ApplicationReadName = 'list_applications' | 'list_all_applications' | 'get_application' |
+export type ApplicationReadName = 'list_applications' | 'list_all_applications' | 'get_application' | 'list_workspaces' |
     'get_portfolio_schemas' | 'list_portfolio_entries' | 'get_portfolio_dashboard' | 'list_portfolio_media' | 'list_portfolio_revisions' |
     'football_generalist_manifest' | 'football_generalist_runs' | 'football_generalist_policies' | 'football_generalist_activity' | 'football_generalist_assessments';
 export function useApplicationRead<T>(name: ApplicationReadName, input: Record<string, unknown> = {}, live = false, skip = false) {
