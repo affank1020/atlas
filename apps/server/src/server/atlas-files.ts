@@ -98,6 +98,11 @@ export class AtlasFilesService {
             if (error instanceof ObjectNotFound) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
             throw error;
         });
+        // Metadata is not evidence that the underlying bytes are intact.
+        // Never serve a truncated or corrupted object, including from local fallback.
+        if (bytes.length !== Number(row.byte_size) ||
+            createHash("sha256").update(bytes).digest("hex") !== row.checksum)
+            throw new Error("Atlas Files object integrity verification failed.");
         return { file: fileRow(row), bytes };
     }
     async archive(ownerInput: FileOwner, id: string): Promise<void> {

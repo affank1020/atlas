@@ -36,12 +36,39 @@
 - Non-approved browser origins, opaque-origin sandboxed Views and cross-site
   POSTs are denied. For local Vite live development, only explicitly allowed
   `ATLAS_WORKSPACE_ORIGINS` receive non-wildcard CORS.
-- Uploads are buffered and limited to **25 MiB per file** (35 MiB HTTP JSON
-  body limit). The client uploads multiple selected files sequentially. These
-  are not direct-to-R2 uploads or a bulk streaming API.
+- The Web browser now uploads raw bytes with `POST /api/files/upload-binary`
+  (`application/octet-stream`). This removes base64 transfer overhead and avoids
+  `FileReader`'s full-file encoded copy. Ownership, percent-encoded file name,
+  and MIME type travel in `X-Atlas-Owner-Kind`, `X-Atlas-Owner-Id`,
+  `X-Atlas-File-Name`, and `X-Atlas-File-Type` headers. The server independently
+  validates all metadata, owner existence and private visibility.
+- Existing `POST /api/files/upload` JSON/base64 clients remain supported.
+  Both paths are **limited to 25 MiB** per file. Server memory still buffers the
+  bounded upload; this is **not yet resumable, multipart or direct-to-R2**.
+  Multiple selected files are transferred sequentially.
+- File downloads verify both the stored byte count and SHA-256 checksum
+  before returning bytes. A missing or altered object fails closed rather
+  than delivering an incomplete screenshot or document.
+- `OPTIONS /api/files/*` now returns only approved, narrow-origin CORS
+  responses, including the binary-upload headers. Private endpoints stay
+  behind the same Caddy admin authentication.
 - Development without Cloudflare keys stores the new Files bytes in the
   configured `ATLAS_MEDIA_DIR`. When all four existing `ATLAS_R2_*` variables
   are set, new Files uploads use the configured private R2 bucket.
+
+## Mobile-node readiness
+
+- Screenshot and document bytes now have a binary transport that mobile and
+  desktop browsers can use with less overhead. **Native mobile Nodes cannot
+  call the admin-only Files HTTP endpoints with Node credentials.** A reviewed,
+  per-Node authenticated transfer route with explicit destination-owner
+  authorisation is required before mobile Nodes can upload directly.
+- Native mobile uploads should support resumable/chunked transfers, idempotent
+  retries, bounded concurrency and device offline queues, especially for large
+  photos/videos and changing network conditions. Do not copy Caddy admin
+  credentials onto Nodes or expose private Files endpoints publicly.
+- Before depending on R2 for mobile assets, configure R2 privately and verify
+  live round-trip upload/download, storage metrics, backup and restore.
 
 ## Limitations and further work
 

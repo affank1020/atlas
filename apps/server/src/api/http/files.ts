@@ -5,7 +5,8 @@ import { AtlasError } from '../../shared/errors.js';
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_BODY_BYTES = 35 * 1024 * 1024;
-const fileActions = new Set(['list', 'upload', 'download', 'archive']);
+const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive']);
+const BINARY_HEADERS = 'content-type,x-atlas-owner-kind,x-atlas-owner-id,x-atlas-file-name,x-atlas-file-type';
 
 function sendJson(response: ServerResponse, status: number, value: unknown) {
     response.writeHead(status, {
@@ -32,6 +33,34 @@ async function parseJson(request: IncomingMessage, maxBytes: number): Promise<Re
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
         throw new AtlasError('Invalid Files JSON request.');
     return parsed as Record<string, unknown>;
+}
+
+async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer }> {
+    if (request.headers['content-type'] !== 'application/octet-stream')
+        throw new AtlasError('Binary uploads must use application/octet-stream.');
+    const header = (name: string, maxLength: number) => {
+        const value = request.headers[name];
+        if (typeof value !== 'string' || value.length === 0 || value.length > maxLength)
+            throw new AtlasError('Invalid binary upload metadata.');
+        return value;
+    };
+    const owner = readOwner({ kind: header('x-atlas-owner-kind', 20), id: header('x-atlas-owner-id', 120) });
+    let fileName: string;
+    try { fileName = decodeURIComponent(header('x-atlas-file-name', 1024)); }
+    catch { throw new AtlasError('Invalid binary upload file name.'); }
+    const mimeType = header('x-atlas-file-type', 120);
+    const length = request.headers['content-length'];
+    if (length && (!/^\d+$/.test(length) || Number(length) > MAX_FILE_BYTES))
+        throw new AtlasError('Files request exceeds the upload limit.');
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of request) {
+        size += chunk.length;
+        if (size > MAX_FILE_BYTES) throw new AtlasError('Files request exceeds the upload limit.');
+        chunks.push(Buffer.from(chunk));
+    }
+    if (!size) throw new AtlasError('Binary upload cannot be empty.');
+    return { owner, fileName, mimeType, bytes: Buffer.concat(chunks, size) };
 }
 
 function readOwner(input: unknown): FileOwner {
@@ -72,14 +101,9 @@ function safeFileId(input: unknown): string {
  * Requests from a foreign web Origin are rejected to prevent Basic Auth CSRF.
  */
 export async function serveFilesRequest(request: IncomingMessage, response: ServerResponse, services: ServerServices): Promise<boolean> {
-    const action = /^\/api\/files\/([a-z]+)$/.exec(request.url ?? '')?.[1];
+    const action = /^\/api\/files\/([a-z-]+)$/.exec(request.url ?? '')?.[1];
     if (!action || !fileActions.has(action)) return false;
 
-    if (request.method !== 'POST') {
-        response.setHeader('allow', 'POST');
-        sendJson(response, 405, { error: 'METHOD_NOT_ALLOWED' });
-        return true;
-    }
     const origin = request.headers.origin;
     const allowedOrigin = !!origin && services.config.workspace.origins.includes(origin);
     if (origin === 'null' || (origin && !allowedOrigin) ||
@@ -93,7 +117,27 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
         response.setHeader('access-control-allow-origin', origin);
         response.setHeader('vary', 'Origin');
     }
+    if (request.method === 'OPTIONS') {
+        if (allowedOrigin) {
+            response.setHeader('access-control-allow-methods', 'POST,OPTIONS');
+            response.setHeader('access-control-allow-headers', BINARY_HEADERS);
+        }
+        response.writeHead(204, { 'cache-control': 'no-store' });
+        response.end();
+        return true;
+    }
+    if (request.method !== 'POST') {
+        response.setHeader('allow', 'POST, OPTIONS');
+        sendJson(response, 405, { error: 'METHOD_NOT_ALLOWED' });
+        return true;
+    }
     try {
+        if (action === 'upload-binary') {
+            const input = await readBinaryUpload(request);
+            await requireActiveOwner(input.owner, services);
+            sendJson(response, 201, await services.files.upload({ ...input, visibility: 'private', client: 'Atlas Web' }));
+            return true;
+        }
         const body = await parseJson(request, action === 'upload' ? MAX_UPLOAD_BODY_BYTES : 4096);
         const owner = readOwner(body.owner);
         // Validate the owner exists before any storage lookup or upload.
