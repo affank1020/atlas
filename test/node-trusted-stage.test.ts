@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -31,6 +31,8 @@ function fixture(ghVersion = '2.102.0') {
         writeFileSync(checksum, digest + '  ' + name + '\n');
     }
     writeChecksum();
+    const attestationBundle = join(root, 'attestations.jsonl');
+    writeFileSync(attestationBundle, '{"signedBundle":"fixture"}\n');
     const trace = join(root, 'gh-args');
     const gh = join(bin, 'gh');
     // Stubbed verifier tests strict arguments and rejection propagation.
@@ -39,18 +41,24 @@ function fixture(ghVersion = '2.102.0') {
         '#!/usr/bin/env bash',
         'if [[ "$1" == "--version" ]]; then echo "gh version $ATLAS_GH_TEST_VERSION"; exit 0; fi',
         'printf "%s\\n" "$@" > "$ATLAS_GH_TEST_TRACE"',
-        'if [[ "$1" == attestation && "$2" == verify ]]; then exit "${ATLAS_GH_TEST_EXIT:-0}"; fi',
+        'if [[ "$1" == attestation && "$2" == verify ]]; then',
+        '  offline=0',
+        '  for arg in "$@"; do if [[ "$arg" == "--bundle" ]]; then offline=1; fi; done',
+        '  if [[ "${ATLAS_GH_TEST_NO_AUTH:-0}" == "1" && "$offline" != "1" ]]; then echo "Login required" >&2; exit 4; fi',
+        '  exit "${ATLAS_GH_TEST_EXIT:-0}"',
+        'fi',
         'exit 2',
     ].join('\n') + '\n');
     chmodSync(gh, 0o755);
-    function run(extra: Record<string, string> = {}, selectedArchive = archive) {
-        return spawnSync('bash', [script, 'verify', selectedArchive, checksum], {
+    function run(extra: Record<string, string> = {}, selectedArchive = archive,
+        action: 'verify' | 'install' = 'verify', bundlePath?: string) {
+        return spawnSync('bash', [script, action, selectedArchive, checksum, ...(bundlePath ? [bundlePath] : [])], {
             encoding: 'utf8',
             env: { ...process.env, PATH: bin + ':' + process.env.PATH,
                 ATLAS_GH_TEST_TRACE: trace, ATLAS_GH_TEST_VERSION: ghVersion, ...extra },
         });
     }
-    return { root, bundle, archive, checksum, trace, run, writeChecksum };
+    return { root, bundle, archive, checksum, trace, run, writeChecksum, attestationBundle };
 }
 
 test('requires exact repository, main, workflow certificate and attested source digest', () => {
@@ -120,4 +128,54 @@ test('installer does not expose update control or restart active services', () =
     assert.doesNotMatch(source, /^\s*(?:sudo|systemctl|bash\s+.*linux-node-lifecycle\.sh)\b/m);
     assert.match(source, /mktemp -d "\$root\/\.signed-stage/);
     assert.match(source, /verify_archive "\$stage\/\$archive_name"/);
+    assert.match(source, /install -m 0600 -- "\$bundle_input" "\$stage\/attestations\.jsonl"/);
+    assert.match(source, /verify_archive "\$stage\/\$archive_name" "\$stage\/\$archive_name\.sha256" "\$stage\/attestations\.jsonl"/);
+});
+
+test('offline attestation bundle verifies without a root-visible GitHub login', () => {
+    const f = fixture();
+    try {
+        // Reproduce sudo's lack of user gh auth: online verification needs a
+        // login, whereas --bundle bypasses the GitHub API authentication gate.
+        const withoutAuth = f.run({ ATLAS_GH_TEST_NO_AUTH: '1', GH_TOKEN: '', GITHUB_TOKEN: '', GH_CONFIG_DIR: join(f.root, 'unconfigured-root-gh') });
+        assert.notEqual(withoutAuth.status, 0);
+        assert.match(withoutAuth.stderr, /Build-provenance verification failed/);
+
+        const offline = f.run({ ATLAS_GH_TEST_NO_AUTH: '1', GH_TOKEN: '', GITHUB_TOKEN: '', GH_CONFIG_DIR: join(f.root, 'unconfigured-root-gh') },
+            f.archive, 'verify', f.attestationBundle);
+        assert.equal(offline.status, 0, offline.stderr);
+        const args = readFileSync(f.trace, 'utf8').split('\n');
+        const bundleFlag = args.indexOf('--bundle');
+        assert.ok(bundleFlag > 0, 'Offline verifier must receive --bundle');
+        assert.equal(args[bundleFlag + 1], f.attestationBundle);
+        assert.ok(args.includes('--source-digest'));
+        assert.ok(args.includes('--cert-identity'));
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('root installation requires explicit bundle and never falls back to online GitHub auth', () => {
+    const f = fixture();
+    try {
+        const noBundle = f.run({ ATLAS_GH_TEST_NO_AUTH: '1', GH_TOKEN: '' }, f.archive, 'install');
+        assert.notEqual(noBundle.status, 0);
+        assert.match(noBundle.stderr, /Install requires a local attestation bundle/);
+        const source = readFileSync(script, 'utf8');
+        assert.match(source, /if \[\[ "\$action" == install && \$# -ne 4 \]\]/);
+        assert.match(source, /verify_archive "\$stage\/\$archive_name" "\$stage\/\$archive_name\.sha256" "\$stage\/attestations\.jsonl"/);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('empty or symlinked attestation bundle fails before invoking verifier', () => {
+    const f = fixture();
+    try {
+        const empty = join(f.root, 'empty.jsonl');
+        writeFileSync(empty, '');
+        const symlink = join(f.root, 'link.jsonl');
+        symlinkSync(f.attestationBundle, symlink);
+        for (const bad of [empty, symlink]) {
+            const res = f.run({}, f.archive, 'verify', bad);
+            assert.notEqual(res.status, 0);
+            assert.throws(() => readFileSync(f.trace, 'utf8'));
+        }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
