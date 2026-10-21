@@ -34,8 +34,16 @@ jobs:
           gradle-version: "8.11.1"
       - name: Install Android platform
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - name: Build APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: JVM regression tests and APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-android-node-junit
+          path: apps/android-node/app/build/test-results/testDebugUnitTest/*.xml
+          retention-days: 14
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: atlas-android-node-debug

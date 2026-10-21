@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -25,53 +26,35 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * First-stage offline UI. Deliberately does not enrol a Node or claim a delivery.
- * Incoming Android Sharesheet text is memory-only and is never logged or uploaded.
- */
+/** No Node pairing or data transmission in this initial app foundation. */
 class MainActivity : ComponentActivity() {
-    private var incoming by mutableStateOf(ShareInput())
+    private val model: CompanionViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        incoming = readShare(intent)
-        setContent { AtlasCompanion(incoming) }
+        // Recreated Activities must not replay their old Sharesheet Intent onto edited drafts.
+        if (savedInstanceState == null) model.receive(intent)
+        setContent {
+            AtlasCompanion(
+                session = model.session,
+                onNavigate = model::navigate,
+                onEditDraft = model::editDraft,
+            )
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        incoming = readShare(intent)
+        // A distinct ACTION_SEND Intent is always a distinct event, even for identical text.
+        model.receive(intent)
     }
-
-    private fun readShare(intent: Intent?): ShareInput {
-        if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") {
-            return ShareInput()
-        }
-        val value = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
-        if (value.isBlank()) return ShareInput(error = "The shared item did not contain text.")
-        if (value.length > 16_384) {
-            return ShareInput(error = "This text exceeds the 16,384-character draft limit.")
-        }
-        return ShareInput(text = value)
-    }
-}
-
-private data class ShareInput(val text: String? = null, val error: String? = null)
-
-private enum class Section(val label: String) {
-    DEVICES("Devices"), SEND("Send"), INBOX("Inbox"), SETTINGS("Settings")
 }
 
 private val atlasScheme = darkColorScheme(
@@ -83,12 +66,11 @@ private val atlasScheme = darkColorScheme(
 )
 
 @Composable
-private fun AtlasCompanion(incoming: ShareInput) {
-    var section by rememberSaveable { mutableStateOf(Section.DEVICES) }
-    LaunchedEffect(incoming) {
-        if (incoming.text != null || incoming.error != null) section = Section.SEND
-    }
-
+private fun AtlasCompanion(
+    session: CompanionSession,
+    onNavigate: (Section) -> Unit,
+    onEditDraft: (String) -> Unit,
+) {
     MaterialTheme(colorScheme = atlasScheme) {
         Surface(modifier = Modifier.fillMaxSize()) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -97,31 +79,33 @@ private fun AtlasCompanion(incoming: ShareInput) {
                         NavigationRail {
                             Section.entries.forEach { item ->
                                 NavigationRailItem(
-                                    selected = item == section,
-                                    onClick = { section = item },
+                                    selected = item == session.section,
+                                    onClick = { onNavigate(item) },
+                                    modifier = Modifier.testTag("tab-" + item.name.lowercase()),
                                     icon = { Text("•") },
                                     label = { Text(item.label) },
                                 )
                             }
                         }
                         CompanionContent(
-                            section = section,
-                            incoming = incoming,
+                            session = session,
+                            onEditDraft = onEditDraft,
                             modifier = Modifier.weight(1f),
                         )
                     }
                 } else {
                     Column {
                         CompanionContent(
-                            section = section,
-                            incoming = incoming,
+                            session = session,
+                            onEditDraft = onEditDraft,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
                             Section.entries.forEach { item ->
                                 NavigationBarItem(
-                                    selected = item == section,
-                                    onClick = { section = item },
+                                    selected = item == session.section,
+                                    onClick = { onNavigate(item) },
+                                    modifier = Modifier.testTag("tab-" + item.name.lowercase()),
                                     icon = { Text("•") },
                                     label = { Text(item.label) },
                                 )
@@ -135,19 +119,23 @@ private fun AtlasCompanion(incoming: ShareInput) {
 }
 
 @Composable
-private fun CompanionContent(section: Section, incoming: ShareInput, modifier: Modifier = Modifier) {
+private fun CompanionContent(
+    session: CompanionSession,
+    onEditDraft: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Text("atlas.", color = MaterialTheme.colorScheme.primary, fontSize = 28.sp)
-        Text(section.label, style = MaterialTheme.typography.headlineMedium)
-        when (section) {
+        Text(session.section.label, style = MaterialTheme.typography.headlineMedium)
+        when (session.section) {
             Section.DEVICES -> {
                 InfoCard("Not enrolled", "This device has not been paired with Atlas Server.")
                 InfoCard("Connection", "Offline · no Node identity or capabilities advertised yet.")
             }
-            Section.SEND -> SendContent(incoming)
+            Section.SEND -> SendContent(session, onEditDraft)
             Section.INBOX -> InfoCard(
                 "No incoming items",
                 "The receiving inbox will become available after device capability routing is implemented.",
@@ -162,18 +150,14 @@ private fun CompanionContent(section: Section, incoming: ShareInput, modifier: M
 }
 
 @Composable
-private fun SendContent(incoming: ShareInput) {
-    // Never save share content across processes, or into SavedState / Android backups.
-    var draft by remember(incoming) { mutableStateOf(incoming.text.orEmpty()) }
-    if (incoming.error != null) {
-        InfoCard("Share not imported", incoming.error)
-    }
+private fun SendContent(session: CompanionSession, onEditDraft: (String) -> Unit) {
+    if (session.error != null) InfoCard("Share not imported", session.error)
     InfoCard("Share to Atlas", "Text and links from Android's Share menu appear here.")
     OutlinedTextField(
-        value = draft,
-        onValueChange = { draft = it.take(16_384) },
+        value = session.draft,
+        onValueChange = onEditDraft,
         label = { Text("Text or link") },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("share-draft"),
         minLines = 3,
         maxLines = 8,
     )

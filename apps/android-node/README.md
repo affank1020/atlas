@@ -35,3 +35,15 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 4. Mac receiver and end-to-end text share (explicit target selection / approval); eventually offline inbox and file workflows.
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
+
+## Tests and repeatable APK installation
+
+CI runs host JVM reducer regression tests (`gradle :app:testDebugUnitTest`) and builds both
+app and Compose instrumentation test APKs. Run `gradle :app:connectedDebugAndroidTest` on
+an Android emulator/connected device for real navigation and Sharesheet UI tests.
+Share drafts survive tab changes and Activity recreation in a volatile-only ViewModel:
+no SavedState, backup, logging, or disk persistence of received content.
+
+CI debug APKs are **signed with ephemeral keys**; installing an APK from another
+runner may require an uninstall (which destroys local app data). Do not enrol
+a real device from a CI debug APK until we introduce a stable development signer.
