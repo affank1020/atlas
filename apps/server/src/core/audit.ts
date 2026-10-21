@@ -32,6 +32,12 @@ export class AuditService {
         const items = data.auditEvents.filter(event => {
             const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
             const pending = event.operation === 'workspace.mutation_requested';
+            const original = details.operation;
+            const categorisedOperation =
+                (pending || event.operation === 'workspace.mutation_failed')
+                && typeof original === 'string'
+                && /^workspace[.][a-z][a-z0-9_]*$/.test(original)
+                    ? original : event.operation;
             const outcome = failed(event) ? 'failed' : pending ? 'pending' : 'completed';
             const search = String(input.search ?? '').toLowerCase();
             return (!input.projectId || event.projectId === input.projectId)
@@ -41,7 +47,7 @@ export class AuditService {
                 && (!input.recordId || event.recordId === input.recordId)
                 && (!input.nodeId || details.nodeId === input.nodeId || details.previousNodeId === input.nodeId)
                 && (!input.operation || event.operation === input.operation)
-                && (!input.category || category(event.operation) === input.category)
+                && (!input.category || category(categorisedOperation) === input.category)
                 && (!input.client || event.client.toLowerCase() === input.client.toLowerCase())
                 && (!input.outcome || outcome === input.outcome)
                 && (!input.from || event.occurredAt >= input.from)

@@ -39,6 +39,37 @@ test('Monitoring filters and paginates over full PostgreSQL audit history', asyn
     const failed = await monitoring.page({ projectId: first.id, outcome: 'failed' });
     assert.equal(failed.total, 0);
 
+    // A failed mutation is stored under a wrapper operation; category filters
+    // must classify the original operation and preserve the immutable wrapper.
+    const wrapped: Array<{ name: string; operation?: string; outcome?: string }> = [
+        { name: 'failed git', operation: 'workspace.git_committed', outcome: 'failed_or_uncertain' },
+        { name: 'failed files', operation: 'workspace.file_patched', outcome: 'failed_or_uncertain' },
+        { name: 'failed dev', operation: 'workspace.dev_invoked', outcome: 'failed_or_uncertain' },
+        { name: 'pending git', operation: 'workspace.git_committed' },
+        { name: 'invalid metadata', operation: 'record.updated', outcome: 'failed_or_uncertain' },
+        { name: 'missing metadata', outcome: 'failed_or_uncertain' },
+    ];
+    for (const row of wrapped) {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'monitoring-test', $1, $2, $3::jsonb, now())`, [
+            row.name === 'pending git' ? 'workspace.mutation_requested' : 'workspace.mutation_failed',
+            second.id, JSON.stringify({ ...(row.operation ? { operation: row.operation } : {}), ...(row.outcome ? { outcome: row.outcome } : {}) }),
+        ]);
+    }
+    for (const category of ['git', 'files', 'dev']) {
+        const matches = await monitoring.page({ projectId: second.id, category, outcome: 'failed' });
+        assert.equal(matches.total, 1, `failed ${category} mutation must be included`);
+        assert.equal(matches.items[0]?.operation, 'workspace.mutation_failed', 'Original immutable operation is preserved');
+    }
+    const requestedGit = await monitoring.page({ projectId: second.id, category: 'git', outcome: 'pending' });
+    assert.equal(requestedGit.total, 1);
+    assert.equal(requestedGit.items[0]?.operation, 'workspace.mutation_requested');
+    const unmatched = await monitoring.page({ projectId: second.id, category: 'workspace', outcome: 'failed' });
+    assert.equal(unmatched.total, 2, 'Invalid/missing original metadata remains in workspace category');
+    const paginated = await monitoring.page({ projectId: second.id, category: 'git', outcome: 'failed', limit: 1 });
+    assert.equal(paginated.total, 1);
+    assert.equal(paginated.items.length, 1);
+
     const legacy = await catalog.auditHistory({ projectId: first.id, limit: 200 });
     assert.equal(legacy.length, 2, 'Legacy MCP history stays unchanged');
 });
