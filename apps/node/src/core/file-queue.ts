@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, readdir, rename, rm, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, rename, rm, rmdir, unlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { nodeStatusPath } from './node-installation.js';
 import { NodeFileTransferError, uploadNodeFileResumable } from './file-transfer.js';
@@ -198,7 +198,7 @@ export class NodeOfflineFileQueue {
                 throw new Error('Node queue encrypted disk budget reached.');
             await this.atomicWrite(uploadId, sealed);
             return uploadId;
-        } finally { await rm(lock,{recursive:false,force:false}); }
+        } finally { await rmdir(lock); }
     }
 
     async snapshot(now = Date.now()): Promise<QueueSnapshot> {
