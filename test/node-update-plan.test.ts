@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildNodeUpdatePlan } from '../apps/server/src/nodes/update-plan.js';
-import type { NodeRelease } from '../apps/server/src/nodes/releases.js';
+import type { NodeRelease, NodeReleaseCatalogue } from '../apps/server/src/nodes/releases.js';
 import type { AtlasNode } from '../apps/server/src/nodes/model.js';
 
 const linux: Pick<AtlasNode, 'id' | 'platform' | 'status' | 'version' | 'credentialState' | 'metadata'> = {
@@ -20,7 +20,7 @@ const release = (version: string, commit: string, sourceOrder: number, platform:
 const old = release('2.0.0', 'aaaaaaaaaaaa', 10);
 const newer = release('2.0.0', 'bbbbbbbbbbbb', 11);
 const ready = { state: 'ready' as const, releases: [newer, old] };
-const plan = (changes: Partial<typeof linux> = {}, catalogue = ready) =>
+const plan = (changes: Partial<typeof linux> = {}, catalogue: Pick<NodeReleaseCatalogue, 'state' | 'releases'> = ready) =>
     buildNodeUpdatePlan({ ...linux, ...changes }, catalogue);
 
 test('Linux stable update plan is read-only even for a newer candidate', () => {
