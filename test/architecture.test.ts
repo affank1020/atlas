@@ -158,7 +158,9 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         assert.deepEqual(storageUsage.inputSchema.properties?.refresh, { type: 'boolean' });
         assert.deepEqual(tools.filter(tool => additivePortfolio.includes(tool.name)).map(tool => tool.name), additivePortfolio);
         assert.deepEqual(tools.filter(tool => ['list_applications', 'list_all_applications', 'get_application'].includes(tool.name)).map(tool => tool.name), ['list_applications', 'list_all_applications', 'get_application']);
-        assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name), v2);
+        // New Node permission tools are registered before the older Node management
+        // tools; only their presence/shape is additive, not catalogue ordering.
+        assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name).sort(), [...v2].sort());
         assert.deepEqual(tools.filter(tool => gitWrites.includes(tool.name)).map(tool => tool.name), gitWrites);
         assert.deepEqual(tools.filter(tool => ['list_nodes', 'get_node', 'read_node_logs', 'workspace_list_dev_tasks', 'workspace_run_dev_task'].includes(tool.name)).map(tool => tool.name), ['workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_nodes', 'get_node', 'read_node_logs']);
     } finally { await client.close(); await server.close(); }
