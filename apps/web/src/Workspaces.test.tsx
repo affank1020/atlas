@@ -45,6 +45,17 @@ test('Workspaces browse independent directories across Nodes and follow deep lin
     expect(await within(inspector).findByText('atlas/feature')).toBeInTheDocument();
     expect(within(inspector).getByText('example/atlas')).toBeInTheDocument();
     expect(within(inspector).getByRole('button', { name: 'Push feature branch to GitHub' })).toBeEnabled();
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_status', {
+        checkoutId: repo.id,
+    }));
+    expect(callTool).toHaveBeenCalledWith('workspace_git_list_worktrees', {
+        checkoutId: repo.id,
+    });
+    // The human-facing ?workspace= deep link stays stable, but the API always
+    // selects the physical checkout, never a logical Workspace ID.
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => ['workspace_git_status',
+        'workspace_git_list_worktrees'].includes(name)).every(([, input]) =>
+        !(input as any)?.workspaceId && !!(input as any)?.checkoutId)).toBe(true);
 });
 
 test('retirement requires successful read-only preflight before enabling deletion', async () => {
@@ -87,8 +98,8 @@ test('retirement requires successful read-only preflight before enabling deletio
         fireEvent.click(within(inspector).getByRole('button', { name: 'Retire' }));
         await waitFor(() => expect(vi.mocked(callTool).mock.calls.some(([name, input]) =>
             name === 'workspace_git_remove_worktree' &&
-            (input as any).workspaceId === repo.id &&
-            (input as any).targetWorkspaceId === feature.id &&
+            (input as any).checkoutId === repo.id &&
+            (input as any).targetCheckoutId === feature.id &&
             (input as any).expectedHead === sha)).toBe(true));
     } finally { confirm.mockRestore(); }
 });
@@ -124,6 +135,8 @@ test('logical repository appears once while Mac and VPS checkouts remain selecta
     expect(location.hash).toContain('workspace=mac');
     fireEvent.click(within(browser).getByRole('button', { name: /Checkout on Linux VPS/ }));
     expect(location.hash).toContain('workspace=vps');
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_status', { checkoutId: 'vps' }));
+    expect(callTool).not.toHaveBeenCalledWith('workspace_git_status', { checkoutId: 'logical-portfolio' });
     fireEvent.change(within(browser).getByLabelText('Node'), { target: { value: 'mac-node' } });
     expect(within(browser).getByText('1 checkout across 1 Node')).toBeInTheDocument();
 });
@@ -357,7 +370,7 @@ test('repository recognition uses Node Git inspection and never sends caller-cho
     await screen.findByText('1 Workspace');
     fireEvent.click(screen.getByRole('button', { name: 'Recognise repositories' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('attach_checkout_repository', {
-        workspaceId: 'mac',
+        checkoutId: 'mac',
     }));
     expect(await screen.findByText(/Recognised 1 verified checkout/)).toBeInTheDocument();
 });
@@ -381,11 +394,11 @@ test('provisioning requires a registered development root and uses brokered serv
     expect(within(region).getByLabelText('Directory name')).toHaveValue('atlas');
     fireEvent.click(submit);
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_clone_repository', {
-        workspaceId: 'root', repository: 'example/atlas', directoryName: 'atlas',
+        checkoutId: 'root', repository: 'example/atlas', directoryName: 'atlas',
     }));
 });
 
-test('provenance-protected retirement uses Workspace IDs and expected commit, never a caller-provided path', async () => {
+test('provenance-protected retirement uses explicit checkout IDs and expected commit, never a caller-provided path', async () => {
     const feature = { ...repo, id: 'feature', name: 'Feature', rootPath: '/srv/atlas/workspaces/atlas-feature' };
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'list_nodes') return [node];
@@ -408,8 +421,17 @@ test('provenance-protected retirement uses Workspace IDs and expected commit, ne
     fireEvent.click(await within(inspector).findByRole('button', { name: 'Check eligibility' }));
     fireEvent.click(await within(inspector).findByRole('button', { name: 'Retire' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_remove_worktree', {
-        workspaceId: 'repo', targetWorkspaceId: 'feature', expectedHead: sha,
+        checkoutId: 'repo', targetCheckoutId: 'feature', expectedHead: sha,
     }));
+    expect(callTool).toHaveBeenCalledWith('workspace_git_retirement_preflight', {
+        checkoutId: 'repo', targetCheckoutId: 'feature', expectedHead: sha,
+    });
+    for (const [name, input] of vi.mocked(callTool).mock.calls) {
+        if (!['workspace_git_retirement_preflight', 'workspace_git_remove_worktree'].includes(name)) continue;
+        expect(input).not.toHaveProperty('workspaceId');
+        expect(input).not.toHaveProperty('targetWorkspaceId');
+        expect(input).not.toHaveProperty('targetPath');
+    }
     expect(vi.mocked(confirm)).toHaveBeenCalledWith(expect.stringContaining('Retire Feature?'));
     expect(await screen.findByText(/estimated reclaimed/)).toBeInTheDocument();
     vi.unstubAllGlobals();
