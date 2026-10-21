@@ -106,6 +106,13 @@ const stop = async () => {
     stopping = true;
     setConnectionState('stopping');
     if (queueInterval) clearInterval(queueInterval);
+    // systemd's stop deadline is shorter than an individual 120-second
+    // resumable HTTP timeout. Abort the active file request and await its
+    // lock-release finally block before stopping the WebSocket Node.
+    if (offlineQueue) {
+        try { await offlineQueue.stop(); }
+        catch { console.error('Atlas Node failed to stop its offline queue cleanly; inspect the local lock.'); }
+    }
     await node.stop();
     process.exitCode = 0;
 };
