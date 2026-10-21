@@ -412,7 +412,12 @@ test('recognition racing with managed creation never strands a worktree or deadl
     }
     const [created, linked] = await Promise.all([creation, recognition]) as any[];
     assert.equal(created.workspace.rootPath, childPath);
-    assert.equal(linked.logicalWorkspaceId, created.workspace.logicalWorkspaceId);
+    // The creation response snapshots the provisional local group before
+    // recognition commits. Re-read the canonical persisted checkout identity:
+    // the recognition transaction must migrate every sibling atomically.
+    assert.equal(created.workspace.logicalWorkspaceId, source.logicalWorkspaceId);
+    const persisted: any = await svc.call('get_workspace', { workspaceId: created.workspace.id });
+    assert.equal(persisted.logicalWorkspaceId, linked.logicalWorkspaceId);
     assert.equal(existsSync(childPath), true);
     assert.equal(git('worktree', 'list', '--porcelain').includes(childPath), true);
     const group = (await svc.call('list_logical_workspaces', {}) as any[])
