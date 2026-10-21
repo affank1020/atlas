@@ -133,45 +133,47 @@ async function estimateCheckoutBytes(target: string): Promise<number> {
  * checkout can make retirement destructive. Fail closed without revealing
  * unrelated processes. No arbitrary commands or user-provided executable. */
 async function assertNoActiveWorkingDirectories(target: string) {
-    if (process.platform === 'linux') {
-        // Minimal VPS installations may not have lsof. Inspect current-user
-        // process cwd links in procfs; never inspect process arguments or env.
-        let processes: string[];
-        try { processes = (await readdir('/proc')).filter(name => /^[0-9]+$/.test(name)); }
-        catch { throw new AtlasError('Cannot inspect running processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE'); }
-        if (processes.length > 4096)
-            throw new AtlasError('Too many processes to verify safe retirement.', 'CAPABILITY_UNAVAILABLE');
-        for (const pid of processes) {
-            try {
-                const status = await readFile(`/proc/${pid}/status`, 'utf8');
-                const uid = status.match(/^Uid:\s+(\d+)/m)?.[1];
-                if (uid === undefined) throw new Error('Could not verify process ownership');
-                if (Number(uid) !== process.getuid?.()) continue;
-                const cwd = await readlink(`/proc/${pid}/cwd`);
-                if (cwd === target || within(target, cwd))
-                    throw new AtlasError('A process is currently working inside this worktree; local files were preserved.', 'CONFLICT');
-            } catch (error) {
-                if (error instanceof AtlasError) throw error;
-                // Exiting processes vanish from procfs between listing and read.
-                if (['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
-                throw new AtlasError('Cannot verify active worktree processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE');
-            }
-        }
-        return;
-    }
+    // Prefer the OS process-file inspector. Linux procfs can deny same-UID
+    // cwd inspections in CI/container namespaces even when no checkout user
+    // is active. An unavailable lsof falls back to procfs, never "safe".
     const lsof = process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof';
-    let output: string;
     try {
-        output = (await exec(lsof, ['-nP', '-d', 'cwd', '-Fn'], {
+        const output = (await exec(lsof, ['-nP', '-d', 'cwd', '-Fn'], {
             timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
             env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
         })).stdout;
-    } catch {
-        throw new AtlasError('Cannot verify active worktree processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE');
+        if (output.split('\n').some(line => line.startsWith('n') &&
+            (line.slice(1) === target || within(target, line.slice(1)))))
+            throw new AtlasError('A process is currently working inside this worktree; local files were preserved.', 'CONFLICT');
+        return;
+    } catch (error) {
+        if (error instanceof AtlasError) throw error;
+        if (process.platform !== 'linux' || (error as NodeJS.ErrnoException).code !== 'ENOENT')
+            throw new AtlasError('Cannot verify active worktree processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE');
     }
-    if (output.split('\n').some(line => line.startsWith('n') &&
-        (line.slice(1) === target || within(target, line.slice(1)))))
-        throw new AtlasError('A process is currently working inside this worktree; local files were preserved.', 'CONFLICT');
+
+    // Linux fallback for VPS installations without lsof. Inspect same-UID
+    // process working directories, without reading argv or environment.
+    let processes: string[];
+    try { processes = (await readdir('/proc')).filter(name => /^[0-9]+$/.test(name)); }
+    catch { throw new AtlasError('Cannot inspect running processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE'); }
+    if (processes.length > 4096)
+        throw new AtlasError('Too many processes to verify safe retirement.', 'CAPABILITY_UNAVAILABLE');
+    for (const pid of processes) {
+        try {
+            const status = await readFile(`/proc/${pid}/status`, 'utf8');
+            const uid = status.match(/^Uid:\s+(\d+)/m)?.[1];
+            if (uid === undefined) throw new Error('Could not verify process ownership');
+            if (Number(uid) !== process.getuid?.()) continue;
+            const cwd = await readlink(`/proc/${pid}/cwd`);
+            if (cwd === target || within(target, cwd))
+                throw new AtlasError('A process is currently working inside this worktree; local files were preserved.', 'CONFLICT');
+        } catch (error) {
+            if (error instanceof AtlasError) throw error;
+            if (['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
+            throw new AtlasError('Cannot verify active worktree processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE');
+        }
+    }
 }
 
 export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
