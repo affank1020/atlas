@@ -21,6 +21,18 @@ GitHub-provided SHA-256 digests and unique source commits. The catalogue
 does **not** import expiring workflow artifacts or debug APKs and does not
 install, restart, or re-enrol Nodes.
 
+**Trust boundary:** The catalogue checks published release metadata and
+GitHub's asset SHA-256 digest but does **not** cryptographically verify the
+build-provenance attestation or its workflow/source identity. It labels every
+entry `provenance: unverified`, including an archive manually published without
+an attestation. Download does not imply safe installation. Before using any
+archive, verify the checksum against the downloaded bytes **and** run
+`gh attestation verify`; check that the attestation comes from the expected
+`affank1020/atlas` main-branch `.github/workflows/node-package.yml` build.
+If provenance verification fails or the expected workflow identity differs,
+do not install or activate the release. A subsequent phase may add verified
+attestation handling server-side; the catalogue must not claim it until then.
+
 On a supported macOS/Linux machine, an operator can inspect and verify a
 downloaded archive before installation:
 
