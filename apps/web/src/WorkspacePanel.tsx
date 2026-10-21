@@ -2,6 +2,7 @@ import { WorkspaceHost } from './Nodes';
 import "./workspaces.css";
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
+import { RecentActivityPreview } from './RecentActivityPreview';
 
 type Workspace = { id: string; nodeId: string; name: string; rootPath: string; kind: string; adapter: string | null };
 type DevTask = { task: string; command: string; timeoutMs: number };
@@ -71,6 +72,7 @@ export function WorkspacePanel({ projectId, archived = false }: { projectId: str
                     {devResult.stderr && <details><summary>Errors{devResult.stderrTruncated ? ' (truncated)' : ''}</summary><pre>{devResult.stderr}</pre></details>}
                 </div>}
             </div>}
+            <RecentActivityPreview title="Recent checkout activity" filters={{ checkoutId: workspace.id }} count={4} refreshVersion={hostRevision} />
             <div className="form-actions"><button disabled={busy} onClick={refresh}>Test connection</button><button className="ghost danger" disabled={busy} onClick={detach}>Archive / detach</button></div>
             <details><summary>Files · read-only preview{truncated ? ' (bounded listing)' : ''}</summary>
                 <ul>{entries.map(x => <li key={x.path}>{x.type === 'file' ? <button className="ghost" onClick={() => read(x.path)}>{x.path}</button> : <code>{x.path}/</code>}</li>)}</ul>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
+import { RecentActivityPreview } from './RecentActivityPreview';
 import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
@@ -229,6 +230,7 @@ export function Workspaces() {
                         <div><span>Working tree</span><strong>{status.dirty ? 'Uncommitted changes' : 'Clean'}</strong></div>
                         <div><span>Origin</span><strong>{status.originRepository || 'None'}</strong></div>
                     </div> : status?.reason && <p className="wm-hint">{status.reason}</p>}
+                    <RecentActivityPreview key={selected.id} title="Recent checkout activity" filters={{ checkoutId: selected.id }} count={4} compact refreshVersion={revision} />
                     {!!status?.changes?.length && <details><summary>{status.changes.length} changed files</summary>
                         <ul className="wm-changes">{status.changes.slice(0,40).map(x => <li key={x.path}>{x.status} {x.path}</li>)}</ul></details>}
                     {status?.available && <section className="wm-subsection">

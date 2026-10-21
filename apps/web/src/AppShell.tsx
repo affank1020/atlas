@@ -5,7 +5,7 @@ import { useRecentWork } from './recentWork';
 import { useListProjectsQuery } from './atlasApi';
 
 export type ProjectSection = 'overview' | 'data' | 'views' | 'applications' | 'workspaces' | 'activity' | 'settings';
-const sections: ProjectSection[] = ['overview', 'data', 'views', 'applications', 'workspaces', 'activity', 'settings'];
+const sections: ProjectSection[] = ['overview', 'data', 'views', 'applications', 'workspaces', 'settings'];
 
 export function ProjectNav({ projectId, section }: { projectId: string; section: ProjectSection }) {
     return <nav className="tabs project-nav" aria-label="Project sections">{sections.map(item => <a key={item} aria-current={section === item ? 'page' : undefined} className={section === item ? 'active' : ''} href={`#/projects/${projectId}${item === 'overview' ? '' : `/${item}`}`}>{item[0].toUpperCase() + item.slice(1)}</a>)}</nav>;

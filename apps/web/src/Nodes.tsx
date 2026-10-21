@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
+import { RecentActivityPreview } from './RecentActivityPreview';
+import { monitoringHash } from './monitoringLinks';
 import './workspaces.css';
 export type AtlasNode = {
     id: string; name: string; status: 'online' | 'offline' | 'unavailable';
@@ -86,10 +88,10 @@ function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onC
                 </select>
             </li>)}</ul> : <p className="node-inspector-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : 'Select to load workspace details.'}</p>}
         </section>
-        <section className="node-inspector-section">
-            <h3>Recent activity</h3>
-            {detail?.activity?.length ? <ul className="node-activity-list">{detail.activity.map((item, index) => <li key={item.createdAt + '-' + index}><span>{item.operation}</span><time>{formatWhen(item.createdAt)}</time></li>)}</ul> : <p className="node-inspector-empty">{loading ? 'Loading activity…' : 'No recent activity.'}</p>}
-        </section>
+        <div className="node-inspector-section">
+            <RecentActivityPreview title="Recent activity" filters={{ nodeId: node.id }} count={4} compact />
+            <a className="monitoring-context-link" href={monitoringHash('logs', { nodeId: node.id })}>Open Node logs in Monitoring ↗</a>
+        </div>
         <details className="node-inspector-advanced">
             <summary>Technical details</summary>
             <dl>
