@@ -103,3 +103,32 @@ test('journal and systemd search vocabulary resolves Linux Node links even witho
         assert.match(link.description, /systemd journal/);
     }
 });
+
+test('unqualified journal document queries preserve Fabric and catalogue retrieval', async () => {
+    const deps = dependencies();
+    const retrieved: string[] = [];
+    let catalogCalls = 0;
+    deps.listProjects = async () => { catalogCalls++; return [project]; };
+    deps.retrieval.search = async (input: { query: string }) => {
+        retrieved.push(input.query);
+        return { results: [{
+            record: { id: 'journal-note', data: { title: 'Research journal 2026' } },
+            store: { id: 'notes', name: 'Notes' },
+            project, snippet: 'Research journal article notes', score: 0.8,
+        }] };
+    };
+    for (const [query, lookup] of [
+        ['Find my research journal', 'research journal'],
+        ['journal article', 'journal article'],
+        ['Find my systemd documentation', 'systemd documentation'],
+    ]) {
+        const intent = interpretSearch(query);
+        assert.equal(intent.intent, null, query);
+        assert.equal(intent.nodeLogs, false, query);
+        assert.equal(intent.term, lookup, query);
+        const results = await searchEverywhere(deps, { query });
+        assert.ok(results.results.some(hit => hit.kind === 'record' && hit.id === 'journal-note'), query);
+    }
+    assert.deepEqual(retrieved, ['research journal', 'journal article', 'systemd documentation']);
+    assert.equal(catalogCalls, 3, 'Document searches must continue loading the project catalogue');
+});
