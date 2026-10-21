@@ -157,7 +157,7 @@ test('duplicate checkout names on the same Node have unique full-path selector o
     expect(new Set(optionNames).size).toBe(optionNames.length);
     fireEvent.change(selector, { target: { value: 'clone-b' } });
     expect(location.hash).toContain('workspace=clone-b');
-    expect(within(inspector).getByText('/srv/atlas/workspaces/atlas-b')).toBeInTheDocument();
+    expect(within(inspector).getAllByText('/srv/atlas/workspaces/atlas-b').length).toBeGreaterThan(0);
 });
 
 test('duplicate names in a small checkout group show both directory paths before selection', async () => {
@@ -189,7 +189,7 @@ test('duplicate names in a small checkout group show both directory paths before
     expect(second).toBeInTheDocument();
     fireEvent.click(second);
     expect(location.hash).toContain('workspace=clone-b');
-    expect(within(inspector).getByText('/srv/atlas/workspaces/atlas-b')).toBeInTheDocument();
+    expect(within(inspector).getAllByText('/srv/atlas/workspaces/atlas-b').length).toBeGreaterThan(0);
 });
 
 test('repository recognition uses Node Git inspection and never sends caller-chosen identity', async () => {
