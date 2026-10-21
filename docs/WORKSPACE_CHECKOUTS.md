@@ -71,7 +71,7 @@ failures or missing merged-PR evidence never trigger local checkout deletion.
 
 ## Limitations before a later cleanup
 
-- Migration `020_logical_workspace_project_links.sql` makes optional Project
+- Migration `021_logical_workspace_project_links.sql` makes optional Project
   associations belong to the logical Workspace. The migration unions links
   from all existing checkouts, including archived ones, and maintains the
   checkout-era join table and primary Project field as a compatibility mirror.
