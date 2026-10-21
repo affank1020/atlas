@@ -98,7 +98,12 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
         const additivePortfolio = ['patch_portfolio_entry', 'preview_portfolio_entry', 'set_portfolio_media'];
         const gitWrites = ['workspace_git_create_branch', 'workspace_git_switch_branch', 'workspace_git_stage', 'workspace_git_commit', 'workspace_git_push_branch', 'workspace_git_open_pull_request'];
-        const stable = tools.filter(tool => !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'list_all_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites, 'search_everything', 'read_node_logs', 'get_storage_usage', 'workspace_git_list_worktrees', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'workspace_git_retirement_preflight', 'list_github_repositories', 'list_workspaces', 'list_logical_workspaces', 'attach_checkout_repository', 'link_workspace_project', 'unlink_workspace_project', 'link_logical_workspace_project', 'unlink_logical_workspace_project'].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        // Checkout-aware tools now expose an additive checkoutId selector.
+        // Keep the original frozen snapshot untouched for all other APIs;
+        // the checkout layer has its own explicit compatibility assertions.
+        const checkoutMigrated = (name: string) => ['get_workspace', 'update_workspace', 'archive_workspace'].includes(name) ||
+            name.startsWith('workspace_') || name.startsWith('unity_');
+        const stable = tools.filter(tool => !checkoutMigrated(tool.name) && !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'list_all_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites, 'search_everything', 'read_node_logs', 'get_storage_usage', 'workspace_git_list_worktrees', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'workspace_git_retirement_preflight', 'list_github_repositories', 'list_workspaces', 'list_logical_workspaces', 'attach_checkout_repository', 'link_workspace_project', 'unlink_workspace_project', 'link_logical_workspace_project', 'unlink_logical_workspace_project'].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
         const create = stable.find(item => item.name === 'create_workspace');
         if (create) delete (create.inputSchema as any).properties.nodeId;
         const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
@@ -111,7 +116,20 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
                 if (required) item.inputSchema.required = required.filter(value => value !== 'projectId');
             }
         }
-        assert.deepEqual(stable.sort(byName), expected.sort(byName));
+        assert.deepEqual(stable.sort(byName), expected.filter((item: any) =>
+            !checkoutMigrated(item.name)).sort(byName));
+        for (const name of ['get_workspace', 'workspace_read_file', 'workspace_git_status',
+            'unity_status', 'workspace_git_remove_worktree']) {
+            const tool = tools.find(item => item.name === name);
+            assert.ok(tool, `Missing migrated checkout operation: ${name}`);
+            assert.ok(tool.inputSchema.properties?.checkoutId, `${name} must advertise checkoutId`);
+            assert.ok(tool.inputSchema.properties?.workspaceId, `${name} must keep legacy workspaceId`);
+        }
+        const retired = tools.find(item => item.name === 'workspace_git_remove_worktree');
+        assert.ok(retired?.inputSchema.properties?.targetCheckoutId,
+            'Destructive retirement must also advertise explicit targetCheckoutId');
+        assert.ok(retired?.inputSchema.properties?.targetWorkspaceId,
+            'Legacy targetWorkspaceId must remain available');
         assert.ok(!tools.some(tool => tool.name.startsWith('sessions_')));
         assert.ok(tools.some(tool => tool.name === 'search_everything'), 'Command search must be exposed by the shared MCP transport');
         const storageUsage = tools.find(tool => tool.name === 'get_storage_usage');
