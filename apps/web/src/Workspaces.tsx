@@ -5,7 +5,7 @@ import './workspaces-manager.css';
 
 type Workspace = { id: string; nodeId: string; projectId: string | null; name: string; rootPath: string; kind: string; status: string };
 type LogicalWorkspace = { id: string; name: string; repository: string | null; kind: 'git' | 'local'; projectIds?: string[]; checkouts: Workspace[] };
-type ProjectLink = { id: string; name: string };
+type ProjectLink = { id: string; name: string; archivedAt?: string };
 type Repository = { repository: string; private: boolean; defaultBranch: string; archived: boolean };
 type GitStatus = { available: boolean; reason?: string; branch?: string; head?: string; originRepository?: string | null; dirty?: boolean; changes?: {path: string; status: string}[] };
 type Worktree = { rootPath: string; head: string; branch: string | null };
@@ -84,7 +84,7 @@ export function Workspaces() {
     const selectedLogical = (logical.length ? logical : groups)
         .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
     const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
-    const availableProjects = projects.filter(project => !linkedProjects.includes(project.id));
+    const availableProjects = projects.filter(project => !project.archivedAt && !linkedProjects.includes(project.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
     const canPublish = !!(status?.available && status.originRepository && status.branch?.startsWith('atlas/') &&
         status.head && !status.dirty && selectedNode?.status === 'online');
@@ -134,7 +134,9 @@ export function Workspaces() {
     }, [revision]);
     useEffect(() => {
         let live = true;
-        callTool<ProjectLink[]>('list_projects', {}).then(result => {
+        // Include archived Projects for readable existing chips; only active
+        // Projects are eligible for new associations.
+        callTool<ProjectLink[]>('list_projects', { includeArchived: true }).then(result => {
             if (live && Array.isArray(result)) setProjects(result);
         }).catch(() => { /* Browsing works without the Project catalogue. */ });
         return () => { live = false; };
@@ -372,9 +374,10 @@ export function Workspaces() {
                         <h3>Projects <span>Shared by every checkout</span></h3>
                         <div className="wm-project-chips">
                             {linkedProjects.length ? linkedProjects.map(projectId => {
-                                const projectName = projects.find(project => project.id === projectId)?.name || projectId;
+                                const project = projects.find(item => item.id === projectId);
+                                const projectName = project?.name || projectId;
                                 return <span className="wm-project-chip" key={projectId}>
-                                    <span title={projectId}>{projectName}</span>
+                                    <span title={projectId}>{projectName}{project?.archivedAt ? ' (archived)' : ''}</span>
                                     <button type="button" className="wm-project-remove" aria-label={'Detach ' + projectName}
                                         disabled={working || IS_MOCK_MODE} onClick={() => unlinkProject(projectId)}>×</button>
                                 </span>;
