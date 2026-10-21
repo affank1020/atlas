@@ -116,14 +116,20 @@ test('MCP share permission mutations have transport-authored audit provenance', 
         assert.equal(rows.rows[0].after_state.sourceNodeId,a.nodeId);
         // Even an input that purports to come from the web cannot override
         // the transport's server-owned provenance.
-        const rejected = await client.callTool({name:'update_node_share_approval',
+        await client.callTool({name:'update_node_share_approval',
             arguments:{sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false,client:'atlas-web'}});
-        assert.equal(rejected.isError,true);
+        // The MCP input schema may either strip the unknown field or reject it.
+        // Neither behaviour may allow a user-controlled provenance label.
+        const beforeHttp = await f.store.pool.query(
+            "SELECT client FROM audit_events WHERE operation='node.share.revoked'");
+        assert.ok(beforeHttp.rows.every(row => row.client === 'atlas-mcp'),
+            'An MCP client cannot impersonate atlas-web with a tool input');
         await dispatch('update_node_share_approval',
             {sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false},'atlas-http');
-        const revoked = await f.store.pool.query(
+        const afterHttp = await f.store.pool.query(
             "SELECT client FROM audit_events WHERE operation='node.share.revoked'");
-        assert.equal(revoked.rows[0].client,'atlas-http');
+        assert.equal(afterHttp.rowCount, (beforeHttp.rowCount ?? 0) + 1);
+        assert.equal(afterHttp.rows.filter(row => row.client === 'atlas-http').length,1);
     } finally {
         await client.close();
         await server.close();
