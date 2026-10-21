@@ -29,12 +29,15 @@ class PairingPersistenceTest {
         check(!saved.message.orEmpty().contains(node.credential))
     }
 
-    @Test fun failedRecoveryNoteIsReportedAsPostEnrolmentFailure() {
-        val error = assertThrows(PairingPersistenceException::class.java) {
-            enrolAndPersist(enrol = { node }, rememberIssued = { throw IllegalStateException("IO") },
-                persist = { error("must never execute") })
-        }
-        assertEquals(node.nodeId, error.nodeId)
+    @Test fun failedRecoveryNoteStillAttemptsEncryptedPersistence() {
+        var persisted = false
+        val result = enrolAndPersist(
+            enrol = { node },
+            rememberIssued = { throw IllegalStateException("Cannot write recovery marker") },
+            persist = { persisted = true },
+        )
+        assertEquals(node, result)
+        check(persisted)
     }
 
     @Test fun failedEnrolmentDoesNotClaimNodeWasIssued() {

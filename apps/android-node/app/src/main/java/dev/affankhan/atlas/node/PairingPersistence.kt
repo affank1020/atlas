@@ -15,8 +15,10 @@ internal fun enrolAndPersist(
     persist: (StoredNode) -> Unit,
 ): StoredNode {
     val node = enrol()
+    // The recovery marker is best-effort. A full preference store should not
+    // prevent an otherwise successful encrypted credential write.
+    try { rememberIssued(node.nodeId) } catch (_: Exception) { /* save still attempted */ }
     try {
-        rememberIssued(node.nodeId)
         persist(node)
     } catch (error: Exception) {
         throw PairingPersistenceException(node.nodeId, error)
