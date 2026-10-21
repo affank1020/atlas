@@ -47,3 +47,43 @@ no SavedState, backup, logging, or disk persistence of received content.
 CI debug APKs are **signed with ephemeral keys**; installing an APK from another
 runner may require an uninstall (which destroys local app data). Do not enrol
 a real device from a CI debug APK until we introduce a stable development signer.
+
+## Pairing and presence milestone (stacked follow-up)
+
+Android now accepts one-use enrolment tickets from Atlas Web, sends a strictly HTTPS
+`POST /node/enrol`, encrypts the resulting Node UUID/credential with an Android
+Keystore AES-GCM key, and connects over authenticated WSS using protocol 2.
+It registers with **no device/workspace capabilities**, so it is online in Nodes
+without the ability to execute privileged Workspace requests.
+
+The WebSocket is foreground-only, with bounded reconnect/backoff; backgrounding
+the app disconnects it and status reflects that. The user can clear credentials
+locally, but must revoke the Node separately in Atlas Web. Do not confuse this
+with a messaging-ready app: the Send button remains disabled until authorised
+`device.*` routing and a Mac receiver are implemented.
+
+The Node must be accessed via a publicly trusted HTTPS origin. Do not
+sideload consecutive ephemeral CI debug APKs and expect credentials to survive
+reinstall: create a stable development signing identity before enrolled-device
+upgrade tests. Local encrypted identity has no backup recovery; rotate/re-enrol
+after reinstall or keystore loss.
+
+## Recovery after interrupted pairing
+
+The one-time Node ticket is consumed by Atlas Server before it returns an
+identity. The app now finishes the bounded HTTPS exchange and encrypted save
+in one non-cancellable IO critical section. Before saving, it records **only**
+the issued Node UUID as a non-secret recovery marker. An encrypted save clears
+this marker atomically with writing the credential.
+
+If Android cannot persist the credential, the app displays the Node UUID and
+recovery instructions. Open **Atlas Web → Nodes**, revoke that Node, then
+generate a new one-use ticket. If the app is killed before a response or the
+credential becomes undecryptable, inspect Atlas Nodes for the Android Node by
+name and revoke it there. No recovery flow reveals or stores credentials in
+plaintext. A JVM regression suite injects failures at both persistence stages.
+
+A foreground-to-background transition cancels the WebSocket immediately,
+including when it is mid-handshake. Emulator tests exercise Compose draft
+navigation/re-import through an isolated Compose rule; no duplicate Activity
+instance is launched by the test harness.
