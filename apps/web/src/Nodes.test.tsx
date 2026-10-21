@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import topologyStyles from './workspaces.css?raw';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Nodes, WorkspaceHost } from './Nodes';
@@ -10,8 +10,7 @@ const node = { id: 'node', name: 'Development machine', status: 'online', capabi
 it('stacks the topology and summary at laptop viewport widths', () => {
     // A narrow map causes the left/right Node cards to overlap Atlas Server.
     // This is a stylesheet breakpoint guard, not a rendered browser screenshot.
-    const css = readFileSync(new URL('./workspaces.css', import.meta.url), 'utf8');
-    const stackRule = css.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.node-topology-layout\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    const stackRule = topologyStyles.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.node-topology-layout\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
     expect(stackRule).not.toBeNull();
     expect(Number(stackRule?.[1])).toBeGreaterThanOrEqual(1240);
 });
