@@ -31,14 +31,14 @@ test('migration 019 backfills logical Workspace IDs without modifying legacy che
     assert.equal(checkout.projectId, project.id);
     // The new logical reader uses the canonical Project link table added
     // in migration 020. Verify the old identity first, then advance schema.
-    await store.pool.query(await readFile('apps/server/migrations/020_logical_workspace_project_links.sql', 'utf8'));
+    await store.pool.query(await readFile('apps/server/migrations/021_logical_workspace_project_links.sql', 'utf8'));
     const logical = await repository.listLogical();
     assert.equal(logical.length, 1);
     assert.equal(logical[0].id, checkoutId);
     assert.equal(logical[0].checkouts[0].id, checkoutId);
 });
 
-test('migration 020 promotes cross-checkout Project links without losing legacy identities', async () => {
+test('migration 021 promotes cross-checkout Project links without losing legacy identities', async () => {
     const { readFile } = await import('node:fs/promises');
     const { randomUUID } = await import('node:crypto');
     const { catalog, store } = await databaseFixture('019_logical_workspaces.sql');
@@ -57,7 +57,7 @@ test('migration 020 promotes cross-checkout Project links without losing legacy 
     await store.pool.query('INSERT INTO workspace_project_links(workspace_id,project_id) VALUES($1,$2)', [macId,p1.id]);
     // The VPS legacy primary is deliberately not mirrored, exercising the
     // migration's fallback for older, inconsistent association rows.
-    await store.pool.query(await readFile('apps/server/migrations/020_logical_workspace_project_links.sql', 'utf8'));
+    await store.pool.query(await readFile('apps/server/migrations/021_logical_workspace_project_links.sql', 'utf8'));
     const repo = new PostgresWorkspaceRepository(store.pool);
     const logical = (await repo.listLogical())[0];
     assert.deepEqual(logical.projectIds.sort(), [p1.id,p2.id].sort());
