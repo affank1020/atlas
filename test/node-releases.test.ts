@@ -83,7 +83,7 @@ function fixtureForCommit(fullCommit: string, publishedAt: string, sequence: num
         tag_name: fullTag,
         target_commitish: fullCommit,
         published_at: publishedAt,
-        body: 'Atlas-Node-Release-Sequence: ' + sequence + '\\n\\nStandalone archive',
+        body: 'Atlas-Node-Release-Sequence: ' + sequence + '\n\nStandalone archive',
         html_url: 'https://github.com/affank1020/atlas/releases/tag/' + fullTag,
         assets: [
             { name: 'atlas-node-v2.0.0-' + short + '.tar.gz', browser_download_url: download, state: 'uploaded', digest: 'sha256:' + sha },
