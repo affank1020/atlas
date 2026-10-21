@@ -23,6 +23,12 @@ describe('Monitoring deep links', () => {
         expect(parseMonitoringHash('#/monitoring?tab=logs&nodeId=linux-node&source=journal&lines=25'))
             .toEqual({ tab: 'logs', filters: { nodeId: 'linux-node', source: 'journal', lines: '25' } });
     });
+    it('round-trips Atlas Server diagnostics without permitting an arbitrary log target', () => {
+        expect(parseMonitoringHash(monitoringHash('logs', { target: 'server', lines: '12' })))
+            .toEqual({ tab: 'logs', filters: { target: 'server', lines: '12' } });
+        expect(parseMonitoringHash('#/monitoring?tab=logs&target=container-root'))
+            .toEqual({ tab: 'logs', filters: {} });
+    });
     it('defaults unknown tabs to Overview', () => {
         expect(parseMonitoringHash('#/monitoring?tab=other')).toEqual({ tab: 'overview', filters: {} });
     });
