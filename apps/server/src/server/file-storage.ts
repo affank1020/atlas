@@ -108,6 +108,40 @@ export class R2ObjectStore implements ObjectStore {
     async get(key: string) { return Buffer.from(await (await this.perform("GET", key)).arrayBuffer()); }
     async delete(key: string) { await this.perform("DELETE", key); }
 
+    /** Read an Atlas Files object with a hard response budget. Never buffer an
+     * untrusted/malformed Content-Length into an unbounded arrayBuffer().
+     * This is also used for independent R2 backup recovery verification.
+     */
+    async getBounded(key: string, maxBytes: number): Promise<Buffer> {
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 25 * 1024 * 1024)
+            throw new Error("Invalid bounded R2 recovery size.");
+        const response = await this.perform("GET", key);
+        const length = response.headers.get("content-length");
+        if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes)) {
+            await response.body?.cancel();
+            throw new Error("R2 recovery object exceeds byte limit.");
+        }
+        if (!response.body) throw new Error("R2 recovery object has no response body.");
+        const reader = response.body.getReader();
+        const chunks: Buffer[] = [];
+        let total = 0;
+        try {
+            for (;;) {
+                const result = await reader.read();
+                if (result.done) break;
+                total += result.value.byteLength;
+                if (total > maxBytes) throw new Error("R2 recovery object exceeds byte limit.");
+                chunks.push(Buffer.from(result.value));
+            }
+            if (length !== null && total !== Number(length))
+                throw new Error("R2 recovery object length differs from Content-Length.");
+            return Buffer.concat(chunks,total);
+        } catch (error) {
+            await reader.cancel().catch(() => undefined);
+            throw error;
+        } finally { reader.releaseLock(); }
+    }
+
     /** Read-only, signed ListObjectsV2. Each response is capped at 1000 keys. */
     async listFilesPage(token?: string, pageSize = 1000): Promise<{ objects: ListedFileObject[]; nextToken?: string }> {
         if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000)
