@@ -96,7 +96,7 @@ export function createHttpTransport(services: ServerServices) {
                 const chunks: Buffer[] = []; let bytes = 0; for await (const chunk of request) { bytes += chunk.length; if (workspaceRoute && bytes > 2 * 1024 * 1024) throw new AtlasError("Workspace request exceeds 2 MiB."); chunks.push(Buffer.from(chunk)); }
                 const input = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
                 if (!Object.hasOwn(nodeSchemas,toolMatch[1]!) && toolMatch[1]!=="execute_view_action" && (!Object.hasOwn(workspaceSchemas,toolMatch[1]!) || "client" in workspaceSchemas[toolMatch[1] as WorkspaceToolName].shape) && !input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
-                const value = await services.dispatch(toolMatch[1]!, input);
+                const value = await services.dispatch(toolMatch[1]!, input, 'atlas-http');
                 response.writeHead(200, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify(value));
             } catch (error) {
                 const known = error instanceof AtlasError; response.writeHead(known && error.code === "NOT_FOUND" ? 404 : 400, { ...cors, "content-type": "application/json" });

@@ -2,6 +2,8 @@ import type { Pool } from 'pg';
 import { AtlasError } from '../shared/errors.js';
 
 export type NodeShareApproval = { sourceNodeId: string; targetNodeId: string; origin: 'managed' | 'environment' };
+/** Assigned by the transport, never parsed from a tool argument or request header. */
+export type ShareAuditClient = 'atlas-http' | 'atlas-mcp' | 'atlas-server';
 
 /** DB grants are checked per send; legacy environment grants are immutable in the UI. */
 export class NodeShareApprovals {
@@ -32,7 +34,7 @@ export class NodeShareApprovals {
             this.key(a.sourceNodeId, a.targetNodeId).localeCompare(this.key(b.sourceNodeId, b.targetNodeId)));
     }
 
-    async update(input: {sourceNodeId: string; targetNodeId: string; enabled: boolean}) {
+    async update(input: {sourceNodeId: string; targetNodeId: string; enabled: boolean}, caller: ShareAuditClient = 'atlas-server') {
         const sourceNodeId = input.sourceNodeId.toLowerCase(), targetNodeId = input.targetNodeId.toLowerCase();
         if (sourceNodeId === targetNodeId) throw new AtlasError('A Node cannot share with itself.', 'SHARE_DENIED');
         if (this.environmentPairs.has(this.key(sourceNodeId, targetNodeId)))
@@ -65,7 +67,8 @@ export class NodeShareApprovals {
             }
             // Only UUIDs in the audit trail, never shared content.
             await db.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at)
-                VALUES(gen_random_uuid(),'atlas-web',$1,$2,now())`, [
+                VALUES(gen_random_uuid(),$1,$2,$3,now())`, [
+                caller,
                 input.enabled ? 'node.share.approved' : 'node.share.revoked',
                 { sourceNodeId, targetNodeId },
             ]);

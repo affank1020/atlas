@@ -15,6 +15,7 @@ export type ShareApproval = {
 export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; nodes: AtlasNode[]}) {
     const [approvals, setApprovals] = useState<ShareApproval[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loaded, setLoaded] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
@@ -22,16 +23,21 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
     useEffect(() => {
         let live = true;
         setLoading(true);
+        setLoaded(false);
         setError('');
         callTool<ShareApproval[]>('list_node_share_approvals').then(value => {
-            if (live) setApprovals(Array.isArray(value) ? value : []);
+            if (live) {
+                if (!Array.isArray(value)) throw new Error('Atlas did not return a permission list.');
+                setApprovals(value);
+                setLoaded(true);
+            }
         }).catch(err => { if (live) setError(err instanceof Error ? err.message : String(err)); })
           .finally(() => { if (live) setLoading(false); });
         return () => { live = false; };
     }, [source.id, revision]);
 
     async function change(target: AtlasNode, enabled: boolean) {
-        if (busyId || loading) return;
+        if (busyId || loading || !loaded) return;
         if (!enabled && !window.confirm('Stop ' + source.name + ' from sharing text to ' + target.name + '?')) return;
         setBusyId(target.id);
         setError('');
@@ -42,6 +48,9 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
             setNotice(enabled ? 'Directional sharing approved.' : 'Directional sharing revoked.');
             setRevision(value => value + 1);
         } catch (err) {
+            // A lost mutation response may hide a committed grant or revoke.
+            // Require a successful refresh before offering another write.
+            setLoaded(false);
             setError(err instanceof Error ? err.message : String(err));
         } finally {
             setBusyId(null);
@@ -60,6 +69,7 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
         {error && <p role="alert" className="node-page-notice">{error}</p>}
         {notice && <p role="status" className="node-page-notice">{notice}</p>}
         {loading ? <p role="status">Loading sharing approvals…</p>
+            : !loaded ? <p role="status">Sharing approval state is unknown. Refresh approvals to retry.</p>
             : !targets.length ? <p>No other Nodes are enrolled yet.</p>
             : <ul className="node-share-list">
                 {targets.map(target => {

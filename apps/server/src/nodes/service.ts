@@ -3,7 +3,7 @@ import { nodeSchemas, type NodeToolName } from './contracts.js';
 import type { AtlasNode } from './model.js';
 import type { NodeRepository } from './repository.js';
 import { NodeIdentity } from './identity.js';
-import type { NodeShareApprovals } from './share-approvals.js';
+import type { NodeShareApprovals, ShareAuditClient } from './share-approvals.js';
 import { listNodeReleases } from './releases.js';
 import type { NodeRuntime } from './runtime.js';
 
@@ -45,13 +45,13 @@ export class NodeService {
     }
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
-    async call(name: NodeToolName, input: unknown) {
+    async call(name: NodeToolName, input: unknown, caller: ShareAuditClient = 'atlas-server') {
         const parsed = nodeSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x = parsed.data as any;
         if (name === 'list_nodes') return this.list();
         if (name === 'list_node_share_approvals') return this.requireShareApprovals().list();
-        if (name === 'update_node_share_approval') return this.requireShareApprovals().update(x);
+        if (name === 'update_node_share_approval') return this.requireShareApprovals().update(x, caller);
         if (name === 'list_node_releases') return listNodeReleases(x.refresh === true);
         if (name === 'read_node_logs') {
             const node = await this.get(x.nodeId);

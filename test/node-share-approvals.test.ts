@@ -47,8 +47,14 @@ test('directed sharing is denied by default, persisted, revocable and bounded to
     await assert.rejects(send(),(err:any)=>err.code==='SHARE_DENIED');
     assert.equal(delivered,1,'revocation prevents delivery even of an idempotent retry');
     const events=await f.store.pool.query(
-        "SELECT operation FROM audit_events WHERE operation LIKE 'node.share.%' ORDER BY created_at,id");
+        "SELECT operation,client FROM audit_events WHERE operation LIKE 'node.share.%' ORDER BY created_at,id");
     assert.equal(events.rowCount,3,'two grants and one revoke are audited');
+    assert.ok(events.rows.every(event => event.client === 'atlas-server'), 'Direct service calls use neutral truthful provenance');
+    for (const id of [a.nodeId, b.nodeId]) {
+        const activity = await identity.activity(id);
+        assert.equal(activity.filter(row => row.operation === 'node.share.approved').length,2);
+        assert.equal(activity.filter(row => row.operation === 'node.share.revoked').length,1);
+    }
 });
 
 test('revoking a Node credential also removes all managed share approvals', async()=>{

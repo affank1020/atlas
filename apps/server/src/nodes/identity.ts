@@ -85,5 +85,8 @@ export class NodeIdentity {
             return { workspaceId: input.workspaceId, nodeId: input.nodeId };
         });
     }
-    async activity(id: string) { return (await this.pool.query("SELECT operation,created_at AS \"createdAt\",after_state AS details FROM audit_events WHERE after_state->>'nodeId'=$1 OR after_state->>'previousNodeId'=$1 ORDER BY created_at DESC LIMIT 20", [id])).rows; }
+    async activity(id: string) { return (await this.pool.query("SELECT operation,created_at AS \"createdAt\",after_state AS details FROM audit_events WHERE after_state->>'nodeId'=$1 OR after_state->>'previousNodeId'=$1 OR
+            (operation IN ('node.share.approved','node.share.revoked') AND
+             (after_state->>'sourceNodeId'=$1 OR after_state->>'targetNodeId'=$1))
+            ORDER BY created_at DESC LIMIT 20", [id])).rows; }
 }

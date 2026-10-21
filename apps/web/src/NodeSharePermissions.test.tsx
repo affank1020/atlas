@@ -44,3 +44,20 @@ it('renders immutable environment grants without offering revoke', async () => {
     expect(screen.getByText('Read-only')).toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Revoke access'})).not.toBeInTheDocument();
 });
+\nit('treats a rejected permissions read as unknown, never as a missing approval', async () => {
+    let attempts = 0;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name !== 'list_node_share_approvals') throw new Error('A write must not be offered');
+        if (++attempts === 1) throw new Error('Temporary registry outage');
+        return [{ sourceNodeId: sender.id, targetNodeId: mac.id, origin: 'managed' }] as never;
+    });
+    render(<NodeSharePermissions source={sender} nodes={[sender, mac]} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Temporary registry outage');
+    expect(screen.getByText(/Sharing approval state is unknown/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve sharing' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke access' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh approvals' }));
+    expect(await screen.findByText('Approved in Atlas')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke access' })).toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'update_node_share_approval')).toHaveLength(0);
+});
