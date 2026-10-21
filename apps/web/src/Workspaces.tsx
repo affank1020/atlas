@@ -4,6 +4,7 @@ import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
 type Workspace = { id: string; nodeId: string; projectId: string | null; name: string; rootPath: string; kind: string; status: string };
+type LogicalWorkspace = { id: string; name: string; repository: string | null; kind: 'git' | 'local'; checkouts: Workspace[] };
 type Repository = { repository: string; private: boolean; defaultBranch: string; archived: boolean };
 type GitStatus = { available: boolean; reason?: string; branch?: string; head?: string; originRepository?: string | null; dirty?: boolean; changes?: {path: string; status: string}[] };
 type Worktree = { rootPath: string; head: string; branch: string | null };
@@ -24,6 +25,7 @@ function suggestTarget(path: string, branch: string) {
 export function Workspaces() {
     const [nodes, setNodes] = useState<AtlasNode[]>([]);
     const [all, setAll] = useState<Workspace[]>([]);
+    const [logical, setLogical] = useState<LogicalWorkspace[]>([]);
     const [repositories, setRepositories] = useState<Repository[]>([]);
     const [catalogError, setCatalogError] = useState('');
     const [error, setError] = useState('');
@@ -55,7 +57,8 @@ export function Workspaces() {
     const [prBody, setPrBody] = useState('');
     const [draftPR, setDraftPR] = useState<Draft>();
 
-    const selected = all.find(w => w.id === selectedId);
+    // Accept both new logical Workspace URLs and existing checkout deep links.
+    const selected = all.find(w => w.id === selectedId) ?? logical.find(group => group.id === selectedId)?.checkouts[0];
     const selectedNode = nodes.find(n => n.id === selected?.nodeId);
     const status = inspectedId === selected?.id ? rawStatus : undefined;
     const worktrees = inspectedId === selected?.id ? rawWorktrees : [];
@@ -64,8 +67,17 @@ export function Workspaces() {
     const online = nodes.filter(n => n.status === 'online' && n.capabilities.includes('workspace.git'));
     const provisionNode = online.find(n => n.id === nodeId);
     const managers = all.filter(w => w.nodeId === nodeId && w.kind === 'generic');
-    const entries = useMemo(() => all.filter(w => (!nodeFilter || w.nodeId === nodeFilter) &&
-        (w.name + ' ' + w.rootPath + ' ' + (nodes.find(n => n.id === w.nodeId)?.name || '')).toLowerCase().includes(search.toLowerCase())), [all, nodes, search, nodeFilter]);
+    const groups = useMemo(() => logical.length ? logical :
+        all.map(w => ({ id: w.id, name: w.name, repository: null, kind: 'local' as const, checkouts: [w] })), [logical, all]);
+    const entries = useMemo(() => groups.map(group => ({
+        ...group,
+        checkouts: group.checkouts.filter(checkout => !nodeFilter || checkout.nodeId === nodeFilter),
+    })).filter(group => group.checkouts.length > 0 &&
+        (group.name + ' ' + (group.repository || '') + ' ' + group.checkouts.map(checkout =>
+            checkout.name + ' ' + checkout.rootPath + ' ' +
+            (nodes.find(node => node.id === checkout.nodeId)?.name || '')).join(' '))
+            .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
+    const selectedLogical = groups.find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
     const canPublish = !!(status?.available && status.originRepository && status.branch?.startsWith('atlas/') &&
         status.head && !status.dirty && selectedNode?.status === 'online');
@@ -81,11 +93,19 @@ export function Workspaces() {
         Promise.allSettled([
             callTool<AtlasNode[]>('list_nodes'),
             callTool<Workspace[]>('list_workspaces', {}),
-        ]).then(([nodeResult, wsResult]) => {
+            callTool<LogicalWorkspace[]>('list_logical_workspaces', {}),
+        ]).then(([nodeResult, wsResult, logicalResult]) => {
             if (!live) return;
             if (nodeResult.status === 'fulfilled') setNodes(nodeResult.value);
             if (wsResult.status === 'fulfilled') setAll(wsResult.value.filter(w => w.status === 'active'));
-            setError([nodeResult, wsResult].filter(v => v.status === 'rejected').map(v => message((v as PromiseRejectedResult).reason)).join(' '));
+            // Graceful fallback during server upgrades, without hiding old checkout IDs.
+            if (logicalResult.status === 'fulfilled' && Array.isArray(logicalResult.value))
+                setLogical(logicalResult.value.map(group => ({ ...group,
+                    checkouts: group.checkouts.filter(checkout => checkout.status === 'active') }))
+                    .filter(group => group.checkouts.length > 0));
+            else setLogical([]);
+            setError([nodeResult, wsResult].filter(v => v.status === 'rejected')
+                .map(v => message((v as PromiseRejectedResult).reason)).join(' '));
         }).finally(() => {
             if (live) { setHasLoaded(true); setLoading(false); }
         });
@@ -145,6 +165,29 @@ export function Workspaces() {
         catch (cause) { setError(message(cause)); }
         finally { setWorking(false); }
     }
+    async function reconcile() {
+        if (IS_MOCK_MODE || working) return;
+        setWorking(true); setError(''); setNotice('');
+        let linked = 0;
+        let skipped = 0;
+        try {
+            for (const checkout of all) {
+                const onlineNode = online.some(node => node.id === checkout.nodeId);
+                if (checkout.kind !== 'generic' || !onlineNode) { skipped++; continue; }
+                try {
+                    const git = await callTool<GitStatus>('workspace_git_status', { workspaceId: checkout.id });
+                    if (!git.available || !git.originRepository) { skipped++; continue; }
+                    // The Node-derived origin is verified again by the Server;
+                    // neither a repository URL nor a Node path is caller-selected.
+                    await callTool('attach_checkout_repository', { workspaceId: checkout.id });
+                    linked++;
+                } catch { skipped++; }
+            }
+            setNotice(`Recognised ${linked} verified checkouts; ${skipped} skipped or unavailable.`);
+            setRevision(value => value + 1);
+        } catch (cause) { setError(message(cause)); }
+        finally { setWorking(false); }
+    }
     async function register(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!provisionNode || !root.startsWith('/')) return;
@@ -196,8 +239,9 @@ export function Workspaces() {
 
     return <div className="workspaces-manager">
         <header className="page-head">
-            <div><p className="eyebrow">Development / across Nodes</p><h1>Workspaces</h1><p>Repositories and isolated checkouts, independent of Projects.</p></div>
+            <div><p className="eyebrow">Development / across Nodes</p><h1>Workspaces</h1><p>One workspace, multiple checkouts. Choose a Node to inspect and work on its files.</p></div>
             <div className="actions"><button className="ghost" onClick={() => setRevision(r => r + 1)} disabled={loading || working}>{loading && hasLoaded ? 'Refreshing…' : 'Refresh'}</button>
+                <button className="ghost" onClick={reconcile} disabled={loading || working || IS_MOCK_MODE || !online.length} title="Group existing checkouts only after checking each Node's Git origin">Recognise repositories</button>
                 <button disabled={IS_MOCK_MODE || !online.length} onClick={() => setProvision(!provision)}>{provision ? 'Close' : '+ Add repository'}</button></div>
         </header>
         {IS_MOCK_MODE && <p className="wm-notice" role="status">Mock preview · write operations are disabled.</p>}
@@ -226,14 +270,14 @@ export function Workspaces() {
                 <button disabled={working || IS_MOCK_MODE || !managerId || !repository || !directoryPattern.test(directoryName)}>Clone</button>
             </form>
             {catalogError && <p role="alert" className="wm-hint error">GitHub catalog unavailable: {catalogError}</p>}
-            <p className="wm-hint">The Node must explicitly trust the selected development root. A new repository becomes an independent Workspace.</p>
+            <p className="wm-hint">Cloning adds a checkout on the selected Node. Checkouts of the same verified GitHub repository belong to one logical Workspace.</p>
         </section>}
         <div className="wm-layout">
             <section className="wm-panel wm-browser" aria-label="Workspace browser" aria-busy={initialLoading}>
-                <div className="wm-fields"><label>Search<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Workspace, directory, Node…" /></label>
+                <div className="wm-fields"><label>Search<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Repository, workspace, checkout, Node…" /></label>
                     <label>Node<select value={nodeFilter} onChange={e => setNodeFilter(e.target.value)}><option value="">All Nodes</option>
                         {nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label></div>
-                <div className="wm-title"><h2>{initialLoading ? <span className="wm-skeleton wm-skeleton-count" aria-hidden="true" /> : `${entries.length} Workspaces`}</h2><small>{initialLoading ? <span className="wm-skeleton wm-skeleton-meta" aria-hidden="true" /> : `${nodes.filter(n => n.status === 'online').length} Nodes online`}</small></div>
+                <div className="wm-title"><h2>{initialLoading ? <span className="wm-skeleton wm-skeleton-count" aria-hidden="true" /> : `${entries.length} ${entries.length === 1 ? 'Workspace' : 'Workspaces'}`}</h2><small>{initialLoading ? <span className="wm-skeleton wm-skeleton-meta" aria-hidden="true" /> : `${nodes.filter(n => n.status === 'online').length} Nodes online`}</small></div>
                 <div className="wm-list" aria-busy={initialLoading}>{initialLoading ? Array.from({ length: 4 }, (_, index) =>
                     <div className="wm-row wm-row-skeleton" key={index} aria-hidden="true">
                         <span className="wm-skeleton wm-skeleton-glyph" />
@@ -244,13 +288,32 @@ export function Workspaces() {
                         </span>
                         <span className="wm-skeleton wm-skeleton-dot" />
                     </div>
-                ) : entries.map(w => {
-                    const node = nodes.find(n => n.id === w.nodeId);
-                    return <button key={w.id} className={'wm-row' + (selectedId === w.id ? ' selected' : '')} aria-pressed={selectedId === w.id} onClick={() => choose(w.id)}>
-                        <span className="wm-glyph" aria-hidden="true">{w.kind === 'unity' ? '◇' : '⌁'}</span>
-                        <span className="wm-row-main"><strong>{w.name}</strong><small title={w.rootPath}>{w.rootPath}</small><small>{node?.name || 'Unknown Node'} · {w.projectId ? 'Project linked' : 'Independent'}</small></span>
-                        <span className={'wm-dot' + (node?.status === 'online' ? ' online' : '')} aria-label={node?.status || 'unknown'} />
-                    </button>;
+                ) : entries.map(group => {
+                    const nodeCount = new Set(group.checkouts.map(checkout => checkout.nodeId)).size;
+                    return <div className="wm-group" key={group.id}>
+                        <button className="wm-row wm-group-heading"
+                            aria-label={group.name}
+                            aria-pressed={group.checkouts.some(checkout => checkout.id === selected?.id)}
+                            onClick={() => choose(group.id)}>
+                            <span className="wm-glyph" aria-hidden="true">⌁</span>
+                            <span className="wm-row-main"><strong>{group.name}</strong>
+                                <small title={group.repository || undefined}>{group.repository || 'Local Workspace'}</small>
+                                <small>{group.checkouts.length} {group.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {nodeCount} {nodeCount === 1 ? 'Node' : 'Nodes'}</small>
+                            </span>
+                        </button>
+                        <div className="wm-checkout-list">{group.checkouts.map(checkout => {
+                            const node = nodes.find(n => n.id === checkout.nodeId);
+                            const isSelected = selected?.id === checkout.id;
+                            return <button className={'wm-checkout-row' + (isSelected ? ' selected' : '')}
+                                key={checkout.id} aria-pressed={isSelected}
+                                aria-label={'Checkout on ' + (node?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
+                                onClick={() => choose(checkout.id)}>
+                                <span className={'wm-dot' + (node?.status === 'online' ? ' online' : '')} aria-hidden="true" />
+                                <span><strong>{node?.name || 'Unknown Node'}{isSelected && status?.branch ? ' · ' + status.branch : ''}</strong>
+                                    <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
+                            </button>;
+                        })}</div>
+                    </div>;
                 })}</div>
                 {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
             </section>
@@ -260,15 +323,15 @@ export function Workspaces() {
                     <span className="wm-skeleton wm-skeleton-heading" />
                     <span className="wm-skeleton wm-skeleton-path-wide" />
                     <span className="wm-skeleton wm-skeleton-path-wide" />
-                </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Select a Workspace to inspect its checkout and Git operations.</p></div> : <>
-                    <div className="wm-title"><div><p className="eyebrow">Workspace inspector</p><h2>{selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
+                </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
+                    <div className="wm-title"><div><p className="eyebrow">Checkout inspector</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
                     <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
                         {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
                     <p className="wm-path">{selected.rootPath}</p>
-                    <p className="wm-hint">{selected.kind} · {selected.projectId ? 'Project linked' : 'Independent Workspace'}</p>
+                    <p className="wm-hint">{selected.kind} checkout · {selectedLogical?.repository || (selected.projectId ? 'Project linked' : 'Local Workspace')}</p>
                     {inspecting && <p role="status" className="wm-sr-only">{inspectedId === selected.id ? 'Refreshing checkout…' : 'Inspecting checkout…'}</p>}
                     {inspectionError && <p role="alert" className="wm-hint error">{inspectionError}</p>}
-                    {selectedNode?.status !== 'online' && <p className="wm-hint">Reconnect this Node to inspect or modify its Workspaces.</p>}
+                    {selectedNode?.status !== 'online' && <p className="wm-hint">Reconnect this Node to inspect or modify its checkout.</p>}
                     {inspectorPending ? <>
                         <div className="wm-git wm-git-skeleton" aria-hidden="true">
                             {['Branch', 'HEAD', 'Working tree', 'Origin'].map((label, index) =>
