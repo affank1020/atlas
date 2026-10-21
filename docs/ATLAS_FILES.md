@@ -136,6 +136,42 @@
 - Before depending on R2 for mobile assets, configure R2 privately and verify
   live round-trip upload/download, storage metrics, backup and restore.
 
+## Safe inventory reconciliation — read-only
+
+- Build the server once (`npm run build:server`), then run
+  `npm run files:audit` from the trusted server host/container. The compiled
+  CLI also accepts `--dry-run --max-objects=N` with 1–5000 objects **per
+  source** (default 2000). The command requires the normal server
+  `DATABASE_URL`, `ATLAS_MEDIA_DIR` and optional `ATLAS_R2_*` secrets,
+  but does not expose a public HTTP/MCP endpoint.
+- This is an **inventory-only** audit. It lists only server-generated
+  `files-<id>-<checksum>` object keys from local storage and (when configured)
+  private R2. It compares each scanned key against all committed
+  `atlas_files` rows, including archived entries. It reports referenced,
+  recent unreferenced and **possible orphan** counts and byte totals.
+- A fixed 24-hour grace period excludes recent unreferenced objects from the
+  orphan candidate category. Every report contains a `truncated` flag for
+  each source; a limited or failed scan must never be treated as complete.
+  **A missing or unmounted local storage root aborts the entire audit** instead
+  of reporting a clean, empty scan. An existing but empty directory is valid.
+  R2 unconfigured is shown explicitly rather than silently considered empty.
+  Reports include at most 25 sample keys per source; they never include file
+  contents, Node credentials or R2 tokens.
+- R2 discovery uses signed, read-only S3 ListObjectsV2 requests with bounded
+  page sizes. Keys matching the broad `files-` LIST prefix but not Atlas's
+  exact generated file-key format are skipped, including older or unrelated
+  objects. LIST page accounting still includes these keys; page-budget
+  exhaustion aborts the audit rather than claiming a complete scan.
+  **These are billable Class A operations**, so the scan must be
+  run manually rather than on every dashboard refresh. At the default scan
+  limit there are at most three list requests; maximum is six.
+- **This code cannot delete objects.** Candidate status is advisory, not
+  authorization for deletion. Upload races, ambiguous writes, backups and
+  restore timing must be addressed by a separate reviewed two-phase
+  reconciler and verified backups before any destructive cleanup policy.
+- No scheduled job, automatic deletion, production flag changes or R2
+  credential modifications are included.
+
 ## Limitations and further work
 
 - Archive and restore update PostgreSQL metadata only. They **do not delete bytes** from

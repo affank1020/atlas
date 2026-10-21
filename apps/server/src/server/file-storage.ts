@@ -9,6 +9,8 @@ const safeKey = (key: string) => {
     return key;
 };
 
+export type ListedFileObject = { key: string; size: number; modifiedAt: Date };
+
 export interface ObjectStore {
     put(key: string, bytes: Buffer, mimeType: string): Promise<void>;
     get(key: string): Promise<Buffer>;
@@ -69,14 +71,21 @@ export class R2ObjectStore implements ObjectStore {
         if (!config.accessKeyId || !config.secretAccessKey) throw new Error("R2 credentials are required.");
     }
 
-    private async perform(method: "PUT" | "GET" | "DELETE", key: string, bytes?: Buffer, mimeType?: string): Promise<Response> {
-        const requestUrl = new URL(`${encodeURIComponent(this.config.bucket)}/${encodeURIComponent(safeKey(key))}`, this.endpoint);
+    private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams): Promise<Response> {
+        const target = encodeURIComponent(this.config.bucket) + (key === null ? "" : "/" + encodeURIComponent(safeKey(key)));
+        const requestUrl = new URL(target, this.endpoint);
+        // SigV4 requires the actual query bytes to match this canonical encoding.
+        const escaped = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g,
+            char => "%" + char.charCodeAt(0).toString(16).toUpperCase());
+        const canonicalQuery = query ? [...query.entries()].sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0)
+            .map(([name, value]) => escaped(name) + "=" + escaped(value)).join("&") : "";
+        if (canonicalQuery) requestUrl.search = canonicalQuery;
         const timestamp = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
         const date = timestamp.slice(0, 8);
         const payloadHash = digest(bytes ?? "");
         const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
         const headers = `host:${requestUrl.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${timestamp}\n`;
-        const canonical = `${method}\n${requestUrl.pathname}\n\n${headers}\n${signedHeaders}\n${payloadHash}`;
+        const canonical = `${method}\n${requestUrl.pathname}\n${canonicalQuery}\n${headers}\n${signedHeaders}\n${payloadHash}`;
         const scope = `${date}/auto/s3/aws4_request`;
         const stringToSign = `AWS4-HMAC-SHA256\n${timestamp}\n${scope}\n${digest(canonical)}`;
         const signingKey = mac(mac(mac(mac(`AWS4${this.config.secretAccessKey}`, date), "auto"), "s3"), "aws4_request");
@@ -98,6 +107,91 @@ export class R2ObjectStore implements ObjectStore {
     async put(key: string, bytes: Buffer, mimeType: string) { await this.perform("PUT", key, bytes, mimeType); }
     async get(key: string) { return Buffer.from(await (await this.perform("GET", key)).arrayBuffer()); }
     async delete(key: string) { await this.perform("DELETE", key); }
+
+    /** Read-only, signed ListObjectsV2. Each response is capped at 1000 keys. */
+    async listFilesPage(token?: string, pageSize = 1000): Promise<{ objects: ListedFileObject[]; nextToken?: string }> {
+        if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000)
+            throw new Error("Invalid R2 inventory page size.");
+        if (token !== undefined && (!token || token.length > 4096)) throw new Error("Invalid R2 inventory token.");
+        const query = new URLSearchParams({
+            "encoding-type": "url", "list-type": "2", "max-keys": String(pageSize), prefix: "files-",
+        });
+        if (token !== undefined) query.set("continuation-token", token);
+        const response = await this.perform("GET", null, undefined, undefined, query);
+        if (Number(response.headers.get("content-length") ?? 0) > 1024 * 1024)
+            throw new Error("R2 inventory response exceeds size limit.");
+        if (!response.body) throw new Error("R2 inventory returned no response body.");
+        const reader = response.body.getReader();
+        const chunks: Buffer[] = [];
+        let bytesRead = 0;
+        for (;;) {
+            const part = await reader.read();
+            if (part.done) break;
+            bytesRead += part.value.byteLength;
+            if (bytesRead > 1024 * 1024) {
+                await reader.cancel();
+                throw new Error("R2 inventory response exceeds size limit.");
+            }
+            chunks.push(Buffer.from(part.value));
+        }
+        const xml = Buffer.concat(chunks, bytesRead).toString("utf8");
+        if (!/<ListBucketResult(?:\s|>)/.test(xml) ||
+            !/<\/ListBucketResult>/.test(xml))
+            throw new Error("Unexpected R2 inventory response.");
+        const contents = [...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)];
+        if (contents.length > pageSize) throw new Error("R2 returned too many inventory keys.");
+        if ((xml.match(/<Contents>/g) ?? []).length !== contents.length)
+            throw new Error("Incomplete R2 inventory object records.");
+        const reportedCount = /<KeyCount>(\d+)<\/KeyCount>/.exec(xml);
+        if (reportedCount && Number(reportedCount[1]) !== contents.length)
+            throw new Error("Inconsistent R2 inventory object count.");
+        const tag = (body: string, name: string): string => {
+            const match = new RegExp("<" + name + ">([\\s\\S]*?)<\\/" + name + ">").exec(body);
+            if (!match) throw new Error("Incomplete R2 inventory XML.");
+            const raw = match[1]!;
+            if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/i.test(raw))
+                throw new Error("Unexpected R2 XML entity.");
+            const decoded = raw.replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/gi, entity => {
+                const value = entity.slice(1, -1);
+                if (value === "amp") return "&";
+                if (value === "lt") return "<";
+                if (value === "gt") return ">";
+                if (value === "quot") return '"';
+                if (value === "apos") return "'";
+                const code = value.toLowerCase().startsWith("#x") ? parseInt(value.slice(2), 16) : parseInt(value.slice(1), 10);
+                if (!Number.isInteger(code) || code < 1 || code > 0x10ffff || code >= 0xd800 && code <= 0xdfff)
+                    throw new Error("Invalid XML numeric entity.");
+                return String.fromCodePoint(code);
+            });
+            return decoded;
+        };
+        const objects = contents.flatMap((match): ListedFileObject[] => {
+            const encodedKey = tag(match[1]!, "Key");
+            let key: string;
+            try { key = decodeURIComponent(encodedKey); }
+            catch {
+                // The bucket can contain unrelated keys with malformed percent
+                // sequences. They aren't Atlas Files inventory candidates.
+                return [];
+            }
+            // S3's prefix is deliberately broader than the server-generated
+            // key format. Ignore out-of-scope files without stopping the scan;
+            // raw Contents count and continuation tokens still bound paging.
+            if (!/^files-[a-f0-9]{32}-[a-f0-9]{64}$/.test(key)) return [];
+            const rawSize = tag(match[1]!, "Size");
+            const modifiedAt = new Date(tag(match[1]!, "LastModified"));
+            const size = Number(rawSize);
+            if (!/^\d+$/.test(rawSize) || !Number.isSafeInteger(size) || !Number.isFinite(modifiedAt.getTime()))
+                throw new Error("Invalid R2 inventory metadata.");
+            return [{ key, size, modifiedAt }];
+        });
+        const truncation = tag(xml, "IsTruncated");
+        if (truncation !== "true" && truncation !== "false") throw new Error("Invalid R2 truncation flag.");
+        const truncated = truncation === "true";
+        const nextToken = truncated ? tag(xml, "NextContinuationToken") : undefined;
+        if (truncated && !nextToken) throw new Error("Missing R2 continuation token.");
+        return { objects, ...(nextToken ? { nextToken } : {}) };
+    }
 }
 
 /** Legacy local objects remain readable after switching new uploads to R2. */
