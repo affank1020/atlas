@@ -358,8 +358,7 @@ test('subprocess SIGTERM during an upload releases the queue lock before service
         const [code]=await Promise.race([terminated,new Promise<never>((_,reject)=>setTimeout(
             ()=>reject(new Error('Queue subprocess exceeded shutdown deadline')),8000))]);
         assert.equal(code,0,errors.slice(0,300));
-        const observed=JSON.parse(await readFile(join(root,'queue','.child-shutdown-observed.json'),'utf8'))
-            as {root:string;after:string[]};
+        const observed = JSON.parse(await readFile(join(root,'queue','.child-shutdown-observed.json'),'utf8')) as {root:string;after:string[]};
         const entries=await readdir(join(root,'queue'));
         assert.equal(observed.root,join(root,'queue'));
         assert.equal(observed.after.includes('.queue-lock'),false,
