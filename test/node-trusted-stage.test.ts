@@ -66,6 +66,7 @@ test('requires exact repository, main, workflow certificate and attested source 
             '--source-ref', 'refs/heads/main',
             '--source-digest', sourceSha,
             '--predicate-type', 'https://slsa.dev/provenance/v1',
+            '--deny-self-hosted-runners',
         ]) assert.ok(args.includes(item), 'Missing required provenance option: ' + item);
         assert.match(res.stdout, /Verified GitHub build provenance/);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
