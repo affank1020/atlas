@@ -106,14 +106,17 @@
 .node-summary-manage .node-management-actions button { font-size: .68rem; min-height: 30px; padding: 6px 8px; }
 .node-summary-manage .node-management-actions .danger { color: var(--danger); }
 
+/* Leave enough horizontal clearance between side Nodes and Atlas Server.
+   At laptop widths the shell/sidebar make a two-column topology too narrow. */
+@media(max-width: 1280px) {
+    .node-topology-layout { grid-template-columns: minmax(0,1fr); }
+    .node-graph { height: 370px; }
+}
 @media(max-width: 1200px) {
-    .node-topology-layout { grid-template-columns: minmax(0,1fr) minmax(250px,290px); }
     .node-graph-card { width: 158px; }
 }
 @media(max-width: 1000px) {
-    .node-topology-layout { grid-template-columns: 1fr; }
     .node-summary { min-height: 215px; }
-    .node-graph { height: 370px; }
 }
 @media(max-width: 700px) {
     .node-detail-grid { grid-template-columns: 1fr; grid-template-areas: 'workspaces' 'activity' 'technical'; }

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Nodes, WorkspaceHost } from './Nodes';
@@ -6,6 +7,15 @@ import { mockTool } from './mockTools';
 vi.mock('./api', () => ({ callTool: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const node = { id: 'node', name: 'Development machine', status: 'online', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], hostedWorkspaceCount: 1, lastSeen: '2026-10-07T09:00:00Z', workspaces: [{ id: 'workspace', projectId: 'project', name: 'Football' }] };
+it('stacks the topology and summary at laptop viewport widths', () => {
+    // A narrow map causes the left/right Node cards to overlap Atlas Server.
+    // This is a stylesheet breakpoint guard, not a rendered browser screenshot.
+    const css = readFileSync(new URL('./workspaces.css', import.meta.url), 'utf8');
+    const stackRule = css.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.node-topology-layout\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(stackRule).not.toBeNull();
+    expect(Number(stackRule?.[1])).toBeGreaterThanOrEqual(1240);
+});
+
 it('shows node health before selection and keeps the map compact', async () => {
     vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : node);
     const { container } = render(<Nodes />);
