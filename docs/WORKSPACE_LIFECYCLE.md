@@ -17,7 +17,7 @@ This phase adds three Node-owned, auditable operations on top of Workspace V2:
   inspect worktrees and retire an explicitly selected registered feature
   worktree. Retiring requires a merged GitHub PR for the exact feature HEAD into
   the repository's current default branch, rejects changed HEADs, dirty,
-  untracked **and ignored** files, checks for processes with a working directory
+  untracked **and ignored** files, rejects tracked files marked `assume-unchanged` or `skip-worktree` (which Git status can hide), checks for processes with a working directory
   inside the checkout, archives the registered Workspace, and **deletes the
   checked-out files and local directory** while **retaining the Git branch and
   commits**. A successful removal reports estimated reclaimed disk blocks.

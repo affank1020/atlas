@@ -61,6 +61,29 @@ test('managed worktrees are isolated, registered in Git, and retire without dele
     await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'), /ignored files/);
     rmSync(path.join(createdPath, 'build.cache'));
 
+    // Git deliberately hides local edits for these index flags. Verify that
+    // both cases fail closed even though porcelain wrongly reports clean.
+    for (const [flag, clearFlag] of [
+        ['--assume-unchanged', '--no-assume-unchanged'],
+        ['--skip-worktree', '--no-skip-worktree'],
+    ]) {
+        const hiddenFile = path.join(createdPath, 'README.md');
+        writeFileSync(hiddenFile, 'local modifications that must survive ' + flag + '\n');
+        git(createdPath, 'update-index', flag, '--', 'README.md');
+        try {
+            assert.equal(git(createdPath, 'status', '--porcelain'), '');
+            assert.match(git(createdPath, 'ls-files', '-v', '--', 'README.md'), /^[a-zS] /);
+            await assert.rejects(
+                removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'),
+                /assume-unchanged or skip-worktree/);
+            assert.equal(existsSync(createdPath), true, 'local checkout must survive ' + flag);
+            assert.equal(git(createdPath, 'rev-parse', 'HEAD'), originalHead);
+        } finally {
+            git(createdPath, 'update-index', clearFlag, '--', 'README.md');
+            writeFileSync(hiddenFile, 'initial\n');
+        }
+    }
+
     // A running program with its cwd in the checkout prevents local deletion.
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)'], {
         cwd: createdPath, stdio: 'ignore',
