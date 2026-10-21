@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
+import { RecentActivityPreview } from './RecentActivityPreview';
 import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
@@ -454,6 +455,7 @@ export function Workspaces() {
                         <p className="wm-path">{selected.rootPath}</p>
                         <p className="wm-hint">{selected.kind} checkout · {linkedProjects.length ? 'Workspace Projects linked' : 'Project-independent'}</p>
                     </div>
+                    <RecentActivityPreview key={selected.id} title="Recent checkout activity" filters={{ checkoutId: selected.id }} count={4} compact refreshVersion={revision} />
                     {inspecting && <p role="status" className="wm-sr-only">{inspectedId === selected.id ? 'Refreshing checkout…' : 'Inspecting checkout…'}</p>}
                     {inspectionError && <p role="alert" className="wm-hint error">{inspectionError}</p>}
                     {selectedNode?.status !== 'online' && <p className="wm-hint">Reconnect this Node to inspect or modify its checkout.</p>}

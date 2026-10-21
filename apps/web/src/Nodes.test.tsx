@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Nodes, WorkspaceHost } from './Nodes';
 import { callTool } from './api';
@@ -154,4 +154,22 @@ it('shows installed/latest software and update state inside the selected Node in
     expect(within(software).getByText('Not enabled for this Node')).toBeInTheDocument();
     expect(within(software).getByRole('link', { name: /View downloads and release notes/ }))
         .toHaveAttribute('href', '#/nodes/software');
+});
+
+it('refreshes the selected Node activity preview when the Nodes page refreshes', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'get_node') return node;
+        if (name === 'query_monitoring_activity') return { items: [], total: 0, offset: 0, limit: 4 };
+        if (name === 'list_node_releases') return { state: 'unavailable', releases: [], checkedAt: null, source: 'none' };
+        return null;
+    });
+    render(<Nodes />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Development machine' }));
+    await waitFor(() => expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity')).toHaveLength(1));
+    expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', { nodeId: node.id, limit: 4, offset: 0 }, expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity')).toHaveLength(2));
+    const reads = vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity');
+    expect(reads[1]?.[1]).toEqual({ nodeId: node.id, limit: 4, offset: 0 });
 });

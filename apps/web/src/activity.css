@@ -30,3 +30,21 @@
 .monitoring-pagination { padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .monitoring-log-result { padding: 18px 22px; }
 .monitoring-log-result pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 620px; font-size: 12px; }
+
+/* Contextual 3–5 item snapshots replace competing full activity consoles. */
+.monitoring-preview { padding: 17px 20px; min-width: 0; }
+.monitoring-preview-compact { padding: 0; min-width: 0; }
+.monitoring-preview-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.monitoring-preview-head h3 { font-size:.88rem; margin:0; font-weight:620; }
+.monitoring-preview-head a,.monitoring-context-link { font-size:.72rem; color:var(--text-secondary); text-decoration:none; }
+.monitoring-preview-head a:hover,.monitoring-context-link:hover { color:var(--accent); }
+.monitoring-preview-list { list-style:none; margin:12px 0 0; padding:0; }
+.monitoring-preview-list li { display:flex; justify-content:space-between; gap:12px; align-items:start; padding:11px 0; border-top:1px solid var(--border); }
+.monitoring-preview-copy { display:grid; gap:4px; min-width:0; }
+.monitoring-preview-copy strong { font-size:.79rem; font-weight:570; line-height:1.35; overflow-wrap:anywhere; }
+.monitoring-preview-copy small { font-size:.68rem; color:var(--text-muted); }
+.monitoring-preview-list time { font-size:.67rem; color:var(--text-muted); flex-shrink:0; text-align:right; }
+.monitoring-preview-failed strong { color:var(--danger); }
+.monitoring-preview-empty { font-size:.73rem; margin:12px 0 0; color:var(--text-muted); }
+.monitoring-context-link { display:inline-block; margin-top:12px; }
+@media (max-width:650px) { .monitoring-preview-list li { flex-direction:column; gap:4px; }.monitoring-preview-list time { text-align:left; } }

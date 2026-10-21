@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
 import { NodeSoftwareSummary } from './NodeSoftware';
+import { RecentActivityPreview } from './RecentActivityPreview';
+import { monitoringHash } from './monitoringLinks';
 import './workspaces.css';
 export type AtlasNode = {
     id: string; name: string; status: 'online' | 'offline' | 'unavailable';
@@ -109,8 +111,8 @@ function NodeSummary({ node, detail, nodes, loading, unavailable, onClear, onCha
     </aside>;
 }
 
-function NodeDetails({ node, detail, loading, detailError }: {
-    node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string;
+function NodeDetails({ node, detail, loading, detailError, revision }: {
+    node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string; revision: number;
 }) {
     const current = detail || node;
     return <section className="node-details" aria-label="Selected node details">
@@ -125,8 +127,8 @@ function NodeDetails({ node, detail, loading, detailError }: {
                 </li>)}</ul> : <p className="node-detail-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : detailError ? 'Workspace details unavailable.' : 'Loading workspace details…'}</p>}
             </section>
             <section className="node-detail-card node-detail-activity">
-                <h3>Recent activity</h3>
-                {detail?.activity?.length ? <ul className="node-activity-list">{detail.activity.map((item, index) => <li key={item.createdAt + '-' + index}><span>{item.operation}</span><time>{formatWhen(item.createdAt)}</time></li>)}</ul> : <p className="node-detail-empty">{loading ? 'Loading activity…' : detailError ? 'Activity unavailable.' : 'No recent activity.'}</p>}
+                <RecentActivityPreview title="Recent activity" filters={{ nodeId: node.id }} count={4} compact refreshVersion={revision} />
+                <a className="monitoring-context-link" href={monitoringHash('logs', { nodeId: node.id })}>Open Node logs in Monitoring ↗</a>
             </section>
             <section className="node-detail-card node-detail-technical">
                 <h3>Technical details</h3>
@@ -238,6 +240,6 @@ export function Nodes() {
             <NodeSummary node={selected} detail={detail?.id === selected?.id ? detail : undefined} nodes={nodes} loading={busy} unavailable={registryError} onClear={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />
         </div>
         {selected && <NodeDetails key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
-            detailError={detailError} loading={detailLoading} />}
+            detailError={detailError} loading={detailLoading} revision={revision} />}
     </div>;
 }

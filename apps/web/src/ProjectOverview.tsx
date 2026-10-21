@@ -1,6 +1,6 @@
 import { rememberWork } from './recentWork';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityFeed } from './ActivityFeed';
+import { RecentActivityPreview } from './RecentActivityPreview';
 import { useRenderViewQuery } from './atlasApi';
 import { ViewFrame } from './ViewPage';
 import { editViewHash, standaloneViewUrl } from './viewLinks';
@@ -67,6 +67,6 @@ export function ProjectOverview({ project, views, viewsBusy, refreshVersion = 0 
             <header className="project-views-head"><div><p className="eyebrow">Project Views</p><h2>At a glance</h2></div><a href={`#/projects/${project.id}/views`}>All Views →</a></header>
             <div className="view-gallery">{active.slice(0, 2).map(view => <ViewContainer key={view.id} view={view} refreshVersion={refreshVersion} />)}</div>
         </section>}
-        <ActivityFeed projectId={project.id} title="Recent activity" refreshVersion={refreshVersion} />
+        <RecentActivityPreview filters={{ projectId: project.id }} title="Recent activity" refreshVersion={refreshVersion} count={5} />
     </div>;
 }
