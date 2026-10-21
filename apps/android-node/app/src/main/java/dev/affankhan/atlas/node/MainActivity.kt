@@ -25,6 +25,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,10 +48,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             AtlasCompanion(
                 session = model.session,
+                node = model.pairedNode,
+                connection = model.connectionStatus,
+                pairing = model.pairing,
+                pairingError = model.pairingError,
+                onPair = model::pair,
+                onForget = model::forget,
                 onNavigate = model::navigate,
                 onEditDraft = model::editDraft,
             )
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        model.startConnection()
+    }
+
+    override fun onStop() {
+        model.stopConnection()
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -68,6 +89,12 @@ private val atlasScheme = darkColorScheme(
 @Composable
 private fun AtlasCompanion(
     session: CompanionSession,
+    node: StoredNode?,
+    connection: String,
+    pairing: Boolean,
+    pairingError: String?,
+    onPair: (String, String, String) -> Unit,
+    onForget: () -> Unit,
     onNavigate: (Section) -> Unit,
     onEditDraft: (String) -> Unit,
 ) {
@@ -89,6 +116,12 @@ private fun AtlasCompanion(
                         }
                         CompanionContent(
                             session = session,
+                            node = node,
+                            connection = connection,
+                            pairing = pairing,
+                            pairingError = pairingError,
+                            onPair = onPair,
+                            onForget = onForget,
                             onEditDraft = onEditDraft,
                             modifier = Modifier.weight(1f),
                         )
@@ -97,6 +130,12 @@ private fun AtlasCompanion(
                     Column {
                         CompanionContent(
                             session = session,
+                            node = node,
+                            connection = connection,
+                            pairing = pairing,
+                            pairingError = pairingError,
+                            onPair = onPair,
+                            onForget = onForget,
                             onEditDraft = onEditDraft,
                             modifier = Modifier.weight(1f),
                         )
@@ -121,6 +160,12 @@ private fun AtlasCompanion(
 @Composable
 private fun CompanionContent(
     session: CompanionSession,
+    node: StoredNode?,
+    connection: String,
+    pairing: Boolean,
+    pairingError: String?,
+    onPair: (String, String, String) -> Unit,
+    onForget: () -> Unit,
     onEditDraft: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -131,10 +176,7 @@ private fun CompanionContent(
         Text("atlas.", color = MaterialTheme.colorScheme.primary, fontSize = 28.sp)
         Text(session.section.label, style = MaterialTheme.typography.headlineMedium)
         when (session.section) {
-            Section.DEVICES -> {
-                InfoCard("Not enrolled", "This device has not been paired with Atlas Server.")
-                InfoCard("Connection", "Offline · no Node identity or capabilities advertised yet.")
-            }
+            Section.DEVICES -> DevicePairing(node, connection, pairing, pairingError, onPair)
             Section.SEND -> SendContent(session, onEditDraft)
             Section.INBOX -> InfoCard(
                 "No incoming items",
@@ -142,8 +184,15 @@ private fun CompanionContent(
             )
             Section.SETTINGS -> {
                 InfoCard("App version", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-                InfoCard("Node protocol", "Atlas Node protocol v2 — integration pending")
-                InfoCard("Credentials", "None stored. Pairing and Android Keystore storage are next.")
+                InfoCard("Node protocol", "Atlas Node protocol v2 — device capabilities pending")
+                if (node != null) {
+                    InfoCard("Credentials", "Node credentials are encrypted using Android Keystore.")
+                    Button(onClick = onForget) { Text("Forget this Node on device") }
+                    Text("This only deletes local credentials. Revoke the Node separately in Atlas Web.",
+                        style = MaterialTheme.typography.bodySmall)
+                } else {
+                    InfoCard("Credentials", "No Node identity stored on this device.")
+                }
             }
         }
     }
@@ -181,4 +230,51 @@ private fun InfoCard(title: String, details: String) {
             Text(details, style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+@Composable
+private fun DevicePairing(
+    node: StoredNode?,
+    connection: String,
+    pairing: Boolean,
+    pairingError: String?,
+    onPair: (String, String, String) -> Unit,
+) {
+    if (node != null) {
+        InfoCard("Paired Node", node.name + " · " + node.nodeId)
+        InfoCard("Connection", connection)
+        InfoCard("Capabilities", "Connected Node identity only. Device sharing is not enabled yet.")
+        return
+    }
+    InfoCard("Not enrolled", "Create a one-time Node enrolment ticket in Atlas Web, then enter it here.")
+    // Enrolment ticket is memory-only and is discarded when this form leaves composition.
+    var server by remember { mutableStateOf("https://atlas.affankhan.dev") }
+    var deviceName by remember { mutableStateOf("Android Node") }
+    var ticket by remember { mutableStateOf("") }
+    OutlinedTextField(
+        value = server, onValueChange = { server = it.take(400) },
+        label = { Text("Atlas server HTTPS address") },
+        modifier = Modifier.fillMaxWidth().testTag("pair-server"),
+        singleLine = true,
+    )
+    OutlinedTextField(
+        value = deviceName, onValueChange = { deviceName = it.take(200) },
+        label = { Text("Device name") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+    OutlinedTextField(
+        value = ticket, onValueChange = { ticket = it.take(256) },
+        label = { Text("One-time pairing ticket") },
+        modifier = Modifier.fillMaxWidth().testTag("pair-ticket"),
+        visualTransformation = PasswordVisualTransformation(),
+        singleLine = true,
+    )
+    Button(onClick = { onPair(server, deviceName, ticket); ticket = "" },
+        enabled = !pairing && ticket.isNotBlank() && deviceName.isNotBlank()) {
+        Text(if (pairing) "Pairing…" else "Pair with Atlas")
+    }
+    if (pairingError != null) InfoCard("Pairing failed", pairingError)
+    Text("Requires valid HTTPS/WSS. The pairing ticket is never saved; the issued Node credential is protected using Android Keystore.",
+        style = MaterialTheme.typography.bodySmall)
 }

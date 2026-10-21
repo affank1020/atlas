@@ -1,10 +1,18 @@
 package dev.affankhan.atlas.node
 
+import android.app.Application
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.WebSocket
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
 
 internal const val MAX_SHARE_CHARACTERS = 16_384
 
@@ -42,7 +50,128 @@ internal data class CompanionSession(
  * Memory-only state: a ViewModel survives tab changes and configuration changes,
  * but never serializes clipboard/share contents to SavedState, disk, or backups.
  */
-internal class CompanionViewModel : ViewModel() {
+internal class CompanionViewModel(application: Application) : AndroidViewModel(application) {
+    private val vault = NodeVault(application)
+    private val transport = AtlasTransport()
+    private val handler = Handler(Looper.getMainLooper())
+    private var foreground = false
+    private var connectionGeneration = 0L
+    private var reconnectDelayMs = 1_000L
+    private var pendingRetry: Runnable? = null
+    private var socket: WebSocket? = null
+
+    var pairedNode by mutableStateOf(vault.load())
+        private set
+    var connectionStatus by mutableStateOf(if (pairedNode == null) "Not enrolled" else "Offline")
+        private set
+    var pairing by mutableStateOf(false)
+        private set
+    var pairingError by mutableStateOf<String?>(null)
+        private set
+
+    fun pair(rawOrigin: String, rawName: String, rawToken: String) {
+        if (pairing || pairedNode != null) return
+        val endpoint = try { parseAtlasEndpoint(rawOrigin) } catch (error: IllegalArgumentException) {
+            pairingError = error.message ?: "Invalid Atlas server URL."
+            return
+        }
+        val name = rawName.trim()
+        val token = rawToken.trim()
+        if (name.isEmpty() || name.length > 200 || token.length < 32) {
+            pairingError = "Enter a device name and a valid one-time enrolment ticket."
+            return
+        }
+        pairing = true
+        pairingError = null
+        viewModelScope.launch {
+            try {
+                val node = withContext(Dispatchers.IO) {
+                    transport.enrol(endpoint, token, name, BuildConfig.VERSION_NAME)
+                }
+                withContext(Dispatchers.IO) { vault.save(node) }
+                pairedNode = node
+                connectionStatus = "Offline"
+                if (foreground) connect()
+            } catch (_: Exception) {
+                pairingError = "Could not enrol the device. Check your Atlas address, TLS certificate and one-time ticket."
+            } finally {
+                pairing = false
+            }
+        }
+    }
+
+    fun startConnection() {
+        foreground = true
+        if (pairedNode != null && socket == null) connect()
+    }
+
+    fun stopConnection() {
+        foreground = false
+        connectionGeneration++
+        pendingRetry?.let(handler::removeCallbacks)
+        pendingRetry = null
+        socket?.close(1000, "App backgrounded")
+        socket = null
+        connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · app in background"
+    }
+
+    private fun connect() {
+        val node = pairedNode ?: return
+        if (!foreground || socket != null) return
+        val generation = ++connectionGeneration
+        connectionStatus = "Connecting"
+        socket = try {
+            transport.connect(node, BuildConfig.VERSION_NAME) { event ->
+                handler.post {
+                    if (!foreground || generation != connectionGeneration) return@post
+                    when (event) {
+                        ConnectionEvent.Online -> {
+                            reconnectDelayMs = 1_000
+                            connectionStatus = "Online"
+                        }
+                        is ConnectionEvent.Offline -> {
+                            connectionStatus = event.detail
+                            // Close stale WebSockets before attempting a new connection.
+                            socket?.cancel()
+                            socket = null
+                            scheduleRetry()
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            connectionStatus = "Could not connect to Atlas."
+            scheduleRetry()
+            null
+        }
+    }
+
+    private fun scheduleRetry() {
+        if (!foreground || pairedNode == null || pendingRetry != null) return
+        val retry = Runnable {
+            pendingRetry = null
+            if (foreground && socket == null && pairedNode != null) connect()
+        }
+        pendingRetry = retry
+        handler.postDelayed(retry, reconnectDelayMs)
+        reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000)
+    }
+
+    fun forget() {
+        stopConnection()
+        vault.clear()
+        pairedNode = null
+        pairingError = null
+        connectionStatus = "Not enrolled"
+        foreground = false
+    }
+
+    override fun onCleared() {
+        stopConnection()
+        transport.close()
+        super.onCleared()
+    }
+
     var session by mutableStateOf(CompanionSession())
         private set
 
