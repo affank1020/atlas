@@ -1,5 +1,6 @@
 import { NodeOfflineFileQueue } from '../../apps/node/src/core/file-queue.js';
-import { readdir } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 /** Real child process test: a simulated slow HTTP request honours AbortSignal
  * and cannot exit until SIGTERM has stopped the worker and released its lock.
@@ -23,6 +24,7 @@ const queue = new NodeOfflineFileQueue(identity,root,async (_upload,signal)=>{
 process.on('SIGTERM',()=>{
     void queue.stop().then(async()=>{
         const after=await readdir(root);
+        await writeFile(join(root,'.child-shutdown-observed.json'),JSON.stringify({root,after}),{mode:0o600});
         if (after.includes('.queue-lock')) {
             process.stderr.write('Queue lock still present after stop completion.\n');
             process.exit(2);return;
