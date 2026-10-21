@@ -239,7 +239,7 @@ export function Nodes() {
             <NodeSummary node={selected} detail={detail?.id === selected?.id ? detail : undefined} nodes={nodes} loading={busy} unavailable={registryError} onClear={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />
         </div>
         {selected && <NodeDetails key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
-        {selected && <NodeSharePermissions key={selected.id} source={selected} nodes={nodes} />}
             detailError={detailError} loading={detailLoading} />}
+        {selected && <NodeSharePermissions key={selected.id} source={selected} nodes={nodes} />}
     </div>;
 }
