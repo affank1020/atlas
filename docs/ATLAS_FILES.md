@@ -244,9 +244,9 @@
   never written to queue files**. Credential rotation/loss makes queued
   content unreadable, not recoverable by falling back to plaintext.
 - The queue is bounded to **8 pending files, 128 MiB encrypted disk bytes,
-  25 MiB per file**. Admission uses an exclusive short-lived producer lock and
+  25 MiB per file**. Admission uses an exclusive cross-process mutation lock and
   file-sync plus atomic rename; an interrupted writer may leave a hidden
-  temporary file that requires operator inspection. A stale `.enqueue-lock`
+  temporary file that requires operator inspection. A stale `.queue-lock`
   must be reviewed and removed manually, never automatically stolen.
   There is no multi-process upload-worker lease: run only one Node service
   instance per queue directory. Avoid filesystem backups of these private
@@ -260,9 +260,26 @@
 - A blocked upload is *never* silently re-identified: check Atlas Files and
   server receipts first to avoid duplicating an ambiguously completed upload.
   Only with explicit operator action, run
-  `npm run files:node:queue-restart -- <upload-uuid>` to issue a new UUID;
-  `npm run files:node:queue-discard -- <upload-uuid>` discards the
+  `npm run files:node:queue-restart -- <queue-uuid>` to rotate the remote
+  upload UUID **inside the existing encrypted queue file**. The stable local
+  queue UUID does not change, and the command returns both `queueId` and
+  `uploadId`. This is an atomic single-record replacement, not a second
+  queue slot, so it works when the 8-file or 128-MiB quota is already full.
+  `npm run files:node:queue-discard -- <queue-uuid>` discards the
   encrypted local copy. Neither command removes remote Atlas Files.
+- A shared, exclusive `.queue-lock` serializes the Node worker and local
+  enqueue/restart/discard commands **even across processes**. A CLI operation
+  against an in-flight sender fails with a clear busy error: retry once it
+  finishes. A successful discard therefore prevents subsequent retries but
+  cannot retract an already-sent HTTP request. A crash can leave this lock
+  behind; inspect its state before manual removal.
+- If a job cannot be decrypted (credential rotation or corruption), `status`
+  reports an `unreadable` count and the worker skips it to continue healthy
+  jobs. Explicit `discard <queue-uuid>` works on a safely checked private
+  regular queue file **without decryption**. No unreadable bytes are sent or
+  silently deleted. The scheduler scans all eight bounded entries and handles
+  up to four *ready* jobs per pass, so blocked/deferred entries cannot starve
+  later work.
 - **Android is not integrated here.** The current Android app has no
   authorized binary-send workflow, and its future offline queue must use
   Android Keystore and scoped app storage rather than reuse Node.js
