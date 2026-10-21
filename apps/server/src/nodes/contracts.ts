@@ -1,6 +1,10 @@
 import { z } from 'zod';
 export const nodeSchemas = {
     list_nodes: z.object({}).strict(),
+    list_node_share_approvals: z.object({}).strict(),
+    update_node_share_approval: z.object({
+        sourceNodeId: z.string().uuid(), targetNodeId: z.string().uuid(), enabled: z.boolean(),
+    }).strict(),
     list_node_releases: z.object({ refresh: z.boolean().optional() }).strict(),
     get_node: z.object({ nodeId: z.string().uuid() }).strict(),
     read_node_logs: z.object({ nodeId: z.string().uuid(), source: z.enum(['stdout', 'stderr']).default('stderr'), lines: z.number().int().min(1).max(200).default(100) }).strict(),

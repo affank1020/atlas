@@ -47,6 +47,8 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
 
     const nodeDescriptions: Record<NodeToolName, string> = {
         list_nodes: 'List persistent Nodes with live status, capabilities, credential state and Workspace counts.',
+        list_node_share_approvals: 'List approved directional text-sharing pairs; environment grants are read-only.',
+        update_node_share_approval: 'Approve or revoke directional Node text sharing, requiring active credentials on approval.',
         list_node_releases: 'Discover verified, published macOS and Linux Node releases; no deployment is performed.',
         get_node: 'Inspect one Node, its assigned Workspaces and recent activity without exposing credentials.',
         read_node_logs: 'Read a bounded, redacted tail from one connected Node’s predefined Atlas stdout or stderr log. No paths or shell commands.',
