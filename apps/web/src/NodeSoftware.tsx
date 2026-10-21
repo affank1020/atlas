@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AtlasNode } from './Nodes';
 import './node-software.css';
@@ -76,14 +76,33 @@ export function releaseUpdateState(installed: string | null | undefined, release
 
 export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const { catalogue, error, loading } = useSoftwareCatalogue();
-    const [preflight, setPreflight] = useState<{ nodeId: string; result?: LinuxNodeUpdatePlan; error?: string; busy?: boolean }>();
-    const currentPreflight = preflight?.nodeId === node.id ? preflight : undefined;
+    // The same Node ID can be re-enrolled, disconnected or upgraded while this
+    // detail card stays mounted. Eligibility applies to the observed runtime
+    // snapshot, not the identity alone.
+    const nodeSnapshot = JSON.stringify([node.id, node.platform, node.version, node.status, node.credentialState]);
+    const requestGeneration = useRef(0);
+    const [preflight, setPreflight] = useState<{ snapshot: string; result?: LinuxNodeUpdatePlan; error?: string; busy?: boolean }>();
+    const currentPreflight = preflight?.snapshot === nodeSnapshot ? preflight : undefined;
+    useEffect(() => {
+        setPreflight(undefined);
+        // Reject outstanding results when this snapshot changes or unmounts.
+        return () => { requestGeneration.current += 1; };
+    }, [nodeSnapshot]);
     function checkReadiness() {
         const nodeId = node.id;
-        setPreflight({ nodeId, busy: true });
+        const snapshot = nodeSnapshot;
+        const generation = ++requestGeneration.current;
+        setPreflight({ snapshot, busy: true });
         void callTool<LinuxNodeUpdatePlan>('plan_node_update', { nodeId })
-            .then(result => setPreflight(current => current?.nodeId === nodeId ? { nodeId, result } : current))
-            .catch(cause => setPreflight(current => current?.nodeId === nodeId ? { nodeId, error: cause instanceof Error ? cause.message : String(cause) } : current));
+            .then(result => {
+                if (requestGeneration.current !== generation) return;
+                setPreflight(current => current?.snapshot === snapshot ? { snapshot, result } : current);
+            })
+            .catch(cause => {
+                if (requestGeneration.current !== generation) return;
+                setPreflight(current => current?.snapshot === snapshot
+                    ? { snapshot, error: cause instanceof Error ? cause.message : String(cause) } : current);
+            });
     }
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
     const status = catalogue?.state === 'ready' ? releaseUpdateState(node.version, catalogue.releases, node.platform) : 'unknown';
