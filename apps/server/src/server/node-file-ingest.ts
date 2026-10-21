@@ -104,9 +104,10 @@ export class NodeFileIngestService {
             await db.query('COMMIT');
             return { file, replayed: false };
         } catch (error) {
-            try { await db.query('ROLLBACK'); }
-            catch { /* COMMIT may be ambiguous; metadata check below fails closed. */ }
-            if (pendingFile) {
+            let rolledBack = false;
+            try { await db.query('ROLLBACK'); rolledBack = true; }
+            catch { /* The transaction state is unknown; do not delete any bytes. */ }
+            if (pendingFile && rolledBack) {
                 // Object-store PUTs cannot be rolled back by PostgreSQL. Check
                 // durable metadata using a separate connection *after* the
                 // transaction ends, including when COMMIT returned an error.
