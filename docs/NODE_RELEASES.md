@@ -11,13 +11,22 @@ checksum as GitHub Actions artifacts (14-day retention). After a successful
 main-branch packaging run, the workflow also attests the archive with GitHub
 Sigstore build provenance and publishes **immutable-by-name** GitHub Release
 assets under `node-v<version>-<12-character-source-commit>`. Publication
-refuses to overwrite an existing tag. Enable GitHub's **immutable releases**
+refuses to overwrite an existing tag. Publication is serialized and checks that
+the packaged source SHA is still the tip of `main`; superseded runs skip
+publication. Prerelease SemVer builds may be packaged and tested but are
+**never published to the stable channel**. Enable GitHub's **immutable releases**
 repository setting before treating the channel as production-grade. The
 published release has no Server/Web files, credentials or environment config.
 
 Atlas discovers only published **immutable** stable Node bundles from GitHub Releases metadata,
 validating archive naming, matching checksum assets, canonical download URLs,
-GitHub-provided SHA-256 digests and unique source commits. The catalogue
+GitHub-provided SHA-256 digests, full source commit IDs and unique source commits.
+The stable catalogue excludes SemVer prereleases even if GitHub's prerelease
+flag is false. For different stable versions it compares SemVer; for builds
+sharing the same version it asks GitHub to confirm source ancestry instead of
+trusting publication timestamps. Incomparable, divergent, or unavailable Git
+history results in an unavailable catalogue rather than an arbitrary latest
+release. The catalogue
 does **not** import expiring workflow artifacts or debug APKs and does not
 install, restart, or re-enrol Nodes.
 
