@@ -62,7 +62,7 @@ export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
     workspace_git_clone_repository: 'Clone one GitHub App-authorised repository into an empty child of a trusted Node development root and register an independent Workspace.',
     workspace_git_list_worktrees: 'List Git worktrees reachable from this registered checkout within the approved Node filesystem roots.',
     workspace_git_create_worktree: 'Create a new isolated atlas/* worktree inside an explicitly trusted Node Git directory and register it as an independent Workspace.',
-    workspace_git_remove_worktree: 'Remove an explicitly selected, clean registered feature worktree while retaining its Git branch and commits.',
+    workspace_git_remove_worktree: 'Retire a clean Atlas-created feature worktree only after verifying an exactly matching merged PR. Deletes its local folder, but retains its Git branch and commits.',
     workspace_git_create_branch: 'Create an atlas/* branch only on an explicitly approved Git workspace.',
     workspace_git_switch_branch: 'Switch an approved local atlas/* branch with a clean working tree.',
     workspace_git_stage: 'Stage only explicitly named regular files whose SHA-256 matches the inspection.',
