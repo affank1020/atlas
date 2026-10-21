@@ -3,6 +3,7 @@ import { nodeSchemas, type NodeToolName } from './contracts.js';
 import type { AtlasNode } from './model.js';
 import type { NodeRepository } from './repository.js';
 import { NodeIdentity } from './identity.js';
+import { listNodeReleases } from './releases.js';
 import type { NodeRuntime } from './runtime.js';
 
 /** Durable registry plus ephemeral runtime attachments. No transport implementation lives here. */
@@ -48,6 +49,7 @@ export class NodeService {
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x = parsed.data as any;
         if (name === 'list_nodes') return this.list();
+        if (name === 'list_node_releases') return listNodeReleases(x.refresh === true);
         if (name === 'read_node_logs') {
             const node = await this.get(x.nodeId);
             const runtime = this.runtimes.get(x.nodeId);

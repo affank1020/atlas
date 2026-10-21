@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
+import { NodeSoftwareSummary } from './NodeSoftware';
 import './workspaces.css';
 export type AtlasNode = {
     id: string; name: string; status: 'online' | 'offline' | 'unavailable';
@@ -137,7 +138,7 @@ function NodeDetails({ node, detail, loading, detailError }: {
                     <div><dt>Last connected</dt><dd>{formatWhen(node.lastSeen)}</dd></div>
                 </dl>
             </section>
-
+            <NodeSoftwareSummary node={current} />
         </div>
     </section>;
 }
@@ -199,7 +200,7 @@ export function Nodes() {
     const online = nodes.filter(node => node.status === 'online').length;
     return <div className="nodes-page">
         <header className="page-head"><div><h1>Nodes</h1></div>
-            <div className="actions"><button onClick={() => void enrol()}>+ Enrol node</button><button className="ghost" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh</button></div>
+            <div className="actions"><a className="ghost" href="#/nodes/software">Software</a><button onClick={() => void enrol()}>+ Enrol node</button><button className="ghost" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh</button></div>
         </header>
         {error && <p className="node-page-notice" role="alert">{error}</p>}
         {message && <p className="node-page-notice" role="status">{message}</p>}
