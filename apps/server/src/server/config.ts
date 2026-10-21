@@ -81,6 +81,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     return {
         databaseUrl, host, port,
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
+        serverDiagnosticsEnabled: env.ATLAS_SERVER_DIAGNOSTICS_ENABLED !== 'false',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
             issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
         nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
