@@ -90,6 +90,9 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
     const storeId = str(input.storeId);
     const nodeId = str(input.nodeId);
     const workspaceId = str(input.workspaceId);
+    // Mirror the public server alias for checkout-oriented reads; audit APIs
+    // keep using their existing workspaceId filter.
+    const checkoutId = str(input.checkoutId ?? input.workspaceId);
     let result: unknown;
     switch (name) {
         case 'get_atlas_status': result = status; break;
@@ -137,7 +140,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         ] }; break;
         case 'workspace_git_list_worktrees': result = { worktrees: [] }; break;
         case 'list_project_workspaces': result = workspaces.filter(w => w.projectId === projectId); break;
-        case 'get_workspace': result = workspaces.find(w => w.projectId === projectId && w.id === workspaceId); break;
+        case 'get_workspace': result = workspaces.find(w => w.projectId === projectId && w.id === checkoutId); break;
         case 'workspace_git_status': result = { available: true, branch: 'demo/main', dirty: false, changes: [], truncated: false }; break;
         case 'workspace_list_dev_tasks': result = []; break;
         case 'workspace_list_files': result = { entries: [{ path: 'README.md', type: 'file' }, { path: 'src', type: 'directory' }], truncated: false }; break;
