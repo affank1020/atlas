@@ -21,6 +21,14 @@ export type NodeRelease = {
     provenance: 'unverified';
 };
 type Catalogue = { state: 'ready' | 'unavailable'; releases: NodeRelease[]; checkedAt: string; error?: string };
+export type NodeUpdateIntent = {
+    id: string; nodeId: string;
+    targetVersion: string; targetCommit: string; installedVersion: string;
+    status: 'requested' | 'cancelled' | 'expired';
+    createdAt: string; expiresAt: string;
+    approved: false; executable: false;
+};
+
 export type LinuxNodeUpdatePlan = {
     nodeId: string;
     status: 'unsupported' | 'offline' | 'unavailable' | 'current' | 'ahead' | 'unknown' | 'candidate';
@@ -83,8 +91,11 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const requestGeneration = useRef(0);
     const [preflight, setPreflight] = useState<{ snapshot: string; result?: LinuxNodeUpdatePlan; error?: string; busy?: boolean }>();
     const currentPreflight = preflight?.snapshot === nodeSnapshot ? preflight : undefined;
+    const [intention, setIntention] = useState<{ snapshot: string; busy?: boolean; result?: NodeUpdateIntent; error?: string }>();
+    const currentIntent = intention?.snapshot === nodeSnapshot ? intention : undefined;
     useEffect(() => {
         setPreflight(undefined);
+        setIntention(undefined);
         // Reject outstanding results when this snapshot changes or unmounts.
         return () => { requestGeneration.current += 1; };
     }, [nodeSnapshot]);
@@ -102,6 +113,47 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
                 if (requestGeneration.current !== generation) return;
                 setPreflight(current => current?.snapshot === snapshot
                     ? { snapshot, error: cause instanceof Error ? cause.message : String(cause) } : current);
+            });
+    }
+    function prepareIntent() {
+        const candidate = currentPreflight?.result?.candidate;
+        if (currentPreflight?.result?.status !== 'candidate' || !candidate || !node.version) return;
+        if (!window.confirm('Record a 15-minute Linux Node update request for ' + node.name +
+            ' to v' + candidate.version + '+' + candidate.commit +
+            '? This only records an intention. No Node installation, approval or restart will occur.')) return;
+        const snapshot = nodeSnapshot;
+        const generation = ++requestGeneration.current;
+        const nodeId = node.id;
+        setIntention({ snapshot, busy: true });
+        void callTool<NodeUpdateIntent>('prepare_node_update', {
+            nodeId, expectedVersion: node.version, expectedCredentialUpdatedAt: node.credentialUpdatedAt ?? null,
+            targetCommit: candidate.commit,
+        }).then(result => {
+            if (requestGeneration.current === generation)
+                setIntention(current => current?.snapshot === snapshot ? { snapshot, result } : current);
+        }).catch(cause => {
+            if (requestGeneration.current === generation)
+                setIntention(current => current?.snapshot === snapshot ? {
+                    snapshot, error: cause instanceof Error ? cause.message : String(cause),
+                } : current);
+        });
+    }
+    function cancelIntent() {
+        if (!currentIntent?.result || currentIntent.result.status !== 'requested') return;
+        const snapshot = nodeSnapshot;
+        const generation = ++requestGeneration.current;
+        const { id: intentId, nodeId } = currentIntent.result;
+        setIntention({ snapshot, result: currentIntent.result, busy: true });
+        void callTool<NodeUpdateIntent>('cancel_node_update_intent', { nodeId, intentId })
+            .then(result => {
+                if (requestGeneration.current === generation)
+                    setIntention(current => current?.snapshot === snapshot ? { snapshot, result } : current);
+            }).catch(cause => {
+                if (requestGeneration.current === generation)
+                    setIntention(current => current?.snapshot === snapshot ? {
+                        snapshot, error: cause instanceof Error ? cause.message : String(cause),
+                        result: current.result,
+                    } : current);
             });
     }
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
@@ -122,6 +174,23 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             </button>
             {currentPreflight?.result && <p role="status"><strong>{currentPreflight.result.status === 'candidate' ? 'Candidate identified' : 'No update approved'}:</strong> {currentPreflight.result.reason} <span>Update execution is not enabled.</span></p>}
             {currentPreflight?.error && <p role="alert">Unable to check update eligibility: {currentPreflight.error}</p>}
+            {currentPreflight?.result?.status === 'candidate' && currentPreflight.result.candidate && !currentIntent?.result &&
+                <button className="ghost" type="button" onClick={prepareIntent} disabled={currentIntent?.busy === true}>
+                    {currentIntent?.busy ? 'Recording request…' : 'Prepare update request (no installation)'}
+                </button>}
+            {currentIntent?.result && <div className="node-update-intent" role="status">
+                <strong>Update request: {currentIntent.result.status}</strong>
+                <p>Target v{currentIntent.result.targetVersion}+{currentIntent.result.targetCommit}.
+                    {currentIntent.result.status === 'requested'
+                        ? ' Expires ' + new Date(currentIntent.result.expiresAt).toLocaleString() + '.'
+                        : ''}
+                    {' '}Not approved. No installation or restart will occur.</p>
+                {currentIntent.result.status === 'requested' &&
+                    <button type="button" className="ghost" disabled={currentIntent.busy === true} onClick={cancelIntent}>
+                        Cancel update request
+                    </button>}
+            </div>}
+            {currentIntent?.error && <p role="alert">Update request error: {currentIntent.error}</p>}
         </div>}
         <a href="#/nodes/software">View downloads and release notes →</a>
     </section>;
