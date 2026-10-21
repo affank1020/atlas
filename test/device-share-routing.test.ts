@@ -83,15 +83,17 @@ test('authenticated share relay requires approved peers, active advertised capab
         assert.deepEqual(first.result, { accepted: true });
         assert.equal(deliveries, 1);
 
-        const duplicate = await send(src, receiver.nodeId, firstId);
+        const duplicate = await send(src, receiver.nodeId.toUpperCase(), firstId.toUpperCase());
         assert.deepEqual(duplicate.result, { accepted: true });
         assert.equal(deliveries, 1, 'Replay of same deliveryId must not cause a second device action');
 
-        const modified = await send(src, receiver.nodeId, firstId, 'changed payload');
+        const modified = await send(src, receiver.nodeId.toUpperCase(), firstId.toUpperCase(), 'changed payload');
         assert.equal(modified.ok, false);
         assert.equal(modified.error.code, 'SHARE_REPLAY');
 
         acceptance = false;
+        const mixedCaseTarget = await send(src, receiver.nodeId.toUpperCase(), randomUUID());
+        assert.deepEqual(mixedCaseTarget.result, { accepted: false });
         const deniedByRecipient = await send(src, receiver.nodeId, randomUUID());
         assert.equal(deniedByRecipient.ok, true);
         assert.deepEqual(deniedByRecipient.result, { accepted: false });
@@ -114,7 +116,7 @@ test('authenticated share relay requires approved peers, active advertised capab
         // Invalid strict-schema messages fail the socket rather than hitting the routing path.
         const closed = once(src, 'close');
         await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('Malformed submission not closed')), 1500))]);
-        assert.equal(deliveries, 2);
+        assert.equal(deliveries, 3);
     } finally {
         for (const ws of sockets) ws.terminate();
         await new Promise<void>(resolve => http.close(() => resolve()));
@@ -149,4 +151,41 @@ test('sharing is disabled when the server has no directional pair approval', asy
         await new Promise<void>(resolve => http.close(() => resolve()));
         await services.lifecycle.close();
     }
+});
+
+test('flood admission bounds pre-authentication DB calls and concurrent requests', async () => {
+    const { DeviceShareRelay } = await import('../apps/server/src/infrastructure/nodes/share-relay.js');
+    const sourceId = randomUUID(), targetId = randomUUID();
+    let authCalls = 0, simultaneous = 0, maxSimultaneous = 0;
+    let releaseAuth!: () => void;
+    const blocker = new Promise<void>(resolve => { releaseAuth = resolve; });
+    const sourceRuntime = { getCapabilities: () => ['device.share.send'] };
+    const targetRuntime = {
+        getCapabilities: () => ['device.share.receive'],
+        deliverDeviceShare: async () => ({ accepted: true }),
+    };
+    const fakeNodes = {
+        runtimes: new Map([[sourceId, sourceRuntime], [targetId, targetRuntime]]),
+        identity: { authenticate: async () => {
+            authCalls++; simultaneous++; maxSimultaneous = Math.max(maxSimultaneous, simultaneous);
+            await blocker; simultaneous--;
+        } },
+        get: async () => ({
+            credentialState: 'active', status: 'online', capabilities: ['device.share.receive'],
+        }),
+    };
+    const relay = new DeviceShareRelay(fakeNodes as any, new Set([sourceId + ':' + targetId]));
+    const sends = Array.from({ length: 200 }, () => relay.forward({
+        sourceId, sourceRuntime: sourceRuntime as any, credential: 'x'.repeat(43),
+        submission: { type: 'device.share.submit', requestId: randomUUID(),
+            deliveryId: randomUUID(), targetNodeId: targetId, text: 'load' },
+    }).then(() => 'ok', (err: {code: string}) => err.code));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(authCalls <= 4, 'Pre-auth flood cannot enqueue unbounded DB work');
+    assert.ok(maxSimultaneous <= 4, 'At most 4 credential queries in flight per sender');
+    releaseAuth();
+    const values = await Promise.all(sends);
+    assert.equal(values.filter(x => x === 'ok').length, 4);
+    assert.ok(values.every(x => ['ok', 'SHARE_BUSY', 'SHARE_RATE_LIMIT'].includes(x)));
+    assert.ok(authCalls <= 24, 'Minute admission budget caps credential rechecks');
 });
