@@ -1,6 +1,5 @@
 import { NodeOfflineFileQueue } from '../../apps/node/src/core/file-queue.js';
-import { readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
 
 /** Real child process test: a simulated slow HTTP request honours AbortSignal
  * and cannot exit until SIGTERM has stopped the worker and released its lock.
@@ -14,17 +13,19 @@ const identity = {
 const queue = new NodeOfflineFileQueue(identity,root,async (_upload,signal)=>{
     process.stdout.write('SENDING\n');
     await new Promise<void>((_resolve,reject)=>{
-        if (signal?.aborted) {
-            reject(new Error('stopped')); return;
-        }
-        signal?.addEventListener('abort',()=>reject(new Error('stopped')),{once:true});
+        // A bare pending Promise does not keep Node's event loop alive.
+        // Model an actual long-lived HTTP socket with an active watchdog
+        // timer, so SIGTERM is delivered to the running worker.
+        const watchdog=setTimeout(()=>reject(new Error('simulated request timeout')),60_000);
+        const stop=()=>{clearTimeout(watchdog);reject(new Error('stopped'));};
+        if(signal?.aborted){stop();return;}
+        signal?.addEventListener('abort',stop,{once:true});
     });
     throw new Error('unexpected delivery');
 });
 process.on('SIGTERM',()=>{
     void queue.stop().then(async()=>{
         const after=await readdir(root);
-        await writeFile(join(root,'.child-shutdown-observed.json'),JSON.stringify({root,after}),{mode:0o600});
         if (after.includes('.queue-lock')) {
             process.stderr.write('Queue lock still present after stop completion.\n');
             process.exit(2);return;
