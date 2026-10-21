@@ -132,7 +132,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         connectionGeneration++
         pendingRetry?.let(handler::removeCallbacks)
         pendingRetry = null
-        socket?.cancel()
+        cancelBackgroundSocket(socket)
         socket = null
         connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · app in background"
     }
