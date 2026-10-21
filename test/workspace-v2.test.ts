@@ -390,6 +390,118 @@ test('draft PR publication rejects a workspace whose origin, branch, or HEAD doe
     assert.equal(brokerCalls, 1);
 });
 
+test('worktree creation cannot restore a Project detached after the pre-lock checkout read', async () => {
+    const { catalog, store } = await databaseFixture();
+    const projectA = await catalog.createProject({ name: 'Detached Project' });
+    const projectB = await catalog.createProject({ name: 'Retained Project' });
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async (_checkout, operation, input) => {
+            assert.equal(operation, 'workspace_git_create_worktree');
+            return { rootPath: input.targetPath, branch: input.branch,
+                head: 'a'.repeat(40), repository: 'affank1020/atlas' };
+        },
+    };
+    const svc = new WorkspaceService(catalog, repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const source: any = await svc.call('create_workspace', {
+        name: 'Source', rootPath: '/trusted/project-race/source',
+        kind: 'generic', projectId: projectA.id,
+    });
+    await svc.call('link_logical_workspace_project', {
+        logicalWorkspaceId: source.logicalWorkspaceId, projectId: projectB.id,
+    });
+    assert.equal((await repository.getById(source.id)).projectId, projectA.id,
+        'The initial checkout snapshot still holds the Project that will be detached');
+
+    let signalRead!: () => void;
+    let releaseRead!: () => void;
+    const preLockRead = new Promise<void>(resolve => { signalRead = resolve; });
+    const resumeCreation = new Promise<void>(resolve => { releaseRead = resolve; });
+    const readOriginal = repository.getById.bind(repository);
+    let intercepted = false;
+    // Hold exactly the early read returned to WorkspaceService. A detach can
+    // commit before the creation operation takes the logical advisory lock.
+    repository.getById = async (id, includeArchived) => {
+        const snapshot = await readOriginal(id, includeArchived);
+        if (id === source.id && !intercepted) {
+            intercepted = true;
+            signalRead();
+            await resumeCreation;
+        }
+        return snapshot;
+    };
+    const creation = svc.call('workspace_git_create_worktree', {
+        workspaceId: source.id, branch: 'atlas/detach-race',
+        targetPath: '/trusted/project-race/new-feature',
+    });
+    await preLockRead;
+    try {
+        await svc.call('unlink_logical_workspace_project', {
+            logicalWorkspaceId: source.logicalWorkspaceId, projectId: projectA.id,
+        });
+        assert.deepEqual((await repository.listLogical())[0].projectIds, [projectB.id],
+            'Project detach must be committed before registration');
+    } finally {
+        releaseRead();
+    }
+    const created: any = await creation;
+    const group = (await svc.call('list_logical_workspaces', {}) as any[])[0];
+    assert.deepEqual(group.projectIds, [projectB.id],
+        'Stale source Project A cannot be added back during registration');
+    assert.equal(created.workspace.projectId, projectB.id);
+    assert.equal((await repository.getById(source.id)).projectId, projectB.id);
+    assert.equal((await svc.call('list_project_workspaces', { projectId: projectA.id }) as any[]).length, 0);
+    assert.deepEqual((await svc.call('list_project_workspaces', { projectId: projectB.id }) as any[])
+        .map(item => item.id).sort(), [source.id, created.workspace.id].sort());
+});
+
+test('archived Projects can be detached but never added by either Workspace Project API', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Archived legacy association' });
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async () => ({ available: false }),
+    };
+    const svc = new WorkspaceService(catalog, repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const workspace: any = await svc.call('create_workspace', {
+        name: 'Existing checkout', rootPath: '/trusted/archived-cleanup',
+        projectId: project.id, kind: 'generic',
+    });
+    await catalog.archiveProject(project.id);
+    assert.deepEqual((await repository.listLogical())[0].projectIds, [project.id]);
+    await assert.rejects(svc.call('link_logical_workspace_project', {
+        logicalWorkspaceId: workspace.logicalWorkspaceId, projectId: project.id,
+    }), /archived|not found/i);
+    await assert.rejects(svc.call('link_workspace_project', {
+        workspaceId: workspace.id, projectId: project.id,
+    }), /archived|not found/i);
+    // Unlink remains possible even though normal Project-scoped operations
+    // reject an archived Project.
+    await svc.call('unlink_logical_workspace_project', {
+        logicalWorkspaceId: workspace.logicalWorkspaceId, projectId: project.id,
+    });
+    assert.deepEqual((await repository.listLogical())[0].projectIds, []);
+    assert.equal((await repository.getById(workspace.id)).projectId, null);
+
+    // The legacy checkout API has the same archived-detach semantics.
+    const second: any = await svc.call('create_workspace', {
+        name: 'Second checkout', rootPath: '/trusted/archived-cleanup2', kind: 'generic',
+    });
+    // Link while active is not possible after archival; seed the pre-existing
+    // relationship directly to exercise compatibility cleanup.
+    await store.pool.query(
+        'INSERT INTO logical_workspace_project_links(logical_workspace_id,project_id) VALUES($1,$2)',
+        [second.logicalWorkspaceId, project.id]);
+    await svc.call('unlink_workspace_project', { workspaceId: second.id, projectId: project.id });
+    assert.deepEqual((await repository.listLogical()).find(g => g.id === second.logicalWorkspaceId)!.projectIds, []);
+});
+
 test('Node protocol accepts a Project-independent Workspace without relaxing Git operation validation', () => {
     const id = '00000000-0000-4000-8000-000000000021';
     const nodeId = '00000000-0000-4000-8000-000000000022';
