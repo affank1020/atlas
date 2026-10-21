@@ -15,10 +15,12 @@ import { callCoreTool } from './core-dispatch.js';
 import { globalSearchInput, searchEverywhere } from './global-search.js';
 import type { ApplicationRegistry } from '../apps/registry.js';
 import type { StorageUsageService } from './storage-usage.js';
+import type { ServerDiagnostics } from './diagnostics.js';
 export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
     storageUsage?: Pick<StorageUsageService, 'get'>;
+    diagnostics?: Pick<ServerDiagnostics, 'read' | 'record'>;
     views: ViewService;
     workspaces: Pick<WorkspaceService, "call">;
     retrieval: RetrievalService;
@@ -33,12 +35,18 @@ export type TransportServices = ApplicationServices & { dispatch(name: string, i
 /** One application dispatch path for HTTP, MCP and future internal job callers. */
 export function createDispatcher(services: ApplicationServices) {
     const { catalog, views, workspaces, retrieval, askAtlas, applications } = services;
-    return async (name: string, input: any = {}): Promise<unknown> => timed(`tool.${/^[a-z_]+$/.test(name) ? name : 'unknown'}`, async () => {
+    return async (name: string, input: any = {}): Promise<unknown> => {
+        try {
+            return await timed(`tool.${/^[a-z_]+$/.test(name) ? name : 'unknown'}`, async () => {
         if (Object.hasOwn(nodeSchemas, name)) {
             if (!services.nodes) throw new AtlasError("Node registry is unavailable.", "NODE_UNAVAILABLE");
             return services.nodes.call(name as NodeToolName, input);
         }
         switch (name) {
+            case 'read_server_diagnostics': {
+                if (!services.diagnostics) throw new AtlasError('Server diagnostics unavailable.', 'CAPABILITY_UNAVAILABLE');
+                return services.diagnostics.read(input);
+            }
             case 'get_storage_usage': {
                 if (!services.storageUsage) throw new AtlasError('Storage metrics unavailable.', 'NOT_FOUND');
                 return services.storageUsage.get(input.refresh === true);
@@ -75,5 +83,11 @@ export function createDispatcher(services: ApplicationServices) {
         }
         if (applications.hasTool(name)) return applications.invoke(name, input);
         return callCoreTool(catalog, views, workspaces, name, input);
-    });
+            });
+        } catch (error) {
+            // Persist only a fixed code; request input and error payloads may be secret.
+            if (name !== 'read_server_diagnostics') services.diagnostics?.record('tool_request_failed');
+            throw error;
+        }
+    };
 }
