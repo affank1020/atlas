@@ -41,7 +41,11 @@ test('Local inventory is read-only, ignores unsafe entries, and detects old unre
         const bounded = await scanLocalFiles(root, 1);
         assert.equal(bounded.objects.length, 1);
         assert.equal(bounded.truncated, true);
-        assert.equal((await scanLocalFiles(path.join(root, 'absent'), 10)).truncated, false);
+        // A missing configured storage root must never be reported as an
+        // apparently complete, clean inventory.
+        await assert.rejects(scanLocalFiles(path.join(root, 'absent'), 10), /root is missing or unmounted/);
+        await assert.rejects(auditAtlasFiles({ pool, localRoot: path.join(root, 'absent'), now }),
+            /root is missing or unmounted/);
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -60,9 +64,11 @@ test('R2 inventory signs ListObjectsV2, safely paginates and preserves opaque co
         recorded.push({ url: parsed, headers: init?.headers as Record<string, string> });
         assert.equal(init?.method, 'GET');
         const cursor = parsed.searchParams.get('continuation-token');
+        const pageSize = Number(parsed.searchParams.get('max-keys'));
         return new Response(cursor === null
-            ? xml(content(one), true, 'token&amp;2')
-            : xml(content(two), false), { status: 200 });
+            ? xml(pageSize === 1 ? content(one) : content('files-backup') + content(one),
+                true, 'token&amp;2')
+            : xml(content('files-old-format') + content(two), false), { status: 200 });
     }) as typeof fetch;
     const r2 = new R2ObjectStore({ endpoint: 'https://0123456789abcdef.r2.cloudflarestorage.com',
         bucket: 'atlas-files', accessKeyId: 'key', secretAccessKey: 'secret' }, requester);
@@ -70,6 +76,9 @@ test('R2 inventory signs ListObjectsV2, safely paginates and preserves opaque co
     assert.equal(inventory.truncated, false);
     assert.deepEqual(inventory.objects.map(x => x.key), [one, two]);
     assert.equal(recorded.length, 2);
+    // Both pages also contain a key under the broad files- prefix which is
+    // not an Atlas-generated file. The bounded paginator must ignore those.
+    assert.equal(inventory.objects.length, 2);
     assert.equal(recorded[0]?.url.pathname, '/atlas-files');
     assert.equal(recorded[0]?.url.searchParams.get('prefix'), 'files-');
     assert.equal(recorded[0]?.url.searchParams.get('list-type'), '2');
@@ -78,6 +87,41 @@ test('R2 inventory signs ListObjectsV2, safely paginates and preserves opaque co
     const firstPageOnly = await scanR2Files(r2, 1);
     assert.equal(firstPageOnly.truncated, true);
     assert.equal(firstPageOnly.objects.length, 1);
+});
+
+test('Existing but empty local root is a legitimate complete empty inventory', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-file-audit-empty-'));
+    try {
+        const pool = { query: async () => { throw new Error('no metadata query needed for empty inventory'); } }
+            as unknown as Pick<Pool, 'query'>;
+        const report = await auditAtlasFiles({ pool, localRoot: root, now });
+        assert.equal(report.local.scanned, 0);
+        assert.equal(report.local.candidateOrphans, 0);
+        assert.equal(report.local.truncated, false);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('R2 skips unrelated malformed or legacy file keys while keeping page bounds', async () => {
+    const validKey = key('e', '3');
+    let calls = 0;
+    const bucket = new R2ObjectStore({
+        endpoint: 'https://0123456789abcdef.r2.cloudflarestorage.com',
+        bucket: 'atlas-files', accessKeyId: 'key', secretAccessKey: 'secret',
+    }, (async (_url, init) => {
+        calls++;
+        assert.equal(init?.method, 'GET');
+        const body = calls === 1
+            ? '<Contents><Key>files-old%ZZ</Key></Contents><Contents><Key>files-backup</Key></Contents>'
+            : '<Contents><Key>' + validKey + '</Key><Size>7</Size>' +
+              '<LastModified>2026-10-01T00:00:00Z</LastModified></Contents>';
+        const continuation = calls === 1 ? '<NextContinuationToken>next</NextContinuationToken>' : '';
+        return new Response('<ListBucketResult>' + body + '<IsTruncated>' + (calls === 1) +
+            '</IsTruncated>' + continuation + '</ListBucketResult>', { status: 200 });
+    }) as typeof fetch);
+    const page = await scanR2Files(bucket, 4);
+    assert.equal(page.truncated, false);
+    assert.deepEqual(page.objects.map(item => item.key), [validKey]);
+    assert.equal(calls, 2);
 });
 
 test('Inventory refuses unbounded scans, malformed R2 responses, and database errors', async () => {
