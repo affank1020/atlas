@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import test, { after } from 'node:test';
@@ -27,12 +27,15 @@ test('Node-native Files uploads enforce identity, Workspace ownership and idempo
     const project = await fixture.catalog.createProject({ name: 'Private Screenshots' });
     const workspaceId = randomUUID();
     const otherWorkspaceId = randomUUID();
+    const sameNodeOtherWorkspaceId = randomUUID();
     const db = fixture.store.pool;
-    await db.query("INSERT INTO logical_workspaces(id,name) VALUES($1,'Mobile'),($2,'Other')",
-        [workspaceId, otherWorkspaceId]);
+    await db.query("INSERT INTO logical_workspaces(id,name) VALUES($1,'Mobile'),($2,'Other'),($3,'Second Mobile')",
+        [workspaceId, otherWorkspaceId, sameNodeOtherWorkspaceId]);
     await db.query(`INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id)
-        VALUES($1,$2,'Mobile','/mobile','generic',NULL,$3,$1),($4,$2,'Other','/other','generic',NULL,$5,$4)`,
-        [workspaceId, project.id, node.nodeId, otherWorkspaceId, other.nodeId]);
+        VALUES($1,$2,'Mobile','/mobile','generic',NULL,$3,$1),
+               ($4,$2,'Other','/other','generic',NULL,$5,$4),
+               ($6,$2,'Second Mobile','/mobile2','generic',NULL,$3,$6)`,
+        [workspaceId, project.id, node.nodeId, otherWorkspaceId, other.nodeId, sameNodeOtherWorkspaceId]);
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-node-files-'));
     const files = new AtlasFilesService(fixture.databaseUrl, root);
     const ingest = new NodeFileIngestService(db, identity, files);
@@ -69,6 +72,20 @@ test('Node-native Files uploads enforce identity, Workspace ownership and idempo
         assert.equal((await files.list({ kind: 'workspace', id: workspaceId })).length, 1);
         assert.equal((await post({}, Buffer.from('different'))).status, 409);
         assert.equal((await post({ 'x-atlas-workspace-id': otherWorkspaceId })).status, 404);
+
+        // Same node, distinct active Workspaces, identical upload UUID: only
+        // one receipt can exist, and the losing request must fail with 409
+        // before issuing a second object-store PUT.
+        const raceId = randomUUID();
+        const [racedA, racedB] = await Promise.all([
+            post({ 'x-atlas-upload-id': raceId }),
+            post({ 'x-atlas-upload-id': raceId, 'x-atlas-workspace-id': sameNodeOtherWorkspaceId }),
+        ]);
+        assert.deepEqual([racedA.status, racedB.status].sort(), [201, 409]);
+        const racedFiles = [...await files.list({ kind: 'workspace', id: workspaceId }),
+            ...await files.list({ kind: 'workspace', id: sameNodeOtherWorkspaceId })];
+        assert.equal(racedFiles.length, 2, 'first upload plus exactly one racing winner');
+        assert.equal((await readdir(root)).length, 2, 'no untracked object from the losing request');
         assert.equal((await post({ 'x-atlas-node-id': other.nodeId })).status, 401);
         assert.equal((await post({ origin: 'https://atlas.example.test' })).status, 403);
         assert.equal((await post({ authorization: 'Bearer invalid' })).status, 401);
@@ -91,7 +108,8 @@ test('Node-native Files uploads enforce identity, Workspace ownership and idempo
         // New uploads cannot be accepted after a credential rotation.
         await identity.ticket(node.nodeId, true);
         assert.equal((await post({ 'x-atlas-upload-id': randomUUID() })).status, 401);
-        assert.equal((await files.list({ kind: 'workspace', id: workspaceId })).length, 1);
+        assert.equal((await files.list({ kind: 'workspace', id: workspaceId })).length +
+            (await files.list({ kind: 'workspace', id: sameNodeOtherWorkspaceId })).length, 2);
     } finally {
         server.closeAllConnections();
         await new Promise<void>(resolve => server.close(() => resolve()));

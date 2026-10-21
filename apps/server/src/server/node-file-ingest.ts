@@ -56,6 +56,7 @@ export class NodeFileIngestService {
         const checksum = createHash('sha256').update(input.bytes).digest('hex');
         const credentialHash = createHash('sha256').update(input.credential).digest('hex');
         const db = await this.pool.connect();
+        let pendingFile: AtlasFile | undefined;
         try {
             await db.query('BEGIN');
             // Lock the Node credential and Workspace placement while saving.
@@ -68,9 +69,13 @@ export class NodeFileIngestService {
                   AND n.credential_state='active' AND n.credential_hash=$3
                 FOR SHARE OF w, n`, [workspaceId, nodeId, credentialHash]);
             if (!owner.rowCount) throw new AtlasError('Node or Workspace authorization changed.', 'NODE_AUTH_INVALID');
-            // Serialize quota checks for all Node uploads to the same Workspace,
-            // and prevent simultaneous replays under the same Node/upload UUID.
-            await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['node-files:' + workspaceId]);
+            // Receipt uniqueness is (node_id,upload_id), NOT per Workspace.
+            // Acquire receipt lock first, then the Workspace quota lock,
+            // using the same order for every upload to avoid deadlocks.
+            await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+                ['node-file-receipt:' + nodeId + ':' + uploadId]);
+            await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+                ['node-files:' + workspaceId]);
             const existing = await db.query(`SELECT r.workspace_id,r.checksum,a.id,a.file_name,a.mime_type,a.byte_size,a.status
                 FROM node_file_upload_receipts r JOIN atlas_files a ON a.id=r.file_id
                 WHERE r.node_id=$1 AND r.upload_id=$2`, [nodeId, uploadId]);
@@ -93,12 +98,23 @@ export class NodeFileIngestService {
                 mimeType: input.mimeType, bytes: input.bytes, visibility: 'private',
                 client: 'atlas-node:' + nodeId, database: db,
             });
+            pendingFile = file;
             await db.query(`INSERT INTO node_file_upload_receipts(node_id,upload_id,workspace_id,file_id,checksum)
                 VALUES($1,$2,$3,$4,$5)`, [nodeId, uploadId, workspaceId, file.id, checksum]);
             await db.query('COMMIT');
             return { file, replayed: false };
         } catch (error) {
-            await db.query('ROLLBACK').catch(() => undefined);
+            try { await db.query('ROLLBACK'); }
+            catch { /* COMMIT may be ambiguous; metadata check below fails closed. */ }
+            if (pendingFile) {
+                // Object-store PUTs cannot be rolled back by PostgreSQL. Check
+                // durable metadata using a separate connection *after* the
+                // transaction ends, including when COMMIT returned an error.
+                // If the database is unavailable, preserve the object rather
+                // than risk destroying a committed file.
+                try { await this.files.discardUncommitted(pendingFile); }
+                catch { console.error('Atlas Node Files failed to reclaim uncommitted bytes; check storage.'); }
+            }
             throw error;
         } finally {
             db.release();

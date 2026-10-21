@@ -95,9 +95,23 @@
 - Retries must reuse the original upload ID. A durable PostgreSQL receipt
   prevents duplicate Files records when the response to an earlier success is
   lost. Reusing an upload ID with different bytes, metadata or Workspace is
-  rejected with HTTP 409. Receipt IDs are scoped per Node. Node-initiated
-  uploads have a conservative **1 GiB lifetime cap per Workspace**, including
-  archived files, so uploads cannot silently exhaust the VPS.
+  rejected with HTTP 409. Receipt IDs are scoped per Node. A transaction-scoped
+  receipt lock precedes the Workspace quota lock to serialize concurrent
+  uploads even across multiple Workspaces on the same Node.
+- Node-initiated uploads have a conservative **1 GiB lifetime cap per Workspace**,
+  including archived files, so uploads cannot silently exhaust the VPS.
+- On object-store or metadata failures, Atlas attempts idempotent deletion of
+  the uniquely generated, uncommitted object. If receipt insertion or COMMIT
+  fails after the object PUT, Atlas first rolls back and checks the durable
+  Files metadata on an independent database connection before deleting. If
+  it cannot prove the object is uncommitted, Atlas deliberately retains the
+  bytes and logs a cleanup warning rather than risk destroying a committed
+  file. Both local storage and R2 support signed object DELETE.
+  Regression tests inject SQL failures after the PUT.
+- **Crash safety is not yet complete.** Sudden power loss, ambiguous remote
+  writes, or an unavailable object store can still leave untracked bytes;
+  physical object reconciliation and backups remain necessary before
+  switching this feature on in production.
 - `apps/node/src/core/file-transfer.ts` provides a transport primitive for
   future desktop/mobile capture queues. The native client must persist the
   upload UUID until the server acknowledges it and retry with the same UUID.

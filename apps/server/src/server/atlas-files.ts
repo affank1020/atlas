@@ -73,12 +73,36 @@ export class AtlasFilesService {
         const id = randomUUID();
         const checksum = createHash("sha256").update(input.bytes).digest("hex");
         const storageKey = `files-${id.replaceAll("-", "")}-${checksum}`;
-        await this.objects.put(storageKey, input.bytes, input.mimeType);
-        const result = await (input.database ?? this.pool).query(
-            `INSERT INTO atlas_files(id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,visibility,created_by)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-            [id,owner.kind,owner.id,storageKey,checksum,fileName,input.mimeType,input.bytes.length,visibility,input.client ?? "atlas-files"]);
-        return fileRow(result.rows[0]!);
+        try {
+            await this.objects.put(storageKey, input.bytes, input.mimeType);
+            const result = await (input.database ?? this.pool).query(
+                `INSERT INTO atlas_files(id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,visibility,created_by)
+                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+                [id,owner.kind,owner.id,storageKey,checksum,fileName,input.mimeType,input.bytes.length,visibility,input.client ?? "atlas-files"]);
+            return fileRow(result.rows[0]!);
+        } catch (error) {
+            // The PUT might have succeeded even when its acknowledgement failed.
+            // The key is server-generated and unique to this attempt. Never mask
+            // the original failure, but surface cleanup failures to operators.
+            try { await this.objects.delete(storageKey); }
+            catch { console.error("Atlas Files failed to clean up an uncommitted object."); }
+            throw error;
+        }
+    }
+
+    /** Call only after the caller's transaction has completed or rolled back.
+     *  A failed/ambiguous COMMIT may have succeeded: never delete if metadata
+     *  exists, and never delete if the database cannot prove its absence. */
+    async discardUncommitted(file: Pick<AtlasFile, "id" | "checksum">): Promise<boolean> {
+        if (!UUID.test(file.id) || !/^[a-f0-9]{64}$/.test(file.checksum))
+            throw new AtlasError("Invalid pending Atlas file.");
+        const storageKey = `files-${file.id.replaceAll("-", "")}-${file.checksum}`;
+        const result = await this.pool.query(
+            "SELECT id FROM atlas_files WHERE id=$1 OR storage_key=$2",
+            [file.id, storageKey]);
+        if (result.rowCount) return false;
+        await this.objects.delete(storageKey);
+        return true;
     }
     async metadata(ownerInput: FileOwner, id: string): Promise<AtlasFile> {
         const owner = ownerScope(ownerInput);
