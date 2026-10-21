@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { NodeOfflineFileQueue,MAX_QUEUE_ITEMS } from '../apps/node/src/core/file-queue.js';
-import { NodeFileTransferError } from '../apps/node/src/core/file-transfer.js';
+import { NodeFileTransferError, uploadNodeFileResumable } from '../apps/node/src/core/file-transfer.js';
 
 const identity = {nodeId:randomUUID(),credential:'p'.repeat(43),
     serverUrl:'wss://atlas.example.test/node/connect'};
@@ -371,3 +371,55 @@ test('subprocess SIGTERM during an upload releases the queue lock before service
     }
 });
 
+
+test('resumable HTTP init honours shutdown AbortSignal before sending subsequent chunks',async()=>{
+    const controller=new AbortController();
+    let notify!:()=>void;
+    const requestStarted=new Promise<void>(resolve=>{notify=resolve;});
+    let calls=0;
+    const request:typeof fetch = async (_url,init)=>{
+        calls++;
+        return new Promise<Response>((_resolve,reject)=>{
+            const signal=init?.signal;
+            assert.ok(signal,'request must use an abort signal');
+            if (signal.aborted) {reject(new Error('aborted'));return;}
+            signal.addEventListener('abort',()=>reject(new Error('request aborted')),{once:true});
+            notify();
+        });
+    };
+    const task=uploadNodeFileResumable({
+        ...identity,workspaceId,uploadId:randomUUID(),
+        fileName:'stop.png',mimeType:'image/png',bytes:specimen.bytes,
+    },request,controller.signal);
+    await requestStarted;
+    controller.abort();
+    await assert.rejects(task,/aborted/);
+    assert.equal(calls,1,'no chunk or complete request after shutdown');
+});
+
+test('queue file rename and removal sync the parent directory before acknowledging',async()=>{
+    const {root,queue,close}=await fixture();
+    const helper=queue as unknown as {syncDirectory:()=>Promise<void>};
+    const original=helper.syncDirectory.bind(queue);
+    let synced=0;
+    helper.syncDirectory=async()=>{synced++;await original();};
+    try {
+        const id=await queue.enqueue(specimen);
+        assert.ok(synced>=2,'fsync after atomic rename AND lock removal');
+        const before=synced;
+        await queue.discard(id);
+        assert.ok(synced>=before+2,'fsync after job unlink AND lock removal');
+        assert.equal((await queue.snapshot()).total,0);
+
+        // If parent fsync fails after rename, the CLI must report an
+        // uncertain durability outcome instead of claiming success.
+        let failOnce=true;
+        helper.syncDirectory=async()=>{
+            if(failOnce){failOnce=false;throw new Error('injected parent fsync failure');}
+            await original();
+        };
+        await assert.rejects(queue.enqueue(specimen),/parent fsync failure/);
+        assert.equal((await queue.snapshot()).total,1,
+            'failed acknowledgement must not silently erase potentially written data');
+    } finally {helper.syncDirectory=original;await close();}
+});
