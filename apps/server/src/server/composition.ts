@@ -1,6 +1,7 @@
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { NodeIdentity } from '../nodes/identity.js';
 import { NodeService } from '../nodes/service.js';
+import { NodeUpdateIntentLedger } from '../nodes/update-intents.js';
 import { NodeRouter } from '../nodes/router.js';
 import { PostgresNodeRepository } from '../infrastructure/database/nodes.js';
 import { PostgresWorkspaceRepository } from "../infrastructure/database/workspaces.js";
@@ -42,7 +43,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const identity = new NodeIdentity(repository.pool);
     const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
-    const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity);
+    const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity, new NodeUpdateIntentLedger(repository.pool));
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
