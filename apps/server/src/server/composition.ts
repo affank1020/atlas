@@ -43,7 +43,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity);
-    const nodeGateway = new RemoteNodeGateway(nodes);
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files]);

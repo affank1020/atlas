@@ -97,7 +97,25 @@ export class NodeResumableTransferService {
                 if (session.workspace_id !== input.workspaceId || session.file_name !== input.fileName ||
                     session.mime_type !== input.mimeType || session.byte_size !== input.byteSize ||
                     session.checksum !== input.checksum) throw conflicting();
+                // A legitimate resume is activity: refresh retention while we
+                // hold the session row lock. A maintenance delete racing this
+                // init either waits/skips or wins before any resume succeeds.
+                // Do not refresh a finalizing/completed claim.
+                if (session.status === 'active')
+                    await db.query(`UPDATE node_file_transfer_sessions SET updated_at=clock_timestamp()
+                        WHERE node_id=$1 AND upload_id=$2 AND status='active'`,
+                        [input.nodeId,input.uploadId]);
             } else {
+                // A transfer purged after inactivity still owns its Node-scoped
+                // upload UUID. Reusing it (even with identical bytes) needs a
+                // fresh UUID, so delayed offline retries cannot change identity.
+                // The earlier FOR UPDATE session lookup serializes with the
+                // maintenance DELETE; this tombstone read follows that lock.
+                const expired = await db.query(
+                    'SELECT 1 FROM node_file_expired_upload_ids WHERE node_id=$1 AND upload_id=$2',
+                    [input.nodeId,input.uploadId]);
+                if (expired.rowCount)
+                    throw new AtlasError('Node transfer expired. Start again with a new upload ID.', 'CONFLICT');
                 // The existing one-shot Node route shares the receipt namespace.
                 const receipt = await db.query('SELECT 1 FROM node_file_upload_receipts WHERE node_id=$1 AND upload_id=$2',
                     [input.nodeId,input.uploadId]);
