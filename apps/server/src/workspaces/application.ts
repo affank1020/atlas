@@ -50,6 +50,12 @@ export class WorkspaceService {
             const db = await this.repository.connect();
             try {
                 await db.begin();
+                // A provisional logical group can contain multiple managed
+                // checkouts. Serialise recognition by the group's original ID
+                // BEFORE taking any per-checkout row locks: otherwise two
+                // callers can each hold one checkout lock, then deadlock when
+                // one tries to move all siblings together.
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
                 await db.lockWorkspace(workspace.id);
                 const current = await db.getById(workspace.id);
                 if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath ||
