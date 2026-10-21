@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { NodeSoftware, releaseUpdateState, type NodeRelease } from './NodeSoftware';
+import { NodeSoftware, NodeSoftwareSummary, releaseUpdateState, type NodeRelease } from './NodeSoftware';
 import { callTool } from './api';
 vi.mock('./api', () => ({ callTool: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -35,4 +35,37 @@ it('never guesses a newer build based only on a different commit', () => {
     expect(releaseUpdateState('2.0.0+ffffffffffff', [release], 'linux')).toBe('unknown');
     expect(releaseUpdateState('1.9.9', [release], 'linux')).toBe('available');
     expect(releaseUpdateState('2.1.0', [release], 'linux')).toBe('newer');
+});
+
+it('per-node Linux preflight remains explicit, read-only and reports unverified provenance', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host', platform: 'linux',
+        status: 'online' as const, capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+        version: '1.9.9',
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_releases') return { state: 'ready', checkedAt: '', releases: [release] };
+        if (name === 'plan_node_update') return {
+            nodeId: node.id, status: 'candidate',
+            reason: 'A newer stable Linux release is available; provenance and host approval remain unverified.',
+            candidate: release, canInstall: false, canActivate: false, provenanceVerified: false,
+        };
+        throw new Error('Unexpected tool: ' + name);
+    });
+    render(<NodeSoftwareSummary node={node} />);
+    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'plan_node_update')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+    expect(callTool).toHaveBeenCalledWith('plan_node_update', { nodeId: node.id });
+    expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
+    expect(screen.getByText(/Update execution is not enabled/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Install|^Activate|^Update now/i })).not.toBeInTheDocument();
+});
+
+it('non-Linux Nodes never expose a Linux update preflight control', async () => {
+    vi.mocked(callTool).mockResolvedValue({ state: 'ready', checkedAt: '', releases: [] });
+    render(<NodeSoftwareSummary node={{
+        id: '11111111-1111-4111-8111-111111111111', name: 'Mac', platform: 'darwin',
+        status: 'online', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0, version: '2.0.0',
+    }} />);
+    expect(screen.queryByRole('button', { name: /Check Linux update eligibility/ })).not.toBeInTheDocument();
 });
