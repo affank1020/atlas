@@ -25,7 +25,7 @@ export function createHttpTransport(services: ServerServices) {
         }
         // Workspace access must not be callable by arbitrary web origins. Native MCP
         // clients omit Origin; Observatory uses an explicitly trusted local origin.
-        const workspaceRoute = /^\/api\/tools\/(?:.*workspace.*|unity_.*|list_github_repositories|list_nodes|list_node_releases|plan_node_update|get_node|create_node_enrolment|update_node|rotate_node_credential|revoke_node|assign_workspace_node)$/.test(request.url ?? "");
+        const workspaceRoute = /^\/api\/tools\/(?:.*workspace.*|unity_.*|list_github_repositories|list_nodes|list_node_releases|plan_node_update|prepare_node_update|list_node_update_intents|cancel_node_update_intent|get_node|create_node_enrolment|update_node|rotate_node_credential|revoke_node|assign_workspace_node)$/.test(request.url ?? "");
         if ((workspaceRoute || request.url === "/mcp") && request.headers.origin && request.headers.origin !== "null") {
             const allowedOrigins = config.workspace.origins;
             if (!allowedOrigins.includes(request.headers.origin)) { response.writeHead(403,{"content-type":"application/json"}); response.end(JSON.stringify({error:"ORIGIN_DENIED",message:"Origin is not approved for workspace access."})); return; }
