@@ -76,7 +76,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
 
     fun pair(rawOrigin: String, rawName: String, rawToken: String) {
-        if (pairing || pairedNode != null) return
+        if (pairing || pairedNode != null || recoveryNodeId != null || unrecoverableIdentity) return
         val endpoint = try { parseAtlasEndpoint(rawOrigin) } catch (error: IllegalArgumentException) {
             pairingError = error.message ?: "Invalid Atlas server URL."
             return
@@ -193,8 +193,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun clearRecoveryNotice() {
+        // User explicitly acknowledged revoking the old server credential.
+        if (unrecoverableIdentity) vault.clear()
         vault.clearRecoveryNotice()
         recoveryNodeId = null
+        unrecoverableIdentity = false
     }
 
     override fun onCleared() {

@@ -270,15 +270,17 @@ private fun DevicePairing(
     InfoCard("Not enrolled", "Create a one-time Node enrolment ticket in Atlas Web, then enter it here.")
     if (unreadableIdentity) {
         InfoCard("Previous pairing cannot be opened",
-            "Android cannot decrypt a previously stored Node credential. Revoke that Android Node in Atlas Web, then pair again.")
+            "Android cannot decrypt a previously stored Node credential. Revoke that Android Node in Atlas Web before pairing again.")
     }
     if (recoveryNodeId != null) {
         InfoCard("Unfinished pairing",
             "Atlas issued credentials for Node " + recoveryNodeId +
             ". Revoke this Node in Atlas Web → Nodes before retrying.")
-        Button(onClick = onClearRecovery) { Text("I revoked that Node") }
     }
     // Enrolment ticket is memory-only and is discarded when this form leaves composition.
+    if (recoveryNodeId != null || unreadableIdentity) {
+        Button(onClick = onClearRecovery) { Text("I revoked the previous Node") }
+    }
     var server by remember { mutableStateOf("https://atlas.affankhan.dev") }
     var deviceName by remember { mutableStateOf("Android Node") }
     var ticket by remember { mutableStateOf("") }
@@ -302,7 +304,8 @@ private fun DevicePairing(
         singleLine = true,
     )
     Button(onClick = { onPair(server, deviceName, ticket); ticket = "" },
-        enabled = !pairing && ticket.isNotBlank() && deviceName.isNotBlank()) {
+        enabled = !pairing && ticket.isNotBlank() && deviceName.isNotBlank() &&
+            recoveryNodeId == null && !unreadableIdentity) {
         Text(if (pairing) "Pairing…" else "Pair with Atlas")
     }
     if (pairingError != null) InfoCard("Pairing failed", pairingError)
