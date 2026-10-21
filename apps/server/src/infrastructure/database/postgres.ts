@@ -91,7 +91,12 @@ export class PostgresRepository implements AtlasRepository {
         if (input.from) where.push('a.created_at >= ' + param(input.from) + '::timestamptz');
         if (input.to) where.push('a.created_at <= ' + param(input.to) + '::timestamptz');
         if (input.category) {
-            const op = 'a.operation';
+            // Mutation intent/failure rows are wrappers: use their recorded operation
+            // for category filtering without rewriting or changing the immutable audit row.
+            // Only accept a structurally valid workspace operation, otherwise use the wrapper.
+            const op = `CASE WHEN a.operation IN ('workspace.mutation_requested', 'workspace.mutation_failed')
+                AND (a.after_state->>'operation') ~ '^workspace[.][a-z][a-z0-9_]*$'
+                THEN a.after_state->>'operation' ELSE a.operation END`;
             const category = `CASE WHEN ${op} LIKE 'view.%' THEN 'view'
                 WHEN ${op} LIKE 'node.%' THEN 'node'
                 WHEN ${op} LIKE 'workspace.git_%' THEN 'git'
@@ -102,7 +107,7 @@ export class PostgresRepository implements AtlasRepository {
             where.push('(' + category + ')=' + param(input.category));
         }
         if (input.outcome) {
-            const failure = "(a.operation LIKE '%_failed' OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error') OR a.after_state->>'success'='false')";
+            const failure = "COALESCE((a.operation LIKE '%_failed' OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error') OR a.after_state->>'success'='false'), false)";
             const pending = "a.operation='workspace.mutation_requested'";
             where.push(input.outcome === 'failed' ? failure : input.outcome === 'pending' ? '(' + pending + ' AND NOT ' + failure + ')' : '(NOT ' + failure + ' AND NOT ' + pending + ')');
         }

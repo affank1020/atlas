@@ -96,7 +96,7 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
         workspace_git_push_branch: { repository: 'affank1020/portfolio-site', branch: 'atlas/test', expectedHead: 'a'.repeat(40) },
         unity_status: {}, unity_list_commands: {}, unity_run_command: { command: 'editor_play', parameters: {} },
     };
-    for (const operation of Object.keys(requiredCapability).filter(op => !['football_control', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree'].includes(op)) as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
+    for (const operation of Object.keys(requiredCapability).filter(op => !['football_control', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'workspace_git_retirement_preflight'].includes(op)) as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
     assert.equal(invoked.length, 19);
     // Internal first-party Application commands reach the owning Node through NodeRouter,
     // but are intentionally not exposed by WorkspaceService's generic public API.

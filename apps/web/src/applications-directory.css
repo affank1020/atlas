@@ -5,7 +5,8 @@
 .applications-directory-card { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 176px; padding: 21px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface); color: var(--text-primary); transition: border-color .17s ease, background .17s ease, transform .17s ease; }
 .applications-directory-card:hover { border-color: var(--accent-solid); background: var(--surface-elevated); color: var(--text-primary); transform: translateY(-2px); }
 .applications-directory-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.applications-directory-icon { width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; color: var(--text-primary); background: var(--surface-hover); margin-bottom: 19px; }
+.applications-directory-icon { width: 44px; height: 44px; border: 1px solid var(--border-strong); border-radius: 11px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); margin-bottom: 19px; transition: border-color .17s ease, background .17s ease; }
+.applications-directory-card:hover .applications-directory-icon { border-color: var(--accent); }
 .applications-directory-card-name { display: block; font-size: 1rem; font-weight: 630; letter-spacing: -.018em; }
 .applications-directory-card-copy { display: block; margin-top: 5px; color: var(--text-secondary); font-size: .83rem; line-height: 1.55; }
 .applications-directory-arrow { position: absolute; top: 18px; right: 20px; font-size: 1rem; color: var(--text-muted); transition: color .17s ease, transform .17s ease; }

@@ -23,7 +23,9 @@ export function WorkspacePanel({ projectId, archived = false }: { projectId: str
         try {
             const list = await callTool<Workspace[]>('list_project_workspaces', { projectId }); setWorkspaces(list);
             if (list[0]) {
-                const scope = { projectId, workspaceId: list[0].id };
+                // A Project can link to a logical Workspace across multiple Nodes;
+                // select the returned physical checkout for all tool calls.
+                const scope = { projectId, checkoutId: list[0].id };
                 const results = await Promise.allSettled([
                     callTool<DevTask[]>('workspace_list_dev_tasks', scope).then(setDevTasks),
                     callTool<GitStatus>('workspace_git_status', scope).then(setGit),
@@ -42,16 +44,16 @@ export function WorkspacePanel({ projectId, archived = false }: { projectId: str
     }
     async function detach() {
         if (!workspace || !confirm('Detach this workspace? Files on disk will be preserved.')) return;
-        setBusy(true); try { await callTool('archive_workspace', { projectId, workspaceId: workspace.id }); await refresh(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+        setBusy(true); try { await callTool('archive_workspace', { projectId, checkoutId: workspace.id }); await refresh(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
     }
     async function runTask(task: string) {
         if (!workspace) return; setBusy(true); setError(''); setDevResult(undefined);
-        try { setDevResult(await callTool<DevResult>('workspace_run_dev_task', { projectId, workspaceId: workspace.id, task })); }
+        try { setDevResult(await callTool<DevResult>('workspace_run_dev_task', { projectId, checkoutId: workspace.id, task })); }
         catch (e) { setError((e as Error).message); } finally { setBusy(false); }
     }
     async function read(path: string) {
         setError(''); setPreview(undefined);
-        try { setPreview(await callTool('workspace_read_file', { projectId, workspaceId: workspace!.id, path })); } catch (e) { setError((e as Error).message); }
+        try { setPreview(await callTool('workspace_read_file', { projectId, checkoutId: workspace!.id, path })); } catch (e) { setError((e as Error).message); }
     }
     return <section className="panel" aria-label="Workspace">
         <div className="panel-head"><div><p className="eyebrow">Workspace</p><h2>Project resource</h2></div><div className="actions"><a href="#/workspaces" className="ghost">Browse all</a><button disabled={busy || archived} onClick={refresh}>{busy ? 'Checking…' : 'Refresh'}</button></div></div>

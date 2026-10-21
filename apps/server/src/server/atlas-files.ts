@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { AtlasError } from "../shared/errors.js";
 import { createObjectStore, ObjectNotFound, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
 
@@ -48,16 +48,17 @@ export class AtlasFilesService {
     }
     async close() { await this.pool.end(); }
 
-    async list(ownerInput: FileOwner): Promise<AtlasFile[]> {
+    async list(ownerInput: FileOwner, status: AtlasFile["status"] = "active"): Promise<AtlasFile[]> {
         const owner = ownerScope(ownerInput);
+        if (status !== "active" && status !== "archived") throw new AtlasError("Invalid Atlas Files status.");
         const result = await this.pool.query(
-            "SELECT * FROM atlas_files WHERE owner_kind=$1 AND owner_id=$2 AND status='active' ORDER BY created_at DESC",
-            [owner.kind, owner.id]);
+            "SELECT * FROM atlas_files WHERE owner_kind=$1 AND owner_id=$2 AND status=$3 ORDER BY created_at DESC",
+            [owner.kind, owner.id, status]);
         return result.rows.map(fileRow);
     }
     async upload(input: {
         owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer;
-        visibility?: FileVisibility; client?: string;
+        visibility?: FileVisibility; client?: string; database?: PoolClient;
     }): Promise<AtlasFile> {
         const owner = ownerScope(input.owner);
         const fileName = input.fileName?.trim();
@@ -72,12 +73,36 @@ export class AtlasFilesService {
         const id = randomUUID();
         const checksum = createHash("sha256").update(input.bytes).digest("hex");
         const storageKey = `files-${id.replaceAll("-", "")}-${checksum}`;
-        await this.objects.put(storageKey, input.bytes, input.mimeType);
+        try {
+            await this.objects.put(storageKey, input.bytes, input.mimeType);
+            const result = await (input.database ?? this.pool).query(
+                `INSERT INTO atlas_files(id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,visibility,created_by)
+                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+                [id,owner.kind,owner.id,storageKey,checksum,fileName,input.mimeType,input.bytes.length,visibility,input.client ?? "atlas-files"]);
+            return fileRow(result.rows[0]!);
+        } catch (error) {
+            // A PUT or INSERT may have committed despite a lost acknowledgement.
+            // Verify durable metadata before deleting; on database uncertainty
+            // retain the object rather than risking destruction of a valid file.
+            try { await this.discardUncommitted({ id, checksum }); }
+            catch { console.error("Atlas Files could not confirm/clean an uncommitted object."); }
+            throw error;
+        }
+    }
+
+    /** Call only after the caller's transaction has completed or rolled back.
+     *  A failed/ambiguous COMMIT may have succeeded: never delete if metadata
+     *  exists, and never delete if the database cannot prove its absence. */
+    async discardUncommitted(file: Pick<AtlasFile, "id" | "checksum">): Promise<boolean> {
+        if (!UUID.test(file.id) || !/^[a-f0-9]{64}$/.test(file.checksum))
+            throw new AtlasError("Invalid pending Atlas file.");
+        const storageKey = `files-${file.id.replaceAll("-", "")}-${file.checksum}`;
         const result = await this.pool.query(
-            `INSERT INTO atlas_files(id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,visibility,created_by)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-            [id,owner.kind,owner.id,storageKey,checksum,fileName,input.mimeType,input.bytes.length,visibility,input.client ?? "atlas-files"]);
-        return fileRow(result.rows[0]!);
+            "SELECT id FROM atlas_files WHERE id=$1 OR storage_key=$2",
+            [file.id, storageKey]);
+        if (result.rowCount) return false;
+        await this.objects.delete(storageKey);
+        return true;
     }
     async metadata(ownerInput: FileOwner, id: string): Promise<AtlasFile> {
         const owner = ownerScope(ownerInput);
@@ -87,6 +112,17 @@ export class AtlasFilesService {
         if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
         return fileRow(result.rows[0]);
     }
+    private async verifiedBytes(row: Record<string, unknown>): Promise<Buffer> {
+        const bytes = await this.objects.get(String(row.storage_key)).catch(error => {
+            if (error instanceof ObjectNotFound) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+            throw error;
+        });
+        // Never return or restore metadata for missing, corrupted or truncated bytes.
+        if (bytes.length !== Number(row.byte_size) ||
+            createHash("sha256").update(bytes).digest("hex") !== row.checksum)
+            throw new Error("Atlas Files object integrity verification failed.");
+        return bytes;
+    }
     async download(ownerInput: FileOwner, id: string): Promise<{ file: AtlasFile; bytes: Buffer }> {
         const owner = ownerScope(ownerInput);
         const result = await this.pool.query(
@@ -94,11 +130,7 @@ export class AtlasFilesService {
             [id,owner.kind,owner.id]);
         if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
         const row = result.rows[0]!;
-        const bytes = await this.objects.get(row.storage_key).catch(error => {
-            if (error instanceof ObjectNotFound) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
-            throw error;
-        });
-        return { file: fileRow(row), bytes };
+        return { file: fileRow(row), bytes: await this.verifiedBytes(row) };
     }
     async archive(ownerInput: FileOwner, id: string): Promise<void> {
         const owner = ownerScope(ownerInput);
@@ -106,6 +138,21 @@ export class AtlasFilesService {
             "UPDATE atlas_files SET status='archived',updated_at=now() WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND status='active' RETURNING id",
             [id,owner.kind,owner.id]);
         if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
-        // Physical deletion and retention are deliberate follow-up work.
+        // Archiving never deletes physical bytes. A separate, explicit policy
+        // and verified backup are required before implementing garbage collection.
+    }
+    async restore(ownerInput: FileOwner, id: string): Promise<AtlasFile> {
+        const owner = ownerScope(ownerInput);
+        const result = await this.pool.query(
+            "SELECT * FROM atlas_files WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND status='archived'",
+            [id, owner.kind, owner.id]);
+        if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+        // Verify retained bytes before making the file downloadable again.
+        await this.verifiedBytes(result.rows[0]);
+        const restored = await this.pool.query(
+            "UPDATE atlas_files SET status='active',updated_at=now() WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND status='archived' RETURNING *",
+            [id, owner.kind, owner.id]);
+        if (!restored.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+        return fileRow(restored.rows[0]);
     }
 }

@@ -1,4 +1,7 @@
 import { timed } from '../../shared/performance.js';
+import { serveFilesRequest } from './files.js';
+import { serveNodeFileUpload } from './node-files.js';
+import { serveNodeResumableRequest } from './node-resumable.js';
 import { nodeSchemas } from '../../nodes/contracts.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -22,11 +25,13 @@ export function createHttpTransport(services: ServerServices) {
         }
         // Workspace access must not be callable by arbitrary web origins. Native MCP
         // clients omit Origin; Observatory uses an explicitly trusted local origin.
-        const workspaceRoute = /^\/api\/tools\/(?:.*workspace.*|unity_.*|list_github_repositories|list_nodes|get_node|create_node_enrolment|update_node|rotate_node_credential|revoke_node|assign_workspace_node)$/.test(request.url ?? "");
+        const workspaceRoute = /^\/api\/tools\/(?:.*workspace.*|unity_.*|list_github_repositories|list_nodes|list_node_releases|get_node|create_node_enrolment|update_node|rotate_node_credential|revoke_node|assign_workspace_node)$/.test(request.url ?? "");
         if ((workspaceRoute || request.url === "/mcp") && request.headers.origin && request.headers.origin !== "null") {
             const allowedOrigins = config.workspace.origins;
             if (!allowedOrigins.includes(request.headers.origin)) { response.writeHead(403,{"content-type":"application/json"}); response.end(JSON.stringify({error:"ORIGIN_DENIED",message:"Origin is not approved for workspace access."})); return; }
         }
+        if (await serveNodeResumableRequest(request, response, services)) return;
+        if (await serveNodeFileUpload(request, response, services)) return;
         if (request.method === "POST" && request.url === "/node/enrol") {
             try {
                 const chunks: Buffer[] = []; let bytes = 0;
@@ -47,6 +52,9 @@ export function createHttpTransport(services: ServerServices) {
             response.end(JSON.stringify(mcpResourceMetadata(config.mcpAuth)));
             return;
         }
+        // Files handles its own strict preflight; never return wildcard CORS
+        // headers for the private /api/files namespace.
+        if (await serveFilesRequest(request, response, services)) return;
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
         if (request.method === "POST" && request.url === "/integrations/contentful/webhook") {
             const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));

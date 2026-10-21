@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { AtlasError } from '@atlas/protocol/errors';
 import { MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION, nodeRequestSchema, registeredSchema, validateNodeOperation } from '@atlas/protocol/node-protocol';
 import { requiredCapability } from '@atlas/protocol/runtime';
+import { deviceShareDeliverySchema, deviceShareReceiptSchema } from '@atlas/protocol/device-protocol';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 
 export interface StandaloneNodeConfig {
@@ -60,6 +61,13 @@ export class StandaloneNode extends EventEmitter {
                 clearTimeout(this.registrationTimer);
                 this.registered = true; this.reconnectAttempt = 0; this.errorReported = false; this.emit('online'); return;
             }
+            const share = deviceShareDeliverySchema.safeParse(message);
+            if (share.success) {
+                if (this.inFlight.size >= 32) { this.reply(socket, share.data.requestId, false, { code: 'NODE_BUSY', message: 'Node execution limit reached.' }); return; }
+                const task = this.handleShare(socket, share.data).finally(() => this.inFlight.delete(task));
+                this.inFlight.add(task);
+                return;
+            }
             const parsed = nodeRequestSchema.safeParse(message);
             if (!parsed.success) { socket.close(1008, 'Invalid request'); return; }
             if (this.inFlight.size >= 32) { this.reply(socket, parsed.data.requestId, false, { code: 'NODE_BUSY', message: 'Node execution limit reached.' }); return; }
@@ -83,6 +91,28 @@ export class StandaloneNode extends EventEmitter {
             if (this.running) this.scheduleReconnect();
         });
     }
+    private async handleShare(socket: WebSocket, request: ReturnType<typeof deviceShareDeliverySchema.parse>) {
+        try {
+            if (!this.runtime.getCapabilities().includes('device.share.receive') || !this.runtime.receiveDeviceShare)
+                throw new AtlasError('Device sharing is not enabled on this Node.', 'CAPABILITY_UNAVAILABLE');
+            if (Date.parse(request.expiresAt) <= Date.now())
+                throw new AtlasError('Share has expired.', 'SHARE_EXPIRED');
+            const receipt = deviceShareReceiptSchema.parse(await this.runtime.receiveDeviceShare({
+                deliveryId: request.deliveryId,
+                sourceNodeId: request.sourceNodeId,
+                text: request.text,
+                expiresAt: request.expiresAt,
+            }));
+            this.reply(socket, request.requestId, true, receipt);
+        } catch (error) {
+            const known = error instanceof AtlasError;
+            this.reply(socket, request.requestId, false, {
+                code: known ? error.code : 'SHARE_REJECTED',
+                message: known ? error.message.slice(0, 200) : 'Device share was not accepted.',
+            });
+        }
+    }
+
     private async handle(socket: WebSocket, request: ReturnType<typeof nodeRequestSchema.parse>) {
         try {
             let result: unknown;

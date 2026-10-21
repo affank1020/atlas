@@ -2,6 +2,15 @@ name: Atlas Node Package
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/node/**"
+      - "packages/protocol/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/package-node-release.mjs"
+      - "scripts/node-release-publication-check.sh"
+      - ".github/workflows/node-package.yml"
   push:
     branches: [main]
     paths:
@@ -10,6 +19,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/package-node-release.mjs"
+      - "scripts/node-release-publication-check.sh"
       - ".github/workflows/node-package.yml"
 
 permissions:
@@ -17,6 +27,10 @@ permissions:
 
 jobs:
   package:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     name: Package standalone Node
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -44,6 +58,10 @@ jobs:
           npm ls --omit=dev --depth=0
           npm audit --omit=dev --audit-level=high
           node --input-type=module -e "import('@atlas/protocol/node-protocol').then(m => { if (m.NODE_PROTOCOL_VERSION !== 2) process.exit(1); })"
+      - name: Attest the verified Node archive
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: .build/node-releases/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: atlas-node-${{ github.sha }}
@@ -52,3 +70,94 @@ jobs:
             .build/node-releases/*.sha256
           retention-days: 14
           if-no-files-found: error
+
+
+  verify-macos:
+    name: Verify macOS installation bundle
+    needs: package
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: atlas-node-${{ github.sha }}
+          path: node-release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify archive and install on macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd node-release
+          shasum -a 256 -c *.sha256
+          archive="$(find . -maxdepth 1 -name 'atlas-node-v*.tar.gz' -print -quit)"
+          test -n "$archive"
+          mkdir -p "${RUNNER_TEMP}/atlas-node-mac"
+          tar -xzf "$archive" -C "${RUNNER_TEMP}/atlas-node-mac"
+          cd "${RUNNER_TEMP}/atlas-node-mac"
+          npm ci --omit=dev --ignore-scripts --workspace @atlas/node --workspace @atlas/protocol --include-workspace-root=false
+          node --input-type=module -e "import('@atlas/protocol/node-protocol').then(m => { if (m.NODE_PROTOCOL_VERSION !== 2) process.exit(1); })"
+
+  publish:
+    name: Publish immutable GitHub Release
+    needs: [package, verify-macos]
+    if: github.ref == 'refs/heads/main'
+    # Serialize promotions so an older run cannot publish after a newer one.
+    concurrency:
+      group: atlas-node-release-publication
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Diff against the current main tree locally rather than using a rate-
+      # limited API or rejecting every unrelated Web/Docs advancement.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: atlas-node-${{ github.sha }}
+          path: node-release
+      - name: Validate and publish once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd node-release
+          shopt -s nullglob
+          archives=(atlas-node-v*.tar.gz)
+          [[ "${#archives[@]}" == 1 ]] || { echo 'Expected exactly one release archive.' >&2; exit 1; }
+          file="${archives[0]}"
+          [[ "$file" =~ ^atlas-node-v([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?)-([a-f0-9]{12})\.tar\.gz$ ]] || exit 1
+          version="${BASH_REMATCH[1]}"
+          [[ "${BASH_REMATCH[3]}" == "${GITHUB_SHA:0:12}" ]] || exit 1
+          [[ -f "$file.sha256" && ! -L "$file.sha256" && ! -L "$file" ]] || exit 1
+          sha256sum -c "$file.sha256"
+          # This channel offers stable versions only. Never mark a prerelease stable.
+          if [[ "$version" == *-* ]]; then
+            echo "Skipping prerelease Node v$version: stable channel only."
+            exit 0
+          fi
+          # Check whether any *Node packaging input* changed since this
+          # build. Unrelated Web/docs commits must not suppress a release.
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin main
+          publication_status="$(bash "$GITHUB_WORKSPACE/scripts/node-release-publication-check.sh" "$GITHUB_WORKSPACE" "$GITHUB_SHA" origin/main)"
+          if [[ "$publication_status" == "superseded" ]]; then
+            echo "Skipping superseded Node build: newer main changed release inputs."
+            exit 0
+          fi
+          [[ "$publication_status" == "current" ]] || exit 1
+          tag="node-v${version}-${GITHUB_SHA:0:12}"
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing GitHub Release $tag" >&2
+            exit 1
+          fi
+          gh release create "$tag" "$file" "$file.sha256" \
+            --repo "$GH_REPO" --target "$GITHUB_SHA" --latest=false \
+            --title "Atlas Node v${version} (${GITHUB_SHA:0:12})" \
+            --notes "$(printf 'Atlas-Node-Release-Sequence: %s\n\n%s' "$GITHUB_RUN_NUMBER" 'Standalone macOS/Linux Node runtime archive. Node wire protocol v2. Requires Node.js 20+. This is NOT an Atlas Server release and does not change registered Node identities. Verify the SHA-256 file and GitHub build-provenance attestation before staging. Linux activation remains a separate explicit operation; macOS auto-update is not provided.')"

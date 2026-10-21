@@ -24,7 +24,13 @@ export class NodeRouter {
         const capability = requiredCapability[operation];
         if (!capability) throw new AtlasError('Unsupported Node operation.');
         const runtime = await this.resolve(workspace.nodeId, capability);
-        return (current: Workspace = workspace) => runtime.execute(current, operation, input);
+        // The logical ID is server-side catalogue metadata, not part of
+        // Node protocol v2. Strip it to preserve compatibility with older
+        // strict-schema Node runtimes during a rolling upgrade.
+        return (current: Workspace = workspace) => {
+            const { logicalWorkspaceId: _logicalWorkspaceId, ...nodeCheckout } = current;
+            return runtime.execute(nodeCheckout, operation, input);
+        };
     }
     async execute(workspace: Workspace, operation: NodeOperation, input: Record<string, any>) {
         return (await this.prepare(workspace, operation, input))();
