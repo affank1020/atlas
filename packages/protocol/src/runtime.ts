@@ -4,6 +4,10 @@ import type { NodeCapability } from './node-model.js';
 export type NodeOperation = WorkspaceOperation;
 /** Transport-neutral, bounded domain operations. Bindings are interpreted only by the runtime. */
 export interface NodeRuntime {
+    /** Optional, explicitly approved by the recipient. Never automatically change clipboard. */
+    receiveDeviceShare?(input: {
+        deliveryId: string; sourceNodeId: string; text: string; expiresAt: string;
+    }): Promise<{ accepted: boolean }>;
     getCapabilities(): NodeCapability[];
     bind(rootPath: string): Promise<string>;
     readLogs?(source: 'stdout' | 'stderr', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;

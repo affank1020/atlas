@@ -5,6 +5,9 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { registrationSchema, registeredSchema, MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION } from '../../nodes/protocol.js';
 import type { NodeService } from '../../nodes/service.js';
 import { RemoteNodeRuntime } from './remote-runtime.js';
+import { deviceShareSubmissionSchema } from '@atlas/protocol/device-protocol';
+import { DeviceShareRelay } from './share-relay.js';
+import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
 const DEFAULT_TIMING: GatewayTiming = { heartbeatMs: 15_000, staleMs: 45_000, registrationMs: 5_000, persistMs: 60_000 };
@@ -17,7 +20,10 @@ export class RemoteNodeGateway {
     private readonly registrations = new Map<string, Promise<void>>();
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING) {}
+    private readonly shares: DeviceShareRelay;
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set()) {
+        this.shares = new DeviceShareRelay(nodes, approvedPairs);
+    }
     private track(task: Promise<unknown>) {
         this.pendingLifecycle.add(task);
         void task.finally(() => this.pendingLifecycle.delete(task)).catch(() => undefined);
@@ -98,6 +104,28 @@ export class RemoteNodeGateway {
                     release();
                     if (this.registrations.get(registration.nodeId) === thisRegistration) this.registrations.delete(registration.nodeId);
                 }
+                return;
+            }
+            const share = deviceShareSubmissionSchema.safeParse(message);
+            if (share.success) {
+                const originId = id, originSession = session;
+                const submission = share.data;
+                const task = this.shares.forward({
+                    sourceId: originId,
+                    sourceRuntime: originSession?.runtime,
+                    credential,
+                    submission,
+                }).then(receipt => {
+                    if (socket.readyState === WebSocket.OPEN && this.sessions.get(originId) === originSession)
+                        socket.send(JSON.stringify({ type: 'response', requestId: submission.requestId, ok: true, result: receipt }));
+                }).catch(error => {
+                    if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== originSession) return;
+                    const known = error instanceof AtlasError;
+                    socket.send(JSON.stringify({ type: 'response', requestId: submission.requestId, ok: false,
+                        error: { code: known ? error.code : 'SHARE_UNAVAILABLE',
+                            message: known ? error.message.slice(0, 200) : 'Share delivery is unavailable.' } }));
+                });
+                this.track(task);
                 return;
             }
             if (!session?.runtime.receive(message)) socket.close(1008, 'Invalid response');
