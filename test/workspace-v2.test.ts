@@ -35,6 +35,102 @@ test('migration 019 backfills logical Workspace IDs without modifying legacy che
     assert.equal(logical[0].checkouts[0].id, checkoutId);
 });
 
+test('migration 020 promotes cross-checkout Project links without losing legacy identities', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { randomUUID } = await import('node:crypto');
+    const { catalog, store } = await databaseFixture('019_logical_workspaces.sql');
+    const p1 = await catalog.createProject({ name: 'Mac portfolio' });
+    const p2 = await catalog.createProject({ name: 'VPS portfolio' });
+    const node = (await store.pool.query("SELECT id FROM nodes WHERE local_key='local'")).rows[0].id;
+    const logicalId = randomUUID(), macId = randomUUID(), linuxId = randomUUID();
+    await store.pool.query(
+        "INSERT INTO logical_workspaces(id,name,repository,kind) VALUES($1,'Portfolio Site','affank1020/portfolio-site','git')",
+        [logicalId]);
+    await store.pool.query(
+        `INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id)
+         VALUES($1,$2,'Portfolio Mac','/mac/portfolio','generic',NULL,$5,$3),
+               ($4,$6,'Portfolio Linux','/linux/portfolio','generic',NULL,$5,$3)`,
+        [macId,p1.id,logicalId,linuxId,node,p2.id]);
+    await store.pool.query('INSERT INTO workspace_project_links(workspace_id,project_id) VALUES($1,$2)', [macId,p1.id]);
+    // The VPS legacy primary is deliberately not mirrored, exercising the
+    // migration's fallback for older, inconsistent association rows.
+    await store.pool.query(await readFile('apps/server/migrations/020_logical_workspace_project_links.sql', 'utf8'));
+    const repo = new PostgresWorkspaceRepository(store.pool);
+    const logical = (await repo.listLogical())[0];
+    assert.deepEqual(logical.projectIds.sort(), [p1.id,p2.id].sort());
+    assert.deepEqual((await repo.list(p1.id)).map(x => x.id).sort(),[macId,linuxId].sort());
+    assert.deepEqual((await repo.list(p2.id)).map(x => x.id).sort(),[macId,linuxId].sort());
+    assert.equal((await repo.get(p1.id,linuxId)).rootPath,'/linux/portfolio');
+    const oldMirror = (await store.pool.query(
+        'SELECT workspace_id,project_id FROM workspace_project_links WHERE workspace_id=ANY($1::uuid[])',
+        [[macId,linuxId]])).rows;
+    assert.equal(oldMirror.length,4,'Both Project links must remain readable through legacy checkout links');
+    assert.equal((await repo.getById(macId)).projectId,p1.id);
+    assert.equal((await repo.getById(linuxId)).projectId,p2.id);
+});
+
+test('logical Projects unite Mac/Linux checkouts, survive new worktrees, and honour legacy unlink', async () => {
+    const { catalog, store } = await databaseFixture();
+    const p1 = await catalog.createProject({ name: 'Portfolio Mac' });
+    const p2 = await catalog.createProject({ name: 'Portfolio VPS' });
+    const p3 = await catalog.createProject({ name: 'Research' });
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files','workspace.git'],
+        bind: async root => root,
+        execute: async () => ({ available: true, originRepository: 'affank1020/portfolio-site' }),
+    };
+    const repo = new PostgresWorkspaceRepository(store.pool);
+    const svc = new WorkspaceService(catalog,repo,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const mac: any = await svc.call('create_workspace', {
+        name: 'Portfolio Site', rootPath: '/mac/project', kind: 'generic', projectId: p1.id,
+    });
+    const linux: any = await svc.call('create_workspace', {
+        name: 'Portfolio Site (VPS)', rootPath: '/linux/project', kind: 'generic', projectId: p2.id,
+    });
+    await svc.call('attach_checkout_repository', { workspaceId: mac.id });
+    const attached: any = await svc.call('attach_checkout_repository', { workspaceId: linux.id });
+    const logicalId = attached.logicalWorkspaceId;
+    let groups = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(groups.length,1);
+    assert.deepEqual(groups[0].projectIds.sort(),[p1.id,p2.id].sort());
+    assert.deepEqual((await svc.call('list_project_workspaces', { projectId:p1.id }) as any[])
+        .map(w=>w.id).sort(),[mac.id,linux.id].sort());
+    assert.equal((await svc.call('get_workspace', { projectId:p2.id,workspaceId:mac.id }) as any).id,mac.id);
+
+    // Both new and legacy MCP mutations operate on the logical identity.
+    await svc.call('link_logical_workspace_project', { logicalWorkspaceId:logicalId,projectId:p3.id });
+    await svc.call('unlink_workspace_project', { workspaceId:mac.id,projectId:p1.id });
+    groups = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.deepEqual(groups[0].projectIds.sort(),[p2.id,p3.id].sort());
+    assert.equal((await svc.call('list_project_workspaces', { projectId:p1.id }) as any[]).length,0);
+    await assert.rejects(svc.call('get_workspace', { projectId:p1.id, workspaceId:linux.id }),/not found/i);
+
+    const transaction = await repo.connect();
+    let sibling: any;
+    try {
+        await transaction.begin();
+        sibling = await transaction.insert({
+            nodeId:mac.nodeId, name:'New feature', rootPath:'/mac/project-feature',
+            kind:'generic', logicalWorkspaceId:logicalId,
+        });
+        await transaction.commit();
+    } catch (error) { await transaction.rollback(); throw error; }
+    finally { transaction.release(); }
+    assert.equal(sibling.projectId!==null,true,'New checkout inherits the logical primary Project');
+    assert.equal((await svc.call('list_project_workspaces', { projectId:p2.id }) as any[]).length,3);
+    assert.equal((await svc.call('list_project_workspaces', { projectId:p3.id }) as any[]).length,3);
+    const mirror = (await store.pool.query(
+        'SELECT project_id FROM workspace_project_links WHERE workspace_id=$1',[sibling.id]))
+        .rows.map(row=>row.project_id);
+    assert.deepEqual(mirror.sort(),[p2.id,p3.id].sort());
+
+    await svc.call('unlink_logical_workspace_project', { logicalWorkspaceId:logicalId,projectId:p2.id });
+    assert.deepEqual((await svc.call('list_logical_workspaces', {}) as any[])[0].projectIds,[p3.id]);
+    assert.equal((await svc.call('list_project_workspaces', { projectId:p2.id }) as any[]).length,0);
+    assert.equal((await repo.getById(sibling.id)).projectId,p3.id);
+});
+
 test('Workspace V2 supports Project-independent registration and multiple optional Project links', async () => {
     const { catalog, store } = await databaseFixture();
     const p1 = await catalog.createProject({ name: 'Research' });
