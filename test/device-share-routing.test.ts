@@ -110,13 +110,43 @@ test('authenticated share relay requires approved peers, active advertised capab
         assert.equal(wrongDestination.ok, false);
         assert.equal(wrongDestination.error.code, 'SHARE_DENIED');
 
+        // A definitely offline target cannot have acted. Reconnecting must allow
+        // retry of the identical delivery UUID, and that retry delivers only once.
+        const disconnected = once(dst, 'close');
+        dst.terminate();
+        await disconnected;
+        for (let tries = 0; tries < 60 && (await services.nodes.get(receiver.nodeId)).status === 'online'; tries++)
+            await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal((await services.nodes.get(receiver.nodeId)).status, 'offline');
+        const recoverId = randomUUID();
+        const offline = await send(src, receiver.nodeId, recoverId);
+        assert.equal(offline.ok, false);
+        assert.equal(offline.error.code, 'SHARE_TARGET_UNAVAILABLE');
+
+        const restored = await connect(receiver.nodeId, receiver.credential, ['device.share.receive']);
+        restored.on('message', bytes => {
+            const message = JSON.parse(String(bytes));
+            if (message.kind !== 'device_share') return;
+            deliveries++;
+            assert.equal(message.deliveryId, recoverId);
+            assert.equal(message.text, 'share hello');
+            restored.send(JSON.stringify({ type: 'response', requestId: message.requestId,
+                ok: true, result: { accepted: true } }));
+        });
+        const recovered = await send(src, receiver.nodeId, recoverId);
+        assert.equal(recovered.ok, true, JSON.stringify(recovered));
+        assert.deepEqual(recovered.result, { accepted: true });
+        const recoveredAgain = await send(src, receiver.nodeId, recoverId.toUpperCase());
+        assert.deepEqual(recoveredAgain.result, { accepted: true });
+        assert.equal(deliveries, 4, 'Offline retry dispatches once, then remains idempotent');
+
         src.send(JSON.stringify({ type: 'device.share.submit', requestId: randomUUID(),
             deliveryId: randomUUID(), sourceNodeId: outsider.nodeId,
             targetNodeId: receiver.nodeId, text: 'spoofed' }));
         // Invalid strict-schema messages fail the socket rather than hitting the routing path.
         const closed = once(src, 'close');
         await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('Malformed submission not closed')), 1500))]);
-        assert.equal(deliveries, 3);
+        assert.equal(deliveries, 4);
     } finally {
         for (const ws of sockets) ws.terminate();
         await new Promise<void>(resolve => http.close(() => resolve()));

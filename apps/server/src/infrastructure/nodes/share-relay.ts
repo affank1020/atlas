@@ -85,7 +85,15 @@ export class DeviceShareRelay {
         const expiry = new Date(now + 45_000).toISOString();
         // Store the promise before awaiting it, so parallel duplicate sends
         // share exactly one target-side action. Intentionally memory-only MVP.
-        const pending = this.deliver(sourceId, targetNodeId, { deliveryId, sourceNodeId: sourceKey, text, expiresAt: expiry }, sourceRuntime);
+        const pending = this.deliver(sourceId, targetNodeId, { deliveryId, sourceNodeId: sourceKey, text, expiresAt: expiry }, sourceRuntime)
+            .catch(error => {
+                // Definitely not dispatched: the same delivery ID may be retried when
+                // the recipient comes online. Keep successful and uncertain outcomes
+                // cached so an ambiguous timeout/disconnect cannot double-deliver.
+                if (error instanceof AtlasError && error.code === 'SHARE_TARGET_UNAVAILABLE' &&
+                    this.seen.get(key)?.result === pending) this.seen.delete(key);
+                throw error;
+            });
         this.seen.set(key, { digest, expiresAt: now + 5 * 60_000, result: pending });
         return pending;
     }
@@ -93,7 +101,10 @@ export class DeviceShareRelay {
     private async deliver(sourceId: string, targetId: string, delivery: {
         deliveryId: string; sourceNodeId: string; text: string; expiresAt: string;
     }, sourceRuntime: RemoteNodeRuntime): Promise<{ accepted: boolean }> {
-        const target = await this.nodes.get(targetId);
+        // Target lookup failures are also definitive pre-dispatch failures.
+        const target = await this.nodes.get(targetId).catch(() => {
+            throw new AtlasError('Receiving device is offline or unavailable.', 'SHARE_TARGET_UNAVAILABLE');
+        });
         const runtime = this.nodes.runtimes.get(targetId);
         if (target.credentialState !== 'active' || target.status !== 'online' || !runtime ||
             !target.capabilities.includes('device.share.receive') ||
