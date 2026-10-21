@@ -13,7 +13,7 @@ export const atlasToolNames = [
     "list_stores", "get_store", "create_store", "update_store", "update_store_schema", "archive_store",
     "create_record", "get_record", "update_record", "archive_record", "bulk_records", "list_records", "query_records",
     "list_views", "get_view", "create_view", "update_view", "archive_view", "render_view", "preview_view", "get_view_history", "execute_view_action",
-    "get_audit_history", "get_recent_activity",
+    "get_audit_history", "get_recent_activity", "query_monitoring_activity",
 ] as const;
 
 export type AtlasToolName = typeof atlasToolNames[number];
@@ -52,6 +52,7 @@ export async function callCoreTool(catalog: CoreService, views: ViewService, wor
         case "get_view_history": return views.viewHistory(input.projectId,input.viewId);
         case "get_audit_history": return catalog.auditHistory(input);
         case "get_recent_activity": return new ActivityService(new AuditService(catalog.store)).recent(input);
+        case "query_monitoring_activity": return new ActivityService(new AuditService(catalog.store)).page(input);
         default: throw new AtlasError(`Unknown Atlas tool '${name}'.`, "NOT_FOUND");
     }
 }

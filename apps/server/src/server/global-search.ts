@@ -61,7 +61,7 @@ export function interpretSearch(query: string): { term: string; intent: Intent; 
     const lower = query.toLocaleLowerCase();
     const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower);
     const logSource = /\b(stderr|errors?|error\s+logs?)\b/.test(lower) ? 'stderr' as const : 'stdout' as const;
-    const requestedLines = /\b(\d{1,3})\s*(?:errors?\s*)?lines?\b/.exec(lower)?.[1];
+    const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr)\s*)?lines?\b/.exec(lower)?.[1];
     const logLines = requestedLines ? Math.min(Math.max(Number(requestedLines), 1), 200) : 100;
     const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
     const intent: Intent = nodeActivity || nodeLogs ? 'node'
@@ -98,8 +98,8 @@ export async function searchEverywhere(deps: SearchDeps, raw: z.input<typeof glo
         const scored = { ...makeHit(lookup || query, hit), score: lookup ? relevance(lookup, hit.title, hit.description, hit.context) : (intent ? 45 : 0) };
         if (scored.score) hits.push(scored);
     };
-    if (intent === 'activity') hits.push({ kind: 'node', id: 'atlas-activity', title: 'View Atlas activity', description: 'Recent recorded operations across Atlas', context: 'Activity', href: '#/activity', score: 135 });
-    if (intent === 'infrastructure') hits.push({ kind: 'node', id: 'atlas-infrastructure', title: 'Inspect Atlas Server', description: 'Server connectivity, registered nodes and health overview', context: 'Infrastructure', href: '#/infrastructure', score: 135 });
+    if (intent === 'activity') hits.push({ kind: 'node', id: 'atlas-activity', title: 'View Atlas activity', description: 'Recent recorded operations across Atlas', context: 'Activity', href: '#/monitoring?tab=activity', score: 135 });
+    if (intent === 'infrastructure') hits.push({ kind: 'node', id: 'atlas-infrastructure', title: 'Inspect Atlas Server', description: 'Server connectivity, registered nodes and health overview', context: 'Infrastructure', href: '#/monitoring?tab=overview', score: 135 });
 
     const [catalogue, records, nodes] = await Promise.allSettled([
         intent === 'node' ? Promise.resolve([] as Project[]) : deps.listProjects(false),
@@ -157,8 +157,7 @@ export async function searchEverywhere(deps: SearchDeps, raw: z.input<typeof glo
                     title: logAvailable ? 'Read ' + node.name + ' ' + (logSource === 'stderr' ? 'error logs' : 'logs') : 'Inspect ' + node.name + ' activity',
                     description: logAvailable ? 'Latest ' + logLines + ' lines · ' + (logSource === 'stderr' ? 'stderr' : 'stdout') : 'Recent operations · raw logs unavailable until the Node supports log access',
                     context: node.name + ' / ' + nodeDescription(node),
-                    href: '#/nodes?node=' + encodeURIComponent(node.id),
-                    ...(logAvailable ? { action: { type: 'read_node_logs' as const, nodeId: node.id, source: logSource, lines: logLines } } : {}),
+                    href: nodeLogs ? '#/monitoring?tab=logs&nodeId=' + encodeURIComponent(node.id) + '&source=' + logSource + '&lines=' + logLines : '#/monitoring?tab=activity&nodeId=' + encodeURIComponent(node.id),
                 });
                 if (!lookup || relevance(lookup, node.name, nodeDescription(node))) hits.push({ ...hit, score: 120 + relevance(lookup, node.name, nodeDescription(node)) });
             } else {
