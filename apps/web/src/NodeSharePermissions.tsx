@@ -38,14 +38,25 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
 
     async function change(target: AtlasNode, enabled: boolean) {
         if (busyId || loading || !loaded) return;
-        if (!enabled && !window.confirm('Stop ' + source.name + ' from sharing text to ' + target.name + '?')) return;
+        const environmentGranted = approvals.some(entry =>
+            entry.origin === 'environment' &&
+            entry.sourceNodeId.toLowerCase() === source.id.toLowerCase() &&
+            entry.targetNodeId.toLowerCase() === target.id.toLowerCase());
+        if (!enabled && !window.confirm(
+            'Remove the Atlas-managed approval from ' + source.name + ' to ' + target.name + '?' +
+            (environmentGranted
+                ? ' The separate server environment grant will STILL authorise sharing until removed and the Server restarted.'
+                : ' This will revoke managed sharing access.')
+        )) return;
         setBusyId(target.id);
         setError('');
         setNotice('');
         try {
             await callTool('update_node_share_approval',
                 { sourceNodeId: source.id, targetNodeId: target.id, enabled });
-            setNotice(enabled ? 'Directional sharing approved.' : 'Directional sharing revoked.');
+            setNotice(enabled ? 'Directional sharing approved.'
+                : environmentGranted ? 'Atlas approval removed. The server environment still authorises sharing.'
+                : 'Directional sharing revoked.');
             setRevision(value => value + 1);
         } catch (err) {
             // A lost mutation response may hide a committed grant or revoke.
@@ -73,29 +84,34 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
             : !targets.length ? <p>No other Nodes are enrolled yet.</p>
             : <ul className="node-share-list">
                 {targets.map(target => {
-                    const permission = approvals.find(entry =>
+                    const pair = approvals.filter(entry =>
                         entry.sourceNodeId.toLowerCase() === source.id.toLowerCase() &&
                         entry.targetNodeId.toLowerCase() === target.id.toLowerCase());
-                    const env = permission?.origin === 'environment';
+                    const env = pair.some(entry => entry.origin === 'environment');
+                    const managed = pair.some(entry => entry.origin === 'managed');
+                    const permission = env || managed;
                     const canApprove = source.credentialState === 'active' && target.credentialState === 'active';
                     return <li key={target.id}>
                         <div className="node-share-peer">
                             <strong>{target.name}</strong>
                             <span>{target.platform || 'Node'} · {target.status}</span>
-                            {permission && <small>{env ? 'Managed by server environment' : 'Approved in Atlas'}</small>}
+                            {managed && <small>Approved in Atlas</small>}
+                            {env && <small>Managed by server environment</small>}
+                            {managed && env && <small>Two independent grants are active. Removing the Atlas grant alone will NOT stop sharing.</small>}
                         </div>
-                        {env ? <span className="badge muted">Read-only</span>
-                            : <button type="button" className={permission ? 'ghost danger' : 'ghost'}
+                        {env && !managed ? <span className="badge muted">Read-only</span>
+                            : <button type="button" className={managed ? 'ghost danger' : 'ghost'}
                                 disabled={busyId !== null || (!permission && !canApprove)}
                                 title={!permission && !canApprove ? 'Both Nodes require active credentials' : undefined}
-                                onClick={() => void change(target, !permission)}>
-                                {busyId === target.id ? 'Saving…' : permission ? 'Revoke access' : 'Approve sharing'}
+                                onClick={() => void change(target, !managed)}>
+                                {busyId === target.id ? 'Saving…' : managed && env ? 'Revoke Atlas approval' : managed ? 'Revoke access' : 'Approve sharing'}
                             </button>}
                     </li>;
                 })}
             </ul>}
         <p className="node-share-footnote">Approvals never grant Workspace access, bypass the Mac confirmation
             dialog, or enable receiving on a Node. Existing <code>ATLAS_DEVICE_SHARE_PAIRS</code> grants
-            remain read-only until that configuration is retired.</p>
+            remain read-only until that configuration is retired. If both sources grant a pair,
+            removing only the Atlas-managed grant leaves environment sharing enabled.</p>
     </section>;
 }

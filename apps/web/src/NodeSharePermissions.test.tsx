@@ -62,3 +62,29 @@ it('treats a rejected permissions read as unknown, never as a missing approval',
     expect(screen.getByRole('button', { name: 'Revoke access' })).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'update_node_share_approval')).toHaveLength(0);
 });
+
+it('shows overlapping permissions and revokes the managed grant without claiming access is gone', async () => {
+    let rows: ShareApproval[] = [
+        {sourceNodeId:sender.id,targetNodeId:mac.id,origin:'environment'},
+        {sourceNodeId:sender.id,targetNodeId:mac.id,origin:'managed'},
+    ];
+    vi.mocked(callTool).mockImplementation(async (name, input) => {
+        if (name === 'list_node_share_approvals') return [...rows] as never;
+        if (name === 'update_node_share_approval') {
+            expect(input).toEqual({sourceNodeId:sender.id,targetNodeId:mac.id,enabled:false});
+            rows = rows.filter(row => row.origin !== 'managed');
+            return {enabled:false} as never;
+        }
+        throw Error('Unexpected tool '+name);
+    });
+    const confirmation = vi.spyOn(window,'confirm').mockReturnValue(true);
+    render(<NodeSharePermissions source={sender} nodes={[sender,mac]} />);
+    expect(await screen.findByText('Two independent grants are active. Removing the Atlas grant alone will NOT stop sharing.')).toBeInTheDocument();
+    expect(screen.getByText('Approved in Atlas')).toBeInTheDocument();
+    expect(screen.getByText('Managed by server environment')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Revoke Atlas approval'}));
+    expect(confirmation).toHaveBeenCalledWith(expect.stringContaining('STILL authorise sharing'));
+    expect(await screen.findByText(/server environment still authorises sharing/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Read-only')).toBeInTheDocument());
+    expect(screen.queryByRole('button',{name:'Revoke Atlas approval'})).not.toBeInTheDocument();
+});
