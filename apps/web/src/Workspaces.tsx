@@ -9,6 +9,10 @@ type Repository = { repository: string; private: boolean; defaultBranch: string;
 type GitStatus = { available: boolean; reason?: string; branch?: string; head?: string; originRepository?: string | null; dirty?: boolean; changes?: {path: string; status: string}[] };
 type Worktree = { rootPath: string; head: string; branch: string | null };
 type Created = { workspace: Workspace; head: string; branch: string };
+type RetirementReport = { eligible: boolean; reason?: string; estimatedReclaimedBytes?: number;
+    mergedPullRequest?: { number: number; url: string } };
+type RetirementState = { targetId: string; sourceId: string; head: string; checking: boolean;
+    report?: RetirementReport; error?: string };
 type Draft = { url: string; number: number; draft: boolean };
 const directoryPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const branchPattern = /^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/;
@@ -56,6 +60,7 @@ export function Workspaces() {
     const [prTitle, setPrTitle] = useState('');
     const [prBody, setPrBody] = useState('');
     const [draftPR, setDraftPR] = useState<Draft>();
+    const [retirement, setRetirement] = useState<RetirementState>();
 
     // Accept both new logical Workspace URLs and existing checkout deep links.
     const selected = all.find(w => w.id === selectedId) ?? logical.find(group => group.id === selectedId)?.checkouts[0];
@@ -154,6 +159,7 @@ export function Workspaces() {
     useEffect(() => {
         setBranch('atlas/'); setTargetPath(''); setFeatureName(''); setPrTitle(''); setPrBody(''); setDraftPR(undefined);
     }, [selected?.id]);
+    useEffect(() => { setRetirement(undefined); }, [selected?.id, revision]);
 
     function choose(id: string) {
         setSelectedId(id);
@@ -215,11 +221,35 @@ export function Workspaces() {
             ...(featureName.trim() ? { name: featureName.trim() } : {}),
         }), 'Feature worktree created.', result => choose(result.workspace.id));
     }
-    async function retire(entry: Worktree, record: Workspace) {
-        if (!selected || !confirm('Retire the worktree at ' + record.rootPath +
-            '?\n\nThis DELETEs the local checkout folder and its tracked files, but keeps the Git branch and commits. Atlas will refuse unless the exact HEAD has a merged PR, the tree has no changes (including ignored files) and no processes are using the folder.')) return;
+    // Prefer a persistent checkout on the same Node. This avoids chaining
+    // feature checkouts into one another's retirement lifecycle.
+    function retirementSource(record: Workspace) {
+        const main = worktrees.find(tree => tree.branch === 'main' || tree.branch === 'master');
+        const permanent = main && all.find(checkout => checkout.nodeId === record.nodeId &&
+            checkout.rootPath === main.rootPath && checkout.id !== record.id);
+        return permanent ?? (selected?.id !== record.id ? selected : undefined);
+    }
+    async function checkRetirement(entry: Worktree, record: Workspace, source: Workspace) {
+        const key = { targetId: record.id, sourceId: source.id, head: entry.head };
+        setRetirement({ ...key, checking: true });
+        try {
+            const report = await callTool<RetirementReport>('workspace_git_retirement_preflight', {
+                workspaceId: source.id, targetWorkspaceId: record.id, expectedHead: entry.head,
+            });
+            setRetirement({ ...key, checking: false, report });
+        } catch (cause) {
+            setRetirement({ ...key, checking: false, error: message(cause) });
+        }
+    }
+    async function retire(entry: Worktree, record: Workspace, source: Workspace) {
+        const report = retirement?.report;
+        if (!report?.eligible || retirement?.sourceId !== source.id ||
+            retirement?.targetId !== record.id || retirement?.head !== entry.head) return;
+        if (!confirm('Retire ' + record.name + '?\n\nThis deletes ' + record.rootPath +
+            ' from this Node. Atlas will recheck every safety condition before deletion. ' +
+            'The Git branch and commits are preserved.')) return;
         await mutate(() => callTool<{ removed: boolean; estimatedReclaimedBytes: number }>('workspace_git_remove_worktree', {
-            workspaceId: selected.id, targetWorkspaceId: record.id, expectedHead: entry.head,
+            workspaceId: source.id, targetWorkspaceId: record.id, expectedHead: entry.head,
         }), result => `Local worktree folder deleted (${reclaimed(result.estimatedReclaimedBytes)} estimated reclaimed); Git branch and commits preserved.`);
     }
     async function push() {
@@ -400,14 +430,34 @@ export function Workspaces() {
                         <h3>Worktrees</h3>
                         <div className="wm-trees">{worktrees.map(t => {
                             const record = all.find(w => w.nodeId === selected.nodeId && w.rootPath === t.rootPath);
+                            const source = record ? retirementSource(record) : undefined;
+                            const check = record && source && retirement?.targetId === record.id &&
+                                retirement.sourceId === source.id && retirement.head === t.head ? retirement : undefined;
                             return <div key={t.rootPath} className="wm-tree"><div><strong>{t.branch || 'Detached HEAD'}</strong>
-                                <small>{t.rootPath} · {shortSha(t.head)}</small></div>
-                                {record && record.id !== selected.id && t.branch?.startsWith('atlas/') &&
-                                    <button className="ghost" disabled={working || inspecting || IS_MOCK_MODE} onClick={() => retire(t, record)}>Retire</button>}
+                                <small>{t.rootPath} · {shortSha(t.head)}</small>
+                                {check?.checking && <small role="status">Checking retirement safety…</small>}
+                                {check?.error && <small role="alert" className="wm-retirement-blocked">{check.error}</small>}
+                                {check?.report?.eligible === false && <small role="status" className="wm-retirement-blocked">
+                                    Not ready: {check.report.reason || 'Safety checks did not pass'}</small>}
+                                {check?.report?.eligible && <small role="status" className="wm-retirement-ready">
+                                    Ready · merged PR #{check.report.mergedPullRequest?.number || 'verified'}
+                                    {check.report.estimatedReclaimedBytes !== undefined ?
+                                        ' · ' + reclaimed(check.report.estimatedReclaimedBytes) + ' reclaimable' : ''}
+                                </small>}
+                                </div>
+                                {record && source && t.branch?.startsWith('atlas/') && <div className="wm-retire-actions">
+                                    <button className="ghost" disabled={working || inspecting || IS_MOCK_MODE || check?.checking}
+                                        onClick={() => checkRetirement(t, record, source)}>
+                                        {check?.checking ? 'Checking…' : 'Check eligibility'}</button>
+                                    {check?.report?.eligible && <button className="ghost wm-retire-confirm"
+                                        disabled={working || inspecting || IS_MOCK_MODE}
+                                        onClick={() => retire(t, record, source)}>Retire</button>}
+                                </div>}
                             </div>;
                         })}</div>
                         <form className="wm-stack" onSubmit={createWorktree}>
                             <h3>New feature worktree</h3>
+                            <p className="wm-hint">Atlas-managed feature worktrees are temporary checkouts. Once their exact PR is merged, you can check eligibility and retire them safely; the branch is preserved.</p>
                             <label>Branch<input value={branch} onChange={e => { const value = e.target.value; setBranch(value); if (!targetPath || targetPath === suggestTarget(selected.rootPath, branch)) setTargetPath(suggestTarget(selected.rootPath, value)); }} placeholder="atlas/feature-name" /></label>
                             <label>Destination on Node<input value={targetPath} onChange={e => setTargetPath(e.target.value)} placeholder={suggestTarget(selected.rootPath, 'atlas/feature')} /></label>
                             <label>Display name (optional)<input value={featureName} onChange={e => setFeatureName(e.target.value)} /></label>

@@ -38,17 +38,16 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
     }
     async lockWorkspace(id: string) { await this.connection.query('SELECT id FROM workspaces WHERE id=$1 FOR NO KEY UPDATE', [id]); }
     async lockExecution(binding: string) { await this.connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [binding]); }
-    async managedWorktreeBranch(workspaceId: string, sourceWorkspaceId: string, rootPath: string): Promise<string | null> {
+    async managedWorktreeBranch(workspaceId: string, rootPath: string): Promise<string | null> {
         // Only a successful Atlas-managed worktree creation can authorise deletion.
         // Read under the same DB transaction/Workspace lock used for the removal.
         const result = await this.connection.query(
             `SELECT after_state->>'branch' AS branch FROM audit_events
              WHERE workspace_id=$1 AND operation='workspace.created'
                AND after_state->>'managedKind'='git_worktree'
-               AND after_state->>'sourceWorkspaceId'=$2
-               AND after_state->>'rootPath'=$3
+               AND after_state->>'rootPath'=$2
              LIMIT 1`,
-            [workspaceId, sourceWorkspaceId, rootPath],
+            [workspaceId, rootPath],
         );
         return result.rows[0]?.branch ?? null;
     }

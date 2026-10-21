@@ -4,7 +4,7 @@ import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
 import { gitWrite } from '../../capabilities/workspace-files/git-write.js';
-import { listManagedWorktrees, createManagedWorktree, removeManagedWorktree, cloneManagedRepository } from '../../capabilities/workspace-files/git-managed.js';
+import { listManagedWorktrees, createManagedWorktree, removeManagedWorktree, preflightManagedWorktreeRetirement, cloneManagedRepository } from '../../capabilities/workspace-files/git-managed.js';
 import { UnityAdapter } from '../../capabilities/unity/unity.js';
 import { footballControl } from '../../capabilities/football.js';
 import { footballValidation } from '../../capabilities/football-validation.js';
@@ -80,6 +80,8 @@ export class LocalNodeRuntime implements NodeRuntime {
                     return createManagedWorktree(workspace.rootPath, this.files, x.branch, x.targetPath);
                 case 'workspace_git_remove_worktree':
                     return removeManagedWorktree(workspace.rootPath, this.files, x.targetPath, x.expectedHead, x.expectedBranch);
+                case 'workspace_git_retirement_preflight':
+                    return preflightManagedWorktreeRetirement(workspace.rootPath, this.files, x.targetPath, x.expectedHead, x.expectedBranch);
                 case 'workspace_git_create_branch':
                 case 'workspace_git_switch_branch':
                 case 'workspace_git_stage':

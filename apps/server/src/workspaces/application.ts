@@ -106,13 +106,41 @@ export class WorkspaceService {
         if (footballAction && (x.projectId !== 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7' || workspace.kind !== 'unity' || workspace.status !== 'active'))
             throw new AtlasError('Football MCP actions require the active AI Football Unity Workspace.', 'WORKSPACE_UNAVAILABLE');
         const nodeOperation = (footballAction ? 'football_control' : name) as WorkspaceOperation;
-        const target = name === 'workspace_git_remove_worktree'
+        const target = (name === 'workspace_git_remove_worktree' || name === 'workspace_git_retirement_preflight')
             ? await this.repository.getById(x.targetWorkspaceId) : undefined;
         if (target && (target.nodeId !== workspace.nodeId || target.id === workspace.id ||
-            target.kind !== 'generic'))
+            target.kind !== 'generic' || target.logicalWorkspaceId !== workspace.logicalWorkspaceId))
             throw new AtlasError('Worktree must be a different active Workspace on the same Node.', 'WORKSPACE_DENIED');
         const nodeInput = footballAction ? { ...x, action: footballAction }
             : target ? { ...x, targetPath: target.rootPath } : x;
+        if (name === 'workspace_git_retirement_preflight' && target) {
+            // Read-only inspection: no mutation intent, archive or Git writes.
+            // A later removal always revalidates the original SHA and all Node guards.
+            const db = await this.repository.connect();
+            let expectedBranch: string | null;
+            try {
+                await db.begin();
+                expectedBranch = await db.managedWorktreeBranch(target.id, target.rootPath);
+                await db.commit();
+            } catch (error) {
+                await db.rollback();
+                throw error;
+            } finally { db.release(); }
+            if (!expectedBranch) return { eligible: false, reason: 'Not an Atlas-managed temporary worktree.' };
+            try {
+                const source = await this.runtime.execute(workspace, 'workspace_git_status',
+                    { workspaceId: workspace.id }) as { available?: boolean; originRepository?: string | null };
+                if (source.available !== true || !source.originRepository)
+                    throw new AtlasError('Cannot verify the GitHub repository.', 'WORKSPACE_DENIED');
+                const mergedPullRequest = await this.github.verifyMergedPullRequest(
+                    source.originRepository, expectedBranch, x.expectedHead);
+                const report = await this.runtime.execute(workspace, 'workspace_git_retirement_preflight',
+                    { ...nodeInput, expectedBranch }) as object;
+                return { ...report, targetWorkspaceId: target.id, mergedPullRequest };
+            } catch (error) {
+                return { eligible: false, targetWorkspaceId: target.id, reason: auditError(error) };
+            }
+        }
         const invoke = () => this.runtime.execute(workspace, nodeOperation, nodeInput);
         const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', workspace_git_create_branch: 'workspace.git_branch_created', workspace_git_switch_branch: 'workspace.git_branch_switched', workspace_git_stage: 'workspace.git_staged', workspace_git_commit: 'workspace.git_committed', workspace_git_push_branch: 'workspace.git_pushed', workspace_git_clone_repository: 'workspace.git_repository_cloned', workspace_git_create_worktree: 'workspace.git_worktree_created', workspace_git_remove_worktree: 'workspace.git_worktree_removed', workspace_git_open_pull_request: 'workspace.git_pull_request_created',  unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
         const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', workspace_git_list_worktrees: 'workspace.git_worktrees_listed', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed', football_training_status: 'football.jobs_inspected', football_evaluation_status: 'football.evaluation_inspected' } as Record<string, string>)[name];
@@ -168,8 +196,7 @@ export class WorkspaceService {
                 })()
                 : target
                     ? async (current: Workspace) => {
-                        const expectedBranch = await db!.managedWorktreeBranch(
-                            target.id, workspace.id, target.rootPath);
+                        const expectedBranch = await db!.managedWorktreeBranch(target.id, target.rootPath);
                         if (!expectedBranch)
                             throw new AtlasError('Only an Atlas-created worktree can be removed through Atlas.', 'WORKSPACE_DENIED');
                         // This path bypasses NodeRouter.prepare to avoid Node
@@ -187,8 +214,8 @@ export class WorkspaceService {
                         // into the current default branch on GitHub.
                         const mergedPullRequest = await this.github.verifyMergedPullRequest(
                             git.originRepository, expectedBranch, x.expectedHead);
-                        // The Node still independently checks branch, HEAD,
-                        // provenance and local changes before removing files.
+                        // The Node confirms both checkouts share a Git common directory and
+                        // rechecks branch, HEAD, ignored files, index flags and processes.
                         const removal = await removeRuntime!.execute(nodeCheckout, nodeOperation, {
                             ...nodeInput, expectedBranch,
                         });

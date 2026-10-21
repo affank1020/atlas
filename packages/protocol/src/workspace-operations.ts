@@ -38,6 +38,12 @@ export const workspaceOperationSchemas = {
         // Injected by the Server from Atlas's trusted creation audit, not MCP.
         expectedBranch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/),
     }).strict(),
+    // Read-only safety inspection. Target directory and branch are injected by Server.
+    workspace_git_retirement_preflight: z.object({ ...scope, ...client,
+        targetWorkspaceId: z.string().uuid(), targetPath: z.string().min(2).max(4096),
+        expectedHead: z.string().regex(/^[a-f0-9]{40}$/),
+        expectedBranch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/),
+    }).strict(),
     workspace_git_create_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),
     workspace_git_switch_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),
     workspace_git_stage: z.object({ ...scope, ...client, files: z.array(z.object({ path: file, expectedSha256: sha256 }).strict()).min(1).max(40) }).strict(),

@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, realpathSync
 import os from 'node:os';
 import path from 'node:path';
 import { WorkspaceFiles } from '../apps/node/src/capabilities/workspace-files/files.js';
-import { listManagedWorktrees, createManagedWorktree, removeManagedWorktree, cloneManagedRepository } from '../apps/node/src/capabilities/workspace-files/git-managed.js';
+import { listManagedWorktrees, createManagedWorktree, removeManagedWorktree, preflightManagedWorktreeRetirement, cloneManagedRepository } from '../apps/node/src/capabilities/workspace-files/git-managed.js';
 
 const git = (root: string, ...args: string[]) =>
     execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
@@ -53,7 +53,14 @@ test('managed worktrees are isolated, registered in Git, and retire without dele
     assert.equal(visible.worktrees.length, 2);
     assert.ok(visible.worktrees.some(x => x.rootPath === createdPath && x.branch === 'atlas/feature'));
 
+    const cleanPreflight = await preflightManagedWorktreeRetirement(source, files,
+        createdPath, originalHead, 'atlas/feature');
+    assert.equal(cleanPreflight.eligible, true);
+    assert.equal(existsSync(createdPath), true, 'Read-only preflight must never delete the checkout');
+
     writeFileSync(path.join(createdPath, 'untracked.txt'), 'keep me');
+    await assert.rejects(preflightManagedWorktreeRetirement(source, files, createdPath,
+        originalHead, 'atlas/feature'), /uncommitted, untracked/);
     await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'), /uncommitted, untracked/);
     rmSync(path.join(createdPath, 'untracked.txt'));
     writeFileSync(path.join(createdPath, 'build.cache'), 'ignored local data');
@@ -103,6 +110,10 @@ test('managed worktrees are isolated, registered in Git, and retire without dele
     await assert.rejects(removeManagedWorktree(source, files, createdPath, 'a'.repeat(40), 'atlas/feature'), /HEAD changed/);
     await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/different'), /branch changed/);
     await assert.rejects(removeManagedWorktree(source, files, source, originalHead, 'atlas/feature'), /parent checkout/);
+    const finalPreflight = await preflightManagedWorktreeRetirement(source, files,
+        createdPath, originalHead, 'atlas/feature');
+    assert.equal(finalPreflight.head, originalHead);
+    assert.ok(finalPreflight.estimatedReclaimedBytes > 0);
     const removed = await removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature');
     assert.equal(removed.preservedBranch, 'atlas/feature');
     assert.ok(removed.estimatedReclaimedBytes > 0);
