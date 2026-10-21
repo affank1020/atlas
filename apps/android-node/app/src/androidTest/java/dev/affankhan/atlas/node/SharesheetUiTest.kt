@@ -14,8 +14,10 @@ class SharesheetUiTest {
 
     private fun deliver(value: String) {
         compose.runOnUiThread {
-            compose.activity.onNewIntent(Intent(Intent.ACTION_SEND).apply {
+            compose.activity.startActivity(Intent(compose.activity, MainActivity::class.java).apply {
+                action = Intent.ACTION_SEND
                 type = "text/plain"
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 putExtra(Intent.EXTRA_TEXT, value)
             })
         }
