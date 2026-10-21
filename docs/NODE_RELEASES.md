@@ -78,6 +78,44 @@ ATLAS_ALLOW_DIRTY_NODE_PACKAGE=1 node scripts/package-node-release.mjs
 Never use a dirty-checkout artifact as a production release. The normal
 packaging command refuses to label uncommitted modifications as immutable.
 
+## Pinned provenance verification and Linux trusted staging
+
+The SHA-256 sidecar verifies **integrity against a supplied checksum**, not
+authenticity. Before trusting an archive for Linux, use the dedicated host
+helper:
+
+```bash
+# GitHub CLI >= 2.102.0 (security-fixed verifier), tar, node and Linux required
+bash scripts/linux-node-trusted-stage.sh verify atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+sudo bash scripts/linux-node-trusted-stage.sh install atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+```
+
+The helper first checks the portable archive format, checksum, and embedded
+source commit. It then uses `gh attestation verify` to pin **all** of:
+the exact `affank1020/atlas` repository, the source ref
+`refs/heads/main`, the **full source commit SHA**, the signing certificate
+identity
+`https://github.com/affank1020/atlas/.github/workflows/node-package.yml@refs/heads/main`,
+the SLSA v1 provenance predicate, and a GitHub-hosted runner. It fails closed
+when the attestation is unavailable, unsigned or does not match. This
+requires online GitHub access and working GitHub CLI attestation support;
+manually supplied SHA-256 files do not override the verifier.
+
+The root-only `install` action copies the archive and checksum into a
+private root-owned staging directory **before** verifying them and passes
+those same copied bytes to the existing `linux-node-release.sh install`
+installer, preventing a caller from changing the artifact between checks.
+It installs into `/opt/atlas-node/releases` but **never** modifies the
+`current`/`previous` symlinks, systemd service, credentials, Atlas Server,
+PostgreSQL or workspaces. Continue to use the separate, administrator-reviewed
+`linux-node-lifecycle.sh plan/activate/rollback` for activation.
+
+**Note:** GitHub's catalogue currently marks the first PR #46 release
+`immutable: false`. It is intentionally ineligible for Atlas's software
+catalogue until the repository's immutable-release setting is enabled and a
+**new** build is published. This host verifier does not override the
+catalogue's immutability requirement.
+
 ## Platform lifecycle and planned control-plane updates
 
 - **Linux**: after verifying this published archive, use existing
