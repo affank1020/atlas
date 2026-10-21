@@ -18,7 +18,8 @@ type Init = NodeTransferIdentity & {
 };
 type TransferRow = {
     workspace_id: string; file_name: string; mime_type: string;
-    byte_size: number; checksum: string; status: 'active' | 'complete';
+    byte_size: number; checksum: string; status: 'active' | 'finalizing' | 'complete';
+    updated_at: Date;
     completed_file_id: string | null;
 };
 type Part = { part_index: number; bytes: Buffer; checksum: string; byte_size: number };
@@ -67,7 +68,7 @@ export class NodeResumableTransferService {
 
     private async load(db: PoolClient, input: NodeTransferIdentity, lock = false): Promise<TransferRow> {
         const result = await db.query<TransferRow>(
-            `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id
+            `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id,updated_at
              FROM node_file_transfer_sessions WHERE node_id=$1 AND upload_id=$2${lock ? ' FOR UPDATE' : ''}`,
             [input.nodeId, input.uploadId]);
         const session = result.rows[0];
@@ -88,7 +89,7 @@ export class NodeResumableTransferService {
             await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
                 ['node-files-staging:' + input.workspaceId]);
             let existing = await db.query<TransferRow>(
-                `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id
+                `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id,updated_at
                  FROM node_file_transfer_sessions WHERE node_id=$1 AND upload_id=$2 FOR UPDATE`,
                 [input.nodeId,input.uploadId]);
             let session = existing.rows[0];
@@ -102,7 +103,7 @@ export class NodeResumableTransferService {
                     [input.nodeId,input.uploadId]);
                 if (receipt.rowCount) throw conflicting();
                 const pending = await db.query<{ bytes: string }>(`SELECT COALESCE(SUM(byte_size),0)::text AS bytes
-                    FROM node_file_transfer_sessions WHERE workspace_id=$1 AND status='active'`, [input.workspaceId]);
+                    FROM node_file_transfer_sessions WHERE workspace_id=$1 AND status IN ('active','finalizing')`, [input.workspaceId]);
                 if (BigInt(pending.rows[0]!.bytes) + BigInt(input.byteSize) > BigInt(NODE_STAGING_WORKSPACE_BYTES))
                     throw new AtlasError('Node transfer staging quota reached (64 MiB).', 'QUOTA_EXCEEDED');
                 await db.query(`INSERT INTO node_file_transfer_sessions
@@ -110,7 +111,7 @@ export class NodeResumableTransferService {
                     VALUES($1,$2,$3,$4,$5,$6,$7)`,
                     [input.nodeId,input.uploadId,input.workspaceId,input.fileName,input.mimeType,input.byteSize,input.checksum]);
                 existing = await db.query<TransferRow>(
-                    `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id
+                    `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id,updated_at
                      FROM node_file_transfer_sessions WHERE node_id=$1 AND upload_id=$2`,
                     [input.nodeId,input.uploadId]);
                 session = existing.rows[0]!;
@@ -131,7 +132,7 @@ export class NodeResumableTransferService {
     async status(input: NodeTransferIdentity) {
         await this.authorized(input);
         const session = await this.pool.query<TransferRow>(
-            `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id
+            `SELECT workspace_id,file_name,mime_type,byte_size,checksum,status,completed_file_id,updated_at
              FROM node_file_transfer_sessions WHERE node_id=$1 AND upload_id=$2`,
             [input.nodeId,input.uploadId]);
         if (!session.rows[0]) throw new AtlasError('Node transfer session was not found.', 'NOT_FOUND');
@@ -156,7 +157,7 @@ export class NodeResumableTransferService {
             await db.query('BEGIN');
             await this.lockAuthorization(db,input);
             const session = await this.load(db,input,true);
-            if (session.status !== 'active') throw new AtlasError('Node transfer is already completed.', 'CONFLICT');
+            if (session.status !== 'active') throw new AtlasError('Node transfer is finalizing or complete.', 'CONFLICT');
             const expectedCount = numberOfParts(session.byte_size);
             if (input.index >= expectedCount) throw new AtlasError('Node transfer chunk index is out of range.');
             const expectedBytes = Math.min(NODE_PART_BYTES, session.byte_size - input.index * NODE_PART_BYTES);
@@ -186,16 +187,27 @@ export class NodeResumableTransferService {
 
     async complete(input: NodeTransferIdentity) {
         await this.authorized(input);
+        let bytes: Buffer | undefined;
+        let fileName = '';
+        let mimeType = '';
+        let claimedAt: Date | undefined;
+        // Phase 1: verify and claim completion under a row lock. This must
+        // commit and RELEASE the pool client before calling ingest(), which
+        // uses that same pool. Otherwise N completions can deadlock N clients.
         const db = await this.pool.connect();
         try {
             await db.query('BEGIN');
             await this.lockAuthorization(db,input);
-            // Serialize finalization against part writes and explicit aborts.
             const session = await this.load(db,input,true);
             if (session.status === 'complete') {
                 await db.query('COMMIT');
                 return { fileId: session.completed_file_id!, replayed: true };
             }
+            if (session.status === 'finalizing' &&
+                Date.now() - new Date(session.updated_at).getTime() < 10 * 60_000)
+                throw new AtlasError('Node transfer is already being finalized. Retry shortly.', 'CONFLICT');
+            // A crash after the claim is recoverable after 10 minutes. The
+            // underlying ingest receipt makes concurrent slow finalizers safe.
             const result = await db.query<Part>(
                 `SELECT part_index,bytes,checksum,byte_size FROM node_file_transfer_parts
                  WHERE node_id=$1 AND upload_id=$2 ORDER BY part_index`,
@@ -203,24 +215,67 @@ export class NodeResumableTransferService {
             const required = numberOfParts(session.byte_size);
             if (result.rows.length !== required || result.rows.some((x,i)=>x.part_index !== i))
                 throw new AtlasError('Node transfer is incomplete.', 'CONFLICT');
-            const bytes = Buffer.concat(result.rows.map(x=>x.bytes), session.byte_size);
+            bytes = Buffer.concat(result.rows.map(x=>x.bytes), session.byte_size);
             if (bytes.length !== session.byte_size ||
                 createHash('sha256').update(bytes).digest('hex') !== session.checksum)
                 throw new AtlasError('Node transfer integrity verification failed.', 'CONFLICT');
-            const saved = await this.ingest.ingest({
-                ...input, fileName: session.file_name, mimeType: session.mime_type, bytes,
-            });
-            await db.query(`UPDATE node_file_transfer_sessions
-                SET status='complete',completed_file_id=$3,updated_at=now()
-                WHERE node_id=$1 AND upload_id=$2`, [input.nodeId,input.uploadId,saved.file.id]);
-            await db.query('DELETE FROM node_file_transfer_parts WHERE node_id=$1 AND upload_id=$2',
+            fileName = session.file_name;
+            mimeType = session.mime_type;
+            const claimed = await db.query<{ updated_at: Date }>(`UPDATE node_file_transfer_sessions
+                SET status='finalizing',updated_at=clock_timestamp()
+                WHERE node_id=$1 AND upload_id=$2 RETURNING updated_at`,
                 [input.nodeId,input.uploadId]);
+            claimedAt = claimed.rows[0]!.updated_at;
             await db.query('COMMIT');
-            return { fileId: saved.file.id, replayed: saved.replayed };
         } catch (error) {
             await db.query('ROLLBACK').catch(() => undefined);
             throw error;
-        } finally { db.release(); }
+        } finally {
+            db.release();
+        }
+
+        // Phase 2: independently authenticated, receipt-deduplicated final
+        // upload. NO PostgreSQL client from Phase 1 remains checked out.
+        let saved: Awaited<ReturnType<NodeFileIngestService['ingest']>>;
+        try {
+            saved = await this.ingest.ingest({ ...input, fileName, mimeType, bytes: bytes! });
+        } catch (error) {
+            // Release the claim for immediate retry, but only when it is
+            // still OUR claim: an expired claimant must never reset a newer one.
+            try {
+                await this.pool.query(`UPDATE node_file_transfer_sessions SET status='active',updated_at=now()
+                    WHERE node_id=$1 AND upload_id=$2 AND status='finalizing' AND updated_at=$3`,
+                    [input.nodeId,input.uploadId,claimedAt]);
+            } catch { /* Fail closed: a later claim expiry permits recovery. */ }
+            throw error;
+        }
+
+        // Phase 3: finalize the checkpoint record in a fresh transaction.
+        // An assignment/archive can invalidate the session after ingest has
+        // committed; in that case the Files receipt still records success.
+        const finalDb = await this.pool.connect();
+        try {
+            await finalDb.query('BEGIN');
+            const session = await finalDb.query<TransferRow>(`SELECT status,completed_file_id
+                FROM node_file_transfer_sessions WHERE node_id=$1 AND upload_id=$2 FOR UPDATE`,
+                [input.nodeId,input.uploadId]);
+            if (session.rows[0]) {
+                if (session.rows[0].status !== 'complete') {
+                    await finalDb.query(`UPDATE node_file_transfer_sessions
+                        SET status='complete',completed_file_id=$3,updated_at=now()
+                        WHERE node_id=$1 AND upload_id=$2`, [input.nodeId,input.uploadId,saved.file.id]);
+                    await finalDb.query('DELETE FROM node_file_transfer_parts WHERE node_id=$1 AND upload_id=$2',
+                        [input.nodeId,input.uploadId]);
+                } else if (session.rows[0].completed_file_id !== saved.file.id) {
+                    throw conflicting();
+                }
+            }
+            await finalDb.query('COMMIT');
+            return { fileId: saved.file.id, replayed: saved.replayed };
+        } catch (error) {
+            await finalDb.query('ROLLBACK').catch(() => undefined);
+            throw error;
+        } finally { finalDb.release(); }
     }
 
     async abort(input: NodeTransferIdentity) {
