@@ -176,6 +176,24 @@ async function assertNoActiveWorkingDirectories(target: string) {
     }
 }
 
+/** Git status can hide local modifications for assume-unchanged and
+ * skip-worktree index entries. Git worktree remove may still delete them.
+ * Refuse any flagged tracked entry, including sparse-checkout entries,
+ * rather than trusting a misleading clean porcelain status. */
+async function assertNoHiddenTrackedFiles(targetPath: string) {
+    // -v shows lowercase tags for assume-unchanged and S for skip-worktree.
+    // -z protects filenames with newlines, spaces, and unusual characters.
+    const index = await run(targetPath, ['ls-files', '-v', '-z', '--cached']);
+    for (const entry of index.split('\0')) {
+        if (!entry) continue;
+        if (entry.length < 3 || entry[1] !== ' ')
+            throw new AtlasError('Could not inspect Git index flags; local files were preserved.', 'CONFLICT');
+        const tag = entry[0]!;
+        if (tag === 'S' || (tag >= 'a' && tag <= 'z'))
+            throw new AtlasError('Worktree has assume-unchanged or skip-worktree Git index flags; local files were preserved.', 'CONFLICT');
+    }
+}
+
 export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
     targetPath: string, expectedHead: string, expectedBranch: string) {
     const entries = await allWorktrees(root, files);
@@ -190,6 +208,8 @@ export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
     await verifyGitLayout(targetPath, files);
     if (await run(targetPath, ['status', '--porcelain', '--untracked-files=all', '--ignored=matching']))
         throw new AtlasError('Worktree has uncommitted, untracked or ignored files; local files were preserved.', 'CONFLICT');
+    // This check is REQUIRED even when porcelain reports a clean checkout.
+    await assertNoHiddenTrackedFiles(targetPath);
     await assertNoActiveWorkingDirectories(targetPath);
     const estimatedReclaimedBytes = await estimateCheckoutBytes(targetPath);
     // No --force, no recursive fs deletion and NO branch deletion. A failed Git
