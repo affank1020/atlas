@@ -45,7 +45,8 @@ export function Files() {
             ? (projects.data ?? []).map(item => ({ id: item.id, name: item.name }))
             : kind === 'workspace'
                 ? (workspaces.data ?? []).filter(item => !item.status || item.status === 'active').map(item => ({ id: item.id, name: item.name }))
-                : (apps.data ?? []).map(item => ({ id: item.slug, name: item.name }));
+                : (apps.data ?? []).filter(item => (apps.data ?? []).filter(candidate => candidate.slug === item.slug).length === 1)
+                    .map(item => ({ id: item.slug, name: item.name }));
         return values.sort((a, b) => a.name.localeCompare(b.name));
     }, [kind, projects.data, workspaces.data, apps.data]);
 
@@ -125,10 +126,10 @@ export function Files() {
         </header>
         <div className="files-scope-panel">
             <div className="files-scope-fields">
-                <label>Owner type<select aria-label="Owner type" value={kind} onChange={event => { setKind(event.target.value as FileOwner['kind']); setSelectedId(''); }}>
+                <label>Owner type<select aria-label="Owner type" disabled={mutating} value={kind} onChange={event => { setKind(event.target.value as FileOwner['kind']); setSelectedId(''); }}>
                     {(Object.keys(scopeLabels) as FileOwner['kind'][]).map(entry => <option key={entry} value={entry}>{scopeLabels[entry]}</option>)}
                 </select></label>
-                <label>Storage owner<select aria-label="Storage owner" value={owner?.id ?? ''} disabled={loadingOwners || !options.length}
+                <label>Storage owner<select aria-label="Storage owner" value={owner?.id ?? ''} disabled={mutating || loadingOwners || !options.length}
                     onChange={event => setSelectedId(event.target.value)}>
                     {options.length === 0 && <option value="">{loadingOwners ? 'Loading owners…' : 'No owners available'}</option>}
                     {options.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}

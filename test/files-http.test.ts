@@ -15,6 +15,7 @@ const origin = 'https://atlas.example.test';
 test('private Files HTTP API is owner-scoped and denies untrusted origins', async () => {
     const entries = new Map<string, { name: string; bytes: Buffer }>();
     const requests: string[] = [];
+    const appSlugs = ['portfolio'];
     const services = {
         config: { workspace: { origins: [origin] } },
         catalog: { getProject: async (id: string) => {
@@ -23,7 +24,7 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
             return { id };
         } },
         workspaces: { repository: { getById: async () => { throw new AtlasError('Workspace not found.', 'NOT_FOUND'); } } },
-        applications: { listAll: () => [{ slug: 'portfolio' }] },
+        applications: { listAll: () => appSlugs.map(slug => ({ slug })) },
         files: {
             list: async (owner: { kind: string; id: string }) =>
                 owner.id === projectId ? [...entries].map(([id, item]) => ({ id, fileName: item.name, byteSize: item.bytes.length })) : [],
@@ -63,6 +64,10 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         assert.equal((await post('list', { owner: { kind: 'project', id: differentProject } })).status, 404);
         assert.equal((await post('list', { owner: { kind: 'workspace', id: randomUUID() } })).status, 404);
         assert.equal((await post('list', { owner: { kind: 'application', id: 'unknown' } })).status, 404);
+        appSlugs.push('portfolio');
+        assert.equal((await post('list', { owner: { kind: 'application', id: 'portfolio' } })).status, 404,
+            'duplicate application slugs cannot share a Files owner');
+        appSlugs.pop();
 
         const content = Buffer.from('<script>not executed</script>');
         const uploaded = await post('upload', { owner, fileName: 'research.pdf', mimeType: 'application/pdf', base64: content.toString('base64'), visibility: 'public' });

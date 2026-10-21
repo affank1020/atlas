@@ -50,9 +50,12 @@ async function requireActiveOwner(owner: FileOwner, services: ServerServices) {
         const workspace = await services.workspaces.repository.getById(owner.id);
         if (workspace.status !== 'active') throw new AtlasError('Files owner not found.', 'NOT_FOUND');
     } else {
-        // Application IDs are slugs, not caller-supplied storage paths.
-        if (!services.applications.listAll().some(app => app.slug === owner.id))
-            throw new AtlasError('Files owner not found.', 'NOT_FOUND');
+        // The v1 Files schema stores an application slug as the owner ID.
+        // Fail closed if multiple projects register the same slug; otherwise
+        // their bytes could become indistinguishable in the same owner scope.
+        const matches = services.applications.listAll().filter(app => app.slug === owner.id);
+        if (matches.length !== 1) throw new AtlasError('Files owner not found.', 'NOT_FOUND');
+        if (matches[0]!.projectId) await services.catalog.getProject(matches[0]!.projectId);
     }
 }
 
