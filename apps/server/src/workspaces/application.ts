@@ -116,7 +116,9 @@ export class WorkspaceService {
                     // The broker has access to multiple installations. Verify this
                     // exact Node checkout first, inside the existing mutation lock,
                     // before allowing a server-side GitHub PR operation.
-                    const inspect = await this.runtime.prepare(workspace, 'workspace_git_status', {});
+                    const inspect = await this.runtime.prepare(workspace, 'workspace_git_status', {
+                        workspaceId: workspace.id,
+                    });
                     return async () => {
                         const git = await inspect() as {
                             available?: boolean; branch?: string; head?: string; originRepository?: string | null;

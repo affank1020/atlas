@@ -12,7 +12,7 @@ export const registrationSchema = z.object({
     platform: z.string().trim().min(1).max(80), version: z.string().max(80).optional(),
 }).strict();
 const workspaceSchema = z.object({
-    id: z.string().uuid(), nodeId: z.string().uuid(), projectId: z.string().uuid(),
+    id: z.string().uuid(), nodeId: z.string().uuid(), projectId: z.string().uuid().nullable(),
     name: z.string(), rootPath: z.string().min(1).max(4096),
     kind: z.enum(['generic', 'unity']), adapter: z.enum(['unity']).nullable(),
     status: z.enum(['active', 'archived']), devTasks: devTasksSchema,
