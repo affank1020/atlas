@@ -134,11 +134,11 @@ test('recent work tolerates invalid storage and remains bounded and deduplicated
     expect(readRecentWork()).toHaveLength(8);
     rememberWork(readRecentWork()[3]); expect(readRecentWork()).toHaveLength(8);
 });
-test('Monitoring shows system connectivity and links to the separate Activity page', async () => {
+test('Monitoring shows system connectivity and links into consolidated Activity', async () => {
     const { store } = createAtlasStore();
     render(<Provider store={store}><MonitoringOverview /></Provider>);
     expect(screen.getByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Activity feed/ })).toHaveAttribute('href', '#/activity');
+    expect(screen.getByRole('link', { name: /Activity feed/ })).toHaveAttribute('href', '#/monitoring?tab=activity');
     expect(await screen.findByText('Atlas Linux VPS')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Manage nodes/ })).toHaveAttribute('href', '#/nodes');
 });

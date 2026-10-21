@@ -37,7 +37,7 @@ test('A launched Application renders a dedicated page without the project View h
     expect(topbar.querySelector('.brand-period')).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('link', { name: /atlas/i })).toHaveAttribute('href', '#/');
     expect(screen.getByRole('button', { name: 'Search Atlas' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#/activity');
+    expect(screen.queryByRole('link', { name: 'Activity' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
     expect(screen.getByRole('main')).toHaveClass('application-window-main');
     expect(readRecentWork()[0]).toMatchObject({ name: 'Portfolio', kind: 'Application', href: '#/projects/project-portfolio/applications/portfolio' });
