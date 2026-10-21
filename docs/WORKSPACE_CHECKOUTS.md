@@ -53,11 +53,16 @@ in its history. Renaming one checkout in a group with multiple active
 checkouts or in a `git` Workspace does not rename the repository-level
 identity; explicit logical rename support will be added separately.
 
-Concurrent repository recognition of sibling checkouts is serialized by
-their original logical Workspace ID **before** individual checkout row
-locks are acquired. If another request has already migrated that group,
-the stale request receives a retryable `CONFLICT` rather than overwriting
-the newer association or deadlocking. Retrying the recognition is safe.
+Repository recognition and managed Git worktree creation share a
+transaction-scoped advisory lock on the source's original logical Workspace
+ID, acquired **before** checkout row locks or Node-side filesystem creation.
+This serializes recognition with both concurrent sibling recognition and
+new feature checkout registration, preventing a foreign-key/checkout-row
+deadlock that could otherwise strand an already-created worktree on disk.
+If recognition moves the group first, a creation attempt with a stale
+logical ID fails `CONFLICT` before touching the Node; retrying after
+refreshing the checkout is safe. Recognition itself is also retryable
+when another request has already moved its original logical group.
 
 Managed feature retirement **requires** a GitHub PR merged for the exact
 feature HEAD into the repository default branch, in addition to Node-side
