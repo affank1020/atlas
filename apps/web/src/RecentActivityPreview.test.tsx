@@ -39,3 +39,12 @@ test('failed preview reads show an error rather than an empty history', async ()
     expect(await screen.findByRole('alert')).toHaveTextContent('Source unavailable');
     expect(screen.getByRole('link', { name: /View all/ })).toHaveAttribute('href', '#/monitoring?tab=activity&nodeId=offline-node');
 });
+
+test('a parent refresh re-queries the same scoped activity without changing its link', async () => {
+    vi.mocked(callTool).mockResolvedValue({ items: [], total: 0, limit: 4, offset: 0 });
+    const { rerender } = render(<RecentActivityPreview filters={{ nodeId: 'node-one' }} count={4} refreshVersion={0} />);
+    await waitFor(() => expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity')).toHaveLength(1));
+    rerender(<RecentActivityPreview filters={{ nodeId: 'node-one' }} count={4} refreshVersion={1} />);
+    await waitFor(() => expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity')).toHaveLength(2));
+    expect(screen.getByRole('link', { name: /View all/ })).toHaveAttribute('href', '#/monitoring?tab=activity&nodeId=node-one');
+});
