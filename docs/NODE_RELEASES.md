@@ -103,3 +103,32 @@ explicitly authorised update requests, progress/audit, offline handling, a
 Linux adapter based on the existing verified lifecycle script, and a separate
 macOS safe updater. No dashboard action runs arbitrary shell commands, updates
 the Server or modifies PostgreSQL.
+
+## Linux update eligibility preflight (read-only)
+
+Use the per-Node **Check Linux update eligibility** action under Nodes, or the
+`plan_node_update` tool with a specific `nodeId`. This is a **read-only
+comparison**, not an installation or activation request. No credentials, shell
+commands, downloads, service changes, migrations or PostgreSQL writes are
+performed.
+
+The plan requires an online, actively enrolled, remote Linux Node. It checks
+the server's immutable stable-release catalogue, compares SemVer, and uses the
+catalogue's monotonic source order for same-version builds. A missing installed
+commit, unknown build or unavailable catalogue produces an explicit unknown or
+unavailable state—not a guessed upgrade/downgrade. macOS and Android are not
+eligible for this Linux-specific path.
+
+**No plan can authorise installation:** even a valid candidate reports
+`canInstall: false`, `canActivate: false`, and
+`provenanceVerified: false`. The catalogue only checks GitHub's release
+metadata; it does not verify build attestations. The next phase must provide
+host-side signed-artifact verification, scoped approval/authorisation,
+durable progress/audit and rollback status before Atlas can trigger a Linux
+update. Do not equate a read-only update candidate with permission to deploy.
+
+**Bootstrap note:** enabling GitHub immutable releases is a repository
+setting, not something the Node catalogue can do. Releases created with
+`immutable: false` remain excluded by the catalogue. After enabling the
+setting, publish a *new* build through the trusted Node packaging workflow;
+the immutable name/tag cannot be overwritten.
