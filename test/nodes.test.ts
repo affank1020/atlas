@@ -128,14 +128,17 @@ test('LocalNodeRuntime advertises implemented capabilities without claiming a co
     assert.deepEqual(new LocalNodeRuntime([], undefined, 'darwin').getCapabilities(), all);
 });
 
-test('Linux runtime advertises only file/Git capabilities and blocks process execution', async () => {
+test('Linux runtime exposes fixed journal logs without development execution', async () => {
     const linux = new LocalNodeRuntime([], undefined, 'linux');
     if (process.platform === 'linux') {
-        assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), ['workspace.files', 'workspace.git']);
+        assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), ['workspace.files', 'workspace.git', 'node.logs']);
     }
-    assert.deepEqual(linux.getCapabilities(), ['workspace.files', 'workspace.git']);
+    assert.deepEqual(linux.getCapabilities(), ['workspace.files', 'workspace.git', 'node.logs']);
     assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(),
         ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs']);
+    await assert.rejects(linux.readLogs('stderr', 10), (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+    await assert.rejects(new LocalNodeRuntime([], undefined, 'darwin').readLogs('journal', 10),
+        (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
     const folder = '/invalid-test-linux-workspace';
     await assert.rejects(
         linux.execute({ rootPath: folder } as any, 'workspace_run_dev_task', { task: 'test' }),
