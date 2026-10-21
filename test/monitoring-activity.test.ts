@@ -92,8 +92,12 @@ test('PostgreSQL Monitoring Node filter includes sender and recipient sharing ev
     for (const nodeId of [a.nodeId,b.nodeId]) {
         const filtered = await monitoring.page({nodeId,category:'node'});
         const events = filtered.items.filter(item => item.operation.startsWith('node.share.'));
-        assert.equal(filtered.total,2,'Only sharing events may match source/target fields');
+        assert.equal(filtered.total,3,'Each Node also retains its own legitimate enrolment event');
+        assert.equal(events.length,2,'Both sharing events are visible for either endpoint');
         assert.deepEqual(events.map(e => e.operation).sort(),['node.share.approved','node.share.revoked']);
+        assert.equal(filtered.items.filter(e => e.operation === 'node.enrolled').length,1);
+        assert.equal(filtered.items.filter(e => e.operation === 'node.updated').length,0,
+            'Unrelated operations cannot match their sourceNodeId/targetNodeId metadata');
         const grants = await monitoring.page({nodeId,operation:'node.share.approved'});
         assert.equal(grants.total,1);
     }
