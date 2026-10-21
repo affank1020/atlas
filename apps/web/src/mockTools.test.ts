@@ -28,6 +28,23 @@ test('demo nodes have inspectable workspace details and a simulated offline node
     }
 });
 
+test('mock Workspace lookups accept explicit checkoutId and the legacy selector', () => {
+    const projects = mockTool<typeof mockProjects>('list_projects');
+    const linked = projects.flatMap(project =>
+        mockTool<Array<{ id: string; name: string }>>('list_project_workspaces', { projectId: project.id })
+            .map(checkout => ({ ...checkout, projectId: project.id })));
+    expect(linked.length).toBeGreaterThan(0);
+    const chosen = linked[0];
+    const viaCheckout = mockTool<{ id: string; name: string }>('get_workspace', {
+        projectId: chosen.projectId, checkoutId: chosen.id,
+    });
+    const viaLegacy = mockTool<{ id: string; name: string }>('get_workspace', {
+        projectId: chosen.projectId, workspaceId: chosen.id,
+    });
+    expect(viaCheckout.id).toBe(chosen.id);
+    expect(viaCheckout).toEqual(viaLegacy);
+});
+
 test('search understands portfolio requests and supplies explicitly simulated log actions', () => {
     const portfolio = mockTool<{ results: Array<{ title: string }> }>('search_everything', { query: 'Open the portfolio app' });
     expect(portfolio.results.some(result => result.title === 'Portfolio')).toBe(true);
