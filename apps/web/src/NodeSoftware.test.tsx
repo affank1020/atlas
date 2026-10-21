@@ -171,3 +171,120 @@ it('prepares a non-executable, expiring Linux intent only after explicit confirm
         expect(screen.queryByRole('button', { name: /Install|Activate|Restart Node/ })).not.toBeInTheDocument();
     } finally { confirm.mockRestore(); }
 });
+
+
+it('rehydrates an existing pending update request after remount, Node switch and snapshot change', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host', platform: 'linux',
+        status: 'online' as const, version: '1.9.9', credentialState: 'active',
+        credentialUpdatedAt: '2026-10-21T10:00:00.000Z',
+        capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    const intent = {
+        id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+        targetVersion: release.version, targetCommit: release.commit, installedVersion: node.version,
+        status: 'requested' as const, createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 12 * 60_000).toISOString(),
+        approved: false as const, executable: false as const,
+    };
+    let persisted = [intent];
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_releases') return { state: 'ready', releases: [release], checkedAt: '' };
+        if (name === 'list_node_update_intents') return persisted;
+        if (name === 'cancel_node_update_intent') {
+            persisted = [{ ...intent, status: 'cancelled' as const }];
+            return persisted[0];
+        }
+        throw new Error('Unexpected tool ' + name);
+    });
+    const view = render(<NodeSoftwareSummary node={node} />);
+    expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled();
+    expect(callTool).not.toHaveBeenCalledWith('plan_node_update', expect.anything());
+
+    view.unmount();
+    render(<NodeSoftwareSummary node={node} />);
+    expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
+
+    const switched = {
+        ...node, id: '33333333-3333-4333-8333-333333333333',
+    };
+    const liveView = render(<NodeSoftwareSummary node={switched} />);
+    liveView.rerender(<NodeSoftwareSummary node={{ ...switched, status: 'offline' }} />);
+    liveView.rerender(<NodeSoftwareSummary node={node} />);
+    await waitFor(() => expect(vi.mocked(callTool).mock.calls.filter(([name]) =>
+        name === 'list_node_update_intents').length).toBeGreaterThanOrEqual(4));
+    expect(screen.getAllByText('Update request: requested').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel update request' })[0]!);
+    expect(callTool).toHaveBeenCalledWith('cancel_node_update_intent', {
+        nodeId: node.id, intentId: intent.id,
+    });
+    expect(await screen.findByText('Update request: cancelled')).toBeInTheDocument();
+});
+
+it('expires pending requests while the Software card is open, without a manual refresh', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host',
+        platform: 'linux', version: '1.9.9', status: 'online' as const,
+        credentialState: 'active', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    const intent = {
+        id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+        status: 'requested' as const, targetVersion: release.version, targetCommit: release.commit,
+        installedVersion: node.version, approved: false as const, executable: false as const,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 180).toISOString(),
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_releases') return { state: 'ready', releases: [release], checkedAt: '' };
+        if (name === 'list_node_update_intents') return [intent];
+        throw new Error('Unexpected tool ' + name);
+    });
+    render(<NodeSoftwareSummary node={node} />);
+    expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeInTheDocument();
+    expect(await screen.findByText('Update request: expired')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel update request' })).not.toBeInTheDocument();
+});
+
+it('reconciles persisted intent after uncertain prepare result, even if eligibility runs concurrently', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host',
+        platform: 'linux', version: '1.9.9', status: 'online' as const,
+        credentialState: 'active', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    const intent = {
+        id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+        status: 'requested' as const, targetVersion: release.version, targetCommit: release.commit,
+        installedVersion: node.version, approved: false as const, executable: false as const,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    };
+    let saved: typeof intent | undefined;
+    let rejectPrepare!: (reason: Error) => void;
+    const pending = new Promise<unknown>((_, reject) => { rejectPrepare = reject; });
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_releases') return { state: 'ready', releases: [release], checkedAt: '' };
+        if (name === 'list_node_update_intents') return saved ? [saved] : [];
+        if (name === 'plan_node_update') return {
+            nodeId: node.id, status: 'candidate', reason: 'Candidate available',
+            candidate: release, canInstall: false, canActivate: false, provenanceVerified: false,
+        };
+        if (name === 'prepare_node_update') return pending;
+        throw new Error('Unexpected tool ' + name);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+        render(<NodeSoftwareSummary node={node} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+        expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole('button', { name: /Prepare update request/ }));
+        expect(screen.getByRole('button', { name: 'Recording request…' })).toBeDisabled();
+        fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+        saved = intent; // simulated server commit followed by lost response
+        await act(async () => { rejectPrepare(new Error('Connection interrupted')); await pending.catch(() => undefined); });
+        expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled();
+    } finally { confirm.mockRestore(); }
+});
