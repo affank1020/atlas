@@ -14,6 +14,8 @@ const { football_control: _footballControl, workspace_git_push_branch: _privateP
 export const workspaceSchemas = {
     list_github_repositories: z.object({}).strict(),
     list_workspaces: z.object({ nodeId: z.string().uuid().optional(), includeArchived: z.boolean().optional() }).strict(),
+    list_logical_workspaces: z.object({ includeArchived: z.boolean().optional() }).strict(),
+    attach_checkout_repository: z.object({ ...scope, ...client }).strict(),
     list_project_workspaces: z.object({ ...project, includeArchived: z.boolean().optional() }).strict(),
     get_workspace: z.object({ ...scope, includeArchived: z.boolean().optional() }).strict(),
     create_workspace: z.object({ projectId: z.string().uuid().optional(), ...client, name, rootPath: file, nodeId: z.string().uuid().optional(), kind: z.enum(['generic', 'unity']).default('generic') }).strict(),
@@ -41,7 +43,9 @@ export const workspaceSchemas = {
 export type WorkspaceToolName = keyof typeof workspaceSchemas;
 export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
     list_github_repositories: 'Discover the repositories and accounts available to the installed GitHub App.',
-    list_workspaces: 'List independent Workspaces across all Nodes, optionally filtered by Node.',
+    list_workspaces: 'List checkout bindings across Nodes (legacy Workspace operations).',
+    list_logical_workspaces: 'List node-independent logical Workspaces and their associated checkout bindings.',
+    attach_checkout_repository: 'Attach one registered checkout to a logical repository Workspace, after verifying its Git origin on its Node.',
     list_project_workspaces: 'List Workspaces associated with a Project; Project association is optional.',
     get_workspace: 'Get a Workspace by stable ID, optionally verifying its Project association.',
     create_workspace: 'Register an existing directory on a Node; Project association is optional.',
@@ -62,7 +66,7 @@ export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
     workspace_git_clone_repository: 'Clone one GitHub App-authorised repository into an empty child of a trusted Node development root and register an independent Workspace.',
     workspace_git_list_worktrees: 'List Git worktrees reachable from this registered checkout within the approved Node filesystem roots.',
     workspace_git_create_worktree: 'Create a new isolated atlas/* worktree inside an explicitly trusted Node Git directory and register it as an independent Workspace.',
-    workspace_git_remove_worktree: 'Retire a clean Atlas-created feature worktree only after verifying an exactly matching merged PR. Deletes its local folder, but retains its Git branch and commits.',
+    workspace_git_remove_worktree: 'Remove an explicitly selected, clean registered feature worktree while retaining its Git branch and commits.',
     workspace_git_create_branch: 'Create an atlas/* branch only on an explicitly approved Git workspace.',
     workspace_git_switch_branch: 'Switch an approved local atlas/* branch with a clean working tree.',
     workspace_git_stage: 'Stage only explicitly named regular files whose SHA-256 matches the inspection.',
