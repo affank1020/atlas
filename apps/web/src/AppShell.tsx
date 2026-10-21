@@ -39,7 +39,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                     {link('#/applications', 'Applications', page === 'applications', 'applications')}
                     {link('#/data', 'Data', page === 'data' || page === 'store', 'data')}
                     {link('#/files', 'Files', page === 'files', 'files')}
-                    {link('#/nodes', 'Nodes', page === 'nodes', 'nodes')}
+                    {link('#/nodes', 'Nodes', (page === 'nodes' || page === 'node-software'), 'nodes')}
                     {link('#/workspaces', 'Workspaces', page === 'workspaces', 'workspaces')}
                     {link('#/monitoring', 'Monitoring', page === 'monitoring', 'monitoring')}
                 </div>
