@@ -179,6 +179,50 @@
 - Continue to keep `ATLAS_NODE_FILES_ENABLED=false` in production until
   reviewed R2 backup/restore and end-to-end native-node security testing.
 
+## Operator maintenance for abandoned resumable checkpoints
+
+- Build the server (`npm run build:server`) and run
+  `npm run files:staging:maintenance` on the trusted server host.
+  **This defaults to a read-only dry run.** It reports stale active checkpoint
+  counts, reserved payload bytes, and actual staged chunk bytes. Stale
+  `finalizing` sessions are separately reported **but never deleted**.
+  No personal file contents, Node credentials or object-store secrets are
+  exposed.
+- A checkpoint becomes eligible after **seven full days without a successful
+  chunk write or a transfer-state update**. A new `init`, received chunk or
+  finalization claim updates `updated_at`; merely reading status does not
+  silently extend retention. This interval cannot be shortened by the CLI.
+- Cleanup is a **separate, explicit operator action**:
+  `npm run files:staging:maintenance -- --apply --confirm=DELETE_STALE_NODE_CHECKPOINTS`.
+  It removes **at most 25 sessions** per invocation by default; operators can
+  set `--max-sessions=1..100`. The batch limit is enforced inside the
+  service. No scheduled job, API route, MCP action or Atlas Worker is added.
+- The apply transaction rechecks the age and `active` state under PostgreSQL
+  `FOR UPDATE SKIP LOCKED` row locks. Concurrent chunk writes or completions
+  cannot lose their checkpoints halfway through a transfer; rows already
+  locked by another transaction are skipped. Only selected
+  `node_file_transfer_sessions` rows and their `ON DELETE CASCADE`
+  `node_file_transfer_parts` bytes are deleted. In the **same transaction**,
+  Atlas inserts a tiny persistent `node_file_expired_upload_ids` tombstone
+  containing only the Node UUID, upload UUID and expiry time. It retains no
+  filename, checksum, Workspace, Node secret or chunk bytes. The transaction
+  rolls back entirely if writing the replay fence or deleting a checkpoint fails.
+- **Not a general Files garbage collector:** this command never touches
+  committed `atlas_files` records, completed upload receipts, archived files,
+  R2/local object bytes or backups. Once an upload's checkpoints have
+  expired, **all retries of that Node-scoped upload UUID receive HTTP 409**,
+  including identical metadata and attempts via the one-shot endpoint.
+  The device must start a new transfer using a **new upload UUID**.
+  Tombstones are retained indefinitely to preserve the identity contract
+  for arbitrarily delayed offline retries; monitor their small but growing
+  PostgreSQL row count. An old `finalizing` row could represent an
+  ambiguous successful PUT and must be investigated/retried rather than
+  automatically deleted.
+- Operators should review the dry-run report and the production database
+  backup before any `--apply`. This adds a safe manual cleanup primitive,
+  not a production-ready unattended expiry policy. Node file uploads remain
+  disabled until live R2 and recovery verification are completed.
+
 ## Safe inventory reconciliation — read-only
 
 - Build the server once (`npm run build:server`), then run
