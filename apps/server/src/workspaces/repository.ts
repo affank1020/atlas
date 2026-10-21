@@ -12,6 +12,7 @@ export interface WorkspaceTransaction extends WorkspaceReader {
     rollback(): Promise<void>;
     release(): void;
     requireActiveProject(projectId: string, lock?: boolean): Promise<void>;
+    requireProject(projectId: string, lock?: boolean): Promise<void>;
     lockWorkspace(id: string): Promise<void>;
     lockExecution(binding: string): Promise<void>;
     managedWorktreeBranch(workspaceId: string, sourceWorkspaceId: string, rootPath: string): Promise<string | null>;
