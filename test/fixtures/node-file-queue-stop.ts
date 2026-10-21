@@ -1,4 +1,5 @@
 import { NodeOfflineFileQueue } from '../../apps/node/src/core/file-queue.js';
+import { readdir } from 'node:fs/promises';
 
 /** Real child process test: a simulated slow HTTP request honours AbortSignal
  * and cannot exit until SIGTERM has stopped the worker and released its lock.
@@ -20,10 +21,16 @@ const queue = new NodeOfflineFileQueue(identity,root,async (_upload,signal)=>{
     throw new Error('unexpected delivery');
 });
 process.on('SIGTERM',()=>{
-    void queue.stop().then(()=>{
+    void queue.stop().then(async()=>{
+        const after=await readdir(root);
+        if (after.includes('.queue-lock')) {
+            process.stderr.write('Queue lock still present after stop completion.\n');
+            process.exit(2);return;
+        }
         process.stdout.write('STOPPED\n');
         process.exit(0);
     },()=>{
+        process.stderr.write('Queue stop promise rejected.\n');
         process.exit(1);
     });
 });
