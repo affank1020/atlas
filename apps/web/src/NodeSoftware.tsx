@@ -18,7 +18,7 @@ export type NodeRelease = {
     checksumUrl: string;
     sha256: string;
     releaseUrl: string;
-    signature: 'github-build-provenance';
+    provenance: 'unverified';
 };
 type Catalogue = { state: 'ready' | 'unavailable'; releases: NodeRelease[]; checkedAt: string; error?: string };
 
@@ -85,17 +85,17 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
 function PlatformRelease({ title, platform, catalogue }: { title: string; platform: 'darwin' | 'linux'; catalogue: Catalogue | undefined }) {
     const release = releaseForPlatform(catalogue?.releases ?? [], platform);
     return <section className="node-software-card" aria-label={title}>
-        <div className="node-software-card-title"><div><p className="eyebrow">{platform === 'linux' ? 'systemd' : 'launchd'}</p><h2>{title}</h2></div><span className="badge">{release ? 'Published release' : 'No verified release'}</span></div>
+        <div className="node-software-card-title"><div><p className="eyebrow">{platform === 'linux' ? 'systemd' : 'launchd'}</p><h2>{title}</h2></div><span className="badge">{release ? 'Published archive' : 'No eligible release'}</span></div>
         {release ? <>
             <p><strong>v{release.version}</strong> <span className="node-software-muted">Build {release.commit} · protocol {release.protocol} · Node.js {release.minimumNodeJs}+ · any CPU architecture</span></p>
             <p className="node-software-muted">Published {new Date(release.publishedAt).toLocaleString()} · {release.channel}</p>
             <div className="node-software-actions">
-                <a href={release.downloadUrl} target="_blank" rel="noopener noreferrer" className="node-software-download">Download verified archive ↗</a>
+                <a href={release.downloadUrl} target="_blank" rel="noopener noreferrer" className="node-software-download">Download release archive ↗</a>
                 <a href={release.checksumUrl} target="_blank" rel="noopener noreferrer">SHA-256 file ↗</a>
                 <a href={release.releaseUrl} target="_blank" rel="noopener noreferrer">Release notes ↗</a>
             </div>
             <p className="node-software-digest">SHA-256 <code>{release.sha256}</code></p>
-            <p className="node-software-muted">GitHub Actions build-provenance attestation available for independent signature verification.</p>
+            <p className="node-software-muted" role="status">Build provenance is unverified by Atlas. A GitHub SHA-256 asset digest is not proof of who built the archive. Verify the attestation against the expected repository and build workflow before installing.</p>
             <details className="node-software-instructions"><summary>Verification and installation</summary>
                 <p>Download both files to the same directory. Verify checksum and source provenance before installing:</p>
                 <pre>{['shasum -a 256 -c atlas-node-v' + release.version + '-' + release.commit + '.tar.gz.sha256', 'gh attestation verify atlas-node-v' + release.version + '-' + release.commit + '.tar.gz --repo affank1020/atlas'].join('\n')}</pre>
@@ -103,14 +103,14 @@ function PlatformRelease({ title, platform, catalogue }: { title: string; platfo
                     <p>Extract to a separate private directory, run the bundle’s documented <code>npm ci --omit=dev --ignore-scripts</code> installation, and configure the existing Node identity and launchd process manually. Automatic macOS replacement and rollback are not yet available; do not overwrite a running checkout.</p>}
                 <p><a href="https://github.com/affank1020/atlas/blob/main/docs/NODE_RELEASES.md" target="_blank" rel="noopener noreferrer">Full installation guide ↗</a></p>
             </details>
-        </> : <p className="node-software-muted">There is no published, integrity-verified installation bundle for this platform yet. No development or expired CI artifacts are offered.</p>}
+        </> : <p className="node-software-muted">There is no published immutable archive with a recorded SHA-256 digest for this platform yet. No development or expired CI artifacts are offered.</p>}
     </section>;
 }
 
 export function NodeSoftware() {
     const { catalogue, error, loading, refresh } = useSoftwareCatalogue();
     return <div className="nodes-page node-software-page">
-        <header className="page-head"><div><p className="eyebrow">Nodes / software</p><h1>Node Software</h1><p>Installable runtime bundles and independent release verification.</p></div>
+        <header className="page-head"><div><p className="eyebrow">Nodes / software</p><h1>Node Software</h1><p>Published runtime archives. Verify checksums and build provenance before installation.</p></div>
             <div className="actions"><a className="ghost" href="#/nodes">← Nodes</a><button className="ghost" disabled={loading} onClick={refresh}>Refresh</button></div></header>
         {loading && <p role="status">Checking published GitHub releases…</p>}
         {(error || catalogue?.state === 'unavailable') && <p className="node-page-notice" role="alert">{error || catalogue?.error || 'Release catalogue unavailable.'}</p>}
