@@ -290,7 +290,13 @@ export function Workspaces() {
                         <span className="wm-skeleton wm-skeleton-dot" />
                     </div>
                 ) : entries.map(group => {
-                    const nodeCount = new Set(group.checkouts.map(checkout => checkout.nodeId)).size;
+                    const checkoutsByNode = new Map<string, Workspace[]>();
+                    for (const checkout of group.checkouts) {
+                        const siblings = checkoutsByNode.get(checkout.nodeId) || [];
+                        siblings.push(checkout);
+                        checkoutsByNode.set(checkout.nodeId, siblings);
+                    }
+                    const nodeCount = checkoutsByNode.size;
                     return <div className="wm-group" key={group.id}>
                         <button className="wm-row wm-group-heading"
                             aria-label={group.name}
@@ -302,18 +308,29 @@ export function Workspaces() {
                                 <small>{group.checkouts.length} {group.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {nodeCount} {nodeCount === 1 ? 'Node' : 'Nodes'}</small>
                             </span>
                         </button>
-                        <div className="wm-checkout-list">{group.checkouts.map(checkout => {
-                            const node = nodes.find(n => n.id === checkout.nodeId);
-                            const isSelected = selected?.id === checkout.id;
-                            return <button className={'wm-checkout-row' + (isSelected ? ' selected' : '')}
-                                key={checkout.id} aria-pressed={isSelected}
-                                aria-label={'Checkout on ' + (node?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
-                                onClick={() => choose(checkout.id)}>
-                                <span className={'wm-dot' + (node?.status === 'online' ? ' online' : '')} aria-hidden="true" />
-                                <span><strong>{node?.name || 'Unknown Node'}{isSelected && status?.branch ? ' · ' + status.branch : ''}</strong>
-                                    <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
-                            </button>;
-                        })}</div>
+                        {Array.from(checkoutsByNode.entries()).map(([hostId, nodeCheckouts]) => {
+                            const host = nodes.find(node => node.id === hostId);
+                            return <div className="wm-node-group" key={hostId}>
+                                <div className="wm-node-heading">
+                                    <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true" />
+                                    <strong>{host?.name || 'Unknown Node'}</strong>
+                                    <small>{nodeCheckouts.length} {nodeCheckouts.length === 1 ? 'checkout' : 'checkouts'}</small>
+                                </div>
+                                <div className="wm-checkout-list">{nodeCheckouts.map(checkout => {
+                                    const isSelected = selected?.id === checkout.id;
+                                    return <button className={'wm-checkout-row' + (isSelected ? ' selected' : '')}
+                                        key={checkout.id} aria-pressed={isSelected}
+                                        aria-label={'Checkout on ' + (host?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
+                                        onClick={() => choose(checkout.id)}>
+                                        <span className="wm-checkout-glyph" aria-hidden="true">↳</span>
+                                        <span><strong>{checkout.name === group.name ? checkout.name + ' checkout' : checkout.name}{isSelected && status?.branch ? ' · ' + status.branch : ''}</strong>
+                                            <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
+                                    </button>;
+                                })}</div>
+                            </div>;
+                        })}
+                    </div>;
+                })}</div>
                     </div>;
                 })}</div>
                 {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
@@ -327,22 +344,33 @@ export function Workspaces() {
                 </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
                     <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
                     <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
-                    {(selectedLogical?.checkouts.length || 0) > 1 && <div className="wm-checkout-switch" role="group" aria-label="Choose Node checkout">
-                        {selectedLogical!.checkouts.map(checkout => {
-                            const node = nodes.find(item => item.id === checkout.nodeId);
-                            return <button key={checkout.id}
-                                className={selected.id === checkout.id ? 'active' : ''}
-                                aria-pressed={selected.id === checkout.id}
-                                onClick={() => choose(checkout.id)}>
-                                <span className={'wm-dot' + (node?.status === 'online' ? ' online' : '')} aria-hidden="true"/>
-                                {node?.name || 'Unknown Node'}
-                            </button>;
-                        })}
-                    </div>}
+                    {(selectedLogical?.checkouts.length || 0) > 1 && (selectedLogical!.checkouts.length > 3
+                        ? <label className="wm-checkout-select">Choose checkout
+                            <select value={selected.id} onChange={event => choose(event.target.value)} aria-label="Choose checkout">
+                                {selectedLogical!.checkouts.map(checkout => {
+                                    const host = nodes.find(node => node.id === checkout.nodeId);
+                                    return <option key={checkout.id} value={checkout.id}>{checkout.name} · {host?.name || 'Unknown Node'}</option>;
+                                })}
+                            </select>
+                        </label>
+                        : <div className="wm-checkout-switch" role="group" aria-label="Choose Node checkout">
+                            {selectedLogical!.checkouts.map(checkout => {
+                                const host = nodes.find(node => node.id === checkout.nodeId);
+                                return <button key={checkout.id}
+                                    className={selected.id === checkout.id ? 'active' : ''}
+                                    aria-pressed={selected.id === checkout.id}
+                                    title={checkout.rootPath}
+                                    onClick={() => choose(checkout.id)}>
+                                    <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true"/>
+                                    <span className="wm-switch-label"><strong>{checkout.name}</strong><small>{host?.name || 'Unknown Node'}</small></span>
+                                </button>;
+                            })}
+                        </div>)}
                     <div className="wm-selected-checkout">
                         <p className="eyebrow">Selected checkout</p>
                         <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
                             {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
+                        <p className="wm-checkout-name">{selected.name}</p>
                         <p className="wm-path">{selected.rootPath}</p>
                         <p className="wm-hint">{selected.kind} checkout · {selected.projectId ? 'Project linked' : 'Project-independent'}</p>
                     </div>
