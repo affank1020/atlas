@@ -144,6 +144,16 @@ export async function expireNodeTransferCheckpoints(
                  )
             `, [nodes,uploads]);
             staged = safeNumber(bytes.rows[0]!.bytes);
+            // Preserve the immutable per-Node upload-ID namespace BEFORE
+            // removing checkpoints. This insert and the subsequent DELETE
+            // commit atomically, so errors never destroy the last replay fence.
+            const tombstones = await db.query(`
+                INSERT INTO node_file_expired_upload_ids(node_id,upload_id)
+                SELECT * FROM UNNEST($1::uuid[],$2::uuid[])
+                RETURNING upload_id
+            `, [nodes,uploads]);
+            if (tombstones.rowCount !== selected.rows.length)
+                throw new Error('Staging expiry tombstones incomplete; rolling back.');
             const removed = await db.query<{ node_id: string; upload_id: string }>(`
                 DELETE FROM node_file_transfer_sessions
                  WHERE (node_id,upload_id) IN (
