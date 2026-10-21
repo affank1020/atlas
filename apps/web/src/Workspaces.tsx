@@ -347,7 +347,7 @@ export function Workspaces() {
                             <select value={selected.id} onChange={event => choose(event.target.value)} aria-label="Choose checkout">
                                 {selectedLogical!.checkouts.map(checkout => {
                                     const host = nodes.find(node => node.id === checkout.nodeId);
-                                    return <option key={checkout.id} value={checkout.id}>{checkout.name} · {host?.name || 'Unknown Node'}</option>;
+                                    return <option key={checkout.id} value={checkout.id}>{checkout.name} · {host?.name || 'Unknown Node'} · {checkout.rootPath}</option>;
                                 })}
                             </select>
                         </label>
@@ -360,7 +360,7 @@ export function Workspaces() {
                                     title={checkout.rootPath}
                                     onClick={() => choose(checkout.id)}>
                                     <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true"/>
-                                    <span className="wm-switch-label"><strong>{checkout.name}</strong><small>{host?.name || 'Unknown Node'}</small></span>
+                                    <span className="wm-switch-label"><strong>{checkout.name}</strong><small>{host?.name || 'Unknown Node'}</small><small className="wm-switch-path">{checkout.rootPath}</small></span>
                                 </button>;
                             })}
                         </div>)}
