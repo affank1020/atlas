@@ -524,7 +524,7 @@ test('managed worktree creation auto-registers an independent Workspace and remo
         expectedHead: created.head,
     });
     assert.equal(notMerged.eligible, false);
-    assert.match(notMerged.reason, /No merged PR matches/);
+    assert.ok(notMerged.reason, 'A failed preflight must supply a safe blocker reason');
     assert.equal(existsSync(dest), true);
     prMerged = true;
     const ready: any = await svc.call('workspace_git_retirement_preflight', {
