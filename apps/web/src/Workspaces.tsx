@@ -301,7 +301,7 @@ export function Workspaces() {
                             <label>Branch<input value={branch} onChange={e => { const value = e.target.value; setBranch(value); if (!targetPath || targetPath === suggestTarget(selected.rootPath, branch)) setTargetPath(suggestTarget(selected.rootPath, value)); }} placeholder="atlas/feature-name" /></label>
                             <label>Destination on Node<input value={targetPath} onChange={e => setTargetPath(e.target.value)} placeholder={suggestTarget(selected.rootPath, 'atlas/feature')} /></label>
                             <label>Display name (optional)<input value={featureName} onChange={e => setFeatureName(e.target.value)} /></label>
-                            <button disabled={working || IS_MOCK_MODE || !validFeature || !targetPath.startsWith('/') || selectedNode?.status !== 'online'}>Create worktree</button>
+                            <button disabled={working || inspecting || IS_MOCK_MODE || !validFeature || !targetPath.startsWith('/') || selectedNode?.status !== 'online'}>Create worktree</button>
                         </form>
                     </section>}
                     {canPublish && <section className="wm-subsection wm-stack"><h3>Publish</h3>
