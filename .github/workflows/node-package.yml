@@ -9,6 +9,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/package-node-release.mjs"
+      - "scripts/node-release-publication-check.sh"
       - ".github/workflows/node-package.yml"
   push:
     branches: [main]
@@ -18,6 +19,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/package-node-release.mjs"
+      - "scripts/node-release-publication-check.sh"
       - ".github/workflows/node-package.yml"
 
 permissions:
@@ -144,13 +146,12 @@ jobs:
           # Check whether any *Node packaging input* changed since this
           # build. Unrelated Web/docs commits must not suppress a release.
           git -C "$GITHUB_WORKSPACE" fetch --no-tags origin main
-          git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
-            { echo "Source commit is no longer an ancestor of main." >&2; exit 1; }
-          changed_paths="$(git -C "$GITHUB_WORKSPACE" diff --name-only "$GITHUB_SHA" origin/main)"
-          if grep -Eq '^((apps/node|packages/protocol)/|package(-lock)?\\.json$|scripts/package-node-release\\.mjs$|\\.github/workflows/node-package\\.yml$)' <<< "$changed_paths"; then
+          publication_status="$(bash "$GITHUB_WORKSPACE/scripts/node-release-publication-check.sh" "$GITHUB_WORKSPACE" "$GITHUB_SHA" origin/main)"
+          if [[ "$publication_status" == "superseded" ]]; then
             echo "Skipping superseded Node build: newer main changed release inputs."
             exit 0
           fi
+          [[ "$publication_status" == "current" ]] || exit 1
           tag="node-v${version}-${GITHUB_SHA:0:12}"
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Refusing to overwrite existing GitHub Release $tag" >&2
