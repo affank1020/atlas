@@ -121,3 +121,51 @@ it('discards an in-flight eligibility result after a same-ID runtime changes', a
     view.rerender(<NodeSoftwareSummary node={linux} />);
     await waitFor(() => expect(screen.queryByText(/Candidate identified/)).not.toBeInTheDocument());
 });
+
+it('prepares a non-executable, expiring Linux intent only after explicit confirmation, then permits cancellation', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host', platform: 'linux',
+        status: 'online' as const, credentialState: 'active',
+        credentialUpdatedAt: '2026-10-21T10:00:00.000Z',
+        version: '1.9.9', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    const request = {
+        id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+        status: 'requested', targetCommit: release.commit, targetVersion: release.version,
+        installedVersion: node.version, approved: false, executable: false,
+        expiresAt: '2026-10-21T12:15:00.000Z', createdAt: '2026-10-21T12:00:00.000Z',
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_releases') return { state: 'ready', checkedAt: '', releases: [release] };
+        if (name === 'plan_node_update') return {
+            nodeId: node.id, status: 'candidate', reason: 'Newer stable release available.',
+            candidate: release, canInstall: false, canActivate: false, provenanceVerified: false,
+        };
+        if (name === 'prepare_node_update') return request;
+        if (name === 'cancel_node_update_intent') return { ...request, status: 'cancelled' };
+        throw new Error('Unexpected tool ' + name);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+        render(<NodeSoftwareSummary node={node} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+        expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /Prepare update request/ }));
+        expect(confirm).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'prepare_node_update')).toBe(false);
+
+        confirm.mockReturnValue(true);
+        fireEvent.click(screen.getByRole('button', { name: /Prepare update request/ }));
+        expect(callTool).toHaveBeenCalledWith('prepare_node_update', {
+            nodeId: node.id, expectedVersion: node.version,
+            expectedCredentialUpdatedAt: node.credentialUpdatedAt, targetCommit: release.commit,
+        });
+        expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
+        expect(screen.getByText(/Not approved. No installation or restart will occur/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel update request' }));
+        expect(callTool).toHaveBeenCalledWith('cancel_node_update_intent', { nodeId: node.id, intentId: request.id });
+        expect(await screen.findByText('Update request: cancelled')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Cancel update request' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Install|Activate|Restart Node/ })).not.toBeInTheDocument();
+    } finally { confirm.mockRestore(); }
+});
