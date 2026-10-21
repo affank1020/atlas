@@ -10,7 +10,7 @@
     route {
         # Atlas Nodes authenticate themselves with a Server-issued Bearer credential.
         # Keep these routes outside the human-facing Basic Auth layer.
-        @node path /node/connect /node/enrol /node/files/upload
+        @node path /node/connect /node/enrol /node/files/upload /node/files/resumable/*
         reverse_proxy @node server:3000
 
         # Explicitly public portfolio delivery endpoints. The Contentful webhook has
