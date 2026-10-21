@@ -1,0 +1,18 @@
+.node-software-page { max-width: 1520px; }
+.node-software-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,345px),1fr)); align-items:start; gap:18px; }
+.node-software-card { min-width:0; padding:22px; background:var(--surface); border:1px solid var(--border); border-radius:14px; }
+.node-software-card-title { display:flex; align-items:start; justify-content:space-between; gap:12px; margin-bottom:18px; }
+.node-software-card-title h2 { margin:5px 0 0; font-size:1.15rem; }
+.node-software-card-title .badge { white-space:nowrap; }
+.node-software-muted { color:var(--text-secondary); font-size:.83rem; line-height:1.65; }
+.node-software-actions { display:flex; align-items:center; flex-wrap:wrap; gap:11px; margin:14px 0; font-size:.85rem; }
+.node-software-download { background:var(--accent-soft); color:var(--accent); border:1px solid var(--border-strong); border-radius:8px; padding:9px 11px; }
+.node-software-digest { font-size:.74rem; overflow-wrap:anywhere; }
+.node-software-digest code { overflow-wrap:anywhere; }
+.node-software-instructions { margin-top:17px; border-top:1px solid var(--border); padding-top:12px; }
+.node-software-instructions summary { cursor:pointer; font-weight:600; }
+.node-software-instructions pre { max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; border:1px solid var(--border); border-radius:8px; font-size:.74rem; background:var(--surface-elevated); }
+.node-software-summary { display:grid; gap:9px; margin:10px 0; }
+.node-software-summary > div { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; font-size:.8rem; }
+.node-software-summary dt { color:var(--text-secondary); }
+.node-software-summary dd { margin:0; text-align:right; overflow-wrap:anywhere; }
