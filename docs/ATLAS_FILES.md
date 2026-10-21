@@ -202,14 +202,22 @@
   cannot lose their checkpoints halfway through a transfer; rows already
   locked by another transaction are skipped. Only selected
   `node_file_transfer_sessions` rows and their `ON DELETE CASCADE`
-  `node_file_transfer_parts` bytes are deleted. The transaction rolls back
-  if the operation fails.
+  `node_file_transfer_parts` bytes are deleted. In the **same transaction**,
+  Atlas inserts a tiny persistent `node_file_expired_upload_ids` tombstone
+  containing only the Node UUID, upload UUID and expiry time. It retains no
+  filename, checksum, Workspace, Node secret or chunk bytes. The transaction
+  rolls back entirely if writing the replay fence or deleting a checkpoint fails.
 - **Not a general Files garbage collector:** this command never touches
   committed `atlas_files` records, completed upload receipts, archived files,
-  R2/local object bytes or backups. Expired upload UUIDs must be retried as
-  fresh sessions, not silently accepted with different content. An old
-  `finalizing` row could represent an ambiguous successful PUT and must
-  be investigated/retried rather than automatically deleted.
+  R2/local object bytes or backups. Once an upload's checkpoints have
+  expired, **all retries of that Node-scoped upload UUID receive HTTP 409**,
+  including identical metadata and attempts via the one-shot endpoint.
+  The device must start a new transfer using a **new upload UUID**.
+  Tombstones are retained indefinitely to preserve the identity contract
+  for arbitrarily delayed offline retries; monitor their small but growing
+  PostgreSQL row count. An old `finalizing` row could represent an
+  ambiguous successful PUT and must be investigated/retried rather than
+  automatically deleted.
 - Operators should review the dry-run report and the production database
   backup before any `--apply`. This adds a safe manual cleanup primitive,
   not a production-ready unattended expiry policy. Node file uploads remain
