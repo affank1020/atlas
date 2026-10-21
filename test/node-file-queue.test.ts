@@ -351,6 +351,8 @@ test('subprocess SIGTERM during an upload releases the queue lock before service
         });
         await Promise.race([ready,new Promise<never>((_,reject)=>setTimeout(
             ()=>reject(new Error('Timed out starting queue subprocess')),8000))]);
+        assert.equal((await readdir(join(root,'queue'))).includes('.queue-lock'),true,
+            'child upload must hold the lock before SIGTERM');
         const terminated=once(p,'exit');
         p.kill('SIGTERM');
         const [code]=await Promise.race([terminated,new Promise<never>((_,reject)=>setTimeout(
