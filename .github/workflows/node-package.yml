@@ -102,6 +102,10 @@ jobs:
     name: Publish immutable GitHub Release
     needs: [package, verify-macos]
     if: github.ref == 'refs/heads/main'
+    # Serialize promotions so an older run cannot publish after a newer one.
+    concurrency:
+      group: atlas-node-release-publication
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -127,6 +131,19 @@ jobs:
           [[ "${BASH_REMATCH[3]}" == "${GITHUB_SHA:0:12}" ]] || exit 1
           [[ -f "$file.sha256" && ! -L "$file.sha256" && ! -L "$file" ]] || exit 1
           sha256sum -c "$file.sha256"
+          # This channel offers stable versions only. Never mark a prerelease stable.
+          if [[ "$version" == *-* ]]; then
+            echo "Skipping prerelease Node v$version: stable channel only."
+            exit 0
+          fi
+          # Job-level concurrency prevents competing publications. Check the
+          # current main tip again immediately before creating the release.
+          main_head="$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$main_head" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid main head" >&2; exit 1; }
+          if [[ "$main_head" != "$GITHUB_SHA" ]]; then
+            echo "Skipping superseded Node commit $GITHUB_SHA (main is $main_head)."
+            exit 0
+          fi
           tag="node-v${version}-${GITHUB_SHA:0:12}"
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Refusing to overwrite existing GitHub Release $tag" >&2
