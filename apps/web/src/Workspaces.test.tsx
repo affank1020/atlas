@@ -192,6 +192,62 @@ test('duplicate names in a small checkout group show both directory paths before
     expect(within(inspector).getAllByText('/srv/atlas/workspaces/atlas-b').length).toBeGreaterThan(0);
 });
 
+test('logical Workspace Project associations are shared, selectable and removable without checkout changes', async () => {
+    const projectA = { id: 'project-a', name: 'Portfolio' };
+    const projectB = { id: 'project-b', name: 'Deployment' };
+    const checkouts = [
+        { ...repo, id: 'mac', nodeId: 'mac-node', name: 'Portfolio Site', rootPath: '/mac/portfolio' },
+        { ...repo, id: 'linux', name: 'Portfolio Site VPS', rootPath: '/srv/portfolio' },
+    ];
+    const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
+    let projectIds = [projectA.id];
+    vi.mocked(callTool).mockImplementation(async (name, args: any) => {
+        if (name === 'list_nodes') return [node,macNode];
+        if (name === 'list_projects') return [projectA,projectB];
+        if (name === 'list_workspaces') return checkouts;
+        if (name === 'list_logical_workspaces') return [{
+            id: 'logical-portfolio', name: 'Portfolio Site', repository: 'affank1020/portfolio-site',
+            kind: 'git', projectIds: [...projectIds], checkouts,
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main',
+            head: sha, originRepository: 'affank1020/portfolio-site', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'link_logical_workspace_project') {
+            projectIds = [...projectIds,args.projectId];
+            return {};
+        }
+        if (name === 'unlink_logical_workspace_project') {
+            projectIds = projectIds.filter(id => id !== args.projectId);
+            return {};
+        }
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    await within(browser).findByText('1 Workspace');
+    fireEvent.click(within(browser).getByRole('button', { name: 'Portfolio Site' }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const section = within(inspector).getByRole('region', { name: 'Workspace Projects' });
+    expect(within(section).getByText('Portfolio')).toBeInTheDocument();
+    fireEvent.change(within(section).getByRole('combobox', { name: 'Project to associate' }), {
+        target: { value: projectB.id },
+    });
+    fireEvent.click(within(section).getByRole('button', { name: 'Associate' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('link_logical_workspace_project', {
+        logicalWorkspaceId: 'logical-portfolio', projectId: projectB.id,
+    }));
+    expect(await within(section).findByText('Deployment')).toBeInTheDocument();
+    fireEvent.click(within(section).getByRole('button', { name: 'Detach Portfolio' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('unlink_logical_workspace_project', {
+        logicalWorkspaceId: 'logical-portfolio', projectId: projectA.id,
+    }));
+    await waitFor(() => expect(within(section).queryByText('Portfolio')).not.toBeInTheDocument());
+    // Project mutations do not alter checkout selection or the two registered paths.
+    expect(checkouts.map(w => w.rootPath)).toEqual(['/mac/portfolio','/srv/portfolio']);
+    expect(location.hash).toContain('workspace=logical-portfolio');
+});
+
 test('repository recognition uses Node Git inspection and never sends caller-chosen identity', async () => {
     const mac = { ...repo, id: 'mac', nodeId: 'mac-node', rootPath: '/mac/portfolio' };
     const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
