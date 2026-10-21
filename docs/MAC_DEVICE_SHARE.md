@@ -10,8 +10,8 @@ does not affect Linux Nodes or previously enrolled macOS Nodes until enabled.
    `ATLAS_DEVICE_SHARE_PAIRS=androidNodeUUID:macNodeUUID` approval.
 3. Each incoming text/share generates a native macOS confirmation dialog,
    showing a short preview and the sender Node ID. Decline is the default;
-   there is a 15-second timeout. Only clicking **Copy** sends the **complete**
-   text to `pbcopy` on stdin.
+   there is a 15-second timeout. Only clicking **Copy** writes the **complete** text as an explicit
+   plain UTF-8 `NSPasteboardTypeString` through macOS's native pasteboard API.
 4. The receiver reports `accepted: true` only after `pbcopy` succeeds.
    Reject, expiry, process stop, or a GUI clipboard failure is not a success.
 
@@ -27,3 +27,7 @@ idempotency and per-peer permissions UI work ships.
 The Android Share screen remains disabled until a sender UI and capability
 claim are added. The tests mock GUI and clipboard operations on CI, so a Mac is
 not needed to verify approval semantics.
+
+For a real Mac clipboard round-trip regression (changes the logged-in user's
+clipboard), run `ATLAS_MAC_PASTEBOARD_TEST=1 node --import tsx --test test/mac-device-share.test.ts`
+on the Mac GUI session; the test is skipped on normal Linux CI.
