@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, mkdir, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -284,3 +287,87 @@ test('unreadable first job does not block a later healthy job',async()=>{
         assert.equal((await queue.snapshot()).total,0);
     }finally{await close();}
 });
+
+test('shutdown aborts a slow sender, frees the cross-process lock, and retains the same UUID',async()=>{
+    let started!:()=>void;
+    const engaged=new Promise<void>(resolve=>{started=resolve;});
+    let attempts=0;
+    const sender:ConstructorParameters<typeof NodeOfflineFileQueue>[2]=async (_upload,signal)=>{
+        attempts++;
+        started();
+        await new Promise<void>((_resolve,reject)=>{
+            signal?.addEventListener('abort',()=>reject(new Error('request aborted by Node stop')),{once:true});
+        });
+        throw new Error('unexpected request success');
+    };
+    const {root,queue,close}=await fixture(sender);
+    try {
+        const id=await queue.enqueue(specimen);
+        const running=queue.flush();
+        await engaged;
+        await queue.stop();
+        const result=await running;
+        assert.equal(result.delivered,0);
+        assert.equal(result.deferred,0,'cancelled shutdown does not count as a new retry');
+        const files=await readdir(join(root,'queue'));
+        assert.ok(files.includes(id+'.job'));
+        assert.equal(files.includes('.queue-lock'),false);
+        assert.equal((await queue.flush()).delivered,0,'stopped worker cannot restart uploading');
+
+        const sent:string[]=[];
+        const resumed=new NodeOfflineFileQueue(identity,join(root,'queue'),async upload=>{
+            sent.push(upload.uploadId);
+            return {fileId:randomUUID(),replayed:true};
+        });
+        assert.equal((await resumed.flush()).delivered,1);
+        assert.deepEqual(sent,[id],'a restart must retain exactly the same remote upload ID');
+        assert.equal(attempts,1);
+    }finally{await close();}
+});
+
+test('subprocess SIGTERM during an upload releases the queue lock before service stop deadline',async()=>{
+    const {root,queue,close}=await fixture();
+    let child:ReturnType<typeof spawn>|undefined;
+    try {
+        const id=await queue.enqueue(specimen);
+        const script=fileURLToPath(new URL('./fixtures/node-file-queue-stop.ts',import.meta.url));
+        child=spawn(process.execPath,['--import','tsx',script,join(root,'queue')],{
+            stdio:['ignore','pipe','pipe'],
+            env:{...process.env,ATLAS_TEST_QUEUE_ID:identity.nodeId,
+                ATLAS_TEST_QUEUE_CREDENTIAL:identity.credential,
+                ATLAS_TEST_QUEUE_SERVER:identity.serverUrl},
+        });
+        const p=child;
+        let output='';
+        let errors='';
+        p.stderr?.on('data',data=>{errors+=String(data).slice(0,512);});
+        const ready=new Promise<void>((resolve,reject)=>{
+            p.stdout?.on('data',chunk=>{
+                output+=String(chunk);
+                if(output.includes('SENDING'))resolve();
+            });
+            p.once('error',reject);
+            p.once('exit',(code)=>reject(new Error('Queue test subprocess exited early: '+code)));
+        });
+        await Promise.race([ready,new Promise<never>((_,reject)=>setTimeout(
+            ()=>reject(new Error('Timed out starting queue subprocess')),8000))]);
+        const terminated=once(p,'exit');
+        p.kill('SIGTERM');
+        const [code]=await Promise.race([terminated,new Promise<never>((_,reject)=>setTimeout(
+            ()=>reject(new Error('Queue subprocess exceeded shutdown deadline')),8000))]);
+        assert.equal(code,0,errors.slice(0,300));
+        assert.equal((await readdir(join(root,'queue'))).includes('.queue-lock'),false);
+        assert.equal((await queue.snapshot()).ready,1);
+        const sent:string[]=[];
+        const recovered=new NodeOfflineFileQueue(identity,join(root,'queue'),async job=>{
+            sent.push(job.uploadId);
+            return {fileId:randomUUID(),replayed:true};
+        });
+        assert.equal((await recovered.flush()).delivered,1);
+        assert.deepEqual(sent,[id]);
+    }finally{
+        child?.kill('SIGKILL');
+        await close();
+    }
+});
+
