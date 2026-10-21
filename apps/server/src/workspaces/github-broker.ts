@@ -66,7 +66,7 @@ export class GitHubBroker {
 
     private async tokenForInstallation(installationId: number, repository?: string, readonly = false) {
         const body = repository
-            ? { repositories: [repository.split('/')[1]], permissions: { contents: 'write', pull_requests: 'write' } }
+            ? { repositories: [repository.split('/')[1]], permissions: readonly ? { contents: 'read' } : { contents: 'write', pull_requests: 'write' } }
             : { permissions: { contents: 'read' } };
         const result = await this.request(`/app/installations/${installationId}/access_tokens`, 'POST', this.jwt(), body) as TokenResponse;
         if (!result.token) throw new AtlasError('GitHub App did not issue a token.', 'GITHUB_REQUEST_FAILED');
@@ -75,13 +75,15 @@ export class GitHubBroker {
         return result.token;
     }
 
-    async installationToken(repository: string) {
+    async installationToken(repository: string) { return this.scopedToken(repository, false); }
+    async repositoryReadToken(repository: string) { return this.scopedToken(repository, true); }
+    private async scopedToken(repository: string, readonly: boolean) {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();
         const installation = installations.find(item => item.account!.login!.toLowerCase() === owner);
         if (!installation) throw new AtlasError('GitHub App is not installed on this repository owner.', 'WORKSPACE_DENIED');
-        return this.tokenForInstallation(installation.id, repository);
+        return this.tokenForInstallation(installation.id, repository, readonly);
     }
 
     async listRepositories() {
