@@ -331,8 +331,6 @@ export function Workspaces() {
                         })}
                     </div>;
                 })}</div>
-                    </div>;
-                })}</div>
                 {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
             </section>
             <aside className="wm-panel wm-inspector" aria-label="Workspace details" aria-busy={!!(inspecting || inspectorPending || (initialLoading && selectedId))}>
