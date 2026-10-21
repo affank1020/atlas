@@ -3,10 +3,10 @@ export type MonitoringTab = 'overview' | 'activity' | 'logs';
 export type MonitoringFilters = {
     projectId?: string; workspaceId?: string; checkoutId?: string; storeId?: string; nodeId?: string;
     operation?: string; category?: string; client?: string; outcome?: string; search?: string;
-    from?: string; to?: string; offset?: string; source?: 'stdout' | 'stderr' | 'journal'; lines?: string;
+    from?: string; to?: string; offset?: string; source?: 'stdout' | 'stderr' | 'journal'; lines?: string; target?: 'server' | 'node';
 };
 export type MonitoringRoute = { tab: MonitoringTab; filters: MonitoringFilters };
-const keys: (keyof MonitoringFilters)[] = ['projectId','workspaceId','checkoutId','storeId','nodeId','operation','category','client','outcome','search','from','to','offset','source','lines'];
+const keys: (keyof MonitoringFilters)[] = ['projectId','workspaceId','checkoutId','storeId','nodeId','operation','category','client','outcome','search','from','to','offset','source','lines','target'];
 export function monitoringHash(tab: MonitoringTab, filters: MonitoringFilters = {}) {
     const params = new URLSearchParams({ tab });
     for (const key of keys) if (filters[key]) params.set(key, filters[key]!);
@@ -23,6 +23,7 @@ export function parseMonitoringHash(hash: string): MonitoringRoute {
         const value = params.get(key);
         if (!value) continue;
         if (key === 'source') { if (value === 'stdout' || value === 'stderr' || value === 'journal') filters.source = value; continue; }
+        if (key === 'target') { if (value === 'server' || value === 'node') filters.target = value; continue; }
         if (key === 'lines') { if (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 200) filters.lines = String(Number(value)); continue; }
         filters[key] = value;
     }
