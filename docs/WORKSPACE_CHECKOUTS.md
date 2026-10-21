@@ -69,6 +69,40 @@ feature HEAD into the repository default branch, in addition to Node-side
 cleanliness, index flag, process and provenance guards. GitHub inspection
 failures or missing merged-PR evidence never trigger local checkout deletion.
 
+## Explicit checkout IDs in public MCP and HTTP APIs
+
+The logical Workspace ID identifies a repository or local development identity
+and is returned by `list_logical_workspaces`. A *checkout* ID identifies one
+Node-bound directory (the `id` of a `checkouts[]` entry).
+
+Public Workspace file, Git, dev-task and Unity operations now accept
+`checkoutId` to select that physical checkout. The existing `workspaceId`
+parameter **continues to mean the physical checkout ID**, so all old MCP and
+HTTP clients remain compatible. Supply **exactly one** of the two; providing
+both (even equal IDs), neither, or an unknown ID fails closed.
+
+For managed worktree retirement and preflight, `targetCheckoutId` is the
+explicit alias for `targetWorkspaceId`, with the same exactly-one rule.
+Targets remain server-resolved registered checkouts; callers still cannot
+supply a target filesystem path or server-owned expected branch. All existing
+provenance, merged-PR, cleanliness and Node checks remain enforced.
+
+Example calls:
+
+```json
+{"tool":"workspace_git_status","arguments":{"checkoutId":"<physical-checkout-uuid>"}}
+{"tool":"workspace_read_file","arguments":{"checkoutId":"<physical-checkout-uuid>","path":"README.md"}}
+{"tool":"workspace_git_retirement_preflight","arguments":{"checkoutId":"<source-checkout-uuid>","targetCheckoutId":"<feature-checkout-uuid>","expectedHead":"<40-character-sha>"}}
+```
+
+The Server validates the explicit selectors and then normalizes them to
+legacy `workspaceId`/`targetWorkspaceId` before routing. **Node protocol v2
+is unchanged** and continues to require `workspaceId` internally. No schema
+migration, directory move or Node upgrade is required for this compatibility
+step. The existing `get_workspace` and `list_workspaces` tool names are
+retained; checkout selection is explicit via parameters, not an implicit
+logical Workspace lookup.
+
 ## Limitations before a later cleanup
 
 - Migration `021_logical_workspace_project_links.sql` makes optional Project
@@ -102,9 +136,8 @@ failures or missing merged-PR evidence never trigger local checkout deletion.
 - Existing unverified clones remain separate until their Nodes are online and
   the explicit reconciliation is performed; no name-based fallback.
 - Branch, dirty status and storage are per checkout, not per logical Workspace.
-- Current MCP write operations still select `workspaceId` as the checkout ID.
-  A future version may expose explicit `checkoutId` inputs while preserving
-  compatibility.
+- The legacy `workspaceId` spelling remains valid on MCP tools. New callers
+  should prefer `checkoutId`; Node runtime messages still use `workspaceId`.
 - Logical Workspaces with no active checkouts are omitted from the default
   list. Empty provisional local identities may be removed by reconciliation;
   Git repository identities with only archived checkouts are retained.
