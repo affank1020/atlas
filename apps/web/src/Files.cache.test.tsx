@@ -24,7 +24,8 @@ test('new Workspaces and worktrees become selectable after navigation without a 
         calls.push(action);
         if (action === 'list_projects') return response([{ id: projectId, name: 'Research' }]);
         if (action === 'list_all_applications') return response([]);
-        if (action === 'list_workspaces') return response([...workspaces]);
+        // Clone response objects: RTK Query freezes its cached data in dev/test.
+        if (action === 'list_workspaces') return response(workspaces.map(workspace => ({ ...workspace })));
         if (action === 'create_workspace') {
             workspaces.push({ id: createdId, name: 'New Workspace', status: 'active' });
             return response(workspaces[workspaces.length - 1]);
