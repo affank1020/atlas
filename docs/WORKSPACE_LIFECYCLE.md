@@ -67,7 +67,12 @@ from untrusted request input**.
   It refuses checkout when tree entries contain symlinks or submodules.
 - Clone requires an exact trusted development root; worktrees require a target
   inside an explicitly trusted development root. Registration uses Node binding.
-- Archive/removal requires the expected commit. The Git branch survives removal.
+- Archive/removal requires the expected commit **and** the original Atlas-created
+  branch. The Server verifies a server-authored `workspace.created` audit entry for
+  that exact Workspace ID, source Workspace, canonical directory, and
+  `managedKind=git_worktree` marker under the same transaction locks used for
+  removal. Merely registering a manually created worktree does not authorise
+  deletion. The Git branch survives successful removal.
 - The Server may not roll back a completed filesystem operation if PostgreSQL
   fails to commit. In that case, inspect the new folder and audit intent before
   retrying: Atlas deliberately avoids destructive automatic cleanup.

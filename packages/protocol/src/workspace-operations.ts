@@ -35,6 +35,8 @@ export const workspaceOperationSchemas = {
         targetWorkspaceId: z.string().uuid(),
         targetPath: z.string().min(2).max(4096),
         expectedHead: z.string().regex(/^[a-f0-9]{40}$/),
+        // Injected by the Server from Atlas's trusted creation audit, not MCP.
+        expectedBranch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/),
     }).strict(),
     workspace_git_create_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),
     workspace_git_switch_branch: z.object({ ...scope, ...client, branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/) }).strict(),

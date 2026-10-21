@@ -110,13 +110,15 @@ export async function createManagedWorktree(root: string, files: WorkspaceFiles,
     return { rootPath: targetPath, branch, head, sourceHead: head };
 }
 export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
-    targetPath: string, expectedHead: string) {
+    targetPath: string, expectedHead: string, expectedBranch: string) {
     const entries = await allWorktrees(root, files);
+    if (!branchAllowed(expectedBranch)) throw new AtlasError('Invalid expected managed branch.', 'WORKSPACE_DENIED');
     if (targetPath === root) throw new AtlasError('Cannot remove the parent checkout.', 'WORKSPACE_DENIED');
     await trustedTarget(targetPath, files);
     const target = entries.find(x => x.rootPath === targetPath);
     if (!target || !target.branch || !branchAllowed(target.branch))
         throw new AtlasError('Target is not an Atlas-managed feature worktree.', 'WORKSPACE_DENIED');
+    if (target.branch !== expectedBranch) throw new AtlasError('Worktree branch changed since Atlas created it.', 'CONFLICT');
     if (target.head !== expectedHead) throw new AtlasError('Worktree HEAD changed.', 'CONFLICT');
     await verifyGitLayout(targetPath, files);
     if (await run(targetPath, ['status', '--porcelain', '--untracked-files=all']))

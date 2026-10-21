@@ -134,6 +134,15 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     const registered: any[] = await svc.call('list_workspaces', {});
     assert.equal(registered.length, 2);
 
+    // Even a clean Atlas-created worktree cannot be deleted if its branch has
+    // changed since registration. Preserve it and allow switching back.
+    execFileSync('/usr/bin/git', ['-C', dest, 'switch', '-c', 'atlas/switched'], { encoding: 'utf8' });
+    await assert.rejects(svc.call('workspace_git_remove_worktree', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
+        expectedHead: created.head,
+    }), /branch changed since Atlas created it/);
+    execFileSync('/usr/bin/git', ['-C', dest, 'switch', 'atlas/test-feature'], { encoding: 'utf8' });
+
     const removed: any = await svc.call('workspace_git_remove_worktree', {
         workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
         expectedHead: created.head,
@@ -142,6 +151,20 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 1);
     assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 2);
     assert.equal(git('rev-parse', 'refs/heads/atlas/test-feature'), created.head);
+
+    // Registering an existing clean atlas/* worktree does NOT make it managed.
+    // A forged "created" Workspace lacks Atlas's server-owned lifecycle marker.
+    const manualPath = path.join(parent, 'manually-created-worktree');
+    git('worktree', 'add', '-b', 'atlas/manual', manualPath, 'HEAD');
+    const manual: any = await svc.call('create_workspace', {
+        name: 'Manual linked worktree', rootPath: manualPath, kind: 'generic',
+    });
+    await assert.rejects(svc.call('workspace_git_remove_worktree', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: manual.id,
+        expectedHead: created.head,
+    }), (error: any) => error?.code === 'WORKSPACE_DENIED');
+    assert.equal((await svc.call('get_workspace', { workspaceId: manual.id }) as any).status, 'active');
+    assert.ok(git('worktree', 'list', '--porcelain').includes(manualPath));
 });
 
 test('authenticated repository cloning registers the new Workspace without exposing tokens', async () => {

@@ -79,7 +79,7 @@ export class LocalNodeRuntime implements NodeRuntime {
                 case 'workspace_git_create_worktree':
                     return createManagedWorktree(workspace.rootPath, this.files, x.branch, x.targetPath);
                 case 'workspace_git_remove_worktree':
-                    return removeManagedWorktree(workspace.rootPath, this.files, x.targetPath, x.expectedHead);
+                    return removeManagedWorktree(workspace.rootPath, this.files, x.targetPath, x.expectedHead, x.expectedBranch);
                 case 'workspace_git_create_branch':
                 case 'workspace_git_switch_branch':
                 case 'workspace_git_stage':

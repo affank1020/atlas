@@ -24,7 +24,7 @@ export const workspaceSchemas = {
     ...publicWorkspaceOperations,
     workspace_git_push_branch: workspaceOperationSchemas.workspace_git_push_branch.omit({ githubToken: true }).strict(),
     workspace_git_clone_repository: workspaceOperationSchemas.workspace_git_clone_repository.omit({ githubToken: true }).strict(),
-    workspace_git_remove_worktree: workspaceOperationSchemas.workspace_git_remove_worktree.omit({ targetPath: true }).strict(),
+    workspace_git_remove_worktree: workspaceOperationSchemas.workspace_git_remove_worktree.omit({ targetPath: true, expectedBranch: true }).strict(),
     workspace_git_open_pull_request: z.object({ ...scope, ...client,
         repository: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/),
         branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/),

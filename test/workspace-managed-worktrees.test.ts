@@ -53,11 +53,12 @@ test('managed worktrees are isolated, registered in Git, and retire without dele
     assert.ok(visible.worktrees.some(x => x.rootPath === createdPath && x.branch === 'atlas/feature'));
 
     writeFileSync(path.join(createdPath, 'untracked.txt'), 'keep me');
-    await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead), /uncommitted or untracked/);
+    await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'), /uncommitted or untracked/);
     rmSync(path.join(createdPath, 'untracked.txt'));
-    await assert.rejects(removeManagedWorktree(source, files, createdPath, 'a'.repeat(40)), /HEAD changed/);
-    await assert.rejects(removeManagedWorktree(source, files, source, originalHead), /parent checkout/);
-    const removed = await removeManagedWorktree(source, files, createdPath, originalHead);
+    await assert.rejects(removeManagedWorktree(source, files, createdPath, 'a'.repeat(40), 'atlas/feature'), /HEAD changed/);
+    await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/different'), /branch changed/);
+    await assert.rejects(removeManagedWorktree(source, files, source, originalHead, 'atlas/feature'), /parent checkout/);
+    const removed = await removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature');
     assert.equal(removed.preservedBranch, 'atlas/feature');
     assert.equal(existsSync(createdPath), false);
     assert.equal(git(source, 'rev-parse', 'refs/heads/atlas/feature'), originalHead);

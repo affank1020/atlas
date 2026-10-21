@@ -107,6 +107,10 @@ export class WorkspaceService {
             // concurrent writers can exhaust the pool and deadlock on Node lookup.
             // Server-only PR creation and server-brokered ephemeral GitHub tokens:
             // neither operation accepts secrets from MCP nor persists them to audit.
+            // Resolve the target Node BEFORE acquiring any DB locks. A managed
+            // deletion is then authorised using the locked creation audit below.
+            const removeRuntime = target
+                ? await this.runtime.resolve(workspace.nodeId, 'workspace.git') : undefined;
             const execute = name === 'workspace_git_open_pull_request'
                 ? await (async () => {
                     // The broker has access to multiple installations. Verify this
@@ -124,6 +128,17 @@ export class WorkspaceService {
                         return this.github.createDraftPullRequest(x.repository, x.branch, x.expectedHead, x.title, x.body);
                     };
                 })()
+                : target
+                    ? async (current: Workspace) => {
+                        const expectedBranch = await db!.managedWorktreeBranch(
+                            target.id, workspace.id, target.rootPath);
+                        if (!expectedBranch)
+                            throw new AtlasError('Only an Atlas-created worktree can be removed through Atlas.', 'WORKSPACE_DENIED');
+                        // Never trust the caller to provide the branch or target
+                        // path. The Node independently checks both Git identity
+                        // and the expected branch before any filesystem deletion.
+                        return removeRuntime!.execute(current, nodeOperation, { ...nodeInput, expectedBranch });
+                    }
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
                     ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) }
                     : name === 'workspace_git_clone_repository'
@@ -166,8 +181,12 @@ export class WorkspaceService {
                     projectId: name === 'workspace_git_clone_repository'
                         ? (x.projectId ?? null) : (x.projectId ?? workspace.projectId),
                     rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic' });
-                await db.audit(registered, 'workspace.created', x.client,
-                    { sourceWorkspaceId: workspace.id, branch: result.branch, repository: result.repository });
+                await db.audit(registered, 'workspace.created', x.client, {
+                    sourceWorkspaceId: workspace.id, branch: result.branch,
+                    rootPath: registered.rootPath,
+                    managedKind: name === 'workspace_git_create_worktree' ? 'git_worktree' : 'github_clone',
+                    repository: result.repository,
+                });
                 result = { ...result, workspace: registered };
             }
             if (name === 'workspace_git_remove_worktree' && target) {
