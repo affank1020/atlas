@@ -4,6 +4,14 @@ import type { NodeService } from '../../nodes/service.js';
 import type { RemoteNodeRuntime } from './remote-runtime.js';
 import type { DeviceShareSubmission } from '@atlas/protocol/device-protocol';
 
+/** Only the relay itself may classify a failure as certainly not dispatched.
+ * A receiving Node can return any AtlasError code, so never infer this from
+ * an error.code string received over the wire.
+ */
+class PreDispatchShareUnavailable extends AtlasError {
+    constructor() { super('Receiving device is offline or unavailable.', 'SHARE_TARGET_UNAVAILABLE'); }
+}
+
 /** No content is persisted or audited. Deny-by-default directed pair policy. */
 export class DeviceShareRelay {
     private readonly seen = new Map<string, { digest: string; expiresAt: number; result: Promise<{accepted: boolean}> }>();
@@ -90,7 +98,7 @@ export class DeviceShareRelay {
                 // Definitely not dispatched: the same delivery ID may be retried when
                 // the recipient comes online. Keep successful and uncertain outcomes
                 // cached so an ambiguous timeout/disconnect cannot double-deliver.
-                if (error instanceof AtlasError && error.code === 'SHARE_TARGET_UNAVAILABLE' &&
+                if (error instanceof PreDispatchShareUnavailable &&
                     this.seen.get(key)?.result === pending) this.seen.delete(key);
                 throw error;
             });
@@ -103,14 +111,14 @@ export class DeviceShareRelay {
     }, sourceRuntime: RemoteNodeRuntime): Promise<{ accepted: boolean }> {
         // Target lookup failures are also definitive pre-dispatch failures.
         const target = await this.nodes.get(targetId).catch(() => {
-            throw new AtlasError('Receiving device is offline or unavailable.', 'SHARE_TARGET_UNAVAILABLE');
+            throw new PreDispatchShareUnavailable();
         });
         const runtime = this.nodes.runtimes.get(targetId);
         if (target.credentialState !== 'active' || target.status !== 'online' || !runtime ||
             !target.capabilities.includes('device.share.receive') ||
             !runtime.getCapabilities().includes('device.share.receive') ||
             typeof (runtime as RemoteNodeRuntime).deliverDeviceShare !== 'function')
-            throw new AtlasError('Receiving device is offline or unavailable.', 'SHARE_TARGET_UNAVAILABLE');
+            throw new PreDispatchShareUnavailable();
         if (this.nodes.runtimes.get(sourceId) !== sourceRuntime)
             throw new AtlasError('Source Node disconnected.', 'NODE_DISCONNECTED');
         return (runtime as RemoteNodeRuntime).deliverDeviceShare(delivery);

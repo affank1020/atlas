@@ -60,6 +60,7 @@ test('authenticated share relay requires approved peers, active advertised capab
         const other = await connect(outsider.nodeId, outsider.credential, ['device.share.send']);
         let deliveries = 0;
         let acceptance = true;
+        let receiverFailureId: string | undefined;
         dst.on('message', bytes => {
             const message = JSON.parse(String(bytes));
             if (message.kind !== 'device_share') return;
@@ -67,8 +68,16 @@ test('authenticated share relay requires approved peers, active advertised capab
             assert.equal(message.sourceNodeId, sender.nodeId);
             assert.equal(message.text, 'share hello');
             assert.ok(Date.parse(message.expiresAt) > Date.now());
-            dst.send(JSON.stringify({ type: 'response', requestId: message.requestId,
-                ok: true, result: { accepted: acceptance } }));
+            if (message.deliveryId === receiverFailureId) {
+                // A receiver controls the error CODE, not the delivery phase.
+                // Even this misleading code must never evict a dispatched ID.
+                dst.send(JSON.stringify({ type: 'response', requestId: message.requestId,
+                    ok: false, error: { code: 'SHARE_TARGET_UNAVAILABLE',
+                        message: 'Recipient may already have acted.' } }));
+            } else {
+                dst.send(JSON.stringify({ type: 'response', requestId: message.requestId,
+                    ok: true, result: { accepted: acceptance } }));
+            }
         });
         const send = async (ws: WebSocket, target: string, deliveryId: string, text = 'share hello') => {
             const requestId = randomUUID();
@@ -110,6 +119,19 @@ test('authenticated share relay requires approved peers, active advertised capab
         assert.equal(wrongDestination.ok, false);
         assert.equal(wrongDestination.error.code, 'SHARE_DENIED');
 
+        // Once a request is dispatched, a receiver-controlled error code must
+        // never make the delivery replayable (even if it impersonates the local
+        // pre-dispatch availability error).
+        receiverFailureId = randomUUID();
+        const dispatchedFailure = await send(src, receiver.nodeId, receiverFailureId);
+        assert.equal(dispatchedFailure.ok, false);
+        assert.equal(dispatchedFailure.error.code, 'SHARE_TARGET_UNAVAILABLE');
+        assert.equal(deliveries, 4);
+        const cachedFailure = await send(src, receiver.nodeId, receiverFailureId.toUpperCase());
+        assert.equal(cachedFailure.ok, false);
+        assert.equal(cachedFailure.error.code, 'SHARE_TARGET_UNAVAILABLE');
+        assert.equal(deliveries, 4, 'Receiver error after dispatch must not trigger a second delivery');
+
         // A definitely offline target cannot have acted. Reconnecting must allow
         // retry of the identical delivery UUID, and that retry delivers only once.
         const disconnected = once(dst, 'close');
@@ -138,7 +160,7 @@ test('authenticated share relay requires approved peers, active advertised capab
         assert.deepEqual(recovered.result, { accepted: true });
         const recoveredAgain = await send(src, receiver.nodeId, recoverId.toUpperCase());
         assert.deepEqual(recoveredAgain.result, { accepted: true });
-        assert.equal(deliveries, 4, 'Offline retry dispatches once, then remains idempotent');
+        assert.equal(deliveries, 5, 'Offline retry dispatches once, then remains idempotent');
 
         src.send(JSON.stringify({ type: 'device.share.submit', requestId: randomUUID(),
             deliveryId: randomUUID(), sourceNodeId: outsider.nodeId,
@@ -146,7 +168,7 @@ test('authenticated share relay requires approved peers, active advertised capab
         // Invalid strict-schema messages fail the socket rather than hitting the routing path.
         const closed = once(src, 'close');
         await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('Malformed submission not closed')), 1500))]);
-        assert.equal(deliveries, 4);
+        assert.equal(deliveries, 5);
     } finally {
         for (const ws of sockets) ws.terminate();
         await new Promise<void>(resolve => http.close(() => resolve()));
