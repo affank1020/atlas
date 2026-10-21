@@ -19,6 +19,8 @@ export interface WorkspaceTransaction extends WorkspaceReader {
     attachRepository(workspaceId: string, repository: string): Promise<Workspace>;
     link(workspaceId: string, projectId: string): Promise<void>;
     unlink(workspaceId: string, projectId: string): Promise<void>;
+    linkLogical(logicalWorkspaceId: string, projectId: string): Promise<void>;
+    unlinkLogical(logicalWorkspaceId: string, projectId: string): Promise<void>;
     update(id: string, name: string | undefined, archive: boolean): Promise<Workspace>;
 }
 export interface WorkspaceRepository extends WorkspaceReader {
