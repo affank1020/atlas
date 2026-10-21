@@ -240,6 +240,6 @@ export function Nodes() {
         </div>
         {selected && <NodeDetails key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
             detailError={detailError} loading={detailLoading} />}
-        {selected && <NodeSharePermissions key={selected.id} source={selected} nodes={nodes} />}
+        {selected && <NodeSharePermissions key={'sharing-' + selected.id} source={selected} nodes={nodes} />}
     </div>;
 }

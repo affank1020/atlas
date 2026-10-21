@@ -33,7 +33,7 @@ it('approves a directional peer and revokes it without changing the reverse pair
     await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
         'update_node_share_approval',{sourceNodeId:sender.id,targetNodeId:mac.id,enabled:false}));
     confirm.mockRestore();
-    expect(within(screen.getByRole('region',{name:'Sharing permissions for Samsung Tablet'})).getByText(/directional/i)).toBeInTheDocument();
+    expect(within(screen.getByRole('region',{name:'Sharing permissions for Samsung Tablet'})).getByText(/Each approval is directional\./i)).toBeInTheDocument();
 });
 
 it('renders immutable environment grants without offering revoke', async () => {
