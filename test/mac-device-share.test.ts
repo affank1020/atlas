@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { MacShareReceiver, type IncomingShare } from '../apps/node/src/capabilities/device-share/mac-receiver.js';
+import { execFileSync } from 'node:child_process';
+import { MacShareReceiver, copyMacShare, plainTextPasteboardScript, type IncomingShare } from '../apps/node/src/capabilities/device-share/mac-receiver.js';
 import { LocalNodeRuntime } from '../apps/node/src/platforms/desktop/runtime.js';
 
 const item = (): IncomingShare => ({
@@ -53,4 +54,29 @@ test('macOS share receiver rejects declined, expired, busy and interrupted share
         async () => { copied = true; });
     assert.deepEqual(await interrupted.receive(item(), controller.signal), { accepted: false });
     assert.equal(copied, false);
+});
+
+test('NSPasteboard bridge always requests plain UTF-8 strings (including RTF-like and Unicode)', () => {
+    const payloads = ['{\\\\rtf1\\\\ansi Literal, not rich text}', '%!PS-Adobe-3.0', 'مرحبا 中文 😊 café', 'line 1\\nline 2'];
+    for (const text of payloads) {
+        const script = plainTextPasteboardScript(text);
+        assert.ok(script.includes('$.NSPasteboardTypeString'));
+        assert.ok(script.includes('$.NSUTF8StringEncoding'));
+        assert.ok(script.includes(Buffer.from(text, 'utf8').toString('base64')));
+        assert.ok(!script.includes(text), 'Original text must not be inserted into JXA source');
+    }
+});
+
+test('real macOS pasteboard faithfully round-trips RTF headers and Unicode', {
+    skip: process.platform !== 'darwin' || process.env.ATLAS_MAC_PASTEBOARD_TEST !== '1',
+}, async () => {
+    // Explicit opt-in only: this changes the human user's clipboard.
+    const payloads = ['{\\\\rtf1\\\\ansi Literal RTF prefix}', 'Unicode: مرحبا 👋 漢字 é'];
+    for (const text of payloads) {
+        await copyMacShare(text);
+        const value = execFileSync('osascript', ['-l', 'JavaScript', '-e',
+            "ObjC.import('AppKit'); ObjC.unwrap($.NSPasteboard.generalPasteboard.stringForType($.NSPasteboardTypeString))"],
+            { encoding: 'utf8' }).replace(/\\n$/, '');
+        assert.equal(value, text);
+    }
 });

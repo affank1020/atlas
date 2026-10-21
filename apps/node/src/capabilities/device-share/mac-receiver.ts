@@ -46,9 +46,26 @@ export async function promptMacShare(input: IncomingShare, signal?: AbortSignal)
     try { return (await command('osascript', ['-'], script, 18_000, signal)) === 'Copy'; }
     catch { return false; }
 }
+/** Use NSPasteboard's string type, not pbcopy header inference (RTF/EPS).
+ * Base64 keeps all Unicode and RTF-looking user content out of JS source,
+ * subprocess argv/environment and command diagnostics.
+ */
+export function plainTextPasteboardScript(text: string): string {
+    const encoded = Buffer.from(text, 'utf8').toString('base64');
+    return `ObjC.import('AppKit');
+const data = $.NSData.alloc.initWithBase64EncodedStringOptions($('${encoded}'), 0);
+if (!data) throw Error('Invalid clipboard bytes');
+const value = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
+if (!value) throw Error('Clipboard text is not UTF-8');
+const pasteboard = $.NSPasteboard.generalPasteboard;
+pasteboard.clearContents();
+if (!pasteboard.setStringForType(value, $.NSPasteboardTypeString))
+    throw Error('Could not write macOS plain-text pasteboard');
+`;
+}
 export async function copyMacShare(text: string, signal?: AbortSignal) {
-    // pbcopy receives data on stdin, not in argv.
-    await command('pbcopy', [], text, 3_000, signal);
+    // JXA bridges NSPasteboard; its actual pasteboard data type is explicit.
+    await command('osascript', ['-l', 'JavaScript', '-'], plainTextPasteboardScript(text), 7_000, signal);
 }
 
 /**
