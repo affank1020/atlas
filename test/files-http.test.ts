@@ -69,12 +69,73 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
             'duplicate application slugs cannot share a Files owner');
         appSlugs.pop();
 
+        // The binary path is used by Atlas Web and can later be reused by a
+        // separately authenticated mobile transfer service.
+        const preflight = await fetch(`${url}/api/files/upload-binary`, {
+            method: 'OPTIONS',
+            headers: { origin, 'access-control-request-method': 'POST',
+                'access-control-request-headers': 'x-atlas-owner-kind,x-atlas-file-name,content-type' },
+        });
+        assert.equal(preflight.status, 204);
+        assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+        assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /x-atlas-file-name/);
+        const badPreflight = await fetch(`${url}/api/files/upload-binary`, {
+            method: 'OPTIONS', headers: { origin: 'https://evil.example' },
+        });
+        assert.equal(badPreflight.status, 403);
+        assert.equal(badPreflight.headers.get('access-control-allow-origin'), null);
+
+        const binary = Buffer.from([0, 1, 128, 255, 3, 12]);
+        const binaryHeaders = {
+            origin, 'content-type': 'application/octet-stream',
+            'x-atlas-owner-kind': owner.kind, 'x-atlas-owner-id': owner.id,
+            'x-atlas-file-name': encodeURIComponent('photo 1.png'),
+            'x-atlas-file-type': 'image/png', 'x-atlas-visibility': 'public',
+        };
+        const binaryUpload = await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: binaryHeaders, body: binary,
+        });
+        assert.equal(binaryUpload.status, 201);
+        const binaryFile = await binaryUpload.json() as { id: string; visibility: string };
+        assert.equal(binaryFile.visibility, 'private');
+        assert.deepEqual(Buffer.from(await (await post('download', { owner, fileId: binaryFile.id })).arrayBuffer()), binary);
+
+        // Regression: valid Unicode names can expand past the old 1024-character
+        // header limit, while still fitting the service's 255-character name limit.
+        const unicodeName = '漢'.repeat(251) + '.png';
+        assert.equal(unicodeName.length, 255);
+        assert.ok(encodeURIComponent(unicodeName).length > 1024);
+        const unicodeResponse = await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST',
+            headers: { ...binaryHeaders, 'x-atlas-file-name': encodeURIComponent(unicodeName) },
+            body: binary,
+        });
+        assert.equal(unicodeResponse.status, 201);
+        const unicodeFile = await unicodeResponse.json() as { id: string; fileName: string };
+        assert.equal(unicodeFile.fileName, unicodeName);
+        assert.deepEqual(Buffer.from(await (await post('download', { owner, fileId: unicodeFile.id })).arrayBuffer()), binary);
+        assert.equal((await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: { ...binaryHeaders, 'x-atlas-file-name': '%invalid' }, body: binary,
+        })).status, 400);
+        assert.equal((await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: { ...binaryHeaders, 'x-atlas-owner-id': differentProject }, body: binary,
+        })).status, 404);
+        assert.equal((await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: { ...binaryHeaders, 'content-type': 'text/plain' }, body: binary,
+        })).status, 400);
+        assert.equal((await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: binaryHeaders, body: Buffer.alloc(0),
+        })).status, 400);
+        assert.equal((await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: binaryHeaders, body: Buffer.alloc(25 * 1024 * 1024 + 1),
+        })).status, 400);
+
         const content = Buffer.from('<script>not executed</script>');
         const uploaded = await post('upload', { owner, fileName: 'research.pdf', mimeType: 'application/pdf', base64: content.toString('base64'), visibility: 'public' });
         assert.equal(uploaded.status, 201);
         const file = await uploaded.json() as { id: string; visibility: string };
         assert.equal(file.visibility, 'private', 'client cannot request public visibility');
-        assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 1);
+        assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 3);
         const result = await post('download', { owner, fileId: file.id });
         assert.equal(result.status, 200);
         assert.equal(result.headers.get('content-type'), 'application/octet-stream');
@@ -84,6 +145,8 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         assert.equal((await post('download', { owner, fileId: randomUUID() })).status, 404);
         assert.equal((await post('upload', { owner, fileName: 'invalid', mimeType: 'text/plain', base64: '%%%'})).status, 400);
         assert.equal((await post('archive', { owner, fileId: file.id })).status, 200);
+        assert.equal((await post('archive', { owner, fileId: binaryFile.id })).status, 200);
+        assert.equal((await post('archive', { owner, fileId: unicodeFile.id })).status, 200);
         assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 0);
         assert.equal((await post('download', { owner, fileId: file.id })).status, 404);
     } finally {

@@ -48,8 +48,10 @@ export function createHttpTransport(services: ServerServices) {
             response.end(JSON.stringify(mcpResourceMetadata(config.mcpAuth)));
             return;
         }
-        if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
+        // Files handles its own strict preflight; never return wildcard CORS
+        // headers for the private /api/files namespace.
         if (await serveFilesRequest(request, response, services)) return;
+        if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
         if (request.method === "POST" && request.url === "/integrations/contentful/webhook") {
             const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
             const rawBody = Buffer.concat(chunks).toString("utf8");

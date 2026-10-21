@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AtlasFilesService } from "../apps/server/src/server/atlas-files.js";
@@ -55,6 +55,28 @@ test("Shared Atlas Files reject unsafe metadata and cannot use arbitrary object 
         assert.equal(file.visibility, "public");
         // Visibility is metadata only in PR1; there is no public file-serving route.
         assert.equal((await files.download(portfolio, file.id)).bytes.toString(), "ok");
+    } finally {
+        await files.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("Downloads reject corrupted or truncated local objects before returning bytes", async () => {
+    const fixture = await databaseFixture();
+    const root = await mkdtemp(path.join(os.tmpdir(), "atlas-files-integrity-"));
+    const files = new AtlasFilesService(fixture.databaseUrl, root);
+    try {
+        const original = Buffer.from("Hello Atlas Files");
+        const saved = await files.upload({ owner: portfolio, fileName: "screenshot.png",
+            mimeType: "image/png", bytes: original });
+        const row = await files.pool.query("SELECT storage_key FROM atlas_files WHERE id=$1", [saved.id]);
+        const objectPath = path.join(root, String(row.rows[0]!.storage_key));
+        await writeFile(objectPath, Buffer.from("hello Atlas Files")); // Same size, different hash.
+        await assert.rejects(files.download(portfolio, saved.id), /integrity verification failed/);
+        await writeFile(objectPath, Buffer.from("truncated"));
+        await assert.rejects(files.download(portfolio, saved.id), /integrity verification failed/);
+        await writeFile(objectPath, original);
+        assert.deepEqual((await files.download(portfolio, saved.id)).bytes, original);
     } finally {
         await files.close();
         await rm(root, { recursive: true, force: true });

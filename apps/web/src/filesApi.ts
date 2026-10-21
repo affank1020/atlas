@@ -43,16 +43,22 @@ export async function uploadFile(owner: FileOwner, file: File): Promise<AtlasFil
         demoFiles.set(key(owner), [{ file: saved, bytes: file }, ...(demoFiles.get(key(owner)) ?? [])]);
         return saved;
     }
-    // Buffered 25 MiB endpoint for the MVP; streaming/presigned uploads come later.
-    const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error('Could not read file.'));
-        reader.onload = () => resolve(String(reader.result).split(',', 2)[1] ?? '');
-        reader.readAsDataURL(file);
+    // Transfer bytes directly instead of allocating a base64 string (33% overhead).
+    // The server keeps a strict 25 MiB cap; resumable uploads are a later phase.
+    const response = await fetch(`${API_BASE}/api/files/upload-binary`, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/octet-stream',
+            'x-atlas-owner-kind': owner.kind,
+            'x-atlas-owner-id': owner.id,
+            'x-atlas-file-name': encodeURIComponent(file.name),
+            'x-atlas-file-type': file.type || 'application/octet-stream',
+        },
+        body: file,
+        signal: AbortSignal.timeout(120_000),
     });
-    return postFiles<AtlasFile>('upload', {
-        owner, fileName: file.name, mimeType: file.type || 'application/octet-stream', base64,
-    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    return response.json() as Promise<AtlasFile>;
 }
 
 export async function downloadFile(owner: FileOwner, file: AtlasFile): Promise<void> {
