@@ -47,10 +47,17 @@ A pre-existing `git` group is never bulk-reassigned based on the origin of
 one member.
 
 `update_workspace` continues to rename an individual checkout. For a
-single-checkout `local` Workspace, its logical display name is also updated
-atomically. Renaming a checkout in a multi-checkout or `git` Workspace does
-not rename the repository-level identity; explicit logical rename support
-will be added separately.
+`local` Workspace with exactly one **active** checkout, its logical
+display name is also updated atomically, even if archived checkouts remain
+in its history. Renaming one checkout in a group with multiple active
+checkouts or in a `git` Workspace does not rename the repository-level
+identity; explicit logical rename support will be added separately.
+
+Concurrent repository recognition of sibling checkouts is serialized by
+their original logical Workspace ID **before** individual checkout row
+locks are acquired. If another request has already migrated that group,
+the stale request receives a retryable `CONFLICT` rather than overwriting
+the newer association or deadlocking. Retrying the recognition is safe.
 
 Managed feature retirement **requires** a GitHub PR merged for the exact
 feature HEAD into the repository default branch, in addition to Node-side
