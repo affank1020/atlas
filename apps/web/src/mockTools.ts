@@ -42,6 +42,8 @@ const records: AtlasRecord[] = stores.flatMap((entry, storeIndex) =>
 );
 const nodeMac = uuid(20, 1);
 const nodeLinux = uuid(20, 2);
+const nodeAndroidTablet = uuid(20, 3);
+const nodeAndroidPhone = uuid(20, 4);
 const workspaces = [
     { id: uuid(21, 1), projectId: mockProjects[0].id, nodeId: nodeMac, name: 'Atlas Demo Repo', rootPath: '/demo/atlas', kind: 'generic', adapter: null },
     { id: uuid(21, 2), projectId: mockProjects[2].id, nodeId: nodeMac, name: 'Football Demo', rootPath: '/demo/football', kind: 'unity', adapter: 'unity' },
@@ -51,6 +53,9 @@ const nodes: AtlasNode[] = [
     { id: nodeMac, name: 'Demo MacBook', status: 'online', platform: 'darwin', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], lastSeen: stamp, hostedWorkspaceCount: 2 },
     // Deliberately disconnected in local mock mode to preview the Home health warning.
     { id: nodeLinux, name: 'Demo Linux VPS', status: 'offline', platform: 'linux', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git'], lastSeen: stamp, hostedWorkspaceCount: 1 },
+    // Android fixtures preview future mobile nodes; they are not enrolled runtimes.
+    { id: nodeAndroidTablet, name: 'Demo Android Tablet', status: 'online', platform: 'android', deviceType: 'tablet', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
+    { id: nodeAndroidPhone, name: 'Demo Android Phone', status: 'online', platform: 'android', deviceType: 'phone', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
 ];
 const activity: AuditEvent[] = [
     { id: uuid(30, 1), occurredAt: stamp, client: 'demo', operation: 'workspace.git_status', projectId: mockProjects[0].id, workspaceId: workspaces[0].id, resulting: { branch: 'demo/main' } },
