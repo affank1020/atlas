@@ -44,6 +44,7 @@ test('dispatch logs fixed failure codes without exposing exception messages, arg
     const services = {
         diagnostics,
         catalog: { listProjects: async () => { throw new Error(secrets); } },
+        applications: { hasTool: () => false },
     } as any;
     const dispatch = createDispatcher(services);
     await assert.rejects(dispatch('list_projects', { token: secrets }), /do-not-record-this/);
