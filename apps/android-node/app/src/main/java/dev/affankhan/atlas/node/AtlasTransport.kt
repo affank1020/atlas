@@ -45,7 +45,12 @@ internal class AtlasTransport {
         }
     }
 
-    fun connect(node: StoredNode, version: String, listener: (ConnectionEvent) -> Unit): WebSocket {
+    fun connect(
+        node: StoredNode,
+        version: String,
+        listener: (ConnectionEvent) -> Unit,
+        onShareReply: (ShareReply) -> Unit,
+    ): WebSocket {
         val endpoint = parseAtlasEndpoint(node.origin)
         val request = Request.Builder()
             .url(endpoint.wssUrl)
@@ -68,7 +73,12 @@ internal class AtlasTransport {
                     }
                     return
                 }
-                // No device.* capabilities yet: never accept a Workspace command.
+                val reply = parseShareReply(text)
+                if (reply != null) {
+                    onShareReply(reply)
+                    return
+                }
+                // Android is sender-only: no incoming Workspace or device commands.
                 webSocket.close(1008, "Unsupported request")
                 listener(ConnectionEvent.Offline("Unsupported server request."))
             }

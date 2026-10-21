@@ -34,6 +34,12 @@ class SharesheetUiTest {
                 onForget = {},
                 onNavigate = { state = state.navigate(it) },
                 onEditDraft = { state = state.editDraft(it) },
+                shareTarget = "",
+                onEditShareTarget = {},
+                shareStatus = "Nothing sent yet",
+                sharePending = false,
+                onSend = {},
+                onLoadDeferredShare = { state = state.loadDeferredShare() },
             )
         }
     }
@@ -45,6 +51,16 @@ class SharesheetUiTest {
         compose.onNodeWithTag("tab-devices").performClick()
         compose.runOnIdle { state = state.importShare(ShareDelivery(2, "https://example.com")) }
         compose.onNodeWithTag("share-draft").assertTextContains("https://example.com")
+    }
+
+    @Test fun nextShareRemainsSeparateFromPreviousDeliveryStatus() {
+        mount()
+        compose.runOnIdle { state = state.receiveShare(ShareDelivery(1, "A submitted"), sending = false) }
+        compose.onNodeWithTag("share-draft").assertTextContains("A submitted")
+        compose.runOnIdle { state = state.receiveShare(ShareDelivery(2, "B arrived"), sending = true) }
+        compose.onNodeWithTag("share-draft").assertTextContains("A submitted")
+        compose.onNodeWithTag("load-next-share").performClick()
+        compose.onNodeWithTag("share-draft").assertTextContains("B arrived")
     }
 
     @Test fun leavingSendAndReturningRetainsDraft() {

@@ -126,3 +126,32 @@ it('issues a one-time enrolment code without displaying a Node credential', asyn
     expect(callTool).toHaveBeenCalledWith('create_node_enrolment', {});
     expect(screen.queryByText(/ATLAS_NODE_CREDENTIAL/)).not.toBeInTheDocument();
 });
+
+it('shows installed/latest software and update state inside the selected Node inspector', async () => {
+    const installed = { ...node, platform: 'linux', version: '1.9.0' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [installed];
+        if (name === 'get_node') return installed;
+        if (name === 'list_node_releases') return {
+            state: 'ready',
+            checkedAt: '2026-10-21T19:00:00Z',
+            releases: [{
+                component: 'desktop-node', platform: 'linux', version: '2.0.0',
+                commit: 'abc123abc123', protocol: 2, channel: 'stable', architecture: 'any',
+                minimumNodeJs: 20, provenance: 'unverified',
+                publishedAt: '2026-10-21T19:00:00Z', notes: '',
+            }],
+        };
+        throw new Error('Unexpected tool: ' + name);
+    });
+    render(<Nodes />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Development machine' }));
+    const details = await screen.findByRole('region', { name: 'Selected node details' });
+    const software = within(details).getByRole('region', { name: 'Node software' });
+    expect(within(software).getByText('1.9.0')).toBeInTheDocument();
+    expect(await within(software).findByText('2.0.0+abc123abc123')).toBeInTheDocument();
+    expect(within(software).getByText('Newer release available')).toBeInTheDocument();
+    expect(within(software).getByText('Not enabled for this Node')).toBeInTheDocument();
+    expect(within(software).getByRole('link', { name: /View downloads and release notes/ }))
+        .toHaveAttribute('href', '#/nodes/software');
+});

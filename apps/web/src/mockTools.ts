@@ -135,6 +135,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
             result = page(records.filter(r => r.projectId === projectId && r.storeId === storeId), input); break;
         case 'list_views': result = []; break;
         case 'list_nodes': result = nodes; break;
+        case 'list_node_releases': result = { state: 'ready', releases: [], checkedAt: stamp, source: 'github-releases' }; break;
         case 'get_node':
             result = { ...nodes.find(node => node.id === nodeId), workspaces: workspaces.filter(w => w.nodeId === nodeId),
                 activity: activity.filter(a => workspaces.some(w => w.nodeId === nodeId && w.id === a.workspaceId)).map(a => ({ operation: a.operation, createdAt: a.occurredAt })) }; break;

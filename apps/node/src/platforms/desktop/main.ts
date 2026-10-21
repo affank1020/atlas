@@ -9,6 +9,7 @@ import { LocalNodeRuntime } from './runtime.js';
 import { UnityAdapter, UnityCliConnection } from '../../capabilities/unity/unity.js';
 import { StandaloneNode } from '../../core/connection/standalone.js';
 import { WorkspaceFiles } from '../../capabilities/workspace-files/files.js';
+import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
 import { NodeOfflineFileQueue } from '../../core/file-queue.js';
 
 loadEnv({ path: process.env.ATLAS_NODE_ENV_FILE || '.env.node', quiet: true });
@@ -30,7 +31,10 @@ if (process.env.ATLAS_NODE_UNITY_ENABLED === '1') {
     const unity = loadUnityConfig();
     adapters.set('unity', new UnityAdapter(files, new UnityCliConnection(unity.binary), unity.approvedCommands));
 }
-const runtime = new LocalNodeRuntime(roots, adapters);
+// Opt-in, GUI-only capability; never enable this on a Linux/headless Node.
+const shareReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_SHARE_RECEIVE_ENABLED === 'true'
+    ? new MacShareReceiver() : undefined;
+const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver);
 const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
 const offlineQueue = process.env.ATLAS_NODE_FILE_QUEUE_ENABLED === '1'
     ? new NodeOfflineFileQueue({nodeId:id,credential:token,serverUrl:serverUrl.toString()})
@@ -39,18 +43,15 @@ let queueInterval: ReturnType<typeof setInterval> | undefined;
 function drainOfflineQueue() {
     if (!offlineQueue || !node.isOnline) return;
     void offlineQueue.flush().then(result => {
-        // Queue diagnostics contain counts only, never uploaded filenames,
-        // contents or node credentials.
+        // Aggregate diagnostics only; never log file contents, names or secrets.
         if (result.delivered) console.log('Atlas Node delivered ' + result.delivered + ' queued file(s).');
         if (result.blocked || result.unreadable)
-            console.warn('Atlas Node has blocked or unreadable offline uploads; inspect local queue status.');
+            console.warn('Atlas Node has blocked or unreadable uploads; inspect local queue status.');
     }).catch(() => {
         console.error('Atlas Node offline file queue cannot be read or flushed.');
     });
 }
 if (offlineQueue) {
-    // No uploads occur unless the owner explicitly enables this opt-in flag.
-    // Foreground Node connectivity drives bounded serial drain passes.
     queueInterval = setInterval(drainOfflineQueue,60_000);
     queueInterval.unref();
 }
@@ -106,9 +107,8 @@ const stop = async () => {
     stopping = true;
     setConnectionState('stopping');
     if (queueInterval) clearInterval(queueInterval);
-    // systemd's stop deadline is shorter than an individual 120-second
-    // resumable HTTP timeout. Abort the active file request and await its
-    // lock-release finally block before stopping the WebSocket Node.
+    // Stop the queue FIRST: abort its active HTTP request and wait for the
+    // cross-process mutation lock to be released within the service deadline.
     if (offlineQueue) {
         try { await offlineQueue.stop(); }
         catch { console.error('Atlas Node failed to stop its offline queue cleanly; inspect the local lock.'); }
