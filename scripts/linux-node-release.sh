@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Manually install a verified, compiled Atlas Node artifact on Linux.
+# Legacy archive integrity/format checker and staging primitive.
+# This does NOT verify the build signer! Use linux-node-trusted-stage.sh
+# for production, which pins the actual GitHub attestation before install.
 # Does not start, restart, enrol or replace an active Node service.
 set -euo pipefail
 

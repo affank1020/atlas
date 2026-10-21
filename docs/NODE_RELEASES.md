@@ -78,6 +78,56 @@ ATLAS_ALLOW_DIRTY_NODE_PACKAGE=1 node scripts/package-node-release.mjs
 Never use a dirty-checkout artifact as a production release. The normal
 packaging command refuses to label uncommitted modifications as immutable.
 
+## Pinned provenance verification and Linux trusted staging
+
+The SHA-256 sidecar verifies **integrity against a supplied checksum**, not
+authenticity. Before trusting an archive for Linux, use the dedicated host
+helper:
+
+```bash
+# GitHub CLI >= 2.102.0, tar, node and Linux required.
+# Download bundle as your normal GitHub CLI-authenticated user (NOT sudo):
+archive="atlas-node-v2.0.0-<12-character-commit>.tar.gz"  # replace with your release filename
+gh attestation download "$archive" -R affank1020/atlas
+bundle="sha256:$(sha256sum "$archive" | awk '{print $1}').jsonl"
+bash scripts/linux-node-trusted-stage.sh verify "$archive" "$archive.sha256" "$bundle"
+sudo bash scripts/linux-node-trusted-stage.sh install "$archive" "$archive.sha256" "$bundle"
+```
+
+The helper first checks the portable archive format, checksum, and embedded
+source commit. It then uses `gh attestation verify` to pin **all** of:
+the exact `affank1020/atlas` repository, the source ref
+`refs/heads/main`, the **full source commit SHA**, the signing certificate
+identity
+`https://github.com/affank1020/atlas/.github/workflows/node-package.yml@refs/heads/main`,
+the SLSA v1 provenance predicate, and a GitHub-hosted runner. It fails closed
+when the attestation is unavailable, unsigned or does not match. This
+requires authenticated GitHub access from the **unprivileged user**
+for `gh attestation download`, but not from the root installer: it verifies
+the signed bundle locally with `gh attestation verify --bundle`. The bundle is
+untrusted input and cannot bypass certificate/source constraints. The installer
+refuses an absent bundle; never pass GitHub tokens through sudo or use
+`sudo -E`. GitHub CLI may fetch or refresh Sigstore trust roots, but does not
+require root API authentication for bundle verification. Offline verification
+cannot independently detect whether a repository has since been renamed or its
+old name reused; verify repository identity online during procurement.
+
+The root-only `install` action copies the archive, checksum and
+attestation bundle into a private root-owned staging directory **before**
+verifying the bundle locally without a root GitHub CLI login, then passes
+those same copied archive/checksum bytes to the existing `linux-node-release.sh install`
+installer, preventing a caller from changing the artifact between checks.
+It installs into `/opt/atlas-node/releases` but **never** modifies the
+`current`/`previous` symlinks, systemd service, credentials, Atlas Server,
+PostgreSQL or workspaces. Continue to use the separate, administrator-reviewed
+`linux-node-lifecycle.sh plan/activate/rollback` for activation.
+
+**Note:** GitHub's catalogue currently marks the first PR #46 release
+`immutable: false`. It is intentionally ineligible for Atlas's software
+catalogue until the repository's immutable-release setting is enabled and a
+**new** build is published. This host verifier does not override the
+catalogue's immutability requirement.
+
 ## Platform lifecycle and planned control-plane updates
 
 - **Linux**: after verifying this published archive, use existing
