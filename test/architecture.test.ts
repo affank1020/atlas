@@ -125,6 +125,18 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
             assert.ok(tool.inputSchema.properties?.checkoutId, `${name} must advertise checkoutId`);
             assert.ok(tool.inputSchema.properties?.workspaceId, `${name} must keep legacy workspaceId`);
         }
+        // Project link/unlink retain their required Project selector even though
+        // the checkout selector can use either the old or new spelling.
+        for (const name of ['link_workspace_project', 'unlink_workspace_project']) {
+            const tool = tools.find(item => item.name === name);
+            assert.ok(tool, `Missing Project association tool: ${name}`);
+            assert.ok(tool.inputSchema.required?.includes('projectId'),
+                `${name} must advertise projectId as required to MCP clients`);
+            assert.ok(tool.inputSchema.properties?.checkoutId,
+                `${name} must still advertise the explicit checkout selector`);
+            assert.ok(tool.inputSchema.properties?.workspaceId,
+                `${name} must still advertise legacy checkout selection`);
+        }
         const retired = tools.find(item => item.name === 'workspace_git_remove_worktree');
         assert.ok(retired?.inputSchema.properties?.targetCheckoutId,
             'Destructive retirement must also advertise explicit targetCheckoutId');
