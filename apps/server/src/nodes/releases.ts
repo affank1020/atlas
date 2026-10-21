@@ -1,5 +1,5 @@
 /**
- * Verified distribution catalogue for standalone desktop Nodes.
+ * Stable distribution catalogue for standalone desktop Nodes.
  *
  * GitHub Releases is the one artifact store. The publisher produces an
  * attestation, but the catalogue cannot independently verify its signature,
@@ -11,8 +11,10 @@ export type NodeRelease = {
     component: 'desktop-node';
     version: string;
     commit: string;
-    /** Complete release-tag target commit, used to order same-version builds. */
+    /** Full source SHA advertised by the publisher; NOT independently attested here. */
     sourceCommit: string;
+    /** Monotonic GitHub Actions workflow run number for this release. */
+    sourceOrder: number;
     platform: 'darwin' | 'linux';
     architecture: 'any';
     channel: 'stable';
@@ -38,7 +40,6 @@ export type NodeReleaseCatalogue = {
 
 const SOURCE = 'https://api.github.com/repos/affank1020/atlas/releases?per_page=30';
 const REPO_RELEASE_URL = 'https://github.com/affank1020/atlas/releases/download/';
-const SOURCE_COMPARE = 'https://api.github.com/repos/affank1020/atlas/compare/';
 const REQUEST_HEADERS = { accept: 'application/vnd.github+json', 'user-agent': 'atlas-node-release-catalogue', 'x-github-api-version': '2022-11-28' };
 const SHA256 = /^[a-f0-9]{64}$/;
 // Stable channel must never accept an -rc/-beta suffix even when GitHub
@@ -61,6 +62,14 @@ function parseRelease(value: GithubRelease): NodeRelease[] {
     if (typeof sourceCommit !== 'string' || !/^[a-f0-9]{40}$/.test(sourceCommit)
         || !sourceCommit.startsWith(match[2]!)) return [];
     if (typeof value.published_at !== 'string' || !Number.isFinite(Date.parse(value.published_at))) return [];
+    // A release is eligible only if it carries the monotonic workflow-run
+    // sequence written by our publisher. Reject legacy/manual entries without
+    // an ordering contract instead of guessing from their publication dates.
+    if (typeof value.body !== 'string') return [];
+    const sequence = /^Atlas-Node-Release-Sequence: ([1-9][0-9]*)$/m.exec(value.body);
+    if (!sequence) return [];
+    const sourceOrder = Number(sequence[1]);
+    if (!Number.isSafeInteger(sourceOrder) || sourceOrder <= 0) return [];
     const tag = value.tag_name;
     const name = 'atlas-node-v' + match[1] + '-' + match[2] + '.tar.gz';
     const assets = value.assets as GithubAsset[];
@@ -74,7 +83,7 @@ function parseRelease(value: GithubRelease): NodeRelease[] {
     if (!SHA256.test(digest)) return [];
     if (value.html_url !== 'https://github.com/affank1020/atlas/releases/tag/' + tag) return [];
     const base = {
-        component: 'desktop-node' as const, version: match[1]!, commit: match[2]!, sourceCommit,
+        component: 'desktop-node' as const, version: match[1]!, commit: match[2]!, sourceCommit, sourceOrder,
         architecture: 'any' as const, channel: 'stable' as const,
         protocol: 2 as const, minimumNodeJs: 20 as const,
         publishedAt: value.published_at,
@@ -96,59 +105,21 @@ function compareVersions(a: string, b: string): number {
 
 export function parseNodeReleases(body: unknown): NodeRelease[] {
     if (!Array.isArray(body)) throw new Error('Invalid GitHub Releases response.');
-    // Only order different semantic versions here: publication timestamp is
-    // NOT a source-order signal for two commits sharing a version.
-    return body.flatMap(value => value && typeof value === 'object' ? parseRelease(value as GithubRelease) : [])
-        .sort((a, b) => compareVersions(a.version, b.version));
-}
-
-/**
- * Use GitHub's Git ancestry comparison to select the newest source commit
- * within each stable SemVer. If ancestry cannot be proven, fail closed:
- * never recommend a possible downgrade by guessing from publication time.
- */
-const ancestryCache = new Map<string, 'ahead' | 'behind'>();
-// Immutable Git commits have immutable ancestry; cache comparisons across
-// refreshes to avoid exhausting GitHub's unauthenticated request quota.
-export async function orderNodeReleases(releases: NodeRelease[], fetcher: typeof fetch): Promise<NodeRelease[]> {
-    const groups = new Map<string, NodeRelease[]>();
+    const releases = body.flatMap(value => value && typeof value === 'object' ? parseRelease(value as GithubRelease) : []);
+    // A workflow run can only produce one build. Conflicting source commits
+    // for the same run number mean metadata is inconsistent: fail closed.
+    const owners = new Map<number, string>();
     for (const release of releases) {
-        const group = groups.get(release.version) ?? [];
-        group.push(release);
-        groups.set(release.version, group);
+        const owner = owners.get(release.sourceOrder);
+        if (owner && owner !== release.sourceCommit) throw new Error('Conflicting Node release sequence.');
+        owners.set(release.sourceOrder, release.sourceCommit);
     }
-    const ordered: NodeRelease[] = [];
-    for (const [, group] of [...groups].sort(([a], [b]) => compareVersions(a, b))) {
-        const builds = group.filter(item => item.platform === 'linux');
-        let newest = builds[0];
-        if (!newest) continue;
-        for (const candidate of builds.slice(1)) {
-            if (candidate.sourceCommit === newest.sourceCommit) continue;
-            const compareUrl = SOURCE_COMPARE + newest.sourceCommit + '...' + candidate.sourceCommit;
-            let status: unknown = ancestryCache.get(compareUrl);
-            if (!status) {
-                const response = await fetcher(compareUrl, {
-                    headers: REQUEST_HEADERS,
-                    signal: AbortSignal.timeout(7000),
-                });
-                if (!response.ok) throw new Error('GitHub commit comparison failed.');
-                const comparison: unknown = await response.json();
-                status = comparison && typeof comparison === 'object' && 'status' in comparison ? comparison.status : undefined;
-                if (status !== 'ahead' && status !== 'behind') throw new Error('Cannot establish release source ancestry.');
-                if (ancestryCache.size >= 256) ancestryCache.delete(ancestryCache.keys().next().value!);
-                ancestryCache.set(compareUrl, status);
-            }
-            if (status === 'ahead') newest = candidate; // head descended from base
-        }
-        ordered.push(...group.filter(item => item.sourceCommit === newest.sourceCommit));
-        ordered.push(...group.filter(item => item.sourceCommit !== newest.sourceCommit));
-    }
-    return ordered;
+    return releases.sort((a, b) => compareVersions(a.version, b.version) || b.sourceOrder - a.sourceOrder);
 }
 
 let cached: { expires: number; result: NodeReleaseCatalogue } | undefined;
 let pending: Promise<NodeReleaseCatalogue> | undefined;
-export function resetNodeReleaseCacheForTests() { cached = undefined; pending = undefined; ancestryCache.clear(); }
+export function resetNodeReleaseCacheForTests() { cached = undefined; pending = undefined; }
 
 /** Fail visibly if GitHub is unavailable; never promote a debug APK or workflow artifact. */
 export async function listNodeReleases(refresh = false, fetcher: typeof fetch = fetch): Promise<NodeReleaseCatalogue> {
@@ -164,7 +135,7 @@ export async function listNodeReleases(refresh = false, fetcher: typeof fetch = 
                 signal: AbortSignal.timeout(7000),
             });
             if (!response.ok) throw new Error('GitHub Releases returned HTTP ' + response.status);
-            const releases = await orderNodeReleases(parseNodeReleases(await response.json()), fetcher);
+            const releases = parseNodeReleases(await response.json());
             result = { state: 'ready', releases, checkedAt, source: 'github-releases' };
         } catch {
             result = { state: 'unavailable', releases: [], checkedAt, source: 'github-releases',
