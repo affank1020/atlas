@@ -38,13 +38,72 @@ test('Workspaces browse independent directories across Nodes and follow deep lin
     render(<Workspaces />);
     const browser = screen.getByRole('region', { name: 'Workspace browser' });
     expect(await within(browser).findByText('Atlas')).toBeInTheDocument();
-    expect(within(browser).getAllByText(/Independent/).length).toBeGreaterThan(0);
+    expect(within(browser).getAllByText(/checkout/).length).toBeGreaterThan(0);
     fireEvent.click(within(browser).getByRole('button', { name: /Atlas/ }));
     expect(location.hash).toContain('workspace=repo');
     const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
     expect(await within(inspector).findByText('atlas/feature')).toBeInTheDocument();
     expect(within(inspector).getByText('example/atlas')).toBeInTheDocument();
     expect(within(inspector).getByRole('button', { name: 'Push feature branch to GitHub' })).toBeEnabled();
+});
+
+test('logical repository appears once while Mac and VPS checkouts remain selectable', async () => {
+    const mac = { ...repo, id: 'mac', nodeId: 'mac-node', name: 'Portfolio Site', rootPath: '/mac/portfolio' };
+    const vps = { ...repo, id: 'vps', name: 'Portfolio Site (VPS)', rootPath: '/srv/portfolio' };
+    const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node, macNode];
+        if (name === 'list_workspaces') return [mac, vps];
+        if (name === 'list_logical_workspaces') return [{
+            id: 'logical-portfolio', name: 'Portfolio Site',
+            repository: 'affank1020/portfolio-site', kind: 'git', checkouts: [mac, vps],
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha,
+            originRepository: 'affank1020/portfolio-site', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    expect(await within(browser).findByText('1 Workspace')).toBeInTheDocument();
+    expect(within(browser).getAllByText('Portfolio Site')).toHaveLength(1);
+    expect(within(browser).getByText('2 checkouts across 2 Nodes')).toBeInTheDocument();
+    fireEvent.click(within(browser).getByRole('button', { name: 'Portfolio Site' }));
+    expect(location.hash).toContain('workspace=logical-portfolio');
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    expect(await within(inspector).findAllByText(/affank1020\/portfolio-site/)).not.toHaveLength(0);
+    expect(within(inspector).getByRole('group', { name: 'Choose Node checkout' })).toBeInTheDocument();
+    fireEvent.click(within(browser).getByRole('button', { name: /Checkout on MacBook/ }));
+    expect(location.hash).toContain('workspace=mac');
+    fireEvent.click(within(browser).getByRole('button', { name: /Checkout on Linux VPS/ }));
+    expect(location.hash).toContain('workspace=vps');
+    fireEvent.change(within(browser).getByLabelText('Node'), { target: { value: 'mac-node' } });
+    expect(within(browser).getByText('1 checkout across 1 Node')).toBeInTheDocument();
+});
+
+test('repository recognition uses Node Git inspection and never sends caller-chosen identity', async () => {
+    const mac = { ...repo, id: 'mac', nodeId: 'mac-node', rootPath: '/mac/portfolio' };
+    const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [macNode];
+        if (name === 'list_workspaces') return [mac];
+        if (name === 'list_logical_workspaces') return [{
+            id: 'local', name: 'Portfolio Site', repository: null, kind: 'local', checkouts: [mac],
+        }];
+        if (name === 'workspace_git_status') return {
+            available: true, originRepository: 'affank1020/portfolio-site',
+        };
+        if (name === 'list_github_repositories') return { repositories: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    await screen.findByText('1 Workspace');
+    fireEvent.click(screen.getByRole('button', { name: 'Recognise repositories' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('attach_checkout_repository', {
+        workspaceId: 'mac',
+    }));
+    expect(await screen.findByText(/Recognised 1 verified checkout/)).toBeInTheDocument();
 });
 
 test('provisioning requires a registered development root and uses brokered server tools', async () => {

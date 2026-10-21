@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { AtlasError } from '../../shared/errors.js';
 import type { Workspace } from '../../workspaces/model.js';
+import type { LogicalWorkspace } from '@atlas/protocol/workspace';
 import type { WorkspaceRepository, WorkspaceTransaction } from '../../workspaces/repository.js';
 
-const row = (x: any): Workspace => ({ id: x.id, nodeId: x.node_id, projectId: x.project_id ?? null, name: x.name, rootPath: x.root_path, kind: x.kind, adapter: x.adapter, status: x.status, devTasks: x.dev_tasks ?? {}, createdAt: new Date(x.created_at).toISOString(), updatedAt: new Date(x.updated_at).toISOString(), ...(x.archived_at && { archivedAt: new Date(x.archived_at).toISOString() }) });
+const row = (x: any): Workspace => ({ id: x.id, logicalWorkspaceId: x.logical_workspace_id, nodeId: x.node_id, projectId: x.project_id ?? null, name: x.name, rootPath: x.root_path, kind: x.kind, adapter: x.adapter, status: x.status, devTasks: x.dev_tasks ?? {}, createdAt: new Date(x.created_at).toISOString(), updatedAt: new Date(x.updated_at).toISOString(), ...(x.archived_at && { archivedAt: new Date(x.archived_at).toISOString() }) });
 class WorkspaceReader {
     constructor(protected readonly db: Pool | PoolClient) {}
     async get(projectId: string, id: string, includeArchived = false) {
@@ -51,11 +52,63 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
         );
         return result.rows[0]?.branch ?? null;
     }
-    async insert(input: { nodeId: string; projectId?: string | null; name: string; rootPath: string; kind: 'generic' | 'unity' }) {
+    /** Repository identity is derived from a verified Git origin, never a
+     * user-supplied name or a matching path. Scoped by the unique repo index. */
+    private async repositoryIdentity(repository: string, displayName: string) {
+        const candidate = randomUUID();
+        await this.connection.query(
+            `INSERT INTO logical_workspaces(id,name,repository,kind)
+             VALUES($1,$2,$3,'git') ON CONFLICT DO NOTHING`,
+            [candidate, displayName, repository.toLowerCase()]);
+        const found = await this.connection.query(
+            'SELECT id FROM logical_workspaces WHERE lower(repository)=$1',
+            [repository.toLowerCase()]);
+        if (!found.rowCount) throw new AtlasError('Unable to resolve repository identity.', 'CONFLICT');
+        return found.rows[0].id as string;
+    }
+    async attachRepository(workspaceId: string, repository: string): Promise<Workspace> {
+        const source = await this.getById(workspaceId);
+        // Caller has verified the bound Node's Git origin. A provisional local
+        // group can contain only Atlas-managed worktree descendants of its
+        // original checkout: those checkouts share one Git common directory.
+        // Migrate the WHOLE local group, including archived siblings, so that
+        // recognising the parent never strands already-created feature trees.
+        const previous = await this.connection.query(
+            'SELECT kind FROM logical_workspaces WHERE id=$1 FOR UPDATE', [source.logicalWorkspaceId]);
+        if (!previous.rowCount)
+            throw new AtlasError('Logical Workspace was not found.', 'CONFLICT');
+        const logicalId = await this.repositoryIdentity(repository, source.name);
+        if (previous.rows[0].kind === 'local') {
+            await this.connection.query(
+                'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE logical_workspace_id=$1',
+                [source.logicalWorkspaceId, logicalId]);
+        } else {
+            // A Git-backed group can contain other independent clones. Never
+            // reassign those based solely on this one checkout's origin.
+            await this.connection.query(
+                'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE id=$1',
+                [workspaceId, logicalId]);
+        }
+        // Remove a provisional identity only after its last checkout moves.
+        await this.connection.query(
+            `DELETE FROM logical_workspaces WHERE id=$1 AND kind='local'
+             AND NOT EXISTS (SELECT 1 FROM workspaces WHERE logical_workspace_id=$1)`,
+            [source.logicalWorkspaceId]);
+        return this.getById(workspaceId);
+    }
+    async insert(input: { nodeId: string; projectId?: string | null; name: string; rootPath: string; kind: 'generic' | 'unity'; logicalWorkspaceId?: string; repository?: string }) {
         try {
+            let logicalId = input.logicalWorkspaceId;
+            if (!logicalId && input.repository)
+                logicalId = await this.repositoryIdentity(input.repository, input.name);
+            if (!logicalId) {
+                logicalId = randomUUID();
+                await this.connection.query('INSERT INTO logical_workspaces(id,name) VALUES($1,$2)', [logicalId, input.name]);
+            }
             const result = await this.connection.query(
-                'INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-                [randomUUID(), input.projectId ?? null, input.name, input.rootPath, input.kind, input.kind === 'unity' ? 'unity' : null, input.nodeId]);
+                'INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+                [randomUUID(), input.projectId ?? null, input.name, input.rootPath, input.kind,
+                    input.kind === 'unity' ? 'unity' : null, input.nodeId, logicalId]);
             const workspace = row(result.rows[0]);
             if (input.projectId) await this.link(workspace.id, input.projectId);
             return workspace;
@@ -82,7 +135,22 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
         const result = archive
             ? await this.connection.query("UPDATE workspaces SET status='archived',archived_at=now(),updated_at=now() WHERE id=$1 RETURNING *", [id])
             : await this.connection.query('UPDATE workspaces SET name=COALESCE($2,name),updated_at=now() WHERE id=$1 RETURNING *', [id, name]);
-        return row(result.rows[0]);
+        const changed = row(result.rows[0]);
+        if (!archive && name !== undefined) {
+            // The browser hides archived checkouts by default. A local
+            // Workspace with exactly one ACTIVE checkout must keep its
+            // logical display name in sync, even with archived history.
+            // A multi-active-checkout group or Git repository needs a
+            // separate logical rename action.
+            await this.connection.query(
+                `UPDATE logical_workspaces l SET name=$2,updated_at=now()
+                 WHERE l.id=$1 AND l.kind='local'
+                   AND (SELECT count(*) FROM workspaces w
+                        WHERE w.logical_workspace_id=l.id
+                          AND w.archived_at IS NULL)=1`,
+                [changed.logicalWorkspaceId, name]);
+        }
+        return changed;
     }
 }
 export class PostgresWorkspaceRepository extends WorkspaceReader implements WorkspaceRepository {
@@ -96,6 +164,33 @@ export class PostgresWorkspaceRepository extends WorkspaceReader implements Work
         return (await this.pool.query(
             'SELECT * FROM workspaces WHERE ($1 OR archived_at IS NULL) AND ($2::uuid IS NULL OR node_id=$2::uuid) ORDER BY created_at,id',
             [includeArchived, nodeId ?? null])).rows.map(row);
+    }
+    async listLogical(includeArchived = false): Promise<LogicalWorkspace[]> {
+        const result = await this.pool.query(
+            `SELECT l.id AS logical_id, l.name AS logical_name,
+                    l.repository AS logical_repository, l.kind AS logical_kind,
+                    l.created_at AS logical_created_at, l.updated_at AS logical_updated_at,
+                    w.*
+             FROM logical_workspaces l
+             JOIN workspaces w ON w.logical_workspace_id=l.id
+             WHERE ($1 OR w.archived_at IS NULL)
+             ORDER BY l.created_at, l.id, w.created_at, w.id`, [includeArchived]);
+        const groups = new Map<string, LogicalWorkspace>();
+        for (const record of result.rows) {
+            let entry = groups.get(record.logical_id);
+            if (!entry) {
+                entry = {
+                    id: record.logical_id, name: record.logical_name,
+                    repository: record.logical_repository, kind: record.logical_kind,
+                    createdAt: new Date(record.logical_created_at).toISOString(),
+                    updatedAt: new Date(record.logical_updated_at).toISOString(),
+                    checkouts: [],
+                };
+                groups.set(entry.id, entry);
+            }
+            entry.checkouts.push(row(record));
+        }
+        return [...groups.values()];
     }
     async connect(): Promise<WorkspaceTransaction> { return new PostgresWorkspaceTransaction(await this.pool.connect()); }
 }

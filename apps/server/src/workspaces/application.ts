@@ -18,6 +18,7 @@ export class WorkspaceService {
         const x: any = parsed.data;
         if (name === 'list_github_repositories') return this.github.listRepositories();
         if (name === 'list_workspaces') return this.repository.listAll(x.includeArchived, x.nodeId);
+        if (name === 'list_logical_workspaces') return this.repository.listLogical(x.includeArchived);
         if (x.projectId) await this.catalog.getProject(x.projectId, x.includeArchived);
         if (name === 'list_project_workspaces') return this.repository.list(x.projectId, x.includeArchived);
         if (name === 'create_workspace') {
@@ -35,6 +36,41 @@ export class WorkspaceService {
             ? await this.repository.get(x.projectId, x.workspaceId, x.includeArchived)
             : await this.repository.getById(x.workspaceId, x.includeArchived);
         if (name === 'get_workspace') return workspace;
+        if (name === 'attach_checkout_repository') {
+            // The caller cannot supply an origin: only the Node's verified Git
+            // inspection may determine which repository owns this checkout.
+            if (workspace.status !== 'active' || workspace.kind !== 'generic')
+                throw new AtlasError('Only active Git checkouts can attach to a repository.', 'WORKSPACE_DENIED');
+            const inspection = await this.runtime.execute(workspace, 'workspace_git_status',
+                { workspaceId: workspace.id }) as { available?: boolean; originRepository?: string | null };
+            const repository = inspection?.originRepository;
+            if (inspection?.available !== true || typeof repository !== 'string' ||
+                !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
+                throw new AtlasError('The Node did not verify a GitHub origin for this checkout.', 'WORKSPACE_DENIED');
+            const db = await this.repository.connect();
+            try {
+                await db.begin();
+                // A provisional logical group can contain multiple managed
+                // checkouts. Serialise recognition by the group's original ID
+                // BEFORE taking any per-checkout row locks: otherwise two
+                // callers can each hold one checkout lock, then deadlock when
+                // one tries to move all siblings together.
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
+                await db.lockWorkspace(workspace.id);
+                const current = await db.getById(workspace.id);
+                if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath ||
+                    current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                    throw new AtlasError('Checkout binding or repository assignment changed; retry discovery.', 'CONFLICT');
+                const updated = await db.attachRepository(workspace.id, repository);
+                await db.audit(updated, 'workspace.repository_attached', x.client, {
+                    checkoutId: workspace.id, logicalWorkspaceId: updated.logicalWorkspaceId,
+                    repository,
+                });
+                await db.commit();
+                return updated;
+            } catch (error) { await db.rollback(); throw error; }
+            finally { db.release(); }
+        }
         if (name === 'link_workspace_project' || name === 'unlink_workspace_project') {
             const db = await this.repository.connect();
             try {
@@ -136,20 +172,26 @@ export class WorkspaceService {
                             target.id, workspace.id, target.rootPath);
                         if (!expectedBranch)
                             throw new AtlasError('Only an Atlas-created worktree can be removed through Atlas.', 'WORKSPACE_DENIED');
-                        // Verify this exact branch tip was merged into the GitHub
-                        // repository's default branch. Git ancestry is insufficient
-                        // for squash merges; lack of PR evidence fails closed.
-                        const git = await removeRuntime!.execute(current, 'workspace_git_status', {
-                            workspaceId: current.id,
+                        // This path bypasses NodeRouter.prepare to avoid Node
+                        // re-resolution under database locks. Strip server-only
+                        // fields for strict Node v2 before both Git inspection
+                        // and destructive retirement.
+                        const { logicalWorkspaceId: _logicalWorkspaceId, ...nodeCheckout } = current;
+                        const git = await removeRuntime!.execute(nodeCheckout, 'workspace_git_status', {
+                            workspaceId: nodeCheckout.id,
                         }) as { available?: boolean; originRepository?: string | null };
                         if (git?.available !== true || !git.originRepository)
                             throw new AtlasError('Cannot verify the source GitHub repository; local files were preserved.', 'WORKSPACE_DENIED');
+                        // Git ancestry alone cannot prove a squash-merged PR.
+                        // Fail closed if the exact feature HEAD was not merged
+                        // into the current default branch on GitHub.
                         const mergedPullRequest = await this.github.verifyMergedPullRequest(
                             git.originRepository, expectedBranch, x.expectedHead);
-                        // Never trust the caller to provide the branch or target
-                        // path. The Node independently checks both Git identity
-                        // and the expected branch before any filesystem deletion.
-                        const removal = await removeRuntime!.execute(current, nodeOperation, { ...nodeInput, expectedBranch });
+                        // The Node still independently checks branch, HEAD,
+                        // provenance and local changes before removing files.
+                        const removal = await removeRuntime!.execute(nodeCheckout, nodeOperation, {
+                            ...nodeInput, expectedBranch,
+                        });
                         return { ...(removal as object), mergedPullRequest };
                     }
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
@@ -166,12 +208,22 @@ export class WorkspaceService {
             db = await this.repository.connect();
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);
+            if (name === 'workspace_git_create_worktree') {
+                // Recognition moves every member of a provisional logical group
+                // while holding that group's advisory lock. Take the SAME lock
+                // before locking the source checkout or touching the Node:
+                // otherwise the new checkout's FK to the old group can deadlock
+                // against recognition's bulk checkout update, leaving a real
+                // Git worktree on disk without an Atlas registration.
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
+            }
             // Do not hold a Core project row lock across slow external-tool calls.
             if (x.projectId) await db.requireActiveProject(x.projectId);
             await db.lockWorkspace(workspace.id);
             const current = x.projectId ? await db.get(x.projectId, workspace.id, false) : await db.getById(workspace.id, false);
-            if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath)
-                throw new AtlasError('Workspace binding changed; retry the operation.', 'CONFLICT');
+            if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath ||
+                current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                throw new AtlasError('Workspace binding or repository association changed; retry the operation.', 'CONFLICT');
             if (target) {
                 await db.lockWorkspace(target.id);
                 const latest = await db.getById(target.id);
@@ -193,7 +245,12 @@ export class WorkspaceService {
                     // inherit their source Project if no Project was supplied.
                     projectId: name === 'workspace_git_clone_repository'
                         ? (x.projectId ?? null) : (x.projectId ?? workspace.projectId),
-                    rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic' });
+                    rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic',
+                    // A feature worktree inherits the source's logical identity.
+                    // A fresh clone joins the globally verified repository identity.
+                    ...(name === 'workspace_git_create_worktree'
+                        ? { logicalWorkspaceId: current.logicalWorkspaceId }
+                        : { repository: x.repository }) });
                 await db.audit(registered, 'workspace.created', x.client, {
                     sourceWorkspaceId: workspace.id, branch: result.branch,
                     rootPath: registered.rootPath,
