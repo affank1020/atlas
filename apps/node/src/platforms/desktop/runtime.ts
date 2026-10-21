@@ -1,5 +1,6 @@
 import { runDevTask } from '../../capabilities/dev/runner.js';
 import { readAtlasNodeLog } from '../../capabilities/node-logs.js';
+import { readAtlasLinuxJournal } from '../../capabilities/linux-journal.js';
 import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
@@ -33,7 +34,7 @@ export class LocalNodeRuntime implements NodeRuntime {
     }
     getCapabilities(): NodeCapability[] {
         const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
-        if (this.platform === 'linux') return shared;
+        if (this.platform === 'linux') return [...shared, 'node.logs'];
         return [...shared, "workspace.dev", "football.training", "node.logs",
             ...(this.adapters.has("unity") ? ["unity" as const] : []),
             ...(this.shareReceiver ? ["device.share.receive" as const] : [])];
@@ -43,7 +44,16 @@ export class LocalNodeRuntime implements NodeRuntime {
         if (!this.shareReceiver) throw new AtlasError('Mac sharing approval not enabled.', 'CAPABILITY_UNAVAILABLE');
         return this.shareReceiver.receive(input, this.shutdown.signal);
     }
-    async readLogs(source: 'stdout' | 'stderr', lines: number) { return readAtlasNodeLog(source, lines, this.platform); }
+    async readLogs(source: 'stdout' | 'stderr' | 'journal', lines: number) {
+        if (this.platform === 'linux') {
+            if (source !== 'journal')
+                throw new AtlasError('Linux Nodes expose only the fixed Atlas systemd journal.', 'CAPABILITY_UNAVAILABLE');
+            return readAtlasLinuxJournal(lines);
+        }
+        if (source === 'journal')
+            throw new AtlasError('Atlas systemd journal access is unavailable on this platform.', 'CAPABILITY_UNAVAILABLE');
+        return readAtlasNodeLog(source, lines, this.platform);
+    }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {
         // Defence in depth even for direct runtime callers: do not let a
         // forged remote request execute development or macOS-only operations.
