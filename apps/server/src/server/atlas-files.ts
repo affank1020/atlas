@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { AtlasError } from "../shared/errors.js";
 import { createObjectStore, ObjectNotFound, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
 
@@ -58,7 +58,7 @@ export class AtlasFilesService {
     }
     async upload(input: {
         owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer;
-        visibility?: FileVisibility; client?: string;
+        visibility?: FileVisibility; client?: string; database?: PoolClient;
     }): Promise<AtlasFile> {
         const owner = ownerScope(input.owner);
         const fileName = input.fileName?.trim();
@@ -74,7 +74,7 @@ export class AtlasFilesService {
         const checksum = createHash("sha256").update(input.bytes).digest("hex");
         const storageKey = `files-${id.replaceAll("-", "")}-${checksum}`;
         await this.objects.put(storageKey, input.bytes, input.mimeType);
-        const result = await this.pool.query(
+        const result = await (input.database ?? this.pool).query(
             `INSERT INTO atlas_files(id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,visibility,created_by)
              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
             [id,owner.kind,owner.id,storageKey,checksum,fileName,input.mimeType,input.bytes.length,visibility,input.client ?? "atlas-files"]);
