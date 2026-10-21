@@ -57,7 +57,7 @@ test('macOS share receiver rejects declined, expired, busy and interrupted share
 });
 
 test('NSPasteboard bridge always requests plain UTF-8 strings (including RTF-like and Unicode)', () => {
-    const payloads = ['{\\\\rtf1\\\\ansi Literal, not rich text}', '%!PS-Adobe-3.0', 'مرحبا 中文 😊 café', 'line 1\\nline 2'];
+    const payloads = [String.raw\`{\rtf1\ansi Literal, not rich text\`, '%!PS-Adobe-3.0', 'مرحبا 中文 😊 café', 'line 1\\nline 2'];
     for (const text of payloads) {
         const script = plainTextPasteboardScript(text);
         assert.ok(script.includes('$.NSPasteboardTypeString'));
@@ -71,12 +71,14 @@ test('real macOS pasteboard faithfully round-trips RTF headers and Unicode', {
     skip: process.platform !== 'darwin' || process.env.ATLAS_MAC_PASTEBOARD_TEST !== '1',
 }, async () => {
     // Explicit opt-in only: this changes the human user's clipboard.
-    const payloads = ['{\\\\rtf1\\\\ansi Literal RTF prefix}', 'Unicode: مرحبا 👋 漢字 é'];
+    const payloads = [String.raw\`{\rtf1\ansi Literal RTF prefix\`, 'Unicode: مرحبا 👋 漢字 é'];
+    assert.ok(payloads[0]!.startsWith(String.raw`{\rtf1`),
+        'The regression must use a genuine single-backslash RTF header');
     for (const text of payloads) {
         await copyMacShare(text);
         const value = execFileSync('osascript', ['-l', 'JavaScript', '-e',
             "ObjC.import('AppKit'); ObjC.unwrap($.NSPasteboard.generalPasteboard.stringForType($.NSPasteboardTypeString))"],
-            { encoding: 'utf8' }).replace(/\\n$/, '');
+            { encoding: 'utf8' }).replace(/\n$/, '');
         assert.equal(value, text);
     }
 });
