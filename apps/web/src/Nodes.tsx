@@ -71,6 +71,7 @@ function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onC
             <h3>Capabilities <span>{current.capabilities.length}</span></h3>
             <NodeCapabilities capabilities={current.capabilities} />
         </section>
+        <NodeSoftwareSummary node={current} />
         <section className="node-inspector-section">
             <h3>Hosted workspaces <span>{current.hostedWorkspaceCount}</span></h3>
             {detail?.workspaces?.length ? <ul className="node-workspace-list">{detail.workspaces.map(workspace => <li key={workspace.id}>
