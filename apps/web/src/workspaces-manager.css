@@ -112,5 +112,16 @@
 .wm-checkout-select { display:grid; gap:7px; color:var(--text-secondary); font-size:.74rem; margin:12px 0 18px; }
 .wm-checkout-select select { width:100%; min-width:0; font-size:.81rem; }
 .wm-checkout-name { margin:0; font-size:.83rem; font-weight:590; }
+.wm-project-links { border-top:1px solid var(--border); margin:13px 0 20px; padding-top:14px; }
+.wm-project-links h3 { display:flex; align-items:baseline; gap:9px; font-size:.81rem; margin:0 0 10px; }
+.wm-project-links h3 span { color:var(--text-muted); font-size:.69rem; font-weight:400; }
+.wm-project-chips { display:flex; flex-wrap:wrap; gap:7px; align-items:center; }
+.wm-project-chip { display:inline-flex; align-items:center; gap:9px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:var(--radius-sm); padding:4px 7px 4px 10px; font-size:.73rem; color:var(--text-secondary); min-width:0; }
+.wm-project-chip>span { overflow-wrap:anywhere; }
+.wm-project-remove { border:0; background:transparent; color:var(--text-muted); padding:0 4px; font-size:1rem; }
+.wm-project-remove:hover { color:var(--danger); background:transparent; }
+.wm-project-add { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
+.wm-project-add select { width:min(100%,270px); min-width:0; font-size:.76rem; }
+.wm-project-add button { font-size:.74rem; }
 .wm-selected-checkout { border-top:1px solid var(--border); padding-top:17px; }
 .wm-selected-checkout .eyebrow { margin:0 0 11px; }
