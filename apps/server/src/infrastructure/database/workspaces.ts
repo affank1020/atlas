@@ -68,13 +68,28 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
     }
     async attachRepository(workspaceId: string, repository: string): Promise<Workspace> {
         const source = await this.getById(workspaceId);
-        // Caller must have verified the Node's Git origin before invoking.
+        // Caller has verified the bound Node's Git origin. A provisional local
+        // group can contain only Atlas-managed worktree descendants of its
+        // original checkout: those checkouts share one Git common directory.
+        // Migrate the WHOLE local group, including archived siblings, so that
+        // recognising the parent never strands already-created feature trees.
+        const previous = await this.connection.query(
+            'SELECT kind FROM logical_workspaces WHERE id=$1 FOR UPDATE', [source.logicalWorkspaceId]);
+        if (!previous.rowCount)
+            throw new AtlasError('Logical Workspace was not found.', 'CONFLICT');
         const logicalId = await this.repositoryIdentity(repository, source.name);
-        await this.connection.query(
-            'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE id=$1',
-            [workspaceId, logicalId]);
-        // Discard an empty, provisional local identity only when no checkout
-        // (including archived history) still references it.
+        if (previous.rows[0].kind === 'local') {
+            await this.connection.query(
+                'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE logical_workspace_id=$1',
+                [source.logicalWorkspaceId, logicalId]);
+        } else {
+            // A Git-backed group can contain other independent clones. Never
+            // reassign those based solely on this one checkout's origin.
+            await this.connection.query(
+                'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE id=$1',
+                [workspaceId, logicalId]);
+        }
+        // Remove a provisional identity only after its last checkout moves.
         await this.connection.query(
             `DELETE FROM logical_workspaces WHERE id=$1 AND kind='local'
              AND NOT EXISTS (SELECT 1 FROM workspaces WHERE logical_workspace_id=$1)`,
@@ -120,7 +135,20 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
         const result = archive
             ? await this.connection.query("UPDATE workspaces SET status='archived',archived_at=now(),updated_at=now() WHERE id=$1 RETURNING *", [id])
             : await this.connection.query('UPDATE workspaces SET name=COALESCE($2,name),updated_at=now() WHERE id=$1 RETURNING *', [id, name]);
-        return row(result.rows[0]);
+        const changed = row(result.rows[0]);
+        if (!archive && name !== undefined) {
+            // The legacy rename operation names a physical checkout. For a
+            // single-checkout local Workspace the checkout IS the logical
+            // identity, so keep its browser title in sync. A multi-checkout
+            // group or Git repository needs a separate logical rename action.
+            await this.connection.query(
+                `UPDATE logical_workspaces l SET name=$2,updated_at=now()
+                 WHERE l.id=$1 AND l.kind='local'
+                   AND (SELECT count(*) FROM workspaces w
+                        WHERE w.logical_workspace_id=l.id)=1`,
+                [changed.logicalWorkspaceId, name]);
+        }
+        return changed;
     }
 }
 export class PostgresWorkspaceRepository extends WorkspaceReader implements WorkspaceRepository {
