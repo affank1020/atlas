@@ -223,7 +223,7 @@ export function Workspaces() {
     }
     // Prefer a persistent checkout on the same Node. This avoids chaining
     // feature checkouts into one another's retirement lifecycle.
-    function retirementSource(entry: Worktree, record: Workspace) {
+    function retirementSource(record: Workspace) {
         const main = worktrees.find(tree => tree.branch === 'main' || tree.branch === 'master');
         const permanent = main && all.find(checkout => checkout.nodeId === record.nodeId &&
             checkout.rootPath === main.rootPath && checkout.id !== record.id);
@@ -404,7 +404,7 @@ export function Workspaces() {
                         <h3>Worktrees</h3>
                         <div className="wm-trees">{worktrees.map(t => {
                             const record = all.find(w => w.nodeId === selected.nodeId && w.rootPath === t.rootPath);
-                            const source = record ? retirementSource(t, record) : undefined;
+                            const source = record ? retirementSource(record) : undefined;
                             const check = record && source && retirement?.targetId === record.id &&
                                 retirement.sourceId === source.id && retirement.head === t.head ? retirement : undefined;
                             return <div key={t.rootPath} className="wm-tree"><div><strong>{t.branch || 'Detached HEAD'}</strong>
