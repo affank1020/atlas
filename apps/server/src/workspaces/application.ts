@@ -40,7 +40,8 @@ export class WorkspaceService {
                 if (name === 'link_logical_workspace_project')
                     await db.linkLogical(group.id, x.projectId);
                 else await db.unlinkLogical(group.id, x.projectId);
-                await db.audit(current, name === 'link_logical_workspace_project'
+                const updated = await db.getById(representative.id);
+                await db.audit(updated, name === 'link_logical_workspace_project'
                     ? 'workspace.logical_project_linked' : 'workspace.logical_project_unlinked',
                     x.client, { logicalWorkspaceId: group.id, projectId: x.projectId });
                 await db.commit();
