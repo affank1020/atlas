@@ -63,20 +63,22 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     </section>;
 }
 type NodeLog = { source: string; available: boolean; lines: string[]; truncated: boolean };
-type LogNode = { id: string; name: string; status: string; capabilities: string[] };
-type ScopedLog = { nodeId: string; source: 'stdout' | 'stderr'; count: number; output: NodeLog };
+type LogNode = { id: string; name: string; platform?: string; status: string; capabilities: string[] };
+type ScopedLog = { nodeId: string; source: 'stdout' | 'stderr' | 'journal'; count: number; output: NodeLog };
 function LogsPanel({ filters }: { filters: MonitoringFilters }) {
     const [nodes, setNodes] = useState<LogNode[]>([]);
     const [error, setError] = useState('');
     const [result, setResult] = useState<ScopedLog>();
     const [reading, setReading] = useState(false);
+    const [tailSearch, setTailSearch] = useState('');
     const active = useRef<AbortController | null>(null);
     const generation = useRef(0);
-    const source = filters.source === 'stdout' ? 'stdout' : 'stderr';
     const lines = filters.lines && /^\d+$/.test(filters.lines) && Number(filters.lines) >= 1 && Number(filters.lines) <= 200
         ? Number(filters.lines) : 200;
     const nodeId = filters.nodeId ?? '';
     const selected = nodes.find(node => node.id === nodeId);
+    const source: 'stdout' | 'stderr' | 'journal' = selected?.platform === 'linux' ? 'journal'
+        : filters.source === 'stdout' ? 'stdout' : 'stderr';
     const cancel = () => {
         generation.current++;
         active.current?.abort();
@@ -123,18 +125,22 @@ function LogsPanel({ filters }: { filters: MonitoringFilters }) {
     };
     // Also guard the render itself: async completion can never label A's data as B's.
     const visible = result?.nodeId === nodeId && result.source === source && result.count === lines ? result.output : undefined;
+    const visibleLines = visible?.lines.filter(line => line.toLowerCase().includes(tailSearch.trim().toLowerCase())) ?? [];
     return <section className="panel activity-panel" aria-label="Monitoring logs">
         <div className="panel-head"><div><p className="eyebrow">Bounded runtime tails</p><h2>Logs</h2></div><button className="ghost" disabled={!selected || reading || selected.status !== 'online' || !selected.capabilities.includes('node.logs')} onClick={() => void read()}>{reading ? 'Reading…' : 'Refresh logs'}</button></div>
         <div className="activity-filters">
-            <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => setSelection({ ...filters, nodeId: e.target.value || undefined })}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
-            <label>Stream<select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'stdout' | 'stderr' })}><option value="stderr">stderr</option><option value="stdout">stdout</option></select></label>
+            <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => { const next = nodes.find(node => node.id === e.target.value); setSelection({ ...filters, nodeId: next?.id, source: next?.platform === 'linux' ? 'journal' : filters.source === 'journal' ? undefined : filters.source }); }}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
+            <label>Stream{selected?.platform === 'linux'
+                ? <select aria-label="Log stream" value="journal" disabled><option value="journal">systemd · atlas-node.service</option></select>
+                : <select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'stdout' | 'stderr' })}><option value="stderr">stderr</option><option value="stdout">stdout</option></select>}</label>
             <label>Lines<input type="number" aria-label="Log lines" min={1} max={200} value={lines} onChange={e => { const next = Number(e.target.value); if (Number.isInteger(next) && next >= 1 && next <= 200) setSelection({ ...filters, lines: String(next) }); }} /></label>
         </div>
-        {!selected && !error && <p className="empty">Select a Node to inspect its available logs. Server and Linux journal adapters are not yet connected.</p>}
+        <div className="activity-filters"><label>Search loaded lines<input aria-label="Search loaded log lines" value={tailSearch} onChange={e => setTailSearch(e.target.value)} placeholder="Filter the bounded tail" /></label></div>
+        {!selected && !error && <p className="empty">Select a Node to inspect its approved logs. Atlas Server logs are not yet connected.</p>}
         {selected?.status !== 'online' && selected && <p role="status" className="empty">Node is {selected.status}; live log reads are unavailable.</p>}
         {selected?.status === 'online' && !selected.capabilities.includes('node.logs') && <p className="empty">This Node does not expose approved log access.</p>}
         {error && <p role="alert" className="activity-error">{error}</p>}
-        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visible.lines.join('\n'))}>Copy visible lines</button></div><pre>{visible.lines.join('\n') || '(empty)'}</pre></>}</div>}
+        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable{source === 'journal' ? ' (journal access may be restricted for this service account)' : ''}.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visibleLines.join('\n'))}>Copy visible lines</button></div><pre>{visible.lines.join('\n') || '(empty)'}</pre></>}</div>}
     </section>;
 }
 export function MonitoringPage() {
