@@ -31,7 +31,17 @@ internal data class CompanionSession(
     val draft: String = "",
     val error: String? = null,
     val lastDeliveryId: Long = 0,
+    val deferredShare: ShareDelivery? = null,
 ) {
+    /** Retain the sent text while the receipt is pending. */
+    fun receiveShare(delivery: ShareDelivery, sending: Boolean): CompanionSession =
+        if (sending) copy(section = Section.SEND, deferredShare = delivery) else importShare(delivery)
+
+    fun loadDeferredShare(): CompanionSession {
+        val waiting = deferredShare ?: return this
+        return copy(deferredShare = null).importShare(waiting)
+    }
+
     fun importShare(delivery: ShareDelivery): CompanionSession {
         if (delivery.id <= lastDeliveryId) return this
         return copy(
@@ -39,6 +49,7 @@ internal data class CompanionSession(
             draft = delivery.text.orEmpty(),
             error = delivery.error,
             lastDeliveryId = delivery.id,
+            deferredShare = null,
         )
     }
 
@@ -215,6 +226,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000)
     }
 
+    fun loadDeferredShare() {
+        if (sharePending || session.deferredShare == null) return
+        session = session.loadDeferredShare()
+        shareStatus = "New draft loaded. It has not been sent."
+    }
+
     fun editShareTarget(value: String) {
         if (!sharePending) shareTarget = value.trim().take(36)
     }
@@ -284,7 +301,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun receive(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return
         val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
-        val nextId = session.lastDeliveryId + 1
+        val nextId = maxOf(session.lastDeliveryId, session.deferredShare?.id ?: 0) + 1
         val delivery = when {
             text.isBlank() -> ShareDelivery(nextId, error = "The shared item did not contain text.")
             text.length > MAX_SHARE_CHARACTERS -> ShareDelivery(
@@ -292,7 +309,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             )
             else -> ShareDelivery(nextId, text = text)
         }
-        session = session.importShare(delivery)
+        session = session.receiveShare(delivery, sending = sharePending)
         if (!sharePending) shareStatus = "Nothing sent yet"
     }
 }
