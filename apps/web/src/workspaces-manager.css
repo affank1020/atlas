@@ -108,6 +108,7 @@
 .wm-switch-label { display:grid; gap:3px; min-width:0; text-align:left; }
 .wm-switch-label strong { font-size:.76rem; font-weight:560; }
 .wm-switch-label small { font-size:.67rem; color:var(--text-muted); }
+.wm-switch-path { max-width:240px; overflow-wrap:anywhere; font-family:var(--font-mono); }
 .wm-checkout-select { display:grid; gap:7px; color:var(--text-secondary); font-size:.74rem; margin:12px 0 18px; }
 .wm-checkout-select select { width:100%; min-width:0; font-size:.81rem; }
 .wm-checkout-name { margin:0; font-size:.83rem; font-weight:590; }
