@@ -121,3 +121,20 @@ test('public push schema rejects injected GitHub secrets and Node requires broke
     assert.equal(workspaceSchemas.workspace_git_open_pull_request.safeParse({ ...input, branch: 'main', title: 'Test PR' }).success, false);
     assert.equal(workspaceSchemas.list_github_repositories.safeParse({}).success, true);
 });
+
+test('repository cloning uses read-only GitHub App tokens and never accepts client credentials', async () => {
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        assert.equal(String(url), 'https://api.github.com/app/installations/456789/access_tokens');
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+            repositories: ['portfolio-site'], permissions: { contents: 'read' },
+        });
+        return response(201, tokenBody);
+    }) as typeof fetch);
+    assert.equal(await broker.repositoryReadToken(repo), tokenBody.token);
+    const clone = { workspaceId, repository: repo, directoryName: 'portfolio-clone' };
+    assert.equal(workspaceSchemas.workspace_git_clone_repository.safeParse(clone).success, true);
+    assert.equal(workspaceSchemas.workspace_git_clone_repository.safeParse({
+        ...clone, githubToken: tokenBody.token,
+    }).success, false);
+});

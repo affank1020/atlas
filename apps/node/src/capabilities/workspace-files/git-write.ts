@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { lstat, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { AtlasError } from '@atlas/protocol/errors';
-import { permitted, type WorkspaceFiles } from './files.js';
+import { permitted, verifyGitLayout, type WorkspaceFiles } from './files.js';
 
 const execute = promisify(execFile);
 const validBranch = (branch: string) => /^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/.test(branch) && !branch.includes('//') && !branch.endsWith('/');
@@ -36,9 +36,14 @@ export async function gitWrite(root: string, files: WorkspaceFiles, operation: s
   await files.resolve(root, '');
   if (!await approvedGitRoot(root, 'ATLAS_GIT_WRITE_ROOTS'))
     throw new AtlasError('Git writes are not approved for this workspace.', 'CAPABILITY_UNAVAILABLE');
-  const meta = await lstat(path.join(root, '.git'));
-  if (!meta.isDirectory() || meta.isSymbolicLink() || await realpath(path.join(root, '.git')) !== path.join(root, '.git'))
-    throw new AtlasError('Unsupported Git repository layout.', 'WORKSPACE_DENIED');
+  // Reuse the read-only Git layout verifier: linked worktrees are allowed
+  // only when their common checkout is also in an approved Node filesystem.
+  await verifyGitLayout(root, files);
+  const commonGitDir = await run(root, ['rev-parse', '--git-common-dir']);
+  const common = path.isAbsolute(commonGitDir) ? commonGitDir : path.resolve(root, commonGitDir);
+  if (path.basename(common) !== '.git' || await realpath(common) !== common ||
+      !await approvedGitRoot(path.dirname(common), 'ATLAS_GIT_WRITE_ROOTS'))
+    throw new AtlasError('Git worktree common directory is not an approved repository.', 'WORKSPACE_DENIED');
   if (await run(root, ['rev-parse', '--show-toplevel']) !== root)
     throw new AtlasError('Workspace is not the Git repository root.', 'WORKSPACE_DENIED');
   const branch = await run(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);

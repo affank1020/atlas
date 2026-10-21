@@ -10,7 +10,7 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const text = z.string().max(512 * 1024);
 // The Football Application's internal Node operation must not become a generic
 // Workspace tool exposed through MCP or the unscoped HTTP dispatcher.
-const { football_control: _footballControl, workspace_git_push_branch: _privatePush, ...publicWorkspaceOperations } = workspaceOperationSchemas;
+const { football_control: _footballControl, workspace_git_push_branch: _privatePush, workspace_git_clone_repository: _privateClone, ...publicWorkspaceOperations } = workspaceOperationSchemas;
 export const workspaceSchemas = {
     list_github_repositories: z.object({}).strict(),
     list_workspaces: z.object({ nodeId: z.string().uuid().optional(), includeArchived: z.boolean().optional() }).strict(),
@@ -23,6 +23,8 @@ export const workspaceSchemas = {
     archive_workspace: z.object({ ...scope, ...client }).strict(),
     ...publicWorkspaceOperations,
     workspace_git_push_branch: workspaceOperationSchemas.workspace_git_push_branch.omit({ githubToken: true }).strict(),
+    workspace_git_clone_repository: workspaceOperationSchemas.workspace_git_clone_repository.omit({ githubToken: true }).strict(),
+    workspace_git_remove_worktree: workspaceOperationSchemas.workspace_git_remove_worktree.omit({ targetPath: true, expectedBranch: true }).strict(),
     workspace_git_open_pull_request: z.object({ ...scope, ...client,
         repository: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/),
         branch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/),
@@ -57,6 +59,10 @@ export const workspaceDescriptions: Record<WorkspaceToolName, string> = {
     workspace_run_dev_task: 'Run one owner-configured development task on the Workspace Node, with bounded time/output and a structured result. No arbitrary shell.',
     workspace_git_status: 'Read Git branch and bounded changed-file summary; no Git writes.',
     workspace_git_diff: 'Read staged and unstaged diffs for safe current text files. Removed/protected files are omitted.',
+    workspace_git_clone_repository: 'Clone one GitHub App-authorised repository into an empty child of a trusted Node development root and register an independent Workspace.',
+    workspace_git_list_worktrees: 'List Git worktrees reachable from this registered checkout within the approved Node filesystem roots.',
+    workspace_git_create_worktree: 'Create a new isolated atlas/* worktree inside an explicitly trusted Node Git directory and register it as an independent Workspace.',
+    workspace_git_remove_worktree: 'Remove an explicitly selected, clean registered feature worktree while retaining its Git branch and commits.',
     workspace_git_create_branch: 'Create an atlas/* branch only on an explicitly approved Git workspace.',
     workspace_git_switch_branch: 'Switch an approved local atlas/* branch with a clean working tree.',
     workspace_git_stage: 'Stage only explicitly named regular files whose SHA-256 matches the inspection.',
