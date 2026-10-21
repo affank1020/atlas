@@ -35,10 +35,12 @@ test('node-log intent deep-links to Monitoring without reading logs in search', 
     assert.equal(result.results[0]?.kind, 'node');
     assert.match(result.results[0]?.title || '', /logs/);
     assert.equal(result.results[0]?.action, undefined);
-    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id);
+    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stdout&lines=100');
     assert.match(result.results[0]?.description || '', /Latest 100 lines/);
+    const stdout = await searchEverywhere(dependencies(), { query: 'show the last 37 stdout lines from my Mac node' });
+    assert.equal(stdout.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stdout&lines=37');
     const errors = await searchEverywhere(dependencies(), { query: 'show the last 100 error lines from my Mac node' });
-    assert.equal(errors.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id);
+    assert.equal(errors.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stderr&lines=100');
 });
 
 test('record search uses indexed Fabric results and includes incomplete-source diagnostics', async () => {
@@ -68,6 +70,6 @@ test('Nodes without log capability fall back to activity, never a privileged rea
         : { workspaces: [] };
     const result = await searchEverywhere(deps, { query: 'show Mac node logs' });
     assert.equal(result.results[0]?.action, undefined);
-    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id);
+    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stdout&lines=100');
     assert.match(result.results[0]?.description || '', /raw logs unavailable/);
 });

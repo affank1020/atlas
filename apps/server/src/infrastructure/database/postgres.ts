@@ -102,7 +102,7 @@ export class PostgresRepository implements AtlasRepository {
             where.push('(' + category + ')=' + param(input.category));
         }
         if (input.outcome) {
-            const failure = "(a.operation LIKE '%_failed' OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error') OR a.after_state->>'success'='false')";
+            const failure = "COALESCE((a.operation LIKE '%_failed' OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error') OR a.after_state->>'success'='false'), false)";
             const pending = "a.operation='workspace.mutation_requested'";
             where.push(input.outcome === 'failed' ? failure : input.outcome === 'pending' ? '(' + pending + ' AND NOT ' + failure + ')' : '(NOT ' + failure + ' AND NOT ' + pending + ')');
         }

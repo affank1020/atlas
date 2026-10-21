@@ -13,6 +13,12 @@ describe('Monitoring deep links', () => {
     it('preserves Logs selection across refreshes', () => {
         expect(parseMonitoringHash('#/monitoring?tab=logs&nodeId=node-1')).toEqual({ tab: 'logs', filters: { nodeId: 'node-1' } });
     });
+    it('round-trips a bounded log selection and rejects invalid source/lines', () => {
+        expect(parseMonitoringHash(monitoringHash('logs', { nodeId: 'node-1', source: 'stdout', lines: '37' })))
+            .toEqual({ tab: 'logs', filters: { nodeId: 'node-1', source: 'stdout', lines: '37' } });
+        expect(parseMonitoringHash('#/monitoring?tab=logs&source=secrets&lines=999&nodeId=n'))
+            .toEqual({ tab: 'logs', filters: { nodeId: 'n' } });
+    });
     it('defaults unknown tabs to Overview', () => {
         expect(parseMonitoringHash('#/monitoring?tab=other')).toEqual({ tab: 'overview', filters: {} });
     });

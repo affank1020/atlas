@@ -157,7 +157,7 @@ export async function searchEverywhere(deps: SearchDeps, raw: z.input<typeof glo
                     title: logAvailable ? 'Read ' + node.name + ' ' + (logSource === 'stderr' ? 'error logs' : 'logs') : 'Inspect ' + node.name + ' activity',
                     description: logAvailable ? 'Latest ' + logLines + ' lines · ' + (logSource === 'stderr' ? 'stderr' : 'stdout') : 'Recent operations · raw logs unavailable until the Node supports log access',
                     context: node.name + ' / ' + nodeDescription(node),
-                    href: nodeLogs ? '#/monitoring?tab=logs&nodeId=' + encodeURIComponent(node.id) : '#/monitoring?tab=activity&nodeId=' + encodeURIComponent(node.id),
+                    href: nodeLogs ? '#/monitoring?tab=logs&nodeId=' + encodeURIComponent(node.id) + '&source=' + logSource + '&lines=' + logLines : '#/monitoring?tab=activity&nodeId=' + encodeURIComponent(node.id),
                 });
                 if (!lookup || relevance(lookup, node.name, nodeDescription(node))) hits.push({ ...hit, score: 120 + relevance(lookup, node.name, nodeDescription(node)) });
             } else {

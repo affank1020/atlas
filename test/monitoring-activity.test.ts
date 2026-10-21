@@ -27,6 +27,18 @@ test('Monitoring filters and paginates over full PostgreSQL audit history', asyn
     const missing = await monitoring.page({ projectId: second.id, operation: 'record.created' });
     assert.equal(missing.total, 0);
     assert.deepEqual(missing.items, []);
+    // SQL three-valued logic: missing outcome/success must not discard normal rows.
+    await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+        VALUES (gen_random_uuid(), 'monitoring-test', 'workspace.mutation_requested', $1, '{}'::jsonb, now()),
+               (gen_random_uuid(), 'monitoring-test', 'workspace.mutation_requested', $1, NULL, now())`, [second.id]);
+    const pending = await monitoring.page({ projectId: second.id, outcome: 'pending' });
+    assert.equal(pending.total, 2);
+    assert.ok(pending.items.every(item => item.operation === 'workspace.mutation_requested'));
+    const completed = await monitoring.page({ projectId: first.id, outcome: 'completed' });
+    assert.equal(completed.total, 2, 'Core rows without outcome metadata must be completed');
+    const failed = await monitoring.page({ projectId: first.id, outcome: 'failed' });
+    assert.equal(failed.total, 0);
+
     const legacy = await catalog.auditHistory({ projectId: first.id, limit: 200 });
     assert.equal(legacy.length, 2, 'Legacy MCP history stays unchanged');
 });

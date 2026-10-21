@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AuditEvent } from './types';
 import { ActivityRows } from './ActivityFeed';
@@ -8,6 +8,13 @@ import './activity.css';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
 const LIMIT = 30;
+export function localDateTimeValue(instant?: string) {
+    if (!instant) return '';
+    const date = new Date(instant);
+    if (Number.isNaN(date.getTime())) return '';
+    const two = (value: number) => String(value).padStart(2, '0');
+    return [date.getFullYear(), two(date.getMonth() + 1), two(date.getDate())].join('-') + 'T' + [two(date.getHours()), two(date.getMinutes())].join(':');
+}
 const CATEGORIES = ['','core','view','node','workspace','files','git','dev','unity'];
 function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     const [page, setPage] = useState<ActivityPage>();
@@ -44,8 +51,8 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
             <button type="button" className="ghost" onClick={() => { location.hash = monitoringHash('activity', { ...draft, offset: undefined }); }}>Apply filters</button>
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
-            <label>From<input aria-label="From" type="datetime-local" value={filters.from ? filters.from.slice(0, 16) : ''} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
-            <label>To<input aria-label="To" type="datetime-local" value={filters.to ? filters.to.slice(0, 16) : ''} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
+            <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
+            <label>To<input aria-label="To" type="datetime-local" value={localDateTimeValue(filters.to)} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
             <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}><label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} /></label><button type="submit">Apply</button></form>
         </div>
         {loading && <p role="status" className="empty">Loading audit history…</p>}
@@ -57,32 +64,77 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
 }
 type NodeLog = { source: string; available: boolean; lines: string[]; truncated: boolean };
 type LogNode = { id: string; name: string; status: string; capabilities: string[] };
+type ScopedLog = { nodeId: string; source: 'stdout' | 'stderr'; count: number; output: NodeLog };
 function LogsPanel({ filters }: { filters: MonitoringFilters }) {
     const [nodes, setNodes] = useState<LogNode[]>([]);
     const [error, setError] = useState('');
-    const [result, setResult] = useState<NodeLog>();
+    const [result, setResult] = useState<ScopedLog>();
     const [reading, setReading] = useState(false);
-    const [source, setSource] = useState<'stdout' | 'stderr'>('stderr');
+    const active = useRef<AbortController | null>(null);
+    const generation = useRef(0);
+    const source = filters.source === 'stdout' ? 'stdout' : 'stderr';
+    const lines = filters.lines && /^\d+$/.test(filters.lines) && Number(filters.lines) >= 1 && Number(filters.lines) <= 200
+        ? Number(filters.lines) : 200;
+    const nodeId = filters.nodeId ?? '';
+    const selected = nodes.find(node => node.id === nodeId);
+    const cancel = () => {
+        generation.current++;
+        active.current?.abort();
+        active.current = null;
+        setReading(false);
+        setResult(undefined);
+        setError('');
+    };
+    // Invalidate an outstanding request on scope changes or unmount, including
+    // selections changed by a bookmarked URL rather than by the local controls.
+    useEffect(() => () => {
+        generation.current++;
+        active.current?.abort();
+        active.current = null;
+    }, [nodeId, source, lines]);
     useEffect(() => {
         const controller = new AbortController();
-        void callTool<LogNode[]>('list_nodes', {}, controller.signal).then(setNodes).catch(e => setError((e as Error).message));
+        void callTool<LogNode[]>('list_nodes', {}, controller.signal)
+            .then(value => { if (!controller.signal.aborted) setNodes(value); })
+            .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); });
         return () => controller.abort();
     }, []);
-    const selected = nodes.find(node => node.id === filters.nodeId);
-    const read = async () => {
-        if (!selected) return;
-        setResult(undefined); setError(''); setReading(true);
-        try { setResult(await callTool<NodeLog>('read_node_logs', { nodeId: selected.id, source, lines: 200 })); }
-        catch (e) { setError((e as Error).message); } finally { setReading(false); }
+    const setSelection = (next: MonitoringFilters) => {
+        cancel();
+        location.hash = monitoringHash('logs', next);
     };
+    const read = async () => {
+        if (!selected || selected.status !== 'online' || !selected.capabilities.includes('node.logs')) return;
+        cancel();
+        const controller = new AbortController();
+        active.current = controller;
+        const id = ++generation.current;
+        const scope = { nodeId: selected.id, source, lines };
+        setReading(true);
+        try {
+            const output = await callTool<NodeLog>('read_node_logs', scope, controller.signal);
+            if (!controller.signal.aborted && id === generation.current) setResult({ nodeId: scope.nodeId, source, count: lines, output });
+        } catch (cause) {
+            if (!controller.signal.aborted && id === generation.current)
+                setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            if (id === generation.current) { setReading(false); active.current = null; }
+        }
+    };
+    // Also guard the render itself: async completion can never label A's data as B's.
+    const visible = result?.nodeId === nodeId && result.source === source && result.count === lines ? result.output : undefined;
     return <section className="panel activity-panel" aria-label="Monitoring logs">
-        <div className="panel-head"><div><p className="eyebrow">Bounded runtime tails</p><h2>Logs</h2></div><button className="ghost" disabled={!selected || reading || selected.status !== 'online'} onClick={() => void read()}>{reading ? 'Reading…' : 'Refresh logs'}</button></div>
-        <div className="activity-filters"><label>Node source<select aria-label="Node source" value={filters.nodeId ?? ''} onChange={e => { setResult(undefined); location.hash = monitoringHash('logs', { nodeId: e.target.value }); }}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label><label>Stream<select aria-label="Log stream" value={source} onChange={e => { setSource(e.target.value as 'stdout' | 'stderr'); setResult(undefined); }}><option value="stderr">stderr</option><option value="stdout">stdout</option></select></label></div>
+        <div className="panel-head"><div><p className="eyebrow">Bounded runtime tails</p><h2>Logs</h2></div><button className="ghost" disabled={!selected || reading || selected.status !== 'online' || !selected.capabilities.includes('node.logs')} onClick={() => void read()}>{reading ? 'Reading…' : 'Refresh logs'}</button></div>
+        <div className="activity-filters">
+            <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => setSelection({ ...filters, nodeId: e.target.value || undefined })}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
+            <label>Stream<select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'stdout' | 'stderr' })}><option value="stderr">stderr</option><option value="stdout">stdout</option></select></label>
+            <label>Lines<input type="number" aria-label="Log lines" min={1} max={200} value={lines} onChange={e => { const next = Number(e.target.value); if (Number.isInteger(next) && next >= 1 && next <= 200) setSelection({ ...filters, lines: String(next) }); }} /></label>
+        </div>
         {!selected && !error && <p className="empty">Select a Node to inspect its available logs. Server and Linux journal adapters are not yet connected.</p>}
         {selected?.status !== 'online' && selected && <p role="status" className="empty">Node is {selected.status}; live log reads are unavailable.</p>}
         {selected?.status === 'online' && !selected.capabilities.includes('node.logs') && <p className="empty">This Node does not expose approved log access.</p>}
         {error && <p role="alert" className="activity-error">{error}</p>}
-        {result && <div className="monitoring-log-result">{!result.available ? <p>Log source unavailable.</p> : <><p>{result.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(result.lines.join('\n'))}>Copy visible lines</button></div><pre>{result.lines.join('\n') || '(empty)'}</pre></>}</div>}
+        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visible.lines.join('\n'))}>Copy visible lines</button></div><pre>{visible.lines.join('\n') || '(empty)'}</pre></>}</div>}
     </section>;
 }
 export function MonitoringPage() {
