@@ -242,7 +242,7 @@ test('logical Workspace Project associations are shared, selectable and removabl
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('unlink_logical_workspace_project', {
         logicalWorkspaceId: 'logical-portfolio', projectId: projectA.id,
     }));
-    await waitFor(() => expect(within(section).queryByText('Portfolio')).not.toBeInTheDocument());
+    await waitFor(() => expect(within(section).queryByRole('button', { name: 'Detach Portfolio' })).not.toBeInTheDocument());
     // Project mutations do not alter checkout selection or the two registered paths.
     expect(checkouts.map(w => w.rootPath)).toEqual(['/mac/portfolio','/srv/portfolio']);
     expect(location.hash).toContain('workspace=logical-portfolio');
