@@ -250,6 +250,48 @@ test('logical Workspace Project associations are shared, selectable and removabl
     expect(location.hash).toContain('workspace=logical-portfolio');
 });
 
+test('archived linked Projects remain named and detachable but are not link targets', async () => {
+    const archived = { id: 'archived-project', name: 'Old Portfolio', archivedAt: '2026-10-20T12:00:00Z' };
+    const active = { id: 'active-project', name: 'Current Portfolio' };
+    let linked = [archived.id];
+    vi.mocked(callTool).mockImplementation(async (name, args: any) => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_projects') return [archived, active];
+        if (name === 'list_workspaces') return [repo];
+        if (name === 'list_logical_workspaces') return [{
+            id: 'logical-atlas', name: 'Atlas', repository: 'affank1020/atlas',
+            kind: 'git', projectIds: [...linked], checkouts: [repo],
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main',
+            head: sha, originRepository: 'affank1020/atlas', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'unlink_logical_workspace_project') {
+            linked = linked.filter(id => id !== args.projectId);
+            return {};
+        }
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    await within(browser).findByText('1 Workspace');
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas' }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const section = within(inspector).getByRole('region', { name: 'Workspace Projects' });
+    expect(await within(section).findByText('Old Portfolio (archived)')).toBeInTheDocument();
+    const linkOptions = within(within(section).getByRole('combobox', { name: 'Project to associate' }))
+        .getAllByRole('option').map(item => item.textContent);
+    expect(linkOptions).toContain('Current Portfolio');
+    expect(linkOptions).not.toContain('Old Portfolio');
+    expect(callTool).toHaveBeenCalledWith('list_projects', { includeArchived: true });
+    fireEvent.click(within(section).getByRole('button', { name: 'Detach Old Portfolio' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('unlink_logical_workspace_project', {
+        logicalWorkspaceId: 'logical-atlas', projectId: archived.id,
+    }));
+    await waitFor(() => expect(within(section).queryByRole('button', { name: 'Detach Old Portfolio' }))
+        .not.toBeInTheDocument());
+});
+
 test('repository recognition uses Node Git inspection and never sends caller-chosen identity', async () => {
     const mac = { ...repo, id: 'mac', nodeId: 'mac-node', rootPath: '/mac/portfolio' };
     const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
