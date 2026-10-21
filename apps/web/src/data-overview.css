@@ -1,0 +1,119 @@
+/* Storage overview: restrained cards and drill-downs, not a second project browser. */
+.data-overview { width: 100%; padding-bottom: 40px; animation: workspace-appear 180ms ease-out; }
+.data-page-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 28px; }
+.data-page-head h1 { font-size: clamp(1.55rem, 2.4vw, 2rem); font-weight: 620; letter-spacing: -.045em; line-height: 1.2; margin: 0; }
+.data-page-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; }
+.data-page-actions > button { flex-shrink: 0; }
+.data-last-refreshed { color: var(--text-muted); font-size: .73rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.data-storage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 36px; }
+.data-storage-card { border: 1px solid var(--border); background: var(--surface); border-radius: 11px; padding: 22px; min-width: 0; }
+.data-storage-card-heading { display: flex; align-items: center; gap: 13px; }
+.data-storage-symbol { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
+.data-storage-card h2 { font-size: .9rem; font-weight: 620; margin: 0 0 3px; letter-spacing: -.025em; }
+.data-storage-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 25px; }
+.data-storage-metric { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.data-storage-metric strong { color: var(--text-primary); font-size: clamp(1.35rem, 2.1vw, 1.8rem); font-weight: 550; line-height: 1.1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.data-storage-metric small { color: var(--text-secondary); font-size: .74rem; }
+.data-section { margin: 0 0 34px; }
+.data-section-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 14px; }
+.data-section-head h2 { font-size: .98rem; font-weight: 600; letter-spacing: -.025em; margin: 0; }
+.data-section-head p { font-size: .76rem; color: var(--text-muted); margin: 7px 0 0; }
+.data-section-head > span { color: var(--text-muted); font-size: .73rem; white-space: nowrap; }
+.data-project-list { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
+.data-project + .data-project { border-top: 1px solid var(--border); }
+.data-project-summary { display: flex; align-items: center; gap: 14px; padding: 0 19px; min-height: 64px; background: transparent; }
+.data-project-toggle { display: flex; align-items: center; flex: 1; gap: 14px; border: 0; background: transparent; color: var(--text-primary); padding: 14px 0; text-align: left; cursor: pointer; min-width: 0; }
+.data-project-summary .data-project-toggle:hover, .data-project-summary .data-project-toggle:focus-visible { background: transparent; }
+.data-project-summary:hover .data-project-title, .data-project-summary:focus-within .data-project-title { color: var(--accent); }
+.data-chevron { width: 7px; height: 7px; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); transform: rotate(-45deg); transition: transform var(--transition); flex-shrink: 0; }
+.data-chevron.expanded { transform: rotate(45deg); }
+.data-project-title { font-size: .83rem; font-weight: 550; transition: color var(--transition); }
+.data-project-count { margin-left: auto; padding-left: 8px; color: var(--text-muted); font-size: .73rem; white-space: nowrap; }
+.data-store-link:hover, .data-file-row:hover .data-file-copy strong { color: var(--accent); }
+.data-project-stores { border-top: 1px solid var(--border); background: var(--bg-secondary); padding: 8px 18px 11px 40px; display: grid; gap: 1px; }
+.data-store-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 9px; color: var(--text-secondary); font-size: .78rem; border-radius: 5px; }
+.data-store-link:hover { background: transparent; }
+.data-store-arrow { color: var(--text-muted); font-size: .86rem; flex-shrink: 0; }
+.data-subtle, .data-empty { font-size: .76rem; color: var(--text-muted); line-height: 1.6; }
+.data-subtle { padding: 9px; }
+.data-empty { margin: 0; padding: 18px; }
+.data-text-button { color: var(--accent); font: inherit; border: 0; background: transparent; padding: 0; cursor: pointer; }
+.data-information-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+.data-information-row strong { font-size: .82rem; font-weight: 550; }
+.data-information-row p { margin: 7px 0 0; color: var(--text-muted); font-size: .74rem; max-width: 680px; line-height: 1.5; }
+.data-state-label { color: var(--text-muted); border: 1px solid var(--border); border-radius: 6px; font-size: .69rem; padding: 5px 9px; white-space: nowrap; }
+.data-file-row { display: flex; align-items: center; gap: 15px; border: 1px solid var(--border); border-radius: 10px; padding: 16px 19px; color: var(--text-primary); transition: border-color var(--transition), background var(--transition); }
+.data-file-row:hover { border-color: var(--border-strong); background: var(--surface); }
+.data-file-icon { display: grid; place-items: center; color: var(--text-secondary); width: 32px; height: 32px; flex-shrink: 0; }
+.data-file-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.data-file-copy strong { font-size: .82rem; font-weight: 550; }
+.data-file-copy small { color: var(--text-muted); font-size: .74rem; }
+.data-file-side { color: var(--text-muted); font-size: .73rem; white-space: nowrap; }
+@media(max-width: 760px) {
+  .data-storage-grid { grid-template-columns: 1fr; }
+  .data-storage-card { padding: 19px; }
+  .data-storage-metrics { gap: 12px; }
+}
+@media(max-width: 540px) {
+  .data-page-head { align-items: center; }
+  .data-page-actions { gap: 8px; }
+  .data-last-refreshed { font-size: .68rem; }
+  .data-project-summary { padding: 0 14px; gap: 10px; }
+  .data-project-toggle { gap: 10px; }
+  .data-project-count { font-size: .67rem; }
+  .data-project-stores { padding-left: 26px; }
+  .data-information-row { align-items: start; flex-direction: column; gap: 12px; }
+  .data-file-row { gap: 10px; padding: 15px; }
+  .data-file-side { display: none; }
+}
+@media(prefers-reduced-motion: reduce) {
+  .data-overview, .data-chevron, .data-project-title, .data-file-row { animation: none; transition: none; }
+}
+
+
+/* Detailed usage metrics */
+.data-storage-card { display: flex; flex-direction: column; }
+.data-storage-card:nth-child(1) .data-storage-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 26px; }
+.data-storage-card:nth-child(2) .data-storage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 24px; }
+.data-usage-bars { margin-top: 27px; padding-top: 18px; border-top: 1px solid var(--border); display: grid; gap: 15px; }
+.data-usage-bar { min-width: 0; }
+.data-usage-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: .72rem; color: var(--text-secondary); margin-bottom: 8px; }
+.data-usage-label > span:last-child { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.data-usage-track { height: 5px; border-radius: 10px; background: var(--surface-elevated); overflow: hidden; }
+.data-usage-track > span { display: block; height: 100%; background: var(--accent-solid); border-radius: inherit; }
+.data-usage-note { display: block; margin: 3px 0 0; font-size: .7rem; line-height: 1.55; color: var(--text-muted); }
+.data-storage-card > .data-usage-note { margin-top: 25px; }
+.data-table-wrap { border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }
+.data-storage-table { border-spacing: 0; border-collapse: collapse; width: 100%; min-width: 540px; font-size: .77rem; }
+.data-storage-table th { color: var(--text-muted); font-weight: 500; font-size: .72rem; background: var(--surface); text-align: right; }
+.data-storage-table th:first-child, .data-storage-table td:first-child { text-align: left; }
+.data-storage-table th, .data-storage-table td { padding: 13px 19px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.data-storage-table td:not(:first-child) { text-align: right; color: var(--text-secondary); }
+.data-storage-table td:first-child { overflow-wrap: anywhere; }
+.data-storage-table tbody tr:last-child td { border-bottom: 0; }
+.data-table-wrap > .data-usage-note { padding: 0 19px 15px; margin-top: 9px; }
+@media (max-width: 760px) {
+  .data-storage-card:nth-child(1) .data-storage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
+/* PostgreSQL composition aligns with R2's usage detail without a second card. */
+.data-storage-composition { margin-top: auto; padding-top: 26px; }
+.data-composition-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--border); padding-top: 18px; margin-bottom: 16px; }
+.data-composition-heading h3 { margin: 0; color: var(--text-primary); font-weight: 550; font-size: .82rem; }
+.data-composition-heading > span { color: var(--text-muted); font-size: .7rem; }
+.data-composition-track { height: 11px; display: flex; width: 100%; overflow: hidden; border-radius: 12px; background: var(--surface-elevated); }
+.data-composition-part { display: block; flex-shrink: 0; height: 100%; }
+.data-composition-tables { background: var(--accent-solid); }
+.data-composition-indexes { background: var(--accent); }
+.data-composition-other { background: var(--text-muted); }
+.data-composition-legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 21px; }
+.data-composition-item { display: flex; flex-direction: column; min-width: 0; gap: 7px; }
+.data-composition-label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: .71rem; white-space: nowrap; }
+.data-composition-dot { display: inline-block; height: 8px; width: 8px; flex-shrink: 0; border-radius: 3px; }
+.data-composition-item strong { font-size: 1.1rem; font-weight: 560; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -.02em; color: var(--text-primary); }
+.data-composition-item small { color: var(--text-muted); font-size: .7rem; font-variant-numeric: tabular-nums; }
+@media(max-width: 540px) {
+  .data-composition-legend { gap: 8px; }
+  .data-composition-label { gap: 5px; font-size: .68rem; }
+}

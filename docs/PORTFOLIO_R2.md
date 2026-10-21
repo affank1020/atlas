@@ -32,3 +32,38 @@ Stable Atlas URLs allow migrating storage without updating the portfolio fronten
 ## Rollback
 
 Remove all four `ATLAS_R2_*` values and redeploy to restore local-only storage. Note that uploads made *only* to R2 after activation would not be readable in local-only mode; export or copy these objects first before rolling back the storage backend.
+
+
+## Data page: read-only storage usage
+
+The Data page now queries PostgreSQL system functions for exact database size, table data,
+index sizes, and the eight largest physical tables. These figures are independent of the
+Atlas logical store/record catalogue. Database size is not a filesystem disk quota:
+check the PostgreSQL Docker volume/host disk separately when evaluating capacity.
+
+Cloudflare R2 bucket totals and account-wide monthly operation counts require **separate**
+read-only GraphQL Analytics credentials. In the private VPS file
+`infra/production.env`, set:
+
+```dotenv
+ATLAS_CF_ACCOUNT_ID=YOUR_32_CHARACTER_ACCOUNT_ID
+ATLAS_CF_ANALYTICS_TOKEN=YOUR_READ_ONLY_ACCOUNT_ANALYTICS_TOKEN
+```
+
+Create the token with **Account → Account Analytics → Read** for the intended account.
+These settings are passed to the server container in the production Docker Compose file.
+They are unrelated to the R2 S3 read/write keys and must never be committed or sent to a client.
+
+Deploy the server after adding the settings; without them the PostgreSQL side works,
+and the Cloudflare panel explicitly displays "not connected." Cloudflare GraphQL usage
+is cached for 15 minutes, with a manual UI Refresh forcing a new sample.
+
+The R2 **bucket storage** number is a recent snapshot, not billable GB-months.
+Class A and B operation totals include **all buckets in the Cloudflare account**
+for the current UTC calendar month (not just the Portfolio bucket), and unknown
+action types are reported separately rather than silently assigned to either class.
+The 10 GB-month / 1M / 10M free allowances are for Standard storage; they are
+references, not hard caps or a complete billing calculation. R2 storage graphs may
+lag behind object writes; historical/empty analytics do not become invented zeroes.
+
+Reference: https://developers.cloudflare.com/r2/platform/metrics-analytics/

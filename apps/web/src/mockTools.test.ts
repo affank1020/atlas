@@ -16,9 +16,11 @@ test('mock catalogue supports linked projects, stores and paginated records', ()
     expect(mockTool<Page<AtlasRecord>>('list_records', { projectId: projects[0].id, storeId: stores[0].id, limit: 1, offset: 1 }).items[0].id).not.toBe(first.items[0].id);
 });
 
-test('demo nodes have inspectable workspace details', () => {
-    const nodes = mockTool<Array<{ id: string; name: string }>>('list_nodes');
+test('demo nodes have inspectable workspace details and a simulated offline node', () => {
+    const nodes = mockTool<Array<{ id: string; name: string; status: string }>>('list_nodes');
     expect(nodes).toHaveLength(2);
+    expect(nodes.find(node => node.name === 'Demo Linux VPS')?.status).toBe('offline');
+    expect(nodes.find(node => node.name === 'Demo MacBook')?.status).toBe('online');
     for (const node of nodes) {
         const detail = mockTool<{ workspaces: Array<{ nodeId: string }> }>('get_node', { nodeId: node.id });
         expect(detail.workspaces.length).toBeGreaterThan(0);

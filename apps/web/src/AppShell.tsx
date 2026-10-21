@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ShellIcon, type ShellIconName } from './ShellIcon';
 import { useRecentWork } from './recentWork';
 import { useListProjectsQuery } from './atlasApi';
@@ -17,7 +17,15 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
     const recent = useRecentWork();
     const [open, setOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
+    const contentFrameRef = useRef<HTMLDivElement>(null);
     useEffect(() => setOpen(false), [page, projectId]);
+    // The shell stays mounted across hash routes, so restore the content pane
+    // to the top without scrolling the header or navigation.
+    useEffect(() => {
+        const resetContentScroll = () => { if (contentFrameRef.current) contentFrameRef.current.scrollTop = 0; };
+        window.addEventListener('hashchange', resetContentScroll);
+        return () => window.removeEventListener('hashchange', resetContentScroll);
+    }, []);
     useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, []);
     useEffect(() => { const shortcut = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setSearchOpen(value => !value); } }; window.addEventListener('keydown', shortcut); return () => window.removeEventListener('keydown', shortcut); }, []);
     const shortcuts = [...new Set(recent.map(item => item.projectId))].map(id => projects.find(p => p.id === id)).filter(p => !!p).slice(0, 5);
@@ -41,8 +49,8 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
             <nav id="global-navigation" aria-label="Main navigation" onClick={event => { if ((event.target as HTMLElement).closest('a')) setOpen(false); }}>
                 <div className="sidebar-primary-links">
                     {link('#/', 'Home', page === 'overview', 'home')}
-                    {link('#/projects', 'Projects', page === 'projects' || page === 'project' || page === 'application', 'projects')}
-                    {link('#/views', 'Views', page === 'views' || page === 'view', 'views')}
+                    {link('#/projects', 'Projects', page === 'projects' || page === 'project' || page === 'view', 'projects')}
+                    {link('#/applications', 'Applications', page === 'applications', 'applications')}
                     {link('#/data', 'Data', page === 'data' || page === 'store', 'data')}
                     {link('#/nodes', 'Nodes', page === 'nodes', 'nodes')}
                     {link('#/monitoring', 'Monitoring', page === 'monitoring', 'monitoring')}
@@ -55,7 +63,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                 </div>
             </nav>
         </aside>
-        <div className="content-frame">
+        <div className="content-frame" ref={contentFrameRef}>
             <main id="main-content" tabIndex={-1} className={contentClass}>{children}</main>
         </div>
         {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}

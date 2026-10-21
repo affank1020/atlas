@@ -58,6 +58,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     for (const name of Object.keys(nodeSchemas) as NodeToolName[]) tool(name, nodeDescriptions[name], nodeSchemas[name].shape);
 
     tool("get_atlas_status", "Report Atlas availability and structured-data counts.", {});
+    tool("get_storage_usage", "Read PostgreSQL storage sizes and Cloudflare R2 analytics without credentials.", { refresh: z.boolean().optional() });
     tool("list_projects", "List active projects, optionally including archived projects.", include);
     tool("get_project", "Get one project by stable ID.", { projectId: z.string().uuid(), ...include });
     tool("create_project", "Create a project, the top-level ownership boundary.", { name: z.string(), description: z.string().optional(), ...client });
@@ -98,7 +99,8 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     tool("request_context", "Retrieve a bounded, authority-aware Atlas evidence pack.", fabricContextSchema.shape);
     tool("ask_atlas", "Chat about Atlas records using fresh evidence and optional conversation history.", askAtlasInputSchema.shape);
     tool('list_applications', 'List launchable first-party Applications in a Project.', { projectId: z.string().uuid() });
-    tool('get_application', 'Get the registered Application manifest for a Project.', { projectId: z.string().uuid(), slug: z.string() });
+    tool('list_all_applications', 'List launchable first-party Applications across Atlas, including standalone Applications.', {});
+    tool('get_application', 'Get a registered Application manifest by its optional Project and slug.', { projectId: z.string().uuid().optional(), slug: z.string() });
     for (const definition of appTools) {
         if (!prioritized.has(definition.name)) tool(definition.name, definition.description, definition.inputSchema);
     }

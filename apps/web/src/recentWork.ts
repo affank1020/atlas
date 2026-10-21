@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 
-export type RecentWork = { href: string; name: string; projectId: string; kind: 'Project' | 'View' | 'Application'; viewSlug?: string };
+export type RecentWork = { href: string; name: string; projectId: string | null; kind: 'Project' | 'View' | 'Application'; viewSlug?: string };
 const key = 'atlas.recent-work.v1';
 const event = 'atlas:recent-work';
 export function readRecentWork(): RecentWork[] {
     try {
         const value: unknown = JSON.parse(sessionStorage.getItem(key) || '[]');
-        return Array.isArray(value) ? value.filter((item): item is RecentWork => item && typeof item.name === 'string' && typeof item.projectId === 'string' && typeof item.href === 'string' && item.href.startsWith('#/projects/') && ['Project', 'View', 'Application'].includes(item.kind)).slice(0, 8) : [];
+        return Array.isArray(value) ? value.filter((item): item is RecentWork => item && typeof item.name === 'string' && (typeof item.projectId === 'string' || (item.projectId === null && item.kind === 'Application')) && typeof item.href === 'string' && (item.href.startsWith('#/projects/') || (item.kind === 'Application' && item.href.startsWith('#/applications/'))) && ['Project', 'View', 'Application'].includes(item.kind)).slice(0, 8) : [];
     } catch { return []; }
 }
 export function rememberWork(item: RecentWork) {

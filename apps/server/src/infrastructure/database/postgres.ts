@@ -3,7 +3,7 @@ import { Pool, type PoolClient, type PoolConfig } from "pg";
 import type { AtlasData, AtlasRecord, AuditEvent, Page, Project, RecordFilter, SortSpec, Store, View } from "../../types.js";
 
 const EMPTY_DATA: AtlasData = { schemaVersion: 1, projects: [], stores: [], records: [], views: [], auditEvents: [] };
-import type { AtlasRepository, CatalogueRead, AuditRead, CatalogueCounts } from "../../core/repository.js";
+import type { AtlasRepository, CatalogueRead, AuditRead, CatalogueCounts, ProjectResourceCounts } from "../../core/repository.js";
 // Invalid entity IDs must retain service NOT_FOUND semantics, not PostgreSQL cast errors.
 const uuid = (value: string | undefined) => value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 const iso = (value: Date | string) => value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -51,6 +51,25 @@ export class PostgresRepository implements AtlasRepository {
             `SELECT '${table}' AS entity,count(*)::int AS total,count(*) FILTER (WHERE archived_at IS NULL)::int AS active,count(*) FILTER (WHERE archived_at IS NOT NULL)::int AS archived FROM ${table}`
         ).join(' UNION ALL '));
         return Object.fromEntries(result.rows.map(({ entity, ...counts }) => [entity, counts])) as CatalogueCounts;
+    }
+    /** One grouped SQL statement, independent of record payload size or project count. */
+    async countProjectResources(includeArchived = false): Promise<Record<string, ProjectResourceCounts>> {
+        const activeOnly = includeArchived ? '' : ' WHERE archived_at IS NULL';
+        const activeRecords = includeArchived ? '' : ' WHERE r.archived_at IS NULL AND s.archived_at IS NULL';
+        const result = await this.query(`
+            SELECT project_id, 'stores' AS kind, count(*)::int AS total FROM stores${activeOnly} GROUP BY project_id
+            UNION ALL
+            SELECT s.project_id, 'records' AS kind, count(*)::int AS total FROM records r
+                JOIN stores s ON s.id = r.store_id${activeRecords} GROUP BY s.project_id
+            UNION ALL
+            SELECT project_id, 'views' AS kind, count(*)::int AS total FROM views${activeOnly} GROUP BY project_id
+        `);
+        const counts: Record<string, ProjectResourceCounts> = {};
+        for (const row of result.rows) {
+            const entry = (counts[row.project_id] ??= { stores: 0, records: 0, views: 0 });
+            entry[row.kind as keyof ProjectResourceCounts] = Number(row.total);
+        }
+        return counts;
     }
     async readAudit(input: AuditRead): Promise<AuditEvent[]> {
         const values: unknown[] = [];

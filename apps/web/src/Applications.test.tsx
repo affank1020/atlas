@@ -55,4 +55,14 @@ test('switching Project clears a previously loaded Application when the next loo
     expect(screen.queryByText('Portfolio publishing UI')).not.toBeInTheDocument();
 });
 
+test('Standalone Application opens with a global back link and no Project scope', async () => {
+    const standalone = { ...manifest, projectId: null };
+    vi.mocked(callTool).mockImplementation(async name => (name === 'list_projects' ? [] : standalone) as never);
+    render(<ApplicationWindow slug="portfolio" />);
+    expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /All Applications/ })).toHaveAttribute('href', '#/applications');
+    expect(callTool).toHaveBeenCalledWith('get_application', { slug: 'portfolio' }, expect.any(AbortSignal));
+    expect(readRecentWork()[0]).toMatchObject({ href: '#/applications/portfolio', projectId: null });
+});
+
 const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };

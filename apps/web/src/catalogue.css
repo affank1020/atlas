@@ -1,0 +1,7 @@
+/* Shared layout for Projects, Applications and future Atlas catalogues. */
+.app-shell .catalogue-page > .page-head {
+    margin-bottom: 10px;
+}
+.app-shell .catalogue-page > .browse-toolbar {
+    padding: 6px 0 26px;
+}

@@ -38,6 +38,27 @@ test('targeted reads match snapshot compatibility, without reading records or au
     await assert.rejects(() => catalog.getProject(other.id), { code: 'NOT_FOUND' });
 });
 
+test('per-project resource counts use grouped active totals and support archived visibility', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'With resources' });
+    const empty = await catalog.createProject({ name: 'Empty resources' });
+    const collection = await catalog.createStore({ projectId: project.id, name: 'Items', fields: [{ name: 'name', type: 'string' }] });
+    await catalog.createRecord({ projectId: project.id, storeId: collection.id, data: { name: 'One' } });
+    const archivedRecord = await catalog.createRecord({ projectId: project.id, storeId: collection.id, data: { name: 'Two' } });
+    await catalog.createView({ projectId: project.id, name: 'Snapshot', queries: [{ name: 'items', storeId: collection.id }], html: '{{#each items}}{{name}}{{/each}}', css: '' });
+
+    assert.deepEqual((await catalog.countProjectResources())[project.id], { stores: 1, records: 2, views: 1 });
+    assert.equal((await catalog.countProjectResources())[empty.id], undefined);
+    await catalog.archiveRecord(project.id, collection.id, archivedRecord.id);
+    assert.deepEqual((await catalog.countProjectResources())[project.id], { stores: 1, records: 1, views: 1 });
+    await catalog.archiveStore(project.id, collection.id);
+    assert.deepEqual((await catalog.countProjectResources())[project.id], { stores: 0, records: 0, views: 1 });
+    assert.deepEqual((await catalog.countProjectResources(true))[project.id], { stores: 1, records: 2, views: 1 });
+
+    const fallback: AtlasRepository = { snapshot: () => store.snapshot(), transaction: fn => store.transaction(fn), queryRecords: (s, i) => store.queryRecords(s, i), close: async () => {} };
+    assert.deepEqual((await new AtlasCatalog(fallback).countProjectResources())[project.id], { stores: 0, records: 0, views: 1 });
+});
+
 test('bounded concurrent View reads preserve query order and actions remain atomic', async () => {
     const { catalog, store } = await databaseFixture();
     const p = await catalog.createProject({ name:'Parallel' });

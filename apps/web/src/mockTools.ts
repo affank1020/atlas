@@ -49,7 +49,8 @@ const workspaces = [
 ];
 const nodes: AtlasNode[] = [
     { id: nodeMac, name: 'Demo MacBook', status: 'online', platform: 'darwin', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], lastSeen: stamp, hostedWorkspaceCount: 2 },
-    { id: nodeLinux, name: 'Demo Linux VPS', status: 'online', platform: 'linux', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git'], lastSeen: stamp, hostedWorkspaceCount: 1 },
+    // Deliberately disconnected in local mock mode to preview the Home health warning.
+    { id: nodeLinux, name: 'Demo Linux VPS', status: 'offline', platform: 'linux', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git'], lastSeen: stamp, hostedWorkspaceCount: 1 },
 ];
 const activity: AuditEvent[] = [
     { id: uuid(30, 1), occurredAt: stamp, client: 'demo', operation: 'workspace.git_status', projectId: mockProjects[0].id, workspaceId: workspaces[0].id, resulting: { branch: 'demo/main' } },
@@ -72,6 +73,7 @@ const portfolioEntries = [
 ];
 const applications = [
     { type: 'portfolio', slug: 'portfolio', name: 'Portfolio', description: 'Browse sample portfolio records in read-only preview.', projectId: mockProjects[1].id },
+    { type: 'football-training', slug: 'football-training', name: 'Football Training', description: 'Explore sample training runs and policies.', projectId: mockProjects[2].id },
 ];
 const status: AtlasStatus = { product: 'Atlas Demo', version: '2.0.0-demo', storage: 'In-memory mock', schemaVersion: 1, projects: mockProjects.length, stores: stores.length, records: records.length };
 const str = (value: unknown) => typeof value === 'string' ? value : '';
@@ -91,7 +93,33 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
     let result: unknown;
     switch (name) {
         case 'get_atlas_status': result = status; break;
-        case 'list_projects': result = mockProjects; break;
+        case 'get_storage_usage': result = {
+            postgres: {
+                state: 'ready', measuredAt: stamp, databaseBytes: 32_000_000, tableBytes: 19_000_000, indexBytes: 6_000_000,
+                tableCount: 3, tables: [
+                    { schema: 'public', name: 'records', tableBytes: 12_000_000, indexBytes: 4_000_000, totalBytes: 16_000_000 },
+                    { schema: 'public', name: 'stores', tableBytes: 4_000_000, indexBytes: 1_000_000, totalBytes: 5_000_000 },
+                    { schema: 'public', name: 'projects', tableBytes: 3_000_000, indexBytes: 1_000_000, totalBytes: 4_000_000 },
+                ],
+            },
+            r2: {
+                state: 'ready', bucket: 'atlas-demo', measuredAt: stamp, refreshedAt: stamp,
+                storageBytes: 480_000_000, objectCount: 64, classA: 314, classB: 12_400, otherOperations: 0,
+                monthStart: stamp.slice(0, 8) + '01T00:00:00Z', accountWideOperations: true,
+                storageAllowanceBytes: 10_000_000_000, classAAllowance: 1_000_000, classBAllowance: 10_000_000,
+            },
+        }; break;
+        case 'list_projects':
+            result = input.withMetrics ? mockProjects.map(p => ({
+                ...p,
+                metrics: {
+                    stores: stores.filter(s => s.projectId === p.id).length,
+                    records: records.filter(r => r.projectId === p.id).length,
+                    views: 0,
+                    applications: applications.filter(a => a.projectId === p.id).length,
+                },
+            })) : mockProjects;
+            break;
         case 'get_project': result = mockProjects.find(p => p.id === projectId); break;
         case 'list_stores': result = stores.filter(s => s.projectId === projectId); break;
         case 'get_store': result = stores.find(s => s.id === storeId && s.projectId === projectId); break;
@@ -112,6 +140,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'get_recent_activity': case 'get_audit_history':
             result = activity.filter(event => (!projectId || event.projectId === projectId) && (!workspaceId || event.workspaceId === workspaceId))
                 .slice(0, Number(input.limit) || 200); break;
+        case 'list_all_applications': result = applications; break;
         case 'list_applications': result = applications.filter(a => a.projectId === projectId); break;
         case 'get_application': result = applications.find(a => a.projectId === projectId && a.slug === input.slug); break;
         case 'get_portfolio_schemas': result = portfolioTypes.map(contentType => ({
