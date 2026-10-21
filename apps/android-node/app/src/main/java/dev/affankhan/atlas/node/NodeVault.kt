@@ -49,6 +49,24 @@ internal class NodeVault(
         }
     }
 
+    /** UUID only; never store the issued credential outside encrypted bytes. */
+    fun rememberIssued(nodeId: String) {
+        require(nodeId.matches(Regex("[0-9a-fA-F-]{36}")))
+        check(preferences.edit().putString("unrecovered_node_id", nodeId).commit()) {
+            "Unable to record pending Node recovery."
+        }
+    }
+
+    fun pendingRecoveryId(): String? = preferences.getString("unrecovered_node_id", null)
+    fun hasUnreadableIdentity(): Boolean =
+        preferences.contains("sealed_identity") && load() == null
+
+    fun clearRecoveryNotice() {
+        check(preferences.edit().remove("unrecovered_node_id").commit()) {
+            "Could not clear recovery notice."
+        }
+    }
+
     fun save(node: StoredNode) {
         parseAtlasEndpoint(node.origin)
         require(node.credential.length >= 32 && node.nodeId.isNotBlank())
@@ -62,7 +80,8 @@ internal class NodeVault(
             .put("name", node.name)
         val ciphertext = cipher.doFinal(json.toString().toByteArray(Charsets.UTF_8))
         val encoded = Base64.encodeToString(cipher.iv + ciphertext, Base64.NO_WRAP)
-        check(preferences.edit().putString("sealed_identity", encoded).commit()) {
+        check(preferences.edit().putString("sealed_identity", encoded)
+            .remove("unrecovered_node_id").commit()) {
             "Could not securely save this Node identity."
         }
     }

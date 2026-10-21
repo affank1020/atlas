@@ -7,6 +7,8 @@ import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.WebSocket
@@ -68,6 +70,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
     var pairingError by mutableStateOf<String?>(null)
         private set
+    var recoveryNodeId by mutableStateOf(vault.pendingRecoveryId())
+        private set
+    var unrecoverableIdentity by mutableStateOf(vault.hasUnreadableIdentity())
+        private set
 
     fun pair(rawOrigin: String, rawName: String, rawToken: String) {
         if (pairing || pairedNode != null) return
@@ -85,15 +91,31 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pairingError = null
         viewModelScope.launch {
             try {
-                val node = withContext(Dispatchers.IO) {
-                    transport.enrol(endpoint, token, name, BuildConfig.VERSION_NAME)
+                // Do not suspend between issuing the one-use credential and writing
+                // it to Keystore-backed storage. Finish this bounded exchange even if
+                // the Activity/ViewModel is destroyed midway through enrolment.
+                val node = withContext(Dispatchers.IO + NonCancellable) {
+                    enrolAndPersist(
+                        enrol = { transport.enrol(endpoint, token, name, BuildConfig.VERSION_NAME) },
+                        rememberIssued = vault::rememberIssued,
+                        persist = vault::save,
+                    )
                 }
-                withContext(Dispatchers.IO) { vault.save(node) }
                 pairedNode = node
+                recoveryNodeId = null
+                unrecoverableIdentity = false
                 connectionStatus = "Offline"
                 if (foreground) connect()
+            } catch (error: PairingPersistenceException) {
+                recoveryNodeId = error.nodeId
+                pairingError = "Atlas issued a Node credential, but Android could not save it. " +
+                    "In Atlas Web → Nodes, revoke Node " + error.nodeId +
+                    " before generating a new pairing ticket. Do not reuse the old ticket."
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
-                pairingError = "Could not enrol the device. Check your Atlas address, TLS certificate and one-time ticket."
+                pairingError = "Pairing could not be confirmed. If the ticket was consumed, " +
+                    "check Atlas Web → Nodes for an orphaned Android Node and revoke it before retrying."
             } finally {
                 pairing = false
             }
@@ -110,7 +132,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         connectionGeneration++
         pendingRetry?.let(handler::removeCallbacks)
         pendingRetry = null
-        socket?.close(1000, "App backgrounded")
+        abortForegroundSocket(socket)
         socket = null
         connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · app in background"
     }
@@ -163,10 +185,16 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         vault.clear()
         pairedNode = null
         pairingError = null
+        unrecoverableIdentity = false
         connectionStatus = "Not enrolled"
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
         foreground = wasForeground
+    }
+
+    fun clearRecoveryNotice() {
+        vault.clearRecoveryNotice()
+        recoveryNodeId = null
     }
 
     override fun onCleared() {

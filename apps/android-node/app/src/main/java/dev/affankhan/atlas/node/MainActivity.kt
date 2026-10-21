@@ -52,6 +52,9 @@ class MainActivity : ComponentActivity() {
                 connection = model.connectionStatus,
                 pairing = model.pairing,
                 pairingError = model.pairingError,
+                recoveryNodeId = model.recoveryNodeId,
+                unreadableIdentity = model.unrecoverableIdentity,
+                onClearRecovery = model::clearRecoveryNotice,
                 onPair = model::pair,
                 onForget = model::forget,
                 onNavigate = model::navigate,
@@ -87,12 +90,15 @@ private val atlasScheme = darkColorScheme(
 )
 
 @Composable
-private fun AtlasCompanion(
+internal fun AtlasCompanion(
     session: CompanionSession,
     node: StoredNode?,
     connection: String,
     pairing: Boolean,
     pairingError: String?,
+    recoveryNodeId: String?,
+    unreadableIdentity: Boolean,
+    onClearRecovery: () -> Unit,
     onPair: (String, String, String) -> Unit,
     onForget: () -> Unit,
     onNavigate: (Section) -> Unit,
@@ -120,6 +126,9 @@ private fun AtlasCompanion(
                             connection = connection,
                             pairing = pairing,
                             pairingError = pairingError,
+                            recoveryNodeId = recoveryNodeId,
+                            unreadableIdentity = unreadableIdentity,
+                            onClearRecovery = onClearRecovery,
                             onPair = onPair,
                             onForget = onForget,
                             onEditDraft = onEditDraft,
@@ -134,6 +143,9 @@ private fun AtlasCompanion(
                             connection = connection,
                             pairing = pairing,
                             pairingError = pairingError,
+                            recoveryNodeId = recoveryNodeId,
+                            unreadableIdentity = unreadableIdentity,
+                            onClearRecovery = onClearRecovery,
                             onPair = onPair,
                             onForget = onForget,
                             onEditDraft = onEditDraft,
@@ -164,6 +176,9 @@ private fun CompanionContent(
     connection: String,
     pairing: Boolean,
     pairingError: String?,
+    recoveryNodeId: String?,
+    unreadableIdentity: Boolean,
+    onClearRecovery: () -> Unit,
     onPair: (String, String, String) -> Unit,
     onForget: () -> Unit,
     onEditDraft: (String) -> Unit,
@@ -176,7 +191,10 @@ private fun CompanionContent(
         Text("atlas.", color = MaterialTheme.colorScheme.primary, fontSize = 28.sp)
         Text(session.section.label, style = MaterialTheme.typography.headlineMedium)
         when (session.section) {
-            Section.DEVICES -> DevicePairing(node, connection, pairing, pairingError, onPair)
+            Section.DEVICES -> DevicePairing(
+                node, connection, pairing, pairingError, recoveryNodeId,
+                unreadableIdentity, onClearRecovery, onPair,
+            )
             Section.SEND -> SendContent(session, onEditDraft)
             Section.INBOX -> InfoCard(
                 "No incoming items",
@@ -238,6 +256,9 @@ private fun DevicePairing(
     connection: String,
     pairing: Boolean,
     pairingError: String?,
+    recoveryNodeId: String?,
+    unreadableIdentity: Boolean,
+    onClearRecovery: () -> Unit,
     onPair: (String, String, String) -> Unit,
 ) {
     if (node != null) {
@@ -247,6 +268,16 @@ private fun DevicePairing(
         return
     }
     InfoCard("Not enrolled", "Create a one-time Node enrolment ticket in Atlas Web, then enter it here.")
+    if (unreadableIdentity) {
+        InfoCard("Previous pairing cannot be opened",
+            "Android cannot decrypt a previously stored Node credential. Revoke that Android Node in Atlas Web, then pair again.")
+    }
+    if (recoveryNodeId != null) {
+        InfoCard("Unfinished pairing",
+            "Atlas issued credentials for Node " + recoveryNodeId +
+            ". Revoke this Node in Atlas Web → Nodes before retrying.")
+        Button(onClick = onClearRecovery) { Text("I revoked that Node") }
+    }
     // Enrolment ticket is memory-only and is discarded when this form leaves composition.
     var server by remember { mutableStateOf("https://atlas.affankhan.dev") }
     var deviceName by remember { mutableStateOf("Android Node") }
