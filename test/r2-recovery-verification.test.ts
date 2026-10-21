@@ -20,13 +20,13 @@ const fixture=(data:Buffer=Buffer.from('verified backup bytes'))=>{
 type Row=ReturnType<typeof fixture>;
 function database(rows:Row[]) {
     const calls:{sql:string;params:unknown[]}[]=[];
-    const sorted=[...rows].sort((a,b)=>a.storage_key.localeCompare(b.storage_key));
+    const sorted=[...rows].sort((a,b)=>a.id.localeCompare(b.id));
     const db={query:async(sql:string,params:unknown[])=>{
         calls.push({sql,params});
         assert.match(sql,/^SELECT id,storage_key,checksum,byte_size FROM atlas_files/);
         const [cursor,limit]=params as [string | null,number];
         assert.ok(limit<=11 && limit>=2);
-        return {rows:sorted.filter(x=>cursor === null || x.storage_key>cursor).slice(0,limit)};
+        return {rows:sorted.filter(x=>cursor === null || x.id>cursor).slice(0,limit)};
     }} as unknown as Pick<Pool,'query'>;
     return {db,calls};
 }
@@ -70,12 +70,12 @@ test('Recovery configs must be independent and complete; CLI refuses mutation fl
         ...backupEnv,ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY:primaryConfig.secretAccessKey,
     },primaryConfig),/different access-key ID and secret/);
     assert.deepEqual(parseRecoveryVerifyArgs(['--dry-run']),{maxFiles:3});
-    assert.deepEqual(parseRecoveryVerifyArgs(['--cursor='+fixture().storage_key,'--max-files=5','--dry-run']).maxFiles,5);
+    assert.deepEqual(parseRecoveryVerifyArgs(['--cursor='+fixture().id,'--max-files=5','--dry-run']).maxFiles,5);
     for(const args of [
         [],['--apply'],['--dry-run','--apply'],['--dry-run','--dry-run'],
         ['--dry-run','--max-files=11'],['--dry-run','--max-files=0'],
         ['--dry-run','--max-files=2.5'],['--dry-run','--max-files=1','--max-files=1'],
-        ['--dry-run','--cursor=../secret'],['--dry-run','--cursor=files-bad'],
+        ['--dry-run','--cursor=../secret'],['--dry-run','--cursor=files-bad'],['--dry-run','--cursor='],
     ])assert.throws(()=>parseRecoveryVerifyArgs(args));
 });
 
@@ -186,12 +186,14 @@ test('initial uncursored scan includes schema-allowed empty storage keys and nev
     assert.deepEqual(primaryCalls,[good.storage_key]);
     assert.deepEqual(backupCalls,[good.storage_key]);
     assert.equal(calls[0]?.params[0],null);
-    assert.match(calls[0]!.sql,/\$1::text IS NULL OR storage_key > \$1/);
+    assert.match(calls[0]!.sql,/\$1::uuid IS NULL OR id > \$1::uuid/);
 });
 
 test('empty storage key at a page boundary supports explicit resume without claiming full coverage',async()=>{
     const invalid=fixture(Buffer.from('bad metadata'));
     invalid.storage_key='';
+    // Predictable primary-key ordering, independent of object-key contents.
+    invalid.id='00000000-0000-4000-8000-000000000001';
     const goodBytes=Buffer.from('intact second file');
     const good=fixture(goodBytes);
     const {db}=database([good,invalid]);
@@ -202,10 +204,10 @@ test('empty storage key at a page boundary supports explicit resume without clai
     assert.equal(first.invalidMetadata,1);
     assert.equal(first.checked,1);
     assert.equal(first.remaining,true);
-    assert.equal(first.nextCursor,'');
+    assert.equal(first.nextCursor,invalid.id);
     assert.equal(first.entireCatalogChecked,false);
-    const args=parseRecoveryVerifyArgs(['--dry-run','--max-files=1','--cursor=']);
-    assert.deepEqual(args,{maxFiles:1,cursor:''});
+    const args=parseRecoveryVerifyArgs(['--dry-run','--max-files=1','--cursor='+invalid.id]);
+    assert.deepEqual(args,{maxFiles:1,cursor:invalid.id});
     const next=await verifyR2Recovery({database:db,primary:store(files,[]),
         backup:store(files,[]),...args});
     assert.equal(next.checked,1);
@@ -214,6 +216,64 @@ test('empty storage key at a page boundary supports explicit resume without clai
     assert.equal(next.remaining,false);
     assert.equal(next.entireCatalogChecked,false);
     assert.equal(next.status,'partial','resumed page cannot imply entire-catalogue success');
+});
+
+test('malformed nonempty key at page boundary yields a usable UUID cursor and visits later valid rows',async()=>{
+    const broken=fixture(Buffer.from('invalid'));
+    broken.id='00000000-0000-4000-8000-000000000002';
+    broken.storage_key='broken-key';
+    const validBytes=Buffer.from('intact recovery payload');
+    const valid=fixture(validBytes);
+    const {db}=database([valid,broken]);
+    const objects=new Map([[valid.storage_key,validBytes]]);
+    const checked:string[]=[];
+    const primary=store(objects,checked),backup=store(objects,[]);
+    const first=await verifyR2Recovery({database:db,primary,backup,maxFiles:1});
+    assert.equal(first.status,'failed');
+    assert.equal(first.invalidMetadata,1);
+    assert.equal(first.checked,1);
+    assert.equal(first.remaining,true);
+    assert.equal(first.nextCursor,broken.id,'cursor is the stable primary key, never the invalid storage key');
+    assert.deepEqual(checked,[],'bad object keys must never be passed to R2');
+    const args=parseRecoveryVerifyArgs(['--dry-run','--max-files=1','--cursor='+first.nextCursor]);
+    assert.deepEqual(args,{maxFiles:1,cursor:broken.id});
+    const next=await verifyR2Recovery({database:db,primary,backup,...args});
+    assert.equal(next.checked,1);
+    assert.equal(next.verifiedBoth,1);
+    assert.equal(next.remaining,false);
+    assert.equal(next.entireCatalogChecked,false);
+    assert.equal(next.status,'partial');
+    assert.deepEqual(checked,[valid.storage_key]);
+});
+
+test('real migrated PostgreSQL paginates past malformed key without arbitrary cursor',async()=>{
+    const fixtureDb=await databaseFixture();
+    const invalid=fixture(Buffer.from('not uploaded'));
+    invalid.id='00000000-0000-4000-8000-000000000003';
+    invalid.storage_key='broken-key';
+    const validBytes=Buffer.from('recovered second object');
+    const valid=fixture(validBytes);
+    for(const row of [invalid,valid]){
+        await fixtureDb.store.pool.query(
+            `INSERT INTO atlas_files (id,owner_kind,owner_id,storage_key,checksum,file_name,
+                mime_type,byte_size,visibility,created_by) VALUES
+                ($1,'workspace',$2,$3,$4,'test.bin','application/octet-stream',$5,'private','test')`,
+            [row.id,randomUUID(),row.storage_key,row.checksum,row.byte_size]);
+    }
+    const files=new Map([[valid.storage_key,validBytes]]);
+    const first=await verifyR2Recovery({
+        database:fixtureDb.store.pool,primary:store(files,[]),backup:store(files,[]),maxFiles:1,
+    });
+    assert.equal(first.status,'failed');
+    assert.equal(first.invalidMetadata,1);
+    assert.equal(first.nextCursor,invalid.id);
+    const next=await verifyR2Recovery({
+        database:fixtureDb.store.pool,primary:store(files,[]),backup:store(files,[]),
+        maxFiles:1,cursor:first.nextCursor,
+    });
+    assert.equal(next.verifiedBoth,1);
+    assert.equal(next.status,'partial');
+    assert.equal(next.remaining,false);
 });
 
 test('real migrated PostgreSQL schema permits empty storage key and the verifier flags it',async()=>{
