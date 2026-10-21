@@ -82,6 +82,45 @@ test('logical repository appears once while Mac and VPS checkouts remain selecta
     expect(within(browser).getByText('1 checkout across 1 Node')).toBeInTheDocument();
 });
 
+test('multiple worktrees on one Node have distinct labels and a compact checkout selector', async () => {
+    const checkouts = [
+        { ...repo, rootPath: '/srv/atlas/atlas' },
+        { ...repo, id: 'feature-a', name: 'API cleanup', rootPath: '/srv/atlas/api-cleanup' },
+        { ...repo, id: 'feature-b', name: 'Node setup', rootPath: '/srv/atlas/node-setup' },
+        { ...repo, id: 'feature-c', name: 'UI polish', rootPath: '/srv/atlas/ui-polish' },
+    ];
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return checkouts;
+        if (name === 'list_logical_workspaces') return [{
+            id: 'atlas-logical', name: 'Atlas', repository: 'affank1020/atlas',
+            kind: 'git', checkouts,
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha,
+            originRepository: 'affank1020/atlas', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    expect(await within(browser).findByText('1 Workspace')).toBeInTheDocument();
+    expect(within(browser).getByText('4 checkouts across 1 Node')).toBeInTheDocument();
+    expect(browser.querySelectorAll('.wm-node-heading')).toHaveLength(1);
+    expect(within(browser).getByText('4 checkouts')).toBeInTheDocument();
+    expect(within(browser).getByText('API cleanup')).toBeInTheDocument();
+    expect(within(browser).getByText('Node setup')).toBeInTheDocument();
+
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas' }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const selector = within(inspector).getByRole('combobox', { name: 'Choose checkout' });
+    expect(within(selector).getAllByRole('option')).toHaveLength(4);
+    fireEvent.change(selector, { target: { value: 'feature-b' } });
+    expect(location.hash).toContain('workspace=feature-b');
+    expect(within(inspector).getByText('Node setup')).toBeInTheDocument();
+    expect(within(inspector).getByText('/srv/atlas/node-setup')).toBeInTheDocument();
+});
+
 test('repository recognition uses Node Git inspection and never sends caller-chosen identity', async () => {
     const mac = { ...repo, id: 'mac', nodeId: 'mac-node', rootPath: '/mac/portfolio' };
     const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
