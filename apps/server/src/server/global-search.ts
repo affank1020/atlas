@@ -55,13 +55,13 @@ const commandWords = new Set([
     'some','specific','get','take','bring','up','recent','latest','last','tail','read','status','details',
     'application','applications','apps','app','project','projects','view','views',
     'data','store','stores','record','records','node','nodes','workspace','workspaces',
-    'logs','log','activity','events','history','server','infrastructure', 'lines', 'line', 'error', 'errors', 'stderr', 'stdout'
+    'logs','log','journal','systemd','activity','events','history','server','infrastructure', 'lines', 'line', 'error', 'errors', 'stderr', 'stdout'
 ]);
 export function interpretSearch(query: string): { term: string; intent: Intent; nodeActivity: boolean; nodeLogs: boolean; logSource: 'stdout' | 'stderr'; logLines: number } {
     const lower = query.toLocaleLowerCase();
-    const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower);
+    const nodeLogs = /\b(logs?|stderr|stdout|journal|systemd)\b|\berror\s+(?:lines?|output)\b/.test(lower);
     const logSource = /\b(stderr|errors?|error\s+logs?)\b/.test(lower) ? 'stderr' as const : 'stdout' as const;
-    const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr)\s*)?lines?\b/.exec(lower)?.[1];
+    const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr|journal|systemd)\s*)?lines?\b/.exec(lower)?.[1];
     const logLines = requestedLines ? Math.min(Math.max(Number(requestedLines), 1), 200) : 100;
     const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
     const intent: Intent = nodeActivity || nodeLogs ? 'node'
