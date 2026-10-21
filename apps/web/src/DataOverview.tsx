@@ -90,7 +90,8 @@ export function DataOverview() {
     const usage = useStorageUsageQuery({ refreshToken });
     const postgres = usage.data?.postgres;
     const cloudflare = usage.data?.r2;
-    const projects = useListProjectsQuery({ includeArchived: false });
+    const projects = useListProjectsQuery({ includeArchived: false, withMetrics: true });
+    const projectsWithStores = projects.data?.filter(project => (project.metrics?.stores ?? 0) > 0);
     const media = useApplicationRead<MediaAsset[]>('list_portfolio_media');
     const assets = media.data?.filter(asset => asset.status === 'active');
     const refreshing = status.isFetching || projects.isFetching || media.isFetching || usage.isFetching;
@@ -143,10 +144,10 @@ export function DataOverview() {
         </div>
 
         <section className="data-section" aria-labelledby="data-projects-title">
-            <div className="data-section-head"><div><h2 id="data-projects-title">Project data</h2><p>Collections managed by Atlas, grouped by project.</p></div><span>{projects.data?.length ?? '—'} projects</span></div>
+            <div className="data-section-head"><div><h2 id="data-projects-title">Project data</h2><p>Collections managed by Atlas, grouped by project.</p></div><span>{projectsWithStores ? `${projectsWithStores.length} ${projectsWithStores.length === 1 ? 'project' : 'projects'}` : '— projects'}</span></div>
             <div className="data-project-list">
-                {projects.data?.map(project => <ProjectStorageRow key={project.id} project={project} />)}
-                {!projects.isLoading && !projects.error && projects.data?.length === 0 && <p className="data-empty">No project data yet.</p>}
+                {projectsWithStores?.map(project => <ProjectStorageRow key={project.id} project={project} />)}
+                {!projects.isLoading && !projects.error && projectsWithStores?.length === 0 && <p className="data-empty">No project data yet.</p>}
                 {projects.error && <p className="data-empty">Projects unavailable. <button type="button" className="data-text-button" onClick={() => void projects.refetch()}>Retry</button></p>}
                 {projects.isLoading && !projects.data && <p className="data-empty" role="status">Loading projects…</p>}
             </div>

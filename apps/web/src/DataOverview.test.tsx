@@ -13,7 +13,10 @@ vi.mock('./api', () => ({
 beforeEach(() => {
     vi.mocked(callTool).mockReset();
     vi.mocked(callTool).mockImplementation(async (name, input) => {
-        if (name === 'list_projects') return [{ id: 'p', name: 'Research' }, { id: 'q', name: 'Writing' }];
+        if (name === 'list_projects') return [
+            { id: 'p', name: 'Research', metrics: { stores: 1 } },
+            { id: 'q', name: 'Writing', metrics: { stores: 0 } },
+        ];
         if (name === 'list_stores') return [{ id: 's', projectId: input?.projectId, name: 'Notes' }];
         if (name === 'get_atlas_status') return { product: 'Atlas', version: '2.0', storage: 'PostgreSQL', projects: 2, stores: 7, records: 138, schemaVersion: 16 };
         if (name === 'get_storage_usage') return {
@@ -70,4 +73,26 @@ test('Data overview groups project stores behind expandable project rows', async
     expect(screen.queryByRole('link', { name: /Project data/ })).not.toBeInTheDocument();
     fireEvent.click(research);
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Notes' })).not.toBeInTheDocument());
+});
+
+test('Data overview hides projects with no active stores', async () => {
+    const { store } = createAtlasStore();
+    render(<Provider store={store}><DataOverview /></Provider>);
+    expect(await screen.findByRole('button', { name: /Research/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Writing/ })).not.toBeInTheDocument();
+    expect(screen.getByText('1 project')).toBeInTheDocument();
+    expect(callTool).toHaveBeenCalledWith('list_projects', { includeArchived: false, withMetrics: true }, expect.anything());
+    expect(callTool).not.toHaveBeenCalledWith('list_stores', expect.objectContaining({ projectId: 'q' }), expect.anything());
+});
+
+test('Data overview shows the empty state when all projects have no stores', async () => {
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_projects'
+        ? [{ id: 'p', name: 'Research', metrics: { stores: 0 } }]
+        : []);
+    const { store } = createAtlasStore();
+    render(<Provider store={store}><DataOverview /></Provider>);
+    expect(await screen.findByText('No project data yet.')).toBeInTheDocument();
+    expect(screen.getByText('0 projects')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Research/ })).not.toBeInTheDocument();
+    expect(callTool).not.toHaveBeenCalledWith('list_stores', expect.anything(), expect.anything());
 });
