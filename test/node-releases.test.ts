@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { listNodeReleases, parseNodeReleases, resetNodeReleaseCacheForTests } from '../apps/server/src/nodes/releases.js';
 
 const sha = 'a'.repeat(64), commit = 'abc123abc123';
@@ -8,7 +11,8 @@ const tag = 'node-v2.0.0-' + commit;
 const url = 'https://github.com/affank1020/atlas/releases/download/' + tag + '/atlas-node-v2.0.0-' + commit + '.tar.gz';
 const good = {
     tag_name: tag, target_commitish: commit + '0'.repeat(28), published_at: '2026-10-21T19:00:00Z', draft: false, prerelease: false, immutable: true,
-    html_url: 'https://github.com/affank1020/atlas/releases/tag/' + tag, body: 'Release notes',
+    html_url: 'https://github.com/affank1020/atlas/releases/tag/' + tag,
+    body: 'Atlas-Node-Release-Sequence: 110\n\nRelease notes',
     assets: [
         { name: 'atlas-node-v2.0.0-' + commit + '.tar.gz', browser_download_url: url, state: 'uploaded', digest: 'sha256:' + sha },
         { name: 'atlas-node-v2.0.0-' + commit + '.tar.gz.sha256', browser_download_url: url + '.sha256', state: 'uploaded' },
@@ -24,8 +28,11 @@ test('only published, checksum-addressed desktop artifacts enter the catalogue',
     // must never be labelled attested in the public catalogue.
     assert.equal(entries[0]!.provenance, 'unverified');
     assert.equal(Object.hasOwn(entries[0]!, 'signature'), false);
-    const manualRelease = parseNodeReleases([{ ...good, body: 'Manually published; no attestation exists.' }]);
+    const manualRelease = parseNodeReleases([{ ...good, body: 'Atlas-Node-Release-Sequence: 110\n\nManually published; no attestation exists.' }]);
     assert.equal(manualRelease[0]!.provenance, 'unverified');
+    // A release without the publication sequence is not sortable, so cannot
+    // be offered as the latest merely because it was published more recently.
+    assert.deepEqual(parseNodeReleases([{ ...good, body: 'Manually published without sequence' }]), []);
     // Even when GitHub mislabels a release candidate as stable, its SemVer
     // suffix prevents admission into the default stable catalogue.
     const rcTag = 'node-v2.1.0-rc.1-' + commit;
@@ -42,6 +49,8 @@ test('only published, checksum-addressed desktop artifacts enter the catalogue',
     for (const patch of [
         { draft: true }, { prerelease: true }, { immutable: false }, { tag_name: 'android-v0.1.0' },
         { target_commitish: 'main' }, { target_commitish: 'b'.repeat(40) },
+        { body: 'Atlas-Node-Release-Sequence: 0' },
+        { body: 'Atlas-Node-Release-Sequence: 9007199254740992' },
         { assets: good.assets.slice(0, 1) },
         { assets: [{ ...good.assets[0], digest: undefined }, good.assets[1]] },
         { assets: [{ ...good.assets[0], browser_download_url: 'https://evil.invalid/a' }, good.assets[1]] },
@@ -64,7 +73,8 @@ test('catalogue reports network failure without inventing downloads', async () =
     assert.equal(again.state, 'ready');
 });
 
-function fixtureForCommit(fullCommit: string, publishedAt: string) {
+
+function fixtureForCommit(fullCommit: string, publishedAt: string, sequence: number) {
     const short = fullCommit.slice(0, 12);
     const fullTag = 'node-v2.0.0-' + short;
     const download = 'https://github.com/affank1020/atlas/releases/download/' + fullTag + '/atlas-node-v2.0.0-' + short + '.tar.gz';
@@ -73,6 +83,7 @@ function fixtureForCommit(fullCommit: string, publishedAt: string) {
         tag_name: fullTag,
         target_commitish: fullCommit,
         published_at: publishedAt,
+        body: 'Atlas-Node-Release-Sequence: ' + sequence + '\\n\\nStandalone archive',
         html_url: 'https://github.com/affank1020/atlas/releases/tag/' + fullTag,
         assets: [
             { name: 'atlas-node-v2.0.0-' + short + '.tar.gz', browser_download_url: download, state: 'uploaded', digest: 'sha256:' + sha },
@@ -81,45 +92,73 @@ function fixtureForCommit(fullCommit: string, publishedAt: string) {
     };
 }
 
-test('source ancestry, not publication time, chooses latest when old A finishes after new B', async () => {
-    const older = 'a'.repeat(40), newer = 'b'.repeat(40);
-    // A is published *after* B despite being the older source commit.
-    const A = fixtureForCommit(older, '2026-10-21T20:30:00Z');
-    const B = fixtureForCommit(newer, '2026-10-21T20:10:00Z');
+test('publisher source sequence keeps newer B ahead when older A publishes last', () => {
+    const A = fixtureForCommit('a'.repeat(40), '2026-10-21T20:30:00Z', 120);
+    const B = fixtureForCommit('b'.repeat(40), '2026-10-21T20:10:00Z', 121);
+    const ordered = parseNodeReleases([A, B]);
+    assert.deepEqual(ordered.slice(0, 2).map(x => x.commit), ['b'.repeat(12), 'b'.repeat(12)]);
+    assert.deepEqual(ordered.slice(0, 2).map(x => x.platform), ['linux', 'darwin']);
+    assert.throws(() => parseNodeReleases([A, { ...B, body: A.body }]), /Conflicting Node release sequence/);
+});
+
+test('thirty same-version releases need only one request even with cold cache and simulated compare failures', async () => {
     resetNodeReleaseCacheForTests();
-    const urls: string[] = [];
+    const releases = Array.from({ length: 30 }, (_, i) =>
+        fixtureForCommit(i.toString(16).padStart(12, '0') + 'a'.repeat(28),
+            new Date(Date.UTC(2026, 9, 21, 20, 30 - i)).toISOString(),
+            i + 100));
+    let requests = 0;
     const fetcher = (async (input: string) => {
-        urls.push(input);
-        if (input.includes('/compare/')) {
-            assert.equal(input.endsWith(older + '...' + newer), true);
-            return { ok: true, json: async () => ({ status: 'ahead' }) };
-        }
-        return { ok: true, json: async () => [A, B] };
+        requests++;
+        if (input.includes('/compare/')) throw new Error('Rate limited: 403');
+        return { ok: true, json: async () => releases };
     }) as unknown as typeof fetch;
     const result = await listNodeReleases(false, fetcher);
     assert.equal(result.state, 'ready');
-    assert.deepEqual(result.releases.slice(0, 2).map(x => x.commit), [newer.slice(0, 12), newer.slice(0, 12)]);
-    assert.deepEqual(result.releases.slice(0, 2).map(x => x.platform), ['linux', 'darwin']);
-    assert.equal(urls.filter(url => url.includes('/compare/')).length, 1);
-    const refreshed = await listNodeReleases(true, fetcher);
-    assert.equal(refreshed.releases[0]!.sourceCommit, newer);
-    assert.equal(urls.filter(url => url.includes('/compare/')).length, 1, 'immutable ancestry must be reused across refreshes');
+    assert.equal(result.releases.length, 60);
+    assert.equal(result.releases[0]!.sourceOrder, 129);
+    assert.equal(requests, 1, 'cold catalogue must not make N ancestry requests');
+    await listNodeReleases(true, fetcher);
+    assert.equal(requests, 2, 'refresh must still only make a single request');
 
-    // An unavailable or divergent Git ancestry check must not invent a latest build.
     resetNodeReleaseCacheForTests();
-    const ambiguous = (async (input: string) => input.includes('/compare/')
-        ? { ok: true, json: async () => ({ status: 'diverged' }) }
-        : { ok: true, json: async () => [A, B] }) as unknown as typeof fetch;
-    const failed = await listNodeReleases(false, ambiguous);
+    const failed = await listNodeReleases(false, (async () => ({
+        ok: false, status: 403,
+    })) as unknown as typeof fetch);
     assert.equal(failed.state, 'unavailable');
     assert.deepEqual(failed.releases, []);
 });
 
-test('publisher only promotes stable builds at current main and serializes overlapping jobs', () => {
+test('node-only publication gate ignores later Web-only pushes but rejects newer Node changes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'atlas-node-release-check-'));
+    const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+    const helper = resolve('scripts/node-release-publication-check.sh');
+    try {
+        git('init', '-q');
+        git('config', 'user.email', 'node-releases-test@example.invalid');
+        git('config', 'user.name', 'Node Release Test');
+        mkdirSync(join(root, 'apps/node'), { recursive: true });
+        mkdirSync(join(root, 'apps/web'), { recursive: true });
+        writeFileSync(join(root, 'apps/node/runtime.txt'), 'Node A');
+        git('add', '.'); git('commit', '-q', '-m', 'Node A');
+        const nodeA = git('rev-parse', 'HEAD');
+
+        writeFileSync(join(root, 'apps/web/ui.txt'), 'Web B');
+        git('add', '.'); git('commit', '-q', '-m', 'Web B');
+        assert.equal(execFileSync('bash', [helper, root, nodeA, 'HEAD'], { encoding: 'utf8' }).trim(), 'current');
+
+        writeFileSync(join(root, 'apps/node/runtime.txt'), 'Node C');
+        git('add', '.'); git('commit', '-q', '-m', 'Node C');
+        assert.equal(execFileSync('bash', [helper, root, nodeA, 'HEAD'], { encoding: 'utf8' }).trim(), 'superseded');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('publisher stamps a monotonic release sequence and serializes promotion', () => {
     const workflow = readFileSync('.github/workflows/node-package.yml', 'utf8');
     assert.ok(workflow.includes('group: atlas-node-release-publication'));
     assert.ok(workflow.includes('cancel-in-progress: false'));
     assert.ok(workflow.includes('if [[ "$version" == *-* ]]'));
-    assert.ok(workflow.includes('main_head="$(gh api'));
-    assert.ok(workflow.includes('if [[ "$main_head" != "$GITHUB_SHA" ]]'));
+    assert.ok(workflow.includes('node-release-publication-check.sh'));
+    assert.ok(workflow.includes('Atlas-Node-Release-Sequence: %s'));
+    assert.ok(workflow.includes('"$GITHUB_RUN_NUMBER"'));
 });
