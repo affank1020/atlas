@@ -71,8 +71,9 @@ test('logical repository appears once while Mac and VPS checkouts remain selecta
     expect(within(browser).getByText('2 checkouts across 2 Nodes')).toBeInTheDocument();
     fireEvent.click(within(browser).getByRole('button', { name: 'Portfolio Site' }));
     expect(location.hash).toContain('workspace=logical-portfolio');
-    expect(await within(screen.getByRole('complementary', { name: 'Workspace details' }))
-        .findByText(/affank1020\/portfolio-site/)).toBeInTheDocument();
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    expect(await within(inspector).findAllByText(/affank1020\/portfolio-site/)).not.toHaveLength(0);
+    expect(within(inspector).getByRole('group', { name: 'Choose Node checkout' })).toBeInTheDocument();
     fireEvent.click(within(browser).getByRole('button', { name: /Checkout on MacBook/ }));
     expect(location.hash).toContain('workspace=mac');
     fireEvent.click(within(browser).getByRole('button', { name: /Checkout on Linux VPS/ }));
