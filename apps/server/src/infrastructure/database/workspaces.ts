@@ -137,15 +137,17 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
             : await this.connection.query('UPDATE workspaces SET name=COALESCE($2,name),updated_at=now() WHERE id=$1 RETURNING *', [id, name]);
         const changed = row(result.rows[0]);
         if (!archive && name !== undefined) {
-            // The legacy rename operation names a physical checkout. For a
-            // single-checkout local Workspace the checkout IS the logical
-            // identity, so keep its browser title in sync. A multi-checkout
-            // group or Git repository needs a separate logical rename action.
+            // The browser hides archived checkouts by default. A local
+            // Workspace with exactly one ACTIVE checkout must keep its
+            // logical display name in sync, even with archived history.
+            // A multi-active-checkout group or Git repository needs a
+            // separate logical rename action.
             await this.connection.query(
                 `UPDATE logical_workspaces l SET name=$2,updated_at=now()
                  WHERE l.id=$1 AND l.kind='local'
                    AND (SELECT count(*) FROM workspaces w
-                        WHERE w.logical_workspace_id=l.id)=1`,
+                        WHERE w.logical_workspace_id=l.id
+                          AND w.archived_at IS NULL)=1`,
                 [changed.logicalWorkspaceId, name]);
         }
         return changed;
