@@ -58,6 +58,54 @@ test('Workspaces browse independent directories across Nodes and follow deep lin
         !(input as any)?.workspaceId && !!(input as any)?.checkoutId)).toBe(true);
 });
 
+test('publishing and creating feature worktrees use the selected checkoutId', async () => {
+    vi.mocked(callTool).mockImplementation(async (name) => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [manager, repo];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'atlas/feature',
+            head: sha, dirty: false, originRepository: 'example/atlas' };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'workspace_git_create_worktree') return {
+            workspace: { ...repo, id: 'new-checkout' }, head: sha, branch: 'atlas/feature-x',
+        };
+        if (name === 'workspace_git_open_pull_request') return {
+            number: 42, url: 'https://github.com/example/atlas/pull/42', draft: true,
+        };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas/ }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const push = await within(inspector).findByRole('button', { name: 'Push feature branch to GitHub' });
+    fireEvent.click(push);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_push_branch', {
+        checkoutId: repo.id, repository: 'example/atlas', branch: 'atlas/feature', expectedHead: sha,
+    }));
+    await waitFor(() => expect(within(inspector).getByRole('button', { name: 'Open draft PR' })).toBeEnabled());
+    fireEvent.change(within(inspector).getByLabelText('Pull request title'), {
+        target: { value: 'Finish checkout selector migration' },
+    });
+    fireEvent.click(within(inspector).getByRole('button', { name: 'Open draft PR' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_open_pull_request', {
+        checkoutId: repo.id, repository: 'example/atlas', branch: 'atlas/feature',
+        expectedHead: sha, title: 'Finish checkout selector migration', body: '',
+    }));
+    fireEvent.change(within(inspector).getByLabelText('Branch'), {
+        target: { value: 'atlas/feature-x' },
+    });
+    fireEvent.change(within(inspector).getByLabelText('Destination on Node'), {
+        target: { value: '/srv/atlas/workspaces/atlas-feature-x' },
+    });
+    await waitFor(() => expect(within(inspector).getByRole('button', { name: 'Create worktree' })).toBeEnabled());
+    fireEvent.click(within(inspector).getByRole('button', { name: 'Create worktree' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_create_worktree', {
+        checkoutId: repo.id, branch: 'atlas/feature-x',
+        targetPath: '/srv/atlas/workspaces/atlas-feature-x',
+    }));
+});
+
 test('retirement requires successful read-only preflight before enabling deletion', async () => {
     const feature = { ...repo, id: 'feature', name: 'Temporary worktree',
         rootPath: '/srv/atlas/workspaces/temp-feature' };
