@@ -431,6 +431,7 @@ export function Workspaces() {
                         })}</div>
                         <form className="wm-stack" onSubmit={createWorktree}>
                             <h3>New feature worktree</h3>
+                            <p className="wm-hint">Atlas-managed feature worktrees are temporary checkouts. Once their exact PR is merged, you can check eligibility and retire them safely; the branch is preserved.</p>
                             <label>Branch<input value={branch} onChange={e => { const value = e.target.value; setBranch(value); if (!targetPath || targetPath === suggestTarget(selected.rootPath, branch)) setTargetPath(suggestTarget(selected.rootPath, value)); }} placeholder="atlas/feature-name" /></label>
                             <label>Destination on Node<input value={targetPath} onChange={e => setTargetPath(e.target.value)} placeholder={suggestTarget(selected.rootPath, 'atlas/feature')} /></label>
                             <label>Display name (optional)<input value={featureName} onChange={e => setFeatureName(e.target.value)} /></label>
