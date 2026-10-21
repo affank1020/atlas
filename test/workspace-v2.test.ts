@@ -2,6 +2,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { databaseFixture, cleanupDatabases } from './database.js';
 import { WorkspaceService } from '../apps/server/src/workspaces/application.js';
+import { workspaceSchemas } from '../apps/server/src/workspaces/contracts.js';
 import { PostgresWorkspaceRepository } from '../apps/server/src/infrastructure/database/workspaces.js';
 import { PostgresNodeRepository } from '../apps/server/src/infrastructure/database/nodes.js';
 import { NodeRouter } from '../apps/server/src/nodes/router.js';
@@ -132,6 +133,36 @@ test('logical Projects unite Mac/Linux checkouts, survive new worktrees, and hon
     assert.deepEqual((await svc.call('list_logical_workspaces', {}) as any[])[0].projectIds,[p3.id]);
     assert.equal((await svc.call('list_project_workspaces', { projectId:p2.id }) as any[]).length,0);
     assert.equal((await repo.getById(sibling.id)).projectId,p3.id);
+});
+
+test('checkout Project link tools require projectId with either ID spelling before any lookup', async () => {
+    const checkoutId = '00000000-0000-4000-8000-000000000017';
+    const projectId = '00000000-0000-4000-8000-000000000018';
+    let touchedDependency = false;
+    const forbidden = () => {
+        touchedDependency = true;
+        throw new Error('Project validation must reject the request before accessing dependencies');
+    };
+    const svc = new WorkspaceService(
+        { getProject: forbidden } as any,
+        { getById: forbidden, connect: forbidden } as any,
+        {} as any,
+    );
+    for (const name of ['link_workspace_project', 'unlink_workspace_project'] as const) {
+        for (const selector of [{ checkoutId }, { workspaceId: checkoutId }]) {
+            const missingProject = selector;
+            assert.equal(workspaceSchemas[name].safeParse(missingProject).success, false,
+                `${name} must reject an absent projectId for both selectors`);
+            await assert.rejects(
+                svc.call(name, missingProject),
+                /projectId/i,
+                `${name} must reject the missing required field before database lookup`,
+            );
+            assert.equal(touchedDependency, false);
+            assert.equal(workspaceSchemas[name].safeParse({ ...selector, projectId }).success, true,
+                `${name} must continue accepting a valid Project with either checkout selector`);
+        }
+    }
 });
 
 test('explicit checkoutId selects the same physical Node checkout as legacy workspaceId', async () => {
