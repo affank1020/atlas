@@ -65,7 +65,8 @@ export function Workspaces() {
     const [draftPR, setDraftPR] = useState<Draft>();
     const [retirement, setRetirement] = useState<RetirementState>();
 
-    // Accept both new logical Workspace URLs and existing checkout deep links.
+    // Preserve existing ?workspace= deep links (logical or physical) while
+    // public checkout operations explicitly select one Node-bound checkoutId.
     const selected = all.find(w => w.id === selectedId) ?? logical.find(group => group.id === selectedId)?.checkouts[0];
     const selectedNode = nodes.find(n => n.id === selected?.nodeId);
     const status = inspectedId === selected?.id ? rawStatus : undefined;
@@ -160,8 +161,8 @@ export function Workspaces() {
         // checkout details from leaking into a newly selected Workspace.
         setInspecting(true); setInspectionError('');
         Promise.allSettled([
-            callTool<GitStatus>('workspace_git_status', { workspaceId: selected.id }),
-            callTool<{worktrees: Worktree[]}>('workspace_git_list_worktrees', { workspaceId: selected.id }),
+            callTool<GitStatus>('workspace_git_status', { checkoutId: selected.id }),
+            callTool<{worktrees: Worktree[]}>('workspace_git_list_worktrees', { checkoutId: selected.id }),
         ]).then(([git, trees]) => {
             if (!live) return;
             setStatus(git.status === 'fulfilled' ? git.value : undefined);
@@ -198,11 +199,11 @@ export function Workspaces() {
                 const onlineNode = online.some(node => node.id === checkout.nodeId);
                 if (checkout.kind !== 'generic' || !onlineNode) { skipped++; continue; }
                 try {
-                    const git = await callTool<GitStatus>('workspace_git_status', { workspaceId: checkout.id });
+                    const git = await callTool<GitStatus>('workspace_git_status', { checkoutId: checkout.id });
                     if (!git.available || !git.originRepository) { skipped++; continue; }
                     // The Node-derived origin is verified again by the Server;
                     // neither a repository URL nor a Node path is caller-selected.
-                    await callTool('attach_checkout_repository', { workspaceId: checkout.id });
+                    await callTool('attach_checkout_repository', { checkoutId: checkout.id });
                     linked++;
                 } catch { skipped++; }
             }
@@ -236,7 +237,7 @@ export function Workspaces() {
         event.preventDefault();
         if (!managerId || !directoryPattern.test(directoryName) || !repository) return;
         await mutate(() => callTool<Created>('workspace_git_clone_repository', {
-            workspaceId: managerId, repository, directoryName,
+            checkoutId: managerId, repository, directoryName,
         }), 'Repository cloned and Workspace registered.', result => {
             choose(result.workspace.id); setProvision(false);
         });
@@ -245,7 +246,7 @@ export function Workspaces() {
         event.preventDefault();
         if (!selected || !validFeature || !targetPath.startsWith('/')) return;
         await mutate(() => callTool<Created>('workspace_git_create_worktree', {
-            workspaceId: selected.id, branch, targetPath: targetPath.trim(),
+            checkoutId: selected.id, branch, targetPath: targetPath.trim(),
             ...(featureName.trim() ? { name: featureName.trim() } : {}),
         }), 'Feature worktree created.', result => choose(result.workspace.id));
     }
@@ -262,7 +263,7 @@ export function Workspaces() {
         setRetirement({ ...key, checking: true });
         try {
             const report = await callTool<RetirementReport>('workspace_git_retirement_preflight', {
-                workspaceId: source.id, targetWorkspaceId: record.id, expectedHead: entry.head,
+                checkoutId: source.id, targetCheckoutId: record.id, expectedHead: entry.head,
             });
             setRetirement({ ...key, checking: false, report });
         } catch (cause) {
@@ -277,13 +278,13 @@ export function Workspaces() {
             ' from this Node. Atlas will recheck every safety condition before deletion. ' +
             'The Git branch and commits are preserved.')) return;
         await mutate(() => callTool<{ removed: boolean; estimatedReclaimedBytes: number }>('workspace_git_remove_worktree', {
-            workspaceId: source.id, targetWorkspaceId: record.id, expectedHead: entry.head,
+            checkoutId: source.id, targetCheckoutId: record.id, expectedHead: entry.head,
         }), result => `Local worktree folder deleted (${reclaimed(result.estimatedReclaimedBytes)} estimated reclaimed); Git branch and commits preserved.`);
     }
     async function push() {
         if (!selected || !canPublish) return;
         await mutate(() => callTool('workspace_git_push_branch', {
-            workspaceId: selected.id, repository: status!.originRepository,
+            checkoutId: selected.id, repository: status!.originRepository,
             branch: status!.branch, expectedHead: status!.head,
         }), 'Branch published to GitHub.');
     }
@@ -291,7 +292,7 @@ export function Workspaces() {
         event.preventDefault();
         if (!selected || !canPublish || !prTitle.trim()) return;
         await mutate(() => callTool<Draft>('workspace_git_open_pull_request', {
-            workspaceId: selected.id, repository: status!.originRepository, branch: status!.branch,
+            checkoutId: selected.id, repository: status!.originRepository, branch: status!.branch,
             expectedHead: status!.head, title: prTitle.trim(), body: prBody,
         }), 'Draft pull request opened.', setDraftPR);
     }
