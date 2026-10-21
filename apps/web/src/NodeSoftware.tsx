@@ -82,8 +82,8 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         const nodeId = node.id;
         setPreflight({ nodeId, busy: true });
         void callTool<LinuxNodeUpdatePlan>('plan_node_update', { nodeId })
-            .then(result => setPreflight({ nodeId, result }))
-            .catch(cause => setPreflight({ nodeId, error: cause instanceof Error ? cause.message : String(cause) }));
+            .then(result => setPreflight(current => current?.nodeId === nodeId ? { nodeId, result } : current))
+            .catch(cause => setPreflight(current => current?.nodeId === nodeId ? { nodeId, error: cause instanceof Error ? cause.message : String(cause) } : current));
     }
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
     const status = catalogue?.state === 'ready' ? releaseUpdateState(node.version, catalogue.releases, node.platform) : 'unknown';
