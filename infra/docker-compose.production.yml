@@ -38,6 +38,8 @@ services:
       ATLAS_MCP_OAUTH_ISSUER: ${ATLAS_MCP_OAUTH_ISSUER:-}
       ATLAS_MCP_OAUTH_ALLOWED_SUBJECT: ${ATLAS_MCP_OAUTH_ALLOWED_SUBJECT:-}
       ATLAS_MCP_DIAGNOSTICS: ${ATLAS_MCP_DIAGNOSTICS:-false}
+      # Only fixed-code, in-memory server diagnostics; no raw Docker logs.
+      ATLAS_SERVER_DIAGNOSTICS_ENABLED: ${ATLAS_SERVER_DIAGNOSTICS_ENABLED:-true}
       # Phase 4.3: server-only GitHub App broker. All defaults deny publishing.
       ATLAS_GITHUB_APP_ID: ${ATLAS_GITHUB_APP_ID:-}
       ATLAS_GITHUB_INSTALLATION_ID: ${ATLAS_GITHUB_INSTALLATION_ID:-}
