@@ -21,3 +21,12 @@
 @media (max-width: 600px) { .activity-item summary { align-items: flex-start; flex-direction: column; } .activity-state { text-align: left; } .activity-details dl > div { grid-template-columns: 1fr; } }
 
 .activity-filters select { max-width: 280px; min-width: 130px; padding: 7px 10px; border: 1px solid var(--line, var(--border)); border-radius: 6px; background: transparent; color: inherit; }
+
+/* Monitoring keeps filters compact and leaves enough room for the audit evidence. */
+.monitoring-page .project-nav { margin-bottom: 22px; }
+.monitoring-filters { gap: 12px; }
+.monitoring-filters input, .monitoring-filters select { min-width: 140px; max-width: 210px; padding: 7px 10px; border: 1px solid var(--line,var(--border)); border-radius: 6px; background: transparent; color: inherit; }
+.monitoring-search { display: flex; align-items: end; gap: 8px; }
+.monitoring-pagination { padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.monitoring-log-result { padding: 18px 22px; }
+.monitoring-log-result pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 620px; font-size: 12px; }

@@ -30,15 +30,15 @@ test('launch-app query resolves an application without being confused by command
     assert.ok(!result.results.some(item => item.kind === 'record'));
 });
 
-test('node-log intent exposes only a bounded, typed log action for an approved Node', async () => {
+test('node-log intent deep-links to Monitoring without reading logs in search', async () => {
     const result = await searchEverywhere(dependencies(), { query: 'check logs for my Mac node' });
     assert.equal(result.results[0]?.kind, 'node');
     assert.match(result.results[0]?.title || '', /logs/);
-    assert.deepEqual(result.results[0]?.action, { type: 'read_node_logs', nodeId: node.id, source: 'stdout', lines: 100 });
-    assert.equal(result.results[0]?.href, '#/nodes?node=' + node.id);
+    assert.equal(result.results[0]?.action, undefined);
+    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id);
     assert.match(result.results[0]?.description || '', /Latest 100 lines/);
     const errors = await searchEverywhere(dependencies(), { query: 'show the last 100 error lines from my Mac node' });
-    assert.deepEqual(errors.results[0]?.action, { type: 'read_node_logs', nodeId: node.id, source: 'stderr', lines: 100 });
+    assert.equal(errors.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id);
 });
 
 test('record search uses indexed Fabric results and includes incomplete-source diagnostics', async () => {
@@ -68,6 +68,6 @@ test('Nodes without log capability fall back to activity, never a privileged rea
         : { workspaces: [] };
     const result = await searchEverywhere(deps, { query: 'show Mac node logs' });
     assert.equal(result.results[0]?.action, undefined);
-    assert.equal(result.results[0]?.href, '#/nodes?node=' + node.id);
+    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id);
     assert.match(result.results[0]?.description || '', /raw logs unavailable/);
 });

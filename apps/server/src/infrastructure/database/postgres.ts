@@ -3,7 +3,7 @@ import { Pool, type PoolClient, type PoolConfig } from "pg";
 import type { AtlasData, AtlasRecord, AuditEvent, Page, Project, RecordFilter, SortSpec, Store, View } from "../../types.js";
 
 const EMPTY_DATA: AtlasData = { schemaVersion: 1, projects: [], stores: [], records: [], views: [], auditEvents: [] };
-import type { AtlasRepository, CatalogueRead, AuditRead, CatalogueCounts, ProjectResourceCounts } from "../../core/repository.js";
+import type { AtlasRepository, CatalogueRead, AuditRead, MonitoringActivityQuery, MonitoringActivityPage, CatalogueCounts, ProjectResourceCounts } from "../../core/repository.js";
 // Invalid entity IDs must retain service NOT_FOUND semantics, not PostgreSQL cast errors.
 const uuid = (value: string | undefined) => value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 const iso = (value: Date | string) => value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -70,6 +70,51 @@ export class PostgresRepository implements AtlasRepository {
             entry[row.kind as keyof ProjectResourceCounts] = Number(row.total);
         }
         return counts;
+    }
+    /** Filter immutable audit rows at the database, before paging. */
+    async queryMonitoringActivity(input: MonitoringActivityQuery): Promise<MonitoringActivityPage> {
+        const limit = Math.min(Math.max(Number.isInteger(input.limit) ? input.limit! : 30, 1), 100);
+        const offset = Math.min(Math.max(Number.isInteger(input.offset) ? input.offset! : 0, 0), 10000);
+        const values: unknown[] = [];
+        const where: string[] = [];
+        const param = (value: unknown) => { values.push(value); return '$' + values.length; };
+        for (const [key, column] of Object.entries({ projectId: 'a.project_id', workspaceId: 'a.workspace_id', checkoutId: 'a.workspace_id', storeId: 'a.store_id', recordId: 'a.record_id' })) {
+            const value = input[key as keyof MonitoringActivityQuery];
+            if (value) where.push(column + '=' + param(uuid(String(value))));
+        }
+        if (input.nodeId) {
+            const id = param(uuid(input.nodeId));
+            where.push("(a.after_state->>'nodeId'=" + id + " OR a.after_state->>'previousNodeId'=" + id + ")");
+        }
+        if (input.client) where.push('lower(a.client)=lower(' + param(input.client) + ')');
+        if (input.operation) where.push('a.operation=' + param(input.operation));
+        if (input.from) where.push('a.created_at >= ' + param(input.from) + '::timestamptz');
+        if (input.to) where.push('a.created_at <= ' + param(input.to) + '::timestamptz');
+        if (input.category) {
+            const op = 'a.operation';
+            const category = `CASE WHEN ${op} LIKE 'view.%' THEN 'view'
+                WHEN ${op} LIKE 'node.%' THEN 'node'
+                WHEN ${op} LIKE 'workspace.git_%' THEN 'git'
+                WHEN ${op} LIKE 'workspace.dev_%' THEN 'dev'
+                WHEN ${op} LIKE 'workspace.unity_%' THEN 'unity'
+                WHEN ${op} LIKE 'workspace.file_%' OR ${op}='workspace.files_searched' THEN 'files'
+                WHEN ${op} LIKE 'workspace.%' THEN 'workspace' ELSE 'core' END`;
+            where.push('(' + category + ')=' + param(input.category));
+        }
+        if (input.outcome) {
+            const failure = "(a.operation LIKE '%_failed' OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error') OR a.after_state->>'success'='false')";
+            const pending = "a.operation='workspace.mutation_requested'";
+            where.push(input.outcome === 'failed' ? failure : input.outcome === 'pending' ? '(' + pending + ' AND NOT ' + failure + ')' : '(NOT ' + failure + ' AND NOT ' + pending + ')');
+        }
+        if (input.search?.trim()) {
+            const p = param('%' + input.search.trim().replace(/[%_]/g, x => '\\' + x) + '%');
+            where.push("(a.operation ILIKE " + p + " OR a.client ILIKE " + p + " OR a.after_state->>'error' ILIKE " + p + " OR a.after_state->>'task' ILIKE " + p + ")");
+        }
+        const condition = where.length ? ' WHERE ' + where.join(' AND ') : '';
+        const count = await this.query('SELECT count(*)::int AS total FROM audit_events a' + condition, values);
+        const limitParam = param(limit), offsetParam = param(offset);
+        const result = await this.query('SELECT a.* FROM audit_events a' + condition + ' ORDER BY a.created_at DESC,a.id DESC LIMIT ' + limitParam + ' OFFSET ' + offsetParam, values);
+        return { items: result.rows.map(auditFromRow), total: Number(count.rows[0].total), limit, offset };
     }
     async readAudit(input: AuditRead): Promise<AuditEvent[]> {
         const values: unknown[] = [];
