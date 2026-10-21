@@ -63,4 +63,6 @@ it('refreshes the selected Node activity preview when the Nodes page refreshes',
     expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', { nodeId: node.id, limit: 4, offset: 0 }, expect.any(AbortSignal));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity')).toHaveLength(2));
+    const reads = vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity');
+    expect(reads[1]?.[1]).toEqual({ nodeId: node.id, limit: 4, offset: 0 });
 });
