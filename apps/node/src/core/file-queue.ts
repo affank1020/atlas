@@ -29,7 +29,7 @@ export type QueueIdentity = { nodeId: string; credential: string; serverUrl: str
 export type QueuedUpload = QueueIdentity & {
     workspaceId: string; uploadId: string; fileName: string; mimeType: string; bytes: Uint8Array;
 };
-type Sender = (upload: QueuedUpload) => Promise<{ fileId: string; replayed: boolean }>;
+type Sender = (upload: QueuedUpload, signal?: AbortSignal) => Promise<{ fileId: string; replayed: boolean }>;
 
 function verifyPayload(payload: unknown, id: string): asserts payload is Payload {
     if (!payload || typeof payload !== 'object') throw new Error('Invalid encrypted Atlas upload queue record.');
@@ -86,9 +86,11 @@ function permanent(error: unknown): boolean {
 export class NodeOfflineFileQueue {
     private readonly key: Buffer;
     private running?: Promise<DrainResult>;
+    private activeRequest?: AbortController;
+    private shuttingDown = false;
     readonly directory: string;
     constructor(readonly identity: QueueIdentity, directory = join(nodeStatusPath(), '..', 'file-queue'),
-        readonly send: Sender = uploadNodeFileResumable) {
+        readonly send: Sender = (upload, signal) => uploadNodeFileResumable(upload, fetch, signal)) {
         if (!UUID.test(identity.nodeId) || identity.credential.length < 32)
             throw new Error('Node offline queue requires an enrolled Node identity.');
         validRoot(directory);
@@ -157,6 +159,24 @@ export class NodeOfflineFileQueue {
         return files.sort((a,b)=>a.id.localeCompare(b.id));
     }
 
+    /** Persist directory entry changes, not only payload bytes. Without
+     * parent fsync a successful rename/unlink can be lost on power failure.
+     * macOS and Linux are the supported desktop Node filesystems; if directory
+     * fsync fails, do not acknowledge the operation as durable.
+     */
+    private async syncDirectory() {
+        const fd = await open(this.directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+        try {
+            if (!(await fd.stat()).isDirectory()) throw new Error('Unsafe Node queue directory.');
+            await fd.sync();
+        } finally { await fd.close(); }
+    }
+
+    private async durableUnlink(id: string) {
+        await unlink(this.path(id));
+        await this.syncDirectory();
+    }
+
     /** One directory-level cross-process mutation lock shared by the Node
      * worker and every operator CLI action. It covers the *whole* send call:
      * discard only succeeds after an in-flight send finishes. If busy, the
@@ -173,7 +193,11 @@ export class NodeOfflineFileQueue {
             throw error;
         }
         try { return await action(); }
-        finally { await rmdir(lock); }
+        finally {
+            await rmdir(lock);
+            // A clean shutdown must also persist removal of the lock marker.
+            await this.syncDirectory();
+        }
     }
 
     private async atomicWrite(id: string, data: Buffer) {
@@ -189,8 +213,15 @@ export class NodeOfflineFileQueue {
             throw error;
         }
         await file.close();
-        try { await rename(temp,dest); }
-        catch (error) { await rm(temp,{force:true});throw error; }
+        try {
+            await rename(temp,dest);
+            await this.syncDirectory();
+        } catch (error) {
+            // If rename succeeded but fsync failed, the caller must treat the
+            // outcome as uncertain; never delete the potentially new job.
+            await rm(temp,{force:true});
+            throw error;
+        }
     }
 
     async enqueue(input: {workspaceId: string; fileName: string; mimeType: string; bytes: Uint8Array}): Promise<string> {
@@ -266,11 +297,23 @@ export class NodeOfflineFileQueue {
             const stat=await lstat(location);
             if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) || stat.size > MAX_JOB_BYTES)
                 throw new Error('Unsafe Node offline queue file; manual inspection required.');
-            await unlink(location);
+            await this.durableUnlink(id);
         });
     }
 
+    /** Gracefully stop a running queue worker before the Node's 20-second
+     * systemd stop deadline. The HTTP request is aborted and this method
+     * waits for the worker's finally block to remove the lock. A partially
+     * transmitted request keeps the SAME upload ID for idempotent recovery.
+     */
+    async stop(): Promise<void> {
+        this.shuttingDown = true;
+        this.activeRequest?.abort();
+        if (this.running) await this.running;
+    }
+
     flush(now = Date.now(), maxJobs = 4): Promise<DrainResult> {
+        if (this.shuttingDown) return Promise.resolve({delivered:0,deferred:0,blocked:0,unreadable:0});
         if (this.running) return this.running;
         this.running = this.drain(now, maxJobs).finally(()=>{this.running=undefined;});
         return this.running;
@@ -279,12 +322,15 @@ export class NodeOfflineFileQueue {
     private async drain(now: number,maxJobs: number): Promise<DrainResult> {
         if (!Number.isSafeInteger(now) || now < 0 || !Number.isInteger(maxJobs) || maxJobs<1 || maxJobs>4)
             throw new Error('Invalid Node queue drain limits.');
-        return this.withLock(async () => {
+        const abort = new AbortController();
+        this.activeRequest = abort;
+        try { return await this.withLock(async () => {
             // Scan all eight bounded records first. Four blocked or backed-off
             // jobs must never starve a fifth ready item.
             const entries = await this.records();
             let delivered=0,deferred=0,blocked=0,unreadable=0,attempted=0;
             for (const entry of entries) {
+                if (this.shuttingDown || abort.signal.aborted) break;
                 let record:Payload;
                 try { record=await this.read(entry.id); }
                 catch { unreadable++;continue; }
@@ -297,8 +343,12 @@ export class NodeOfflineFileQueue {
                 try {
                     await this.send({...this.identity,workspaceId:record.workspaceId,
                         uploadId:record.uploadId,fileName:record.fileName,mimeType:record.mimeType,
-                        bytes:Buffer.from(record.base64,'base64')});
+                        bytes:Buffer.from(record.base64,'base64')}, abort.signal);
                 } catch(error) {
+                    // Aborted shutdown is not a permanent transfer failure.
+                    // Preserve the original encrypted job and upload UUID;
+                    // the next Node process consults server-side checkpoints.
+                    if (abort.signal.aborted) break;
                     const isPermanent=permanent(error);
                     const attempts=Math.min(record.attempts+1,MAX_ATTEMPTS);
                     const updated:Payload={...record,
@@ -311,10 +361,12 @@ export class NodeOfflineFileQueue {
                 // This delete is serialized with the operator CLI; if it
                 // fails, propagate the error and preserve the original UUID
                 // for the next idempotent server-side retry.
-                await unlink(this.path(entry.id));
+                await this.durableUnlink(entry.id);
                 delivered++;
             }
             return {delivered,deferred,blocked,unreadable};
-        });
+        }); } finally {
+            if (this.activeRequest === abort) this.activeRequest = undefined;
+        }
     }
 }
