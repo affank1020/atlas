@@ -152,15 +152,24 @@
   interrupted transfers recoverable across server restarts and replicas,
   with a strict **25 MiB** file limit and **64 MiB active staging reservation**
   per Workspace. Actual database/WAL usage can exceed raw byte totals.
-- `complete` requires all chunks and re-verifies the whole-file checksum;
-  it then invokes the existing Node ingest path (1 GiB retained-data quota,
-  private Files object, receipt-based idempotency). Temporary chunk rows
-  are removed on successful commit; a duplicate completion returns the
-  original final file ID. `abort` explicitly frees staging reservations and
-  chunks for an unfinished transfer.
-- A transfer does not automatically expire or self-delete. Lost/abandoned
-  sessions can exhaust the 64 MiB staging allowance until explicitly aborted;
-  add a reviewed expiry/reconciliation policy before production enablement.
+- `complete` requires all chunks and re-verifies the whole-file checksum.
+  It durably claims the session, **releases its PostgreSQL client**, and only
+  then invokes Node ingest (1 GiB retained-data quota, private Files object,
+  receipt-based idempotency). Final checkpoint recording uses a fresh
+  transaction, avoiding connection-pool deadlocks with concurrent completions.
+  A crashed finalizer can be reclaimed after a 10-minute claim lease, and
+  the existing ingest receipt deduplicates retries. Temporary chunk rows
+  are removed on success; a duplicate completion returns the same file ID.
+  `abort` explicitly frees staging for unfinished active transfers.
+- Updating a Workspace's Node assignment, archived timestamp, or status
+  transactionally removes unfinished checkpoints and their chunk bytes via
+  a database trigger, even when the old Node can no longer authenticate.
+  Completed Files and receipts are unaffected.
+- Active transfers do not automatically expire. Lost/abandoned sessions
+  can exhaust the 64 MiB staging allowance until explicitly aborted, except
+  when their Workspace is moved/archived. A stalled `finalizing` claim can
+  be retried after 10 minutes, but cannot clean itself without a retry.
+  Add a reviewed expiry/reconciliation policy before production enablement.
   There is **no background queue, retry scheduler or automatic garbage
   collection** in this PR. Client storage of upload UUID and original bytes
   remains the responsibility of the future native mobile offline queue.
