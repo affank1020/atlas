@@ -92,6 +92,13 @@ failures or missing merged-PR evidence never trigger local checkout deletion.
   links with the destination before retiring the provisional identity.
   Changing an already-recognised repository's Git origin does not silently
   transfer its Project associations to a different repository.
+- When a new managed worktree is created, it inherits only the *current*
+  logical Workspace associations under the transaction lock. A stale
+  checkout primary cannot reattach a Project removed concurrently.
+- Archived Projects can be detached through both logical and legacy
+  unlink tools. Both link tools still require an active Project. The
+  Workspaces UI names archived associations and excludes them from
+  the association picker.
 - Existing unverified clones remain separate until their Nodes are online and
   the explicit reconciliation is performed; no name-based fallback.
 - Branch, dirty status and storage are per checkout, not per logical Workspace.
