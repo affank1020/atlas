@@ -271,8 +271,24 @@
   enqueue/restart/discard commands **even across processes**. A CLI operation
   against an in-flight sender fails with a clear busy error: retry once it
   finishes. A successful discard therefore prevents subsequent retries but
-  cannot retract an already-sent HTTP request. A crash can leave this lock
-  behind; inspect its state before manual removal.
+  cannot retract an already-sent HTTP request. On SIGTERM/SIGINT, the desktop
+  Node first aborts its in-flight resumable HTTP request and **awaits the
+  queue's lock-release cleanup** before closing its Node connection; stopped
+  jobs retain the same UUID for idempotent recovery after restart.
+  This is designed to complete within Linux systemd's 20-second stop budget.
+  A sudden SIGKILL, machine reset, or sender that ignores abort can still
+  leave the lock behind; inspect its state before manual removal. Do not
+  automatically steal a lock merely because its timestamp is old.
+- A queue record's **file bytes are fsynced before atomic rename**, and the
+  containing directory is fsynced after every job rename, retry-state update,
+  explicit discard and successful delivery deletion. The lock's normal removal
+  also syncs the directory. The command does not acknowledge a queue mutation
+  as durable if a directory-sync operation fails; in that case the rename may
+  already have happened and the operator must inspect queue status instead of
+  blindly re-enqueuing the same payload. Directory fsync must be supported by
+  the underlying filesystem (tested on Linux CI); unsupported filesystems
+  fail closed. Hardware write caches and nonlocal/network filesystems can
+  impose weaker durability guarantees, so use local supported filesystems.
 - If a job cannot be decrypted (credential rotation or corruption), `status`
   reports an `unreadable` count and the worker skips it to continue healthy
   jobs. Explicit `discard <queue-uuid>` works on a safely checked private
