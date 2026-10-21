@@ -40,7 +40,7 @@ export async function promptMacShare(input: IncomingShare, signal?: AbortSignal)
         (input.text.length > 180 ? '…' : '');
     const source = input.sourceNodeId.slice(0, 8);
     const script = 'set response to display dialog "Atlas share from Node ' +
-        escapeAppleScript(source) + '\\n\\n' + escapeAppleScript(preview) +
+        escapeAppleScript(source) + '" & return & return & "' + escapeAppleScript(preview) +
         '" with title "Atlas" buttons {"Decline", "Copy"} default button "Decline" giving up after 15\n' +
         'return button returned of response\n';
     try { return (await command('osascript', ['-'], script, 18_000, signal)) === 'Copy'; }
