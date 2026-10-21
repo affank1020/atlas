@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
                 shareStatus = model.shareStatus,
                 sharePending = model.sharePending,
                 onSend = model::sendCurrentDraft,
+                onLoadDeferredShare = model::loadDeferredShare,
             )
         }
     }
@@ -113,6 +114,7 @@ internal fun AtlasCompanion(
     shareStatus: String,
     sharePending: Boolean,
     onSend: () -> Unit,
+    onLoadDeferredShare: () -> Unit,
 ) {
     MaterialTheme(colorScheme = atlasScheme) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -147,6 +149,7 @@ internal fun AtlasCompanion(
                             shareStatus = shareStatus,
                             sharePending = sharePending,
                             onSend = onSend,
+                            onLoadDeferredShare = onLoadDeferredShare,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -169,6 +172,7 @@ internal fun AtlasCompanion(
                             shareStatus = shareStatus,
                             sharePending = sharePending,
                             onSend = onSend,
+                            onLoadDeferredShare = onLoadDeferredShare,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
@@ -207,6 +211,7 @@ private fun CompanionContent(
     shareStatus: String,
     sharePending: Boolean,
     onSend: () -> Unit,
+    onLoadDeferredShare: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -221,7 +226,7 @@ private fun CompanionContent(
                 unreadableIdentity, onClearRecovery, onPair,
             )
             Section.SEND -> SendContent(session, node, connection, onEditDraft,
-                shareTarget, onEditShareTarget, shareStatus, sharePending, onSend)
+                shareTarget, onEditShareTarget, shareStatus, sharePending, onSend, onLoadDeferredShare)
             Section.INBOX -> InfoCard(
                 "No incoming items",
                 "The receiving inbox will become available after device capability routing is implemented.",
@@ -253,7 +258,14 @@ private fun SendContent(
     shareStatus: String,
     sharePending: Boolean,
     onSend: () -> Unit,
+    onLoadDeferredShare: () -> Unit,
 ) {
+    if (session.deferredShare != null) {
+        InfoCard("Another share is waiting",
+            "The latest incoming item is held until the current share is resolved. The draft below is still the one being sent.")
+        Button(onClick = onLoadDeferredShare, enabled = !sharePending,
+            modifier = Modifier.testTag("load-next-share")) { Text("Load newest shared item") }
+    }
     if (session.error != null) InfoCard("Share not imported", session.error)
     InfoCard("Share to Atlas", "Text and links from Android's Share menu appear here.")
     OutlinedTextField(
