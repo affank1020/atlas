@@ -61,10 +61,10 @@ export function interpretSearch(query: string): { term: string; intent: Intent; 
     const lower = query.toLocaleLowerCase();
     // "journal" may be a document title, not operational output. Only interpret
     // journal/systemd vocabulary as logs when a Node/runtime or explicit log
-    // context is present; preserve these terms for general Fabric searches.
+    // context is present; systemd service/unit by itself is not a log request.\n    // Preserve these terms for general Fabric searches.
     const nodeContext = /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
     const journalContext = /\b(?:journal|systemd)\b/.test(lower) &&
-        (nodeContext || /\b(?:journal|systemd)\s+(?:logs?|lines?|output)\b|\b(?:logs?|tail)\s+(?:journal|systemd)\b|\bsystemd\s+(?:service|unit)\b/.test(lower));
+        (nodeContext || /\b(?:journal|systemd)\s+(?:logs?|lines?|output)\b|\b(?:logs?|tail)\s+(?:journal|systemd)\b/.test(lower));
     const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower) || journalContext;
     const logSource = /\b(stderr|errors?|error\s+logs?)\b/.test(lower) ? 'stderr' as const : 'stdout' as const;
     const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr|journal|systemd)\s*)?lines?\b/.exec(lower)?.[1];
