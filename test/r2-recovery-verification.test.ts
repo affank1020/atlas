@@ -24,9 +24,9 @@ function database(rows:Row[]) {
     const db={query:async(sql:string,params:unknown[])=>{
         calls.push({sql,params});
         assert.match(sql,/^SELECT id,storage_key,checksum,byte_size FROM atlas_files/);
-        const [cursor,limit]=params as [string,number];
+        const [cursor,limit]=params as [string | null,number];
         assert.ok(limit<=11 && limit>=2);
-        return {rows:sorted.filter(x=>cursor === '' || x.storage_key>cursor).slice(0,limit)};
+        return {rows:sorted.filter(x=>cursor === null || x.storage_key>cursor).slice(0,limit)};
     }} as unknown as Pick<Pool,'query'>;
     return {db,calls};
 }
@@ -185,8 +185,35 @@ test('initial uncursored scan includes schema-allowed empty storage keys and nev
     assert.deepEqual(result.failureFileIds,[invalid.id]);
     assert.deepEqual(primaryCalls,[good.storage_key]);
     assert.deepEqual(backupCalls,[good.storage_key]);
-    assert.equal(calls[0]?.params[0],'');
-    assert.match(calls[0]!.sql,/\$1 = '' OR storage_key > \$1/);
+    assert.equal(calls[0]?.params[0],null);
+    assert.match(calls[0]!.sql,/\$1::text IS NULL OR storage_key > \$1/);
+});
+
+test('empty storage key at a page boundary supports explicit resume without claiming full coverage',async()=>{
+    const invalid=fixture(Buffer.from('bad metadata'));
+    invalid.storage_key='';
+    const goodBytes=Buffer.from('intact second file');
+    const good=fixture(goodBytes);
+    const {db}=database([good,invalid]);
+    const files=new Map([[good.storage_key,goodBytes]]);
+    const first=await verifyR2Recovery({database:db,primary:store(files,[]),
+        backup:store(files,[]),maxFiles:1});
+    assert.equal(first.status,'failed');
+    assert.equal(first.invalidMetadata,1);
+    assert.equal(first.checked,1);
+    assert.equal(first.remaining,true);
+    assert.equal(first.nextCursor,'');
+    assert.equal(first.entireCatalogChecked,false);
+    const args=parseRecoveryVerifyArgs(['--dry-run','--max-files=1','--cursor=']);
+    assert.deepEqual(args,{maxFiles:1,cursor:''});
+    const next=await verifyR2Recovery({database:db,primary:store(files,[]),
+        backup:store(files,[]),...args});
+    assert.equal(next.checked,1);
+    assert.equal(next.invalidMetadata,0);
+    assert.equal(next.verifiedBoth,1);
+    assert.equal(next.remaining,false);
+    assert.equal(next.entireCatalogChecked,false);
+    assert.equal(next.status,'partial','resumed page cannot imply entire-catalogue success');
 });
 
 test('real migrated PostgreSQL schema permits empty storage key and the verifier flags it',async()=>{
