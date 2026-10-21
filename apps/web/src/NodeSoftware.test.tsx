@@ -133,16 +133,18 @@ it('prepares a non-executable, expiring Linux intent only after explicit confirm
         id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
         status: 'requested', targetCommit: release.commit, targetVersion: release.version,
         installedVersion: node.version, approved: false, executable: false,
-        expiresAt: '2026-10-21T12:15:00.000Z', createdAt: '2026-10-21T12:00:00.000Z',
+        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), createdAt: new Date().toISOString(),
     };
+    let saved: typeof request | undefined;
     vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_update_intents') return saved ? [saved] : [];
         if (name === 'list_node_releases') return { state: 'ready', checkedAt: '', releases: [release] };
         if (name === 'plan_node_update') return {
             nodeId: node.id, status: 'candidate', reason: 'Newer stable release available.',
             candidate: release, canInstall: false, canActivate: false, provenanceVerified: false,
         };
-        if (name === 'prepare_node_update') return request;
-        if (name === 'cancel_node_update_intent') return { ...request, status: 'cancelled' };
+        if (name === 'prepare_node_update') { saved = request; return request; }
+        if (name === 'cancel_node_update_intent') { saved = { ...request, status: 'cancelled' }; return saved; }
         throw new Error('Unexpected tool ' + name);
     });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
@@ -150,7 +152,7 @@ it('prepares a non-executable, expiring Linux intent only after explicit confirm
         render(<NodeSoftwareSummary node={node} />);
         fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
         expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: /Prepare update request/ }));
+        fireEvent.click(await screen.findByRole('button', { name: /Prepare update request/ }));
         expect(confirm).toHaveBeenCalledTimes(1);
         expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'prepare_node_update')).toBe(false);
 
