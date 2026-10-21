@@ -59,7 +59,7 @@ export function parseRecoveryVerifyArgs(args: string[]): { maxFiles: number; cur
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > R2_RECOVERY_MAX_FILES)
         throw new Error('Recovery verification checks 1 to 10 files per invocation.');
     const cursor = cursors[0]?.slice('--cursor='.length);
-    if (cursor !== undefined && !FILE_KEY.test(cursor))
+    if (cursor !== undefined && cursor !== '' && !FILE_KEY.test(cursor))
         throw new Error('Invalid R2 recovery cursor.');
     return { maxFiles, ...(cursor !== undefined ? { cursor } : {}) };
 }
@@ -96,16 +96,17 @@ export async function verifyR2Recovery(input: {
     const maxFiles = input.maxFiles ?? R2_RECOVERY_DEFAULT_FILES;
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > R2_RECOVERY_MAX_FILES)
         throw new Error('Invalid R2 recovery verification limit.');
-    if (input.cursor !== undefined && !FILE_KEY.test(input.cursor))
+    if (input.cursor !== undefined && input.cursor !== '' && !FILE_KEY.test(input.cursor))
         throw new Error('Invalid R2 recovery cursor.');
 
     const query = await input.database.query<FileRow>(
         'SELECT id,storage_key,checksum,byte_size FROM atlas_files ' +
-        // The first uncursored page must include even schema-allowed empty
-        // storage keys, so corrupt metadata is counted rather than silently
-        // excluded from a supposedly complete recovery verification.
-        'WHERE ($1 = \'\' OR storage_key > $1) ORDER BY storage_key ASC LIMIT $2',
-        [input.cursor ?? '',maxFiles+1]);
+        // NULL means an uncursored complete-catalogue start, including
+        // schema-allowed empty keys. An explicitly supplied empty cursor
+        // resumes *after* the empty-key record if it filled the first page;
+        // it must not restart the initial scan or claim full coverage.
+        'WHERE ($1::text IS NULL OR storage_key > $1) ORDER BY storage_key ASC LIMIT $2',
+        [input.cursor ?? null,maxFiles+1]);
     if (query.rows.length > maxFiles+1) throw new Error('Recovery metadata query exceeded its bound.');
     const rows = query.rows.slice(0,maxFiles);
     const remaining = query.rows.length > maxFiles;
@@ -113,7 +114,7 @@ export async function verifyR2Recovery(input: {
         mode: 'read-only',status: 'partial',checked: 0, verifiedPrimary: 0,
         verifiedBackup: 0,verifiedBoth: 0,primaryMissing: 0,backupMissing: 0,
         primaryCorrupt: 0,backupCorrupt: 0,invalidMetadata: 0,bytesRead: 0,
-        maxFiles,remaining,entireCatalogChecked: !input.cursor && !remaining,
+        maxFiles,remaining,entireCatalogChecked: input.cursor === undefined && !remaining,
         noWrites: true,failureFileIds: [],
     };
     for (const row of rows) {
