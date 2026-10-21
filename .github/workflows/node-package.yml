@@ -110,6 +110,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Diff against the current main tree locally rather than using a rate-
+      # limited API or rejecting every unrelated Web/Docs advancement.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: atlas-node-${{ github.sha }}
@@ -136,12 +141,14 @@ jobs:
             echo "Skipping prerelease Node v$version: stable channel only."
             exit 0
           fi
-          # Job-level concurrency prevents competing publications. Check the
-          # current main tip again immediately before creating the release.
-          main_head="$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq '.object.sha')"
-          [[ "$main_head" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid main head" >&2; exit 1; }
-          if [[ "$main_head" != "$GITHUB_SHA" ]]; then
-            echo "Skipping superseded Node commit $GITHUB_SHA (main is $main_head)."
+          # Check whether any *Node packaging input* changed since this
+          # build. Unrelated Web/docs commits must not suppress a release.
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin main
+          git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "Source commit is no longer an ancestor of main." >&2; exit 1; }
+          changed_paths="$(git -C "$GITHUB_WORKSPACE" diff --name-only "$GITHUB_SHA" origin/main)"
+          if grep -Eq '^((apps/node|packages/protocol)/|package(-lock)?\\.json$|scripts/package-node-release\\.mjs$|\\.github/workflows/node-package\\.yml$)' <<< "$changed_paths"; then
+            echo "Skipping superseded Node build: newer main changed release inputs."
             exit 0
           fi
           tag="node-v${version}-${GITHUB_SHA:0:12}"
@@ -152,4 +159,4 @@ jobs:
           gh release create "$tag" "$file" "$file.sha256" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" --latest=false \
             --title "Atlas Node v${version} (${GITHUB_SHA:0:12})" \
-            --notes "Standalone macOS/Linux Node runtime archive. Node wire protocol v2. Requires Node.js 20+. This is NOT an Atlas Server release and does not change registered Node identities. Verify the SHA-256 file and GitHub build-provenance attestation before staging. Linux activation remains a separate explicit operation; macOS auto-update is not provided."
+            --notes "$(printf 'Atlas-Node-Release-Sequence: %s\\n\\n%s' "$GITHUB_RUN_NUMBER" 'Standalone macOS/Linux Node runtime archive. Node wire protocol v2. Requires Node.js 20+. This is NOT an Atlas Server release and does not change registered Node identities. Verify the SHA-256 file and GitHub build-provenance attestation before staging. Linux activation remains a separate explicit operation; macOS auto-update is not provided.')"
