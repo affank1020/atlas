@@ -152,11 +152,17 @@
 - A fixed 24-hour grace period excludes recent unreferenced objects from the
   orphan candidate category. Every report contains a `truncated` flag for
   each source; a limited or failed scan must never be treated as complete.
+  **A missing or unmounted local storage root aborts the entire audit** instead
+  of reporting a clean, empty scan. An existing but empty directory is valid.
   R2 unconfigured is shown explicitly rather than silently considered empty.
   Reports include at most 25 sample keys per source; they never include file
   contents, Node credentials or R2 tokens.
 - R2 discovery uses signed, read-only S3 ListObjectsV2 requests with bounded
-  page sizes. **These are billable Class A operations**, so the scan must be
+  page sizes. Keys matching the broad `files-` LIST prefix but not Atlas's
+  exact generated file-key format are skipped, including older or unrelated
+  objects. LIST page accounting still includes these keys; page-budget
+  exhaustion aborts the audit rather than claiming a complete scan.
+  **These are billable Class A operations**, so the scan must be
   run manually rather than on every dashboard refresh. At the default scan
   limit there are at most three list requests; maximum is six.
 - **This code cannot delete objects.** Candidate status is advisory, not
