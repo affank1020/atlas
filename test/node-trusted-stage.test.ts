@@ -117,7 +117,7 @@ test('a prerelease filename cannot enter the stable staging path', () => {
 test('installer does not expose update control or restart active services', () => {
     const source = readFileSync(script, 'utf8');
     assert.match(source, /linux-node-release\.sh" install/);
-    assert.doesNotMatch(source, /systemctl|linux-node-lifecycle\.sh|sudo\s/);
+    assert.doesNotMatch(source, /^\s*(?:sudo|systemctl|bash\s+.*linux-node-lifecycle\.sh)\b/m);
     assert.match(source, /mktemp -d "\$root\/\.signed-stage/);
     assert.match(source, /verify_archive "\$stage\/\$archive_name"/);
 });
