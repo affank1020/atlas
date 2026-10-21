@@ -99,6 +99,100 @@ test('renaming a single-checkout local Workspace updates its logical browser nam
     assert.equal((await svc.call('get_workspace', { workspaceId: ws.id }) as any).name, 'New name');
 });
 
+test('local logical rename follows visible singleton when other checkouts were archived', async () => {
+    const { catalog, store } = await databaseFixture();
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async () => ({ available: false }),
+    };
+    const svc = new WorkspaceService(catalog, repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const source: any = await svc.call('create_workspace', {
+        name: 'Original', rootPath: '/trusted/archive-rename/source', kind: 'generic',
+    });
+    const db = await repository.connect();
+    let feature: any;
+    try {
+        await db.begin();
+        feature = await db.insert({
+            nodeId: source.nodeId, logicalWorkspaceId: source.logicalWorkspaceId,
+            name: 'Feature checkout', rootPath: '/trusted/archive-rename/feature', kind: 'generic',
+        });
+        await db.commit();
+    } catch (error) { await db.rollback(); throw error; }
+    finally { db.release(); }
+    await svc.call('update_workspace', { workspaceId: source.id, name: 'Checkout renamed' });
+    assert.equal((await svc.call('list_logical_workspaces', {}) as any[])[0].name, 'Original',
+        'Renaming one of two ACTIVE local checkouts must not rename the logical group');
+    await svc.call('archive_workspace', { workspaceId: feature.id });
+    let groups = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(groups[0].checkouts.length, 1, 'Archived siblings are hidden by default');
+    await svc.call('update_workspace', { workspaceId: source.id, name: 'Visible singleton' });
+    groups = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(groups[0].name, 'Visible singleton');
+    assert.deepEqual(groups[0].checkouts.map((checkout: any) => checkout.id), [source.id]);
+    const history = await svc.call('list_logical_workspaces', { includeArchived: true }) as any[];
+    assert.equal(history[0].name, 'Visible singleton');
+    assert.deepEqual(history[0].checkouts.map((checkout: any) => checkout.id).sort(),
+        [source.id, feature.id].sort(), 'Archived checkout history must remain intact');
+});
+
+test('simultaneous recognition of sibling checkouts serialises without PostgreSQL deadlock', async () => {
+    const { catalog, store } = await databaseFixture();
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    let inspectCount = 0;
+    let releaseInspections!: () => void;
+    const bothInspected = new Promise<void>(resolve => { releaseInspections = resolve; });
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async (_checkout, operation) => {
+            assert.equal(operation, 'workspace_git_status');
+            if (++inspectCount === 2) releaseInspections();
+            await bothInspected; // Both callers have captured the same old logical ID.
+            return { available: true, originRepository: 'affank1020/atlas' };
+        },
+    };
+    const svc = new WorkspaceService(catalog, repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const source: any = await svc.call('create_workspace', {
+        name: 'Main checkout', rootPath: '/trusted/concurrent/source', kind: 'generic',
+    });
+    const db = await repository.connect();
+    let sibling: any;
+    try {
+        await db.begin();
+        sibling = await db.insert({
+            nodeId: source.nodeId, logicalWorkspaceId: source.logicalWorkspaceId,
+            name: 'Managed sibling', rootPath: '/trusted/concurrent/feature', kind: 'generic',
+        });
+        await db.commit();
+    } catch (error) { await db.rollback(); throw error; }
+    finally { db.release(); }
+
+    const attempts = await Promise.allSettled([
+        svc.call('attach_checkout_repository', { workspaceId: source.id }),
+        svc.call('attach_checkout_repository', { workspaceId: sibling.id }),
+    ]);
+    assert.equal(inspectCount, 2);
+    assert.equal(attempts.filter(x => x.status === 'fulfilled').length, 1,
+        'One caller wins the group migration; the other should receive a retryable stale-ID conflict');
+    const rejected = attempts.find(x => x.status === 'rejected') as PromiseRejectedResult;
+    assert.match(String(rejected.reason), /Checkout binding or repository assignment changed/);
+    assert.doesNotMatch(String(rejected.reason), /deadlock|40P01/i);
+    // Explicit retry is safe and must be idempotent; the group is already unified.
+    await svc.call('attach_checkout_repository', {
+        workspaceId: attempts[0].status === 'rejected' ? source.id : sibling.id,
+    });
+    const logical = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(logical.length, 1);
+    assert.equal(logical[0].repository, 'affank1020/atlas');
+    assert.deepEqual(logical[0].checkouts.map((x: any) => x.id).sort(),
+        [source.id, sibling.id].sort());
+});
+
 test('verified Git origins unify distinct checkout bindings without changing their IDs or Node paths', async () => {
     const { catalog, store } = await databaseFixture();
     const runtime: ExecutionHost = {
