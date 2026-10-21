@@ -1,0 +1,60 @@
+# Logical Workspaces and Node-bound Checkouts (incremental migration)
+
+## Model
+
+A **logical Workspace** is a repository-level identity, independent of the
+machine hosting its files. A **Checkout** is a specific directory bound to
+one Node. A Git worktree is a special checkout associated with another checkout
+through Git's common directory; two clones on different Nodes are **not** the
+same Git worktree, even when both use the `main` branch.
+
+```text
+Portfolio Site  [logical_workspace.id, repository=affank1020/portfolio-site]
+  MacBook       [legacy workspace.id, nodeId, rootPath, branch=main]
+  Linux VPS     [legacy workspace.id, nodeId, rootPath, branch=main]
+  Mac feature   [legacy workspace.id, nodeId, rootPath, branch=atlas/feature]
+```
+
+## Safe, incremental deployment
+
+Migration `019_logical_workspaces.sql` creates logical identities and adds
+`workspaces.logical_workspace_id`. It **does not** move, delete, rename or
+deduplicate any checkout and **does not** alter existing Workspace IDs, Git
+metadata, Node assignments, Project links, audit history or directory paths.
+
+Each existing checkout initially receives its own logical identity. To group
+existing Git checkouts, use the Workspaces page's **Recognise repositories**
+action, or call `attach_checkout_repository` on each active checkout. The
+Server asks the bound Node for a verified GitHub origin, then associates the
+checkout with the single case-insensitive repository identity. Neither a
+display name nor a path nor an untrusted caller-provided URL may determine
+membership. Offline Nodes are deferred.
+
+`list_logical_workspaces` returns the logical identities and their checkouts;
+legacy `list_workspaces`, `get_workspace`, file, Git and football actions
+continue to accept the existing node-bound Workspace IDs. New Atlas-managed
+Git worktrees inherit the source checkout's logical identity; new authorised
+GitHub clones join the matching logical repository immediately.
+
+The added logical ID is stripped from transport messages to Nodes so remote
+Node protocol v2 remains compatible with already connected Nodes.
+
+## Limitations before a later cleanup
+
+- Project links are still stored against legacy node-bound checkout IDs.
+  Logical Workspace-level Project associations need a separate migration.
+- Existing unverified clones remain separate until their Nodes are online and
+  the explicit reconciliation is performed; no name-based fallback.
+- Branch, dirty status and storage are per checkout, not per logical Workspace.
+- Current MCP write operations still select `workspaceId` as the checkout ID.
+  A future version may expose explicit `checkoutId` inputs while preserving
+  compatibility.
+- Logical Workspaces with no active checkouts are omitted from the default
+  list. Empty provisional local identities may be removed by reconciliation;
+  Git repository identities with only archived checkouts are retained.
+
+Do not remove old checkout rows or force-delete directories during this
+transition. Run a database backup before migration, verify old Workspace IDs
+remain addressable, reconcile Portfolio Site on both Nodes, and check that
+`list_logical_workspaces` shows a single Portfolio logical identity with both
+checkout paths before releasing the updated UI to everyone.
