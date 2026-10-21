@@ -89,6 +89,28 @@ export class NodeFileIngestService {
                 await db.query('COMMIT');
                 return { file, replayed: true };
             }
+            // The one-shot endpoint shares Node-scoped upload UUIDs with
+            // resumable transfers. Lock any existing checkpoint row before
+            // checking the expiry fence: maintenance may be deleting the row
+            // concurrently, and the lock makes that decision atomic.
+            const transfer = await db.query(`SELECT workspace_id,file_name,mime_type,
+                    byte_size,checksum,status
+                FROM node_file_transfer_sessions WHERE node_id=$1 AND upload_id=$2
+                FOR UPDATE`, [nodeId, uploadId]);
+            const expired = await db.query(`SELECT 1 FROM node_file_expired_upload_ids
+                WHERE node_id=$1 AND upload_id=$2`, [nodeId, uploadId]);
+            if (expired.rowCount)
+                throw new AtlasError('Upload ID expired. Use a new upload ID.', 'CONFLICT');
+            if (transfer.rows[0]) {
+                const row = transfer.rows[0];
+                // Only the finalizing resumable path may reuse its reserved
+                // identity here. Direct one-shot requests cannot consume an
+                // active resumable ID or mutate its previously bound metadata.
+                if (row.status !== 'finalizing' || row.workspace_id !== workspaceId ||
+                    row.file_name !== input.fileName.trim() || row.mime_type !== input.mimeType ||
+                    row.checksum !== checksum || Number(row.byte_size) !== input.bytes.length)
+                    throw new AtlasError('Upload ID is reserved for a different transfer.', 'CONFLICT');
+            }
             const total = await db.query(`SELECT COALESCE(SUM(byte_size),0)::text AS bytes FROM atlas_files
                 WHERE owner_kind='workspace' AND owner_id=$1`, [workspaceId]);
             if (BigInt(total.rows[0].bytes) + BigInt(input.bytes.length) > BigInt(NODE_WORKSPACE_LIMIT_BYTES))
