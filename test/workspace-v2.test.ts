@@ -315,6 +315,114 @@ test('Node protocol accepts a Project-independent Workspace without relaxing Git
     }).success, false, 'Malformed Project associations still fail closed');
 });
 
+test('recognition racing with managed creation never strands a worktree or deadlocks', async t => {
+    const { execFileSync } = await import('node:child_process');
+    const { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync, writeFileSync } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { LocalNodeRuntime } = await import('../apps/node/src/platforms/desktop/runtime.js');
+    const parent = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'atlas-workspace-recognition-race-')));
+    const original = process.env.ATLAS_GIT_TRUSTED_ROOTS;
+    process.env.ATLAS_GIT_TRUSTED_ROOTS = parent;
+    t.after(() => {
+        if (original === undefined) delete process.env.ATLAS_GIT_TRUSTED_ROOTS;
+        else process.env.ATLAS_GIT_TRUSTED_ROOTS = original;
+        rmSync(parent, { recursive: true, force: true });
+    });
+    const sourcePath = path.join(parent, 'source');
+    const siblingPath = path.join(parent, 'sibling');
+    const childPath = path.join(parent, 'new-feature');
+    mkdirSync(sourcePath);
+    const git = (...args: string[]) => execFileSync('/usr/bin/git', ['-C', sourcePath, ...args], { encoding: 'utf8' }).trim();
+    git('init', '-b', 'main');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.test');
+    writeFileSync(path.join(sourcePath, 'README.md'), 'initial');
+    git('add', 'README.md');
+    git('commit', '-m', 'initial');
+    git('remote', 'add', 'origin', 'https://github.com/affank1020/atlas.git');
+    git('worktree', 'add', '-b', 'atlas/older-feature', siblingPath, 'HEAD');
+
+    const { catalog, store } = await databaseFixture();
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const localNode = new LocalNodeRuntime([parent], new Map(), 'linux');
+    let creationEntered!: () => void;
+    let inspectionEntered!: () => void;
+    let releaseCreation!: () => void;
+    const creationOnDisk = new Promise<void>(resolve => { creationEntered = resolve; });
+    const inspectionDone = new Promise<void>(resolve => { inspectionEntered = resolve; });
+    const allowRegistration = new Promise<void>(resolve => { releaseCreation = resolve; });
+    const runtime: ExecutionHost = {
+        getCapabilities: () => localNode.getCapabilities(),
+        bind: root => localNode.bind(root),
+        execute: async (checkout, operation, input) => {
+            const result = await localNode.execute(checkout, operation, input);
+            if (operation === 'workspace_git_create_worktree') {
+                creationEntered();
+                await allowRegistration;
+            }
+            if (operation === 'workspace_git_status') inspectionEntered();
+            return result;
+        },
+    };
+    const svc = new WorkspaceService(catalog, repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const source: any = await svc.call('create_workspace', {
+        name: 'Source', rootPath: sourcePath, kind: 'generic',
+    });
+    const db = await repository.connect();
+    let sibling: any;
+    try {
+        await db.begin();
+        sibling = await db.insert({
+            nodeId: source.nodeId, logicalWorkspaceId: source.logicalWorkspaceId,
+            name: 'Existing feature', rootPath: siblingPath, kind: 'generic',
+        });
+        await db.commit();
+    } catch (error) { await db.rollback(); throw error; }
+    finally { db.release(); }
+
+    const creation = svc.call('workspace_git_create_worktree', {
+        workspaceId: sibling.id, branch: 'atlas/new-feature', targetPath: childPath,
+    });
+    await creationOnDisk;
+    assert.equal(existsSync(childPath), true, 'The Node has already created the worktree on disk');
+
+    const recognition = svc.call('attach_checkout_repository', { workspaceId: source.id });
+    try {
+        await inspectionDone;
+        // Wait until the recognition transaction is actually queued on the
+        // logical-group advisory lock. This ensures the test exercises the
+        // dangerous interleaving rather than relying on scheduler luck.
+        let queued = false;
+        const deadline = Date.now() + 4_000;
+        while (Date.now() < deadline) {
+            const waiters = await store.pool.query(
+                `SELECT count(*)::integer AS n FROM pg_stat_activity
+                 WHERE datname=current_database()
+                   AND wait_event_type='Lock' AND wait_event='advisory'
+                   AND query LIKE '%pg_advisory_xact_lock(hashtextextended%'`);
+            if (waiters.rows[0].n > 0) { queued = true; break; }
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        assert.equal(queued, true, 'Recognition must queue on the group lock, before any sibling row lock');
+    } finally {
+        // Always let Node execution finish, even when the lock assertion fails.
+        releaseCreation();
+    }
+    const [created, linked] = await Promise.all([creation, recognition]) as any[];
+    assert.equal(created.workspace.rootPath, childPath);
+    assert.equal(linked.logicalWorkspaceId, created.workspace.logicalWorkspaceId);
+    assert.equal(existsSync(childPath), true);
+    assert.equal(git('worktree', 'list', '--porcelain').includes(childPath), true);
+    const group = (await svc.call('list_logical_workspaces', {}) as any[])
+        .find(x => x.repository === 'affank1020/atlas');
+    assert.ok(group);
+    assert.deepEqual(group.checkouts.map((x: any) => x.id).sort(),
+        [source.id, sibling.id, created.workspace.id].sort(),
+        'The physical feature checkout and its Atlas registration must remain together');
+});
+
 test('managed worktree creation auto-registers an independent Workspace and removal archives it', async t => {
     const { execFileSync } = await import('node:child_process');
     const { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
