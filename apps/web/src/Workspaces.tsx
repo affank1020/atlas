@@ -77,7 +77,8 @@ export function Workspaces() {
             checkout.name + ' ' + checkout.rootPath + ' ' +
             (nodes.find(node => node.id === checkout.nodeId)?.name || '')).join(' '))
             .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
-    const selectedLogical = groups.find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
+    const selectedLogical = (logical.length ? logical : groups)
+        .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
     const canPublish = !!(status?.available && status.originRepository && status.branch?.startsWith('atlas/') &&
         status.head && !status.dirty && selectedNode?.status === 'online');
@@ -324,11 +325,27 @@ export function Workspaces() {
                     <span className="wm-skeleton wm-skeleton-path-wide" />
                     <span className="wm-skeleton wm-skeleton-path-wide" />
                 </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
-                    <div className="wm-title"><div><p className="eyebrow">Checkout inspector</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
-                    <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
-                        {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
-                    <p className="wm-path">{selected.rootPath}</p>
-                    <p className="wm-hint">{selected.kind} checkout · {selectedLogical?.repository || (selected.projectId ? 'Project linked' : 'Local Workspace')}</p>
+                    <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
+                    <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
+                    {(selectedLogical?.checkouts.length || 0) > 1 && <div className="wm-checkout-switch" role="group" aria-label="Choose Node checkout">
+                        {selectedLogical!.checkouts.map(checkout => {
+                            const node = nodes.find(item => item.id === checkout.nodeId);
+                            return <button key={checkout.id}
+                                className={selected.id === checkout.id ? 'active' : ''}
+                                aria-pressed={selected.id === checkout.id}
+                                onClick={() => choose(checkout.id)}>
+                                <span className={'wm-dot' + (node?.status === 'online' ? ' online' : '')} aria-hidden="true"/>
+                                {node?.name || 'Unknown Node'}
+                            </button>;
+                        })}
+                    </div>}
+                    <div className="wm-selected-checkout">
+                        <p className="eyebrow">Selected checkout</p>
+                        <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
+                            {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
+                        <p className="wm-path">{selected.rootPath}</p>
+                        <p className="wm-hint">{selected.kind} checkout · {selected.projectId ? 'Project linked' : 'Project-independent'}</p>
+                    </div>
                     {inspecting && <p role="status" className="wm-sr-only">{inspectedId === selected.id ? 'Refreshing checkout…' : 'Inspecting checkout…'}</p>}
                     {inspectionError && <p role="alert" className="wm-hint error">{inspectionError}</p>}
                     {selectedNode?.status !== 'online' && <p className="wm-hint">Reconnect this Node to inspect or modify its checkout.</p>}
