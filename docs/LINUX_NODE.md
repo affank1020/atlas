@@ -68,3 +68,20 @@ sudo bash scripts/linux-node-release.sh install atlas-node-v*.tar.gz atlas-node-
 This explicitly **does not** change the `current` symlink or restart systemd.
 Review the available previous release and independent Node identity before
 manually activating anything. The MacBook Node remains independent.
+
+## Signed provenance gate
+
+The legacy `linux-node-release.sh verify/install` only checks checksum,
+bundle structure, and metadata. It does **not** establish who built an
+archive; do not treat it as a trusted installation path by itself.
+
+For production staging use:
+```bash
+bash scripts/linux-node-trusted-stage.sh verify atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+sudo bash scripts/linux-node-trusted-stage.sh install atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+```
+This fails unless patched GitHub CLI 2.102.0 or later verifies the exact
+main-branch `node-package.yml` signing identity, source SHA and SLSA
+provenance. The install operation stages a release without activating it.
+Neither command triggers a Node restart, updates Server/PostgreSQL, or
+accesses credentials. See `docs/NODE_RELEASES.md` for trust details.
