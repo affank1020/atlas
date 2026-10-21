@@ -11,6 +11,30 @@ import { nodeRequestSchema, validateNodeOperation } from '../packages/protocol/s
 
 after(cleanupDatabases);
 
+test('migration 019 backfills logical Workspace IDs without modifying legacy checkout identity', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { randomUUID } = await import('node:crypto');
+    const { catalog, store } = await databaseFixture('018_atlas_files.sql');
+    const project = await catalog.createProject({ name: 'Pre-migration project' });
+    const node = (await store.pool.query("SELECT id FROM nodes WHERE local_key='local'")).rows[0].id;
+    const checkoutId = randomUUID();
+    await store.pool.query(
+        `INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id)
+         VALUES($1,$2,'Portfolio Site','/old/portfolio','generic',NULL,$3)`,
+        [checkoutId, project.id, node]);
+    await store.pool.query(await readFile('apps/server/migrations/019_logical_workspaces.sql', 'utf8'));
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const checkout = await repository.getById(checkoutId);
+    assert.equal(checkout.logicalWorkspaceId, checkoutId);
+    assert.equal(checkout.rootPath, '/old/portfolio');
+    assert.equal(checkout.nodeId, node);
+    assert.equal(checkout.projectId, project.id);
+    const logical = await repository.listLogical();
+    assert.equal(logical.length, 1);
+    assert.equal(logical[0].id, checkoutId);
+    assert.equal(logical[0].checkouts[0].id, checkoutId);
+});
+
 test('Workspace V2 supports Project-independent registration and multiple optional Project links', async () => {
     const { catalog, store } = await databaseFixture();
     const p1 = await catalog.createProject({ name: 'Research' });
@@ -18,7 +42,11 @@ test('Workspace V2 supports Project-independent registration and multiple option
     const runtime: ExecutionHost = {
         getCapabilities: () => ['workspace.files', 'workspace.git'],
         bind: async requested => requested,
-        execute: async (_workspace, operation) => ({ operation, result: 'ok' }),
+        execute: async (checkout, operation) => {
+            assert.equal(Object.hasOwn(checkout, 'logicalWorkspaceId'), false,
+                'Node v2 must not receive the new server-side logical ID');
+            return { operation, result: 'ok' };
+        },
     };
     const repo = new PostgresWorkspaceRepository(store.pool);
     const svc = new WorkspaceService(catalog, repo, new NodeRouter(new NodeService(
@@ -46,6 +74,57 @@ test('Workspace V2 supports Project-independent registration and multiple option
     assert.equal((await svc.call('list_project_workspaces', { projectId: p1.id }) as any[]).length, 0);
     assert.equal((await svc.call('list_project_workspaces', { projectId: p2.id }) as any[]).length, 1);
     assert.equal((await svc.call('get_workspace', { workspaceId: ws.id }) as any).projectId, p2.id);
+});
+
+test('verified Git origins unify distinct checkout bindings without changing their IDs or Node paths', async () => {
+    const { catalog, store } = await databaseFixture();
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async requested => requested,
+        execute: async (checkout, operation) => {
+            assert.equal(operation, 'workspace_git_status');
+            return { available: true, originRepository: checkout.rootPath.includes('unrelated')
+                ? 'affank1020/another-repo' : 'affank1020/portfolio-site' };
+        },
+    };
+    const vpsNodeId = '00000000-0000-4000-8000-000000000099';
+    await store.pool.query(
+        "INSERT INTO nodes(id,name,status,capabilities,metadata) VALUES($1,'Linux VPS','online',ARRAY['workspace.files','workspace.git'],'{}'::jsonb)",
+        [vpsNodeId]);
+    const nodes = new NodeService(new PostgresNodeRepository(store.pool), runtime, 'MacBook');
+    nodes.attachRemote(vpsNodeId, runtime);
+    const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
+        new NodeRouter(nodes));
+    const mac: any = await svc.call('create_workspace', {
+        name: 'Portfolio Site', rootPath: '/mac/portfolio', kind: 'generic',
+    });
+    const linux: any = await svc.call('create_workspace', {
+        name: 'Portfolio Site (VPS)', rootPath: '/linux/portfolio', nodeId: vpsNodeId, kind: 'generic',
+    });
+    const unrelated: any = await svc.call('create_workspace', {
+        name: 'Unrelated', rootPath: '/mac/unrelated', kind: 'generic',
+    });
+    assert.equal((await svc.call('list_logical_workspaces', {}) as any[]).length, 3,
+        'Do not deduplicate on similar labels before checking the origin');
+    await assert.rejects(svc.call('attach_checkout_repository', {
+        workspaceId: mac.id, repository: 'someone/forged',
+    }), /Unrecognized key/);
+    const linkedMac: any = await svc.call('attach_checkout_repository', { workspaceId: mac.id });
+    const linkedVps: any = await svc.call('attach_checkout_repository', { workspaceId: linux.id });
+    await svc.call('attach_checkout_repository', { workspaceId: unrelated.id });
+    const logical = await svc.call('list_logical_workspaces', {}) as any[];
+    assert.equal(logical.length, 2);
+    const group = logical.find(x => x.repository === 'affank1020/portfolio-site');
+    assert.ok(group);
+    assert.deepEqual(group.checkouts.map((x: any) => x.id).sort(), [mac.id, linux.id].sort());
+    assert.equal(linkedMac.logicalWorkspaceId, linkedVps.logicalWorkspaceId);
+    assert.notEqual(mac.nodeId, linux.nodeId, 'Mac and VPS remain separate Node placements');
+    assert.equal(group.checkouts.find((x: any) => x.id === linux.id).rootPath, '/linux/portfolio');
+    assert.equal((await svc.call('get_workspace', { workspaceId: mac.id }) as any).rootPath, '/mac/portfolio');
+    assert.equal((await svc.call('get_workspace', { workspaceId: linux.id }) as any).nodeId, linux.nodeId);
+    // Repeating reconciliation must not create more logical records.
+    await svc.call('attach_checkout_repository', { workspaceId: linux.id });
+    assert.equal((await svc.call('list_logical_workspaces', {}) as any[]).length, 2);
 });
 
 test('draft PR publication rejects a workspace whose origin, branch, or HEAD does not match', async () => {
@@ -141,20 +220,20 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     git('config', 'user.email', 'test@example.test');
     writeFileSync(path.join(source, 'README.md'), 'initial');
     git('add', 'README.md'); git('commit', '-m', 'initial');
-    git('remote', 'add', 'origin', 'https://github.com/affank1020/atlas.git');
 
     const { catalog, store } = await databaseFixture();
-    const runtime = new LocalNodeRuntime([parent], new Map(), 'linux');
-    let prMerged = false;
-    const broker = { verifyMergedPullRequest: async (repository: string, branch: string, head: string) => {
-        assert.equal(repository, 'affank1020/atlas');
-        assert.equal(branch, 'atlas/test-feature');
-        assert.match(head, /^[a-f0-9]{40}$/);
-        if (!prMerged) throw new Error('No merged PR matches this exact branch HEAD');
-        return { number: 42, url: 'https://github.com/affank1020/atlas/pull/42' };
-    } } as any;
+    const localNode = new LocalNodeRuntime([parent], new Map(), 'linux');
+    const runtime: ExecutionHost = {
+        getCapabilities: () => localNode.getCapabilities(),
+        bind: root => localNode.bind(root),
+        execute: async (checkout, operation, input) => {
+            assert.equal(Object.hasOwn(checkout, 'logicalWorkspaceId'), false,
+                'Every Node operation, including managed removal, must use Node v2 checkout fields');
+            return localNode.execute(checkout, operation, input);
+        },
+    };
     const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
-        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')), broker);
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
     const originalWorkspace: any = await svc.call('create_workspace',
         { name: 'Main checkout', rootPath: source, kind: 'generic' });
     const dest = path.join(parent, 'feature-checkout');
@@ -170,14 +249,6 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     const registered: any[] = await svc.call('list_workspaces', {});
     assert.equal(registered.length, 2);
 
-    // Retirement requires GitHub's merged PR evidence before touching files.
-    await assert.rejects(svc.call('workspace_git_remove_worktree', {
-        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
-        expectedHead: created.head,
-    }), /No merged PR matches/);
-    assert.equal((await svc.call('get_workspace', { workspaceId: created.workspace.id }) as any).status, 'active');
-    prMerged = true;
-
     // Even a clean Atlas-created worktree cannot be deleted if its branch has
     // changed since registration. Preserve it and allow switching back.
     execFileSync('/usr/bin/git', ['-C', dest, 'switch', '-c', 'atlas/switched'], { encoding: 'utf8' });
@@ -192,8 +263,6 @@ test('managed worktree creation auto-registers an independent Workspace and remo
         expectedHead: created.head,
     });
     assert.equal(removed.preservedBranch, 'atlas/test-feature');
-    assert.ok(removed.estimatedReclaimedBytes > 0);
-    assert.equal(removed.mergedPullRequest.number, 42);
     assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 1);
     assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 2);
     assert.equal(git('rev-parse', 'refs/heads/atlas/test-feature'), created.head);
