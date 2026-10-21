@@ -39,6 +39,12 @@ export function loadRecoveryR2Config(env: NodeJS.ProcessEnv, primary: R2StorageC
     if (new URL(primary.endpoint).origin === new URL(backup.endpoint).origin &&
         primary.bucket === backup.bucket)
         throw new Error('Recovery bucket must differ from the primary bucket.');
+    // A different bucket alone is not a separate recovery credential.
+    // Refuse even partial credential reuse; a compromised or revoked source
+    // credential must not also authorize a supposed recovery copy.
+    if (backup.accessKeyId === primary.accessKeyId ||
+        backup.secretAccessKey === primary.secretAccessKey)
+        throw new Error('Recovery R2 must use different access-key ID and secret credentials.');
     return backup;
 }
 
@@ -95,7 +101,10 @@ export async function verifyR2Recovery(input: {
 
     const query = await input.database.query<FileRow>(
         'SELECT id,storage_key,checksum,byte_size FROM atlas_files ' +
-        'WHERE storage_key > $1 ORDER BY storage_key ASC LIMIT $2',
+        // The first uncursored page must include even schema-allowed empty
+        // storage keys, so corrupt metadata is counted rather than silently
+        // excluded from a supposedly complete recovery verification.
+        'WHERE ($1 = \'\' OR storage_key > $1) ORDER BY storage_key ASC LIMIT $2',
         [input.cursor ?? '',maxFiles+1]);
     if (query.rows.length > maxFiles+1) throw new Error('Recovery metadata query exceeded its bound.');
     const rows = query.rows.slice(0,maxFiles);
