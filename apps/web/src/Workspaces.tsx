@@ -13,6 +13,9 @@ const directoryPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const branchPattern = /^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const shortSha = (head?: string) => head?.slice(0, 9) || '—';
+const reclaimed = (bytes: number) => bytes >= 1024 * 1024
+    ? `~${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+    : `~${Math.ceil(bytes / 1024)} KiB`;
 function suggestTarget(path: string, branch: string) {
     const slash = path.lastIndexOf('/');
     return slash > 0 ? path.slice(0, slash + 1) + path.slice(slash + 1) + '-' + branch.replace(/^atlas\//, '').replaceAll('/', '-') : '';
@@ -108,10 +111,10 @@ export function Workspaces() {
         setSelectedId(id);
         location.hash = id ? '/workspaces?workspace=' + encodeURIComponent(id) : '/workspaces';
     }
-    async function mutate<T>(action: () => Promise<T>, done: string, after?: (value: T) => void) {
+    async function mutate<T>(action: () => Promise<T>, done: string | ((result: T) => string), after?: (value: T) => void) {
         if (IS_MOCK_MODE) return;
         setWorking(true); setError(''); setNotice('');
-        try { const result = await action(); after?.(result); setNotice(done); setRevision(n => n + 1); }
+        try { const result = await action(); after?.(result); setNotice(typeof done === 'string' ? done : done(result)); setRevision(n => n + 1); }
         catch (cause) { setError(message(cause)); }
         finally { setWorking(false); }
     }
@@ -142,10 +145,11 @@ export function Workspaces() {
         }), 'Feature worktree created.', result => choose(result.workspace.id));
     }
     async function retire(entry: Worktree, record: Workspace) {
-        if (!selected || !confirm('Remove the clean worktree at ' + record.rootPath + '? Branches and commits will be preserved.')) return;
-        await mutate(() => callTool('workspace_git_remove_worktree', {
+        if (!selected || !confirm('Retire the worktree at ' + record.rootPath +
+            '?\n\nThis DELETEs the local checkout folder and its tracked files, but keeps the Git branch and commits. Atlas will refuse unless the exact HEAD has a merged PR, the tree has no changes (including ignored files) and no processes are using the folder.')) return;
+        await mutate(() => callTool<{ removed: boolean; estimatedReclaimedBytes: number }>('workspace_git_remove_worktree', {
             workspaceId: selected.id, targetWorkspaceId: record.id, expectedHead: entry.head,
-        }), 'Worktree retired; branch preserved.');
+        }), result => `Local worktree folder deleted (${reclaimed(result.estimatedReclaimedBytes)} estimated reclaimed); Git branch and commits preserved.`);
     }
     async function push() {
         if (!selected || !canPublish) return;

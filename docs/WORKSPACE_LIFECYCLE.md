@@ -15,9 +15,13 @@ This phase adds three Node-owned, auditable operations on top of Workspace V2:
   as an independent Workspace; existing checkout files are preserved.
 - `workspace_git_list_worktrees` and `workspace_git_remove_worktree` —
   inspect worktrees and retire an explicitly selected registered feature
-  worktree. Retiring rejects dirty/untracked worktrees and changed HEADs,
-  archives the registered Workspace, **retains the feature branch and commits**,
-  and never uses `git worktree remove --force`.
+  worktree. Retiring requires a merged GitHub PR for the exact feature HEAD into
+  the repository's current default branch, rejects changed HEADs, dirty,
+  untracked **and ignored** files, checks for processes with a working directory
+  inside the checkout, archives the registered Workspace, and **deletes the
+  checked-out files and local directory** while **retaining the Git branch and
+  commits**. A successful removal reports estimated reclaimed disk blocks.
+  It never uses `git worktree remove --force` or recursive filesystem deletion.
 
 ## Initial setup
 
@@ -55,7 +59,21 @@ To retire it, read `workspace_git_list_worktrees` or
 `workspace_git_remove_worktree` with the source Workspace ID,
 `targetWorkspaceId` (the feature Workspace ID) and `expectedHead`.
 The Node receives the target directory from the Server database, **never
-from untrusted request input**.
+from untrusted request input**. This is an **explicit, irreversible local
+checkout deletion**: the tracked file copies and directory disappear, but
+the feature branch and commits remain available in Git. Atlas refuses to
+delete when the exact feature HEAD lacks a verifiable merged PR, GitHub
+cannot be reached, a file is modified/untracked/ignored, a process has
+its working directory inside the checkout or the Node cannot complete
+the safety inspection. It does not silently clear generated build outputs.
+
+The returned `estimatedReclaimedBytes` is an approximation from allocated
+filesystem blocks before deletion, **not a measured disk-free delta**.
+The macOS implementation uses `lsof` to inspect process working directories;
+Linux uses same-UID `/proc` working-directory inspection. These checks
+cannot guarantee that every open file handle or a process started later
+will be detected, so removal always uses Git's normal (non-forced) safety
+checks as a final guard.
 
 ## Safety and rollout
 

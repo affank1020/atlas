@@ -71,6 +71,7 @@ test('provenance-protected retirement uses Workspace IDs and expected commit, ne
         if (name === 'list_workspaces') return [manager, repo, feature];
         if (name === 'list_github_repositories') return { repositories: [] };
         if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha, dirty: false, originRepository: 'example/atlas' };
+        if (name === 'workspace_git_remove_worktree') return { removed: true, estimatedReclaimedBytes: 1048576 };
         if (name === 'workspace_git_list_worktrees') return { worktrees: [
             { rootPath: repo.rootPath, branch: 'main', head: sha },
             { rootPath: feature.rootPath, branch: 'atlas/feature', head: sha },
@@ -86,5 +87,7 @@ test('provenance-protected retirement uses Workspace IDs and expected commit, ne
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_remove_worktree', {
         workspaceId: 'repo', targetWorkspaceId: 'feature', expectedHead: sha,
     }));
+    expect(vi.mocked(confirm)).toHaveBeenCalledWith(expect.stringContaining('DELETEs the local checkout folder'));
+    expect(await screen.findByText(/estimated reclaimed/)).toBeInTheDocument();
     vi.unstubAllGlobals();
 });

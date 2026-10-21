@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +27,8 @@ test('managed worktrees are isolated, registered in Git, and retire without dele
     git(source, 'config', 'user.name', 'Test');
     git(source, 'config', 'user.email', 'test@example.test');
     writeFileSync(path.join(source, 'README.md'), 'initial\n');
-    git(source, 'add', 'README.md');
+    writeFileSync(path.join(source, '.gitignore'), '*.cache\n');
+    git(source, 'add', 'README.md', '.gitignore');
     git(source, 'commit', '-m', 'Initial');
     const originalHead = git(source, 'rev-parse', 'HEAD');
     // Worktrees must branch from HEAD, not silently include dirty changes.
@@ -53,13 +54,35 @@ test('managed worktrees are isolated, registered in Git, and retire without dele
     assert.ok(visible.worktrees.some(x => x.rootPath === createdPath && x.branch === 'atlas/feature'));
 
     writeFileSync(path.join(createdPath, 'untracked.txt'), 'keep me');
-    await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'), /uncommitted or untracked/);
+    await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'), /uncommitted, untracked/);
     rmSync(path.join(createdPath, 'untracked.txt'));
+    writeFileSync(path.join(createdPath, 'build.cache'), 'ignored local data');
+    assert.equal(git(createdPath, 'status', '--porcelain'), '');
+    await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'), /ignored files/);
+    rmSync(path.join(createdPath, 'build.cache'));
+
+    // A running program with its cwd in the checkout prevents local deletion.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)'], {
+        cwd: createdPath, stdio: 'ignore',
+    });
+    try {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature'),
+            /(?:process is currently working inside|Cannot verify active worktree processes)/);
+        assert.equal(existsSync(createdPath), true);
+    } finally {
+        await new Promise<void>(resolve => {
+            if (child.exitCode !== null || child.signalCode !== null) return resolve();
+            child.once('exit', () => resolve());
+            child.kill();
+        });
+    }
     await assert.rejects(removeManagedWorktree(source, files, createdPath, 'a'.repeat(40), 'atlas/feature'), /HEAD changed/);
     await assert.rejects(removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/different'), /branch changed/);
     await assert.rejects(removeManagedWorktree(source, files, source, originalHead, 'atlas/feature'), /parent checkout/);
     const removed = await removeManagedWorktree(source, files, createdPath, originalHead, 'atlas/feature');
     assert.equal(removed.preservedBranch, 'atlas/feature');
+    assert.ok(removed.estimatedReclaimedBytes > 0);
     assert.equal(existsSync(createdPath), false);
     assert.equal(git(source, 'rev-parse', 'refs/heads/atlas/feature'), originalHead);
     assert.equal((await listManagedWorktrees(source, files)).worktrees.length, 1);

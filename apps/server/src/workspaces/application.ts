@@ -136,10 +136,21 @@ export class WorkspaceService {
                             target.id, workspace.id, target.rootPath);
                         if (!expectedBranch)
                             throw new AtlasError('Only an Atlas-created worktree can be removed through Atlas.', 'WORKSPACE_DENIED');
+                        // Verify this exact branch tip was merged into the GitHub
+                        // repository's default branch. Git ancestry is insufficient
+                        // for squash merges; lack of PR evidence fails closed.
+                        const git = await removeRuntime!.execute(current, 'workspace_git_status', {
+                            workspaceId: current.id,
+                        }) as { available?: boolean; originRepository?: string | null };
+                        if (git?.available !== true || !git.originRepository)
+                            throw new AtlasError('Cannot verify the source GitHub repository; local files were preserved.', 'WORKSPACE_DENIED');
+                        const mergedPullRequest = await this.github.verifyMergedPullRequest(
+                            git.originRepository, expectedBranch, x.expectedHead);
                         // Never trust the caller to provide the branch or target
                         // path. The Node independently checks both Git identity
                         // and the expected branch before any filesystem deletion.
-                        return removeRuntime!.execute(current, nodeOperation, { ...nodeInput, expectedBranch });
+                        const removal = await removeRuntime!.execute(current, nodeOperation, { ...nodeInput, expectedBranch });
+                        return { ...(removal as object), mergedPullRequest };
                     }
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
                     ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) }

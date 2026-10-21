@@ -141,11 +141,20 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     git('config', 'user.email', 'test@example.test');
     writeFileSync(path.join(source, 'README.md'), 'initial');
     git('add', 'README.md'); git('commit', '-m', 'initial');
+    git('remote', 'add', 'origin', 'https://github.com/affank1020/atlas.git');
 
     const { catalog, store } = await databaseFixture();
     const runtime = new LocalNodeRuntime([parent], new Map(), 'linux');
+    let prMerged = false;
+    const broker = { verifyMergedPullRequest: async (repository: string, branch: string, head: string) => {
+        assert.equal(repository, 'affank1020/atlas');
+        assert.equal(branch, 'atlas/test-feature');
+        assert.match(head, /^[a-f0-9]{40}$/);
+        if (!prMerged) throw new Error('No merged PR matches this exact branch HEAD');
+        return { number: 42, url: 'https://github.com/affank1020/atlas/pull/42' };
+    } } as any;
     const svc = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
-        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')), broker);
     const originalWorkspace: any = await svc.call('create_workspace',
         { name: 'Main checkout', rootPath: source, kind: 'generic' });
     const dest = path.join(parent, 'feature-checkout');
@@ -161,6 +170,14 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     const registered: any[] = await svc.call('list_workspaces', {});
     assert.equal(registered.length, 2);
 
+    // Retirement requires GitHub's merged PR evidence before touching files.
+    await assert.rejects(svc.call('workspace_git_remove_worktree', {
+        workspaceId: originalWorkspace.id, targetWorkspaceId: created.workspace.id,
+        expectedHead: created.head,
+    }), /No merged PR matches/);
+    assert.equal((await svc.call('get_workspace', { workspaceId: created.workspace.id }) as any).status, 'active');
+    prMerged = true;
+
     // Even a clean Atlas-created worktree cannot be deleted if its branch has
     // changed since registration. Preserve it and allow switching back.
     execFileSync('/usr/bin/git', ['-C', dest, 'switch', '-c', 'atlas/switched'], { encoding: 'utf8' });
@@ -175,6 +192,8 @@ test('managed worktree creation auto-registers an independent Workspace and remo
         expectedHead: created.head,
     });
     assert.equal(removed.preservedBranch, 'atlas/test-feature');
+    assert.ok(removed.estimatedReclaimedBytes > 0);
+    assert.equal(removed.mergedPullRequest.number, 42);
     assert.equal((await svc.call('list_workspaces', {}) as any[]).length, 1);
     assert.equal((await svc.call('list_workspaces', { includeArchived: true }) as any[]).length, 2);
     assert.equal(git('rev-parse', 'refs/heads/atlas/test-feature'), created.head);
