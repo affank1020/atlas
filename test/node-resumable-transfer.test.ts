@@ -15,6 +15,7 @@ import { AtlasFilesService } from '../apps/server/src/server/atlas-files.js';
 import { serveNodeResumableRequest } from '../apps/server/src/api/http/node-resumable.js';
 import { uploadNodeFileResumable } from '../apps/node/src/core/file-transfer.js';
 import type { ServerServices } from '../apps/server/src/server/composition.js';
+import { Pool } from 'pg';
 
 after(cleanupDatabases);
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
@@ -90,6 +91,72 @@ test('Staging reservations are bounded, identity-scoped and explicitly abortable
         assert.equal((await env.service.status({...env.identityInfo,uploadId:three})).completed,false);
         await assert.rejects(env.service.chunk({...env.identityInfo,uploadId:two,index:25,
             bytes:Buffer.from('x'),checksum:sha(Buffer.from('x'))}),/out of range|Invalid Node transfer chunk/);
+    }finally{await env.close();}
+});
+
+test('Completion with pool max=1 releases its client before ingest and concurrent completions finish',async()=>{
+    const env=await setup('Pool One');
+    // Rebuild both services over the *same* single-connection pool used by
+    // Identity and Node ingest. Pool saturation previously deadlocked forever.
+    const onePool=new Pool({connectionString:env.files.pool.options.connectionString, max:1,
+        connectionTimeoutMillis:2500});
+    const identity=new NodeIdentity(onePool);
+    const ingest=new NodeFileIngestService(onePool,identity,env.files);
+    const service=new NodeResumableTransferService(onePool,ingest);
+    const bytes=Buffer.from('concurrent completion');
+    const inputs=[randomUUID(),randomUUID(),randomUUID()].map(uploadId=>({
+        ...env.identityInfo, uploadId,fileName:'part.png',mimeType:'image/png',
+        byteSize:bytes.length,checksum:sha(bytes),
+    }));
+    try {
+        for(const input of inputs){
+            await service.init(input);
+            await service.chunk({...input,index:0,bytes,checksum:sha(bytes)});
+        }
+        const results=await Promise.race([
+            Promise.all(inputs.map(input=>service.complete(input))),
+            new Promise<never>((_resolve,reject)=>setTimeout(()=>reject(new Error('pool completion deadlocked')),9000)),
+        ]);
+        assert.equal(new Set(results.map(result=>result.fileId)).size,3);
+        assert.equal((await env.files.list({kind:'workspace',id:env.identityInfo.workspaceId})).length,3);
+        assert.equal((await onePool.query('SELECT 1 AS healthy')).rows[0].healthy,1);
+    }finally{await onePool.end();await env.close();}
+});
+
+test('Reassignment and archive atomically discard stranded active checkpoints',async()=>{
+    const env=await setup('Original Phone');
+    const identity=new NodeIdentity(env.pool);
+    try {
+        const oldUpload=(uploadId:string)=>({...env.identityInfo,uploadId,
+            fileName:'old.png',mimeType:'image/png',byteSize:25*NODE_PART_BYTES,
+            checksum:'f'.repeat(64)});
+        await env.service.init(oldUpload(randomUUID()));
+        await env.service.init(oldUpload(randomUUID()));
+        const thirdId=randomUUID();
+        await assert.rejects(env.service.init(oldUpload(thirdId)),
+            e=>(e as {code:string}).code==='QUOTA_EXCEEDED');
+        const ticket=await identity.ticket();
+        const moved=await identity.enrol({token:ticket.enrolmentToken,name:'Replacement Phone',platform:'android'});
+        // Workspace updates via identity.assign OR any other SQL path must
+        // invalidate staging in the same transaction. Projectless test
+        // checkout uses the latter.
+        await env.pool.query('UPDATE workspaces SET node_id=$2 WHERE id=$1',
+            [env.identityInfo.workspaceId,moved.nodeId]);
+        const old=await env.pool.query('SELECT COUNT(*)::int AS count FROM node_file_transfer_sessions WHERE workspace_id=$1 AND status<>\'complete\'',
+            [env.identityInfo.workspaceId]);
+        assert.equal(old.rows[0].count,0);
+        const parts=await env.pool.query('SELECT COUNT(*)::int AS count FROM node_file_transfer_parts');
+        assert.equal(parts.rows[0].count,0);
+        await assert.rejects(env.service.abort(env.identityInfo));
+        const newInput={...env.identityInfo,nodeId:moved.nodeId,credential:moved.credential,uploadId:thirdId};
+        const started=await env.service.init({...newInput,fileName:'new.png',mimeType:'image/png',
+            byteSize:25*NODE_PART_BYTES,checksum:'e'.repeat(64)});
+        assert.equal(started.completed,false,'new Node can reclaim full staging quota');
+        await env.pool.query('UPDATE workspaces SET archived_at=now() WHERE id=$1',
+            [env.identityInfo.workspaceId]);
+        assert.equal((await env.pool.query('SELECT COUNT(*)::int AS count FROM node_file_transfer_sessions WHERE workspace_id=$1',
+            [env.identityInfo.workspaceId])).rows[0].count,0);
+        await assert.rejects(env.service.status(newInput));
     }finally{await env.close();}
 });
 
