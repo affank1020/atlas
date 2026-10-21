@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { NodeSoftware, NodeSoftwareSummary, releaseUpdateState, type NodeRelease } from './NodeSoftware';
+import { NodeSoftware, NodeSoftwareSummary, releaseUpdateState, type NodeRelease, type NodeUpdateIntent } from './NodeSoftware';
 import { callTool } from './api';
 vi.mock('./api', () => ({ callTool: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -187,7 +187,7 @@ it('rehydrates an existing pending update request after remount, Node switch and
         expiresAt: new Date(Date.now() + 12 * 60_000).toISOString(),
         approved: false as const, executable: false as const,
     };
-    let persisted = [intent];
+    let persisted: NodeUpdateIntent[] = [intent];
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'list_node_releases') return { state: 'ready', releases: [release], checkedAt: '' };
         if (name === 'list_node_update_intents') return persisted;
