@@ -106,6 +106,16 @@ export class NodeResumableTransferService {
                         WHERE node_id=$1 AND upload_id=$2 AND status='active'`,
                         [input.nodeId,input.uploadId]);
             } else {
+                // A transfer purged after inactivity still owns its Node-scoped
+                // upload UUID. Reusing it (even with identical bytes) needs a
+                // fresh UUID, so delayed offline retries cannot change identity.
+                // The earlier FOR UPDATE session lookup serializes with the
+                // maintenance DELETE; this tombstone read follows that lock.
+                const expired = await db.query(
+                    'SELECT 1 FROM node_file_expired_upload_ids WHERE node_id=$1 AND upload_id=$2',
+                    [input.nodeId,input.uploadId]);
+                if (expired.rowCount)
+                    throw new AtlasError('Node transfer expired. Start again with a new upload ID.', 'CONFLICT');
                 // The existing one-shot Node route shares the receipt namespace.
                 const receipt = await db.query('SELECT 1 FROM node_file_upload_receipts WHERE node_id=$1 AND upload_id=$2',
                     [input.nodeId,input.uploadId]);
