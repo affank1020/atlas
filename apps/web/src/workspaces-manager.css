@@ -56,3 +56,25 @@
 @media(max-width:1020px) { .wm-layout { grid-template-columns:1fr; } .wm-inspector { position:static; max-height:none; } }
 @media(max-width:610px) { .wm-panel { padding:15px; } .wm-browser { padding:0; } .wm-fields { grid-template-columns:1fr; } .wm-browser>.wm-fields { padding:15px; } .wm-browser>.wm-title { padding:12px 15px; } .wm-row { padding:13px 15px; } .wm-title { flex-wrap:wrap; } }
 @media(prefers-reduced-motion:reduce) { .workspaces-manager { animation:none; } }
+/* Layout-matched loading placeholders avoid an empty initial browser or inspector. */
+.wm-skeleton { display:block; border-radius:5px; background:var(--surface-elevated); background-image:linear-gradient(90deg,transparent 0%,var(--bg-secondary) 45%,transparent 90%); background-size:220% 100%; animation:wm-shimmer 1.6s ease-in-out infinite; }
+@keyframes wm-shimmer { from { background-position:100% 0; } to { background-position:-100% 0; } }
+.wm-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.wm-skeleton-count { width:122px; height:16px; }
+.wm-skeleton-meta { width:98px; height:12px; }
+.wm-row-skeleton { pointer-events:none; }
+.wm-skeleton-glyph { flex:none; width:35px; height:35px; border-radius:9px; }
+.wm-skeleton-title { width:45%; height:12px; }
+.wm-skeleton-path { width:83%; height:10px; }
+.wm-skeleton-node { width:60%; height:10px; }
+.wm-skeleton-dot { flex:none; width:7px; height:7px; border-radius:50%; }
+.wm-inspector-skeleton { display:grid; gap:15px; padding:3px 0 6px; }
+.wm-skeleton-heading { width:62%; height:21px; }
+.wm-skeleton-path-wide { width:100%; height:27px; }
+.wm-git-skeleton .wm-skeleton-git { width:42%; height:12px; align-self:center; }
+.wm-git-skeleton .wm-skeleton-git-1 { width:25%; }
+.wm-git-skeleton .wm-skeleton-git-2 { width:36%; }
+.wm-git-skeleton .wm-skeleton-git-3 { width:55%; }
+.wm-trees-skeleton .wm-tree>div { flex:1; gap:10px; }
+.wm-trees-skeleton .wm-tree .wm-skeleton-path { width:70%; }
+@media(prefers-reduced-motion:reduce) { .wm-skeleton { animation:none; background-image:none; } }

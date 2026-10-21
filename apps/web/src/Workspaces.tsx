@@ -29,13 +29,16 @@ export function Workspaces() {
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [loading, setLoading] = useState(true);
+    const [hasLoaded, setHasLoaded] = useState(false);
+    const [catalogLoading, setCatalogLoading] = useState(true);
     const [working, setWorking] = useState(false);
     const [revision, setRevision] = useState(0);
     const [search, setSearch] = useState('');
     const [nodeFilter, setNodeFilter] = useState('');
     const [selectedId, setSelectedId] = useState(() => new URLSearchParams(location.hash.split('?')[1] || '').get('workspace') || '');
-    const [status, setStatus] = useState<GitStatus>();
-    const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+    const [rawStatus, setStatus] = useState<GitStatus>();
+    const [rawWorktrees, setWorktrees] = useState<Worktree[]>([]);
+    const [inspectedId, setInspectedId] = useState('');
     const [inspecting, setInspecting] = useState(false);
     const [inspectionError, setInspectionError] = useState('');
     const [provision, setProvision] = useState(false);
@@ -54,6 +57,10 @@ export function Workspaces() {
 
     const selected = all.find(w => w.id === selectedId);
     const selectedNode = nodes.find(n => n.id === selected?.nodeId);
+    const status = inspectedId === selected?.id ? rawStatus : undefined;
+    const worktrees = inspectedId === selected?.id ? rawWorktrees : [];
+    const initialLoading = loading && !hasLoaded;
+    const inspectorPending = !!(selected && selectedNode?.status === 'online' && inspectedId !== selected.id);
     const online = nodes.filter(n => n.status === 'online' && n.capabilities.includes('workspace.git'));
     const provisionNode = online.find(n => n.id === nodeId);
     const managers = all.filter(w => w.nodeId === nodeId && w.kind === 'generic');
@@ -74,31 +81,51 @@ export function Workspaces() {
         Promise.allSettled([
             callTool<AtlasNode[]>('list_nodes'),
             callTool<Workspace[]>('list_workspaces', {}),
-            callTool<{repositories: Repository[]}>('list_github_repositories', {}),
-        ]).then(([nodeResult, wsResult, repoResult]) => {
+        ]).then(([nodeResult, wsResult]) => {
             if (!live) return;
             if (nodeResult.status === 'fulfilled') setNodes(nodeResult.value);
             if (wsResult.status === 'fulfilled') setAll(wsResult.value.filter(w => w.status === 'active'));
             setError([nodeResult, wsResult].filter(v => v.status === 'rejected').map(v => message((v as PromiseRejectedResult).reason)).join(' '));
-            if (repoResult.status === 'fulfilled') { setRepositories(repoResult.value.repositories); setCatalogError(''); }
-            else setCatalogError(message(repoResult.reason));
-        }).finally(() => { if (live) setLoading(false); });
+        }).finally(() => {
+            if (live) { setHasLoaded(true); setLoading(false); }
+        });
+        return () => { live = false; };
+    }, [revision]);
+    useEffect(() => {
+        let live = true;
+        setCatalogLoading(true);
+        callTool<{repositories: Repository[]}>('list_github_repositories', {}).then(result => {
+            if (!live) return;
+            setRepositories(result.repositories);
+            setCatalogError('');
+        }).catch(cause => {
+            if (live) setCatalogError(message(cause));
+        }).finally(() => {
+            if (live) setCatalogLoading(false);
+        });
         return () => { live = false; };
     }, [revision]);
     useEffect(() => {
         if (!nodeId && online.length) setNodeId(online[0].id);
     }, [nodeId, nodes]);
     useEffect(() => {
-        if (!selected || selectedNode?.status !== 'online') { setStatus(undefined); setWorktrees([]); setInspectionError(''); return; }
+        if (!selected || selectedNode?.status !== 'online') {
+            setStatus(undefined); setWorktrees([]); setInspectedId('');
+            setInspecting(false); setInspectionError('');
+            return;
+        }
         let live = true;
-        setInspecting(true); setStatus(undefined); setWorktrees([]); setInspectionError('');
+        // Retain the last inspection during a refresh; the selected ID prevents
+        // checkout details from leaking into a newly selected Workspace.
+        setInspecting(true); setInspectionError('');
         Promise.allSettled([
             callTool<GitStatus>('workspace_git_status', { workspaceId: selected.id }),
             callTool<{worktrees: Worktree[]}>('workspace_git_list_worktrees', { workspaceId: selected.id }),
         ]).then(([git, trees]) => {
             if (!live) return;
-            if (git.status === 'fulfilled') setStatus(git.value);
-            if (trees.status === 'fulfilled') setWorktrees(trees.value.worktrees);
+            setStatus(git.status === 'fulfilled' ? git.value : undefined);
+            setWorktrees(trees.status === 'fulfilled' ? trees.value.worktrees : []);
+            setInspectedId(selected.id);
             setInspectionError([git, trees].filter(x => x.status === 'rejected').map(x => message((x as PromiseRejectedResult).reason)).join(' '));
         }).finally(() => { if (live) setInspecting(false); });
         return () => { live = false; };
@@ -170,13 +197,13 @@ export function Workspaces() {
     return <div className="workspaces-manager">
         <header className="page-head">
             <div><p className="eyebrow">Development / across Nodes</p><h1>Workspaces</h1><p>Repositories and isolated checkouts, independent of Projects.</p></div>
-            <div className="actions"><button className="ghost" onClick={() => setRevision(r => r + 1)} disabled={loading || working}>Refresh</button>
+            <div className="actions"><button className="ghost" onClick={() => setRevision(r => r + 1)} disabled={loading || working}>{loading && hasLoaded ? 'Refreshing…' : 'Refresh'}</button>
                 <button disabled={IS_MOCK_MODE || !online.length} onClick={() => setProvision(!provision)}>{provision ? 'Close' : '+ Add repository'}</button></div>
         </header>
         {IS_MOCK_MODE && <p className="wm-notice" role="status">Mock preview · write operations are disabled.</p>}
         {error && <p className="wm-notice error" role="alert">{error}</p>}
         {notice && <p className="wm-notice" role="status">{notice}</p>}
-        {loading && <p className="wm-notice" role="status">Loading Nodes and Workspaces…</p>}
+        {loading && <p className="wm-sr-only" role="status">{initialLoading ? 'Loading Nodes and Workspaces…' : 'Refreshing Workspaces…'}</p>}
         {provision && <section className="wm-panel" aria-label="Provision repository">
             <div className="wm-title"><div><p className="eyebrow">GitHub → Node</p><h2>Provision repository</h2></div><span>Existing directories are never overwritten</span></div>
             <div className="wm-fields">
@@ -193,7 +220,7 @@ export function Workspaces() {
             </form>}
             <form className="wm-fields" onSubmit={clone}>
                 <label>Authorised GitHub repository<select value={repository} onChange={e => { setRepository(e.target.value); setDirectoryName(e.target.value.split('/')[1] || ''); }}>
-                    <option value="">Select repository</option>
+                    <option value="">{catalogLoading ? 'Loading repositories…' : 'Select repository'}</option>
                     {repositories.filter(r => !r.archived).map(r => <option key={r.repository} value={r.repository}>{r.repository}{r.private ? ' · Private' : ''}</option>)}</select></label>
                 <label>Directory name<input value={directoryName} onChange={e => setDirectoryName(e.target.value)} required maxLength={80} placeholder="repository-name" /></label>
                 <button disabled={working || IS_MOCK_MODE || !managerId || !repository || !directoryPattern.test(directoryName)}>Clone</button>
@@ -202,12 +229,22 @@ export function Workspaces() {
             <p className="wm-hint">The Node must explicitly trust the selected development root. A new repository becomes an independent Workspace.</p>
         </section>}
         <div className="wm-layout">
-            <section className="wm-panel wm-browser" aria-label="Workspace browser">
+            <section className="wm-panel wm-browser" aria-label="Workspace browser" aria-busy={initialLoading}>
                 <div className="wm-fields"><label>Search<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Workspace, directory, Node…" /></label>
                     <label>Node<select value={nodeFilter} onChange={e => setNodeFilter(e.target.value)}><option value="">All Nodes</option>
                         {nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label></div>
-                <div className="wm-title"><h2>{entries.length} Workspaces</h2><small>{nodes.filter(n => n.status === 'online').length} Nodes online</small></div>
-                <div className="wm-list">{entries.map(w => {
+                <div className="wm-title"><h2>{initialLoading ? <span className="wm-skeleton wm-skeleton-count" aria-hidden="true" /> : `${entries.length} Workspaces`}</h2><small>{initialLoading ? <span className="wm-skeleton wm-skeleton-meta" aria-hidden="true" /> : `${nodes.filter(n => n.status === 'online').length} Nodes online`}</small></div>
+                <div className="wm-list" aria-busy={initialLoading}>{initialLoading ? Array.from({ length: 4 }, (_, index) =>
+                    <div className="wm-row wm-row-skeleton" key={index} aria-hidden="true">
+                        <span className="wm-skeleton wm-skeleton-glyph" />
+                        <span className="wm-row-main">
+                            <span className="wm-skeleton wm-skeleton-title" />
+                            <span className="wm-skeleton wm-skeleton-path" />
+                            <span className="wm-skeleton wm-skeleton-node" />
+                        </span>
+                        <span className="wm-skeleton wm-skeleton-dot" />
+                    </div>
+                ) : entries.map(w => {
                     const node = nodes.find(n => n.id === w.nodeId);
                     return <button key={w.id} className={'wm-row' + (selectedId === w.id ? ' selected' : '')} aria-pressed={selectedId === w.id} onClick={() => choose(w.id)}>
                         <span className="wm-glyph" aria-hidden="true">{w.kind === 'unity' ? '◇' : '⌁'}</span>
@@ -217,17 +254,35 @@ export function Workspaces() {
                 })}</div>
                 {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
             </section>
-            <aside className="wm-panel wm-inspector" aria-label="Workspace details">
-                {!selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Select a Workspace to inspect its checkout and Git operations.</p></div> : <>
+            <aside className="wm-panel wm-inspector" aria-label="Workspace details" aria-busy={!!(inspecting || inspectorPending || (initialLoading && selectedId))}>
+                {!selected && initialLoading && selectedId ? <div className="wm-inspector-skeleton" aria-hidden="true">
+                    <span className="wm-skeleton wm-skeleton-meta" />
+                    <span className="wm-skeleton wm-skeleton-heading" />
+                    <span className="wm-skeleton wm-skeleton-path-wide" />
+                    <span className="wm-skeleton wm-skeleton-path-wide" />
+                </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Select a Workspace to inspect its checkout and Git operations.</p></div> : <>
                     <div className="wm-title"><div><p className="eyebrow">Workspace inspector</p><h2>{selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
                     <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
                         {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
                     <p className="wm-path">{selected.rootPath}</p>
                     <p className="wm-hint">{selected.kind} · {selected.projectId ? 'Project linked' : 'Independent Workspace'}</p>
-                    {inspecting && <p role="status" className="wm-hint">Inspecting checkout…</p>}
+                    {inspecting && <p role="status" className="wm-sr-only">{inspectedId === selected.id ? 'Refreshing checkout…' : 'Inspecting checkout…'}</p>}
                     {inspectionError && <p role="alert" className="wm-hint error">{inspectionError}</p>}
                     {selectedNode?.status !== 'online' && <p className="wm-hint">Reconnect this Node to inspect or modify its Workspaces.</p>}
-                    {status?.available ? <div className="wm-git">
+                    {inspectorPending ? <>
+                        <div className="wm-git wm-git-skeleton" aria-hidden="true">
+                            {['Branch', 'HEAD', 'Working tree', 'Origin'].map((label, index) =>
+                                <div key={label}><span>{label}</span><span className={'wm-skeleton wm-skeleton-git wm-skeleton-git-' + index} /></div>)}
+                        </div>
+                        <section className="wm-subsection wm-trees-skeleton" aria-hidden="true">
+                            <h3>Worktrees</h3>
+                            {Array.from({ length: 2 }, (_, index) =>
+                                <div className="wm-tree" key={index}><div>
+                                    <span className="wm-skeleton wm-skeleton-title" />
+                                    <span className="wm-skeleton wm-skeleton-path" />
+                                </div></div>)}
+                        </section>
+                    </> : status?.available ? <div className="wm-git">
                         <div><span>Branch</span><strong>{status.branch || 'Detached'}</strong></div>
                         <div><span>HEAD</span><code>{shortSha(status.head)}</code></div>
                         <div><span>Working tree</span><strong>{status.dirty ? 'Uncommitted changes' : 'Clean'}</strong></div>
@@ -242,7 +297,7 @@ export function Workspaces() {
                             return <div key={t.rootPath} className="wm-tree"><div><strong>{t.branch || 'Detached HEAD'}</strong>
                                 <small>{t.rootPath} · {shortSha(t.head)}</small></div>
                                 {record && record.id !== selected.id && t.branch?.startsWith('atlas/') &&
-                                    <button className="ghost" disabled={working || IS_MOCK_MODE} onClick={() => retire(t, record)}>Retire</button>}
+                                    <button className="ghost" disabled={working || inspecting || IS_MOCK_MODE} onClick={() => retire(t, record)}>Retire</button>}
                             </div>;
                         })}</div>
                         <form className="wm-stack" onSubmit={createWorktree}>
@@ -250,14 +305,14 @@ export function Workspaces() {
                             <label>Branch<input value={branch} onChange={e => { const value = e.target.value; setBranch(value); if (!targetPath || targetPath === suggestTarget(selected.rootPath, branch)) setTargetPath(suggestTarget(selected.rootPath, value)); }} placeholder="atlas/feature-name" /></label>
                             <label>Destination on Node<input value={targetPath} onChange={e => setTargetPath(e.target.value)} placeholder={suggestTarget(selected.rootPath, 'atlas/feature')} /></label>
                             <label>Display name (optional)<input value={featureName} onChange={e => setFeatureName(e.target.value)} /></label>
-                            <button disabled={working || IS_MOCK_MODE || !validFeature || !targetPath.startsWith('/') || selectedNode?.status !== 'online'}>Create worktree</button>
+                            <button disabled={working || inspecting || IS_MOCK_MODE || !validFeature || !targetPath.startsWith('/') || selectedNode?.status !== 'online'}>Create worktree</button>
                         </form>
                     </section>}
                     {canPublish && <section className="wm-subsection wm-stack"><h3>Publish</h3>
-                        <button className="ghost" onClick={push} disabled={working || IS_MOCK_MODE}>Push feature branch to GitHub</button>
+                        <button className="ghost" onClick={push} disabled={working || inspecting || IS_MOCK_MODE}>Push feature branch to GitHub</button>
                         <form className="wm-stack" onSubmit={openPR}><label>Pull request title<input value={prTitle} onChange={e => setPrTitle(e.target.value)} required minLength={5} maxLength={120} /></label>
                             <label>Description<textarea value={prBody} onChange={e => setPrBody(e.target.value)} rows={3} maxLength={8000} /></label>
-                            <button disabled={working || IS_MOCK_MODE || prTitle.trim().length < 5}>Open draft PR</button></form>
+                            <button disabled={working || inspecting || IS_MOCK_MODE || prTitle.trim().length < 5}>Open draft PR</button></form>
                         {draftPR && <a href={draftPR.url} target="_blank" rel="noreferrer">Draft PR #{draftPR.number} ↗</a>}
                     </section>}
                     {working && <p role="status" className="wm-hint">Working on the Node…</p>}
