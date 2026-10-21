@@ -22,9 +22,12 @@ internal data class StoredNode(
  * Android Keystore AES-GCM key encrypts Node credentials before private app storage.
  * Credentials are not in backups, SavedState, APK, URLs, or logs.
  */
-internal class NodeVault(private val context: Context) {
-    private val preferences get() = context.getSharedPreferences("atlas_node_identity", Context.MODE_PRIVATE)
-    private val alias = "atlas_mobile_node_aes_v1"
+internal class NodeVault(
+    private val context: Context,
+    private val preferencesName: String = "atlas_node_identity",
+    private val alias: String = "atlas_mobile_node_aes_v1",
+) {
+    private val preferences get() = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
     private val aad = "atlas.mobile.node.identity.v1".toByteArray(Charsets.UTF_8)
 
     private fun key(create: Boolean): SecretKey? {
