@@ -9,6 +9,7 @@ import { LocalNodeRuntime } from './runtime.js';
 import { UnityAdapter, UnityCliConnection } from '../../capabilities/unity/unity.js';
 import { StandaloneNode } from '../../core/connection/standalone.js';
 import { WorkspaceFiles } from '../../capabilities/workspace-files/files.js';
+import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
 
 loadEnv({ path: process.env.ATLAS_NODE_ENV_FILE || '.env.node', quiet: true });
 const id = z.string().uuid().parse(process.env.ATLAS_NODE_ID);
@@ -29,7 +30,10 @@ if (process.env.ATLAS_NODE_UNITY_ENABLED === '1') {
     const unity = loadUnityConfig();
     adapters.set('unity', new UnityAdapter(files, new UnityCliConnection(unity.binary), unity.approvedCommands));
 }
-const runtime = new LocalNodeRuntime(roots, adapters);
+// Opt-in, GUI-only capability; never enable this on a Linux/headless Node.
+const shareReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_SHARE_RECEIVE_ENABLED === 'true'
+    ? new MacShareReceiver() : undefined;
+const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver);
 const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
 // Local, credential-free diagnostics; preserve the macOS menu-bar UI path.
 // The Linux service uses XDG_STATE_HOME (or ~/.local/state) instead.

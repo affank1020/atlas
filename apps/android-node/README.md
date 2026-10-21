@@ -87,3 +87,27 @@ A foreground-to-background transition cancels the WebSocket immediately,
 including when it is mid-handshake. Emulator tests exercise Compose draft
 navigation/re-import through an isolated Compose rule; no duplicate Activity
 instance is launched by the test harness.
+
+## 0.3.0 — Explicit Android text sender (manual recipient)
+Android now advertises only `device.share.send`, not `device.share.receive`
+or any Workspace access. In the Send tab the user chooses a target **Node UUID**
+from Atlas Web, edits/approves the text, and explicitly presses Send. Content
+is never sent automatically when Android receives a Sharesheet Intent.
+
+Only an active foreground WSS connection can send, over the existing
+per-Node credential. Messages use separate request/delivery UUIDs and bounded
+text; the receiver must be approved on Atlas Server and return a real receipt.
+Status distinguishes accepted, declined, unavailable and unconfirmed delivery.
+Stale/out-of-order acknowledgements cannot mark another send as accepted.
+An outbound attempt has no offline queue and is not retried after disconnection.
+
+The recipient picker is temporarily **manual** because native Nodes must not
+reuse Atlas Web's Basic Auth/admin-only API to list devices. A scoped Node
+directory with per-peer permissions is planned. Real-device acceptance testing
+comes after the relay, Mac receiver and this sender have all passed review.
+
+While a send awaits acknowledgement, a second Android Share intent is held
+in a volatile deferred slot, rather than replacing the on-screen text that
+was actually submitted. After the acknowledgement, **Load newest shared item**
+explicitly switches to the new draft. If several incoming shares arrive
+while pending, only the most recent is retained (no background queue).

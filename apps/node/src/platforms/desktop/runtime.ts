@@ -11,6 +11,7 @@ import { footballValidation } from '../../capabilities/football-validation.js';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 import type { NodeCapability } from '@atlas/protocol/node-model';
+import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
 import type { Workspace, WorkspaceAdapter } from '@atlas/protocol/workspace';
 import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 export class LocalNodeRuntime implements NodeRuntime {
@@ -19,8 +20,11 @@ export class LocalNodeRuntime implements NodeRuntime {
     readonly files: WorkspaceFiles;
     readonly adapters: Map<string, WorkspaceAdapter>;
     private readonly platform: NodeJS.Platform;
-    constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>, platform: NodeJS.Platform = process.platform) {
+    private readonly shareReceiver?: MacShareReceiver;
+    constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>,
+        platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver) {
         this.platform = platform;
+        this.shareReceiver = platform === 'darwin' ? shareReceiver : undefined;
         this.files = new WorkspaceFiles(roots);
         // The Linux Node is intentionally not a Unity/football host. A Linux
         // development sandbox is not ready, so no dev execution is advertised.
@@ -30,9 +34,15 @@ export class LocalNodeRuntime implements NodeRuntime {
     getCapabilities(): NodeCapability[] {
         const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
         if (this.platform === 'linux') return shared;
-        return [...shared, "workspace.dev", "football.training", "node.logs", ...(this.adapters.has("unity") ? ["unity" as const] : [])];
+        return [...shared, "workspace.dev", "football.training", "node.logs",
+            ...(this.adapters.has("unity") ? ["unity" as const] : []),
+            ...(this.shareReceiver ? ["device.share.receive" as const] : [])];
     }
     bind(rootPath: string) { return this.files.bind(rootPath); }
+    async receiveDeviceShare(input: { deliveryId: string; sourceNodeId: string; text: string; expiresAt: string }) {
+        if (!this.shareReceiver) throw new AtlasError('Mac sharing approval not enabled.', 'CAPABILITY_UNAVAILABLE');
+        return this.shareReceiver.receive(input, this.shutdown.signal);
+    }
     async readLogs(source: 'stdout' | 'stderr', lines: number) { return readAtlasNodeLog(source, lines, this.platform); }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {
         // Defence in depth even for direct runtime callers: do not let a
