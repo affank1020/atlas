@@ -42,7 +42,8 @@ function drainOfflineQueue() {
         // Queue diagnostics contain counts only, never uploaded filenames,
         // contents or node credentials.
         if (result.delivered) console.log('Atlas Node delivered ' + result.delivered + ' queued file(s).');
-        if (result.blocked) console.warn('Atlas Node has blocked offline uploads; inspect local queue status.');
+        if (result.blocked || result.unreadable)
+            console.warn('Atlas Node has blocked or unreadable offline uploads; inspect local queue status.');
     }).catch(() => {
         console.error('Atlas Node offline file queue cannot be read or flushed.');
     });
