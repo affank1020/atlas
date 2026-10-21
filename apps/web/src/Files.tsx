@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApplicationRead, useListProjectsQuery } from './atlasApi';
-import { archiveFile, downloadFile, listFiles, uploadFile, type AtlasFile, type FileOwner } from './filesApi';
+import { archiveFile, downloadFile, listFiles, restoreFile, uploadFile, type AtlasFile, type FileOwner } from './filesApi';
 import type { ApplicationManifest } from './Applications';
 import './files.css';
 
@@ -33,6 +33,7 @@ export function Files() {
     const [kind, setKind] = useState<FileOwner['kind']>('project');
     const [selectedId, setSelectedId] = useState('');
     const [search, setSearch] = useState('');
+    const [fileStatus, setFileStatus] = useState<AtlasFile['status']>('active');
     const [entries, setEntries] = useState<AtlasFile[]>([]);
     const [busy, setBusy] = useState(false);
     const [mutating, setMutating] = useState(false);
@@ -61,13 +62,13 @@ export function Files() {
         let active = true;
         if (!owner) { setEntries([]); setBusy(false); return; }
         setBusy(true); setError(''); setMessage(''); setEntries([]);
-        void listFiles(owner).then(rows => {
+        void listFiles(owner, fileStatus).then(rows => {
             if (active) setEntries(rows);
         }).catch(reason => {
             if (active) setError(reason instanceof Error ? reason.message : 'Could not load files.');
         }).finally(() => { if (active) setBusy(false); });
         return () => { active = false; };
-    }, [owner?.kind, owner?.id, version]);
+    }, [owner?.kind, owner?.id, fileStatus, version]);
 
     const reload = () => {
         setVersion(current => current + 1);
@@ -81,7 +82,7 @@ export function Files() {
     const totalBytes = entries.reduce((sum, item) => sum + item.byteSize, 0);
 
     const onUpload = async (files: FileList | null) => {
-        if (!owner || !files?.length) return;
+        if (!owner || fileStatus !== 'active' || !files?.length) return;
         const chosen = Array.from(files);
         setError(''); setMessage(''); setMutating(true);
         let uploaded = 0;
@@ -94,7 +95,7 @@ export function Files() {
                 }
             }
             if (uploaded === chosen.length) setMessage(`${uploaded} ${uploaded === 1 ? 'file' : 'files'} uploaded privately.`);
-            const rows = await listFiles(owner);
+            const rows = await listFiles(owner, 'active');
             setEntries(rows);
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : 'Could not refresh files.');
@@ -105,7 +106,7 @@ export function Files() {
     };
 
     const onArchive = async (file: AtlasFile) => {
-        if (!owner || !window.confirm(`Archive "${file.fileName}"? It will disappear from Atlas Files, but the stored bytes are retained until a future cleanup policy is configured.`)) return;
+        if (!owner || !window.confirm(`Archive "${file.fileName}"? It will move to Archived files. The stored bytes are retained until a future cleanup policy is configured.`)) return;
         setError(''); setMessage(''); setMutating(true);
         try {
             await archiveFile(owner, file.id);
@@ -113,6 +114,18 @@ export function Files() {
             setMessage(`${file.fileName} archived.`);
         } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not archive file.'); }
         finally { setMutating(false); }
+    };
+
+    const onRestore = async (file: AtlasFile) => {
+        if (!owner || fileStatus !== 'archived') return;
+        setError(''); setMessage(''); setMutating(true);
+        try {
+            await restoreFile(owner, file.id);
+            setEntries(current => current.filter(item => item.id !== file.id));
+            setMessage(`${file.fileName} restored. You can now download it from Active files.`);
+        } catch (reason) {
+            setError(reason instanceof Error ? reason.message : 'Could not restore file.');
+        } finally { setMutating(false); }
     };
 
     const onDownload = async (file: AtlasFile) => {
@@ -127,7 +140,7 @@ export function Files() {
             <div><h1>Files</h1><p>Private storage for your projects, workspaces and applications.</p></div>
             <div className="files-actions">
                 <button type="button" className="ghost" disabled={busy || mutating || projects.isFetching || workspaces.isFetching || apps.isFetching} onClick={reload}>↻ Refresh</button>
-                <button type="button" disabled={!owner || mutating || busy} onClick={() => uploadInput.current?.click()}>{mutating ? 'Working…' : 'Upload files'}</button>
+                <button type="button" disabled={!owner || fileStatus !== 'active' || mutating || busy} onClick={() => uploadInput.current?.click()}>{mutating ? 'Working…' : 'Upload files'}</button>
                 <input ref={uploadInput} type="file" multiple className="files-hidden-input" aria-label="Choose files to upload" onChange={event => void onUpload(event.target.files)} />
             </div>
         </header>
@@ -149,22 +162,36 @@ export function Files() {
         {message ? <p className="notice" role="status">{message}</p> : null}
         <div className="files-collection-head">
             <div className="files-collection-info"><h2>Stored files</h2><span>{entries.length} files · {prettySize(totalBytes)}</span></div>
-            <input type="search" aria-label="Search stored files" placeholder="Search files…" value={search} onChange={event => setSearch(event.target.value)} />
+            <div className="files-collection-controls">
+                <label className="files-status-control">Status
+                    <select aria-label="File status" value={fileStatus} disabled={mutating}
+                        onChange={event => setFileStatus(event.target.value as AtlasFile['status'])}>
+                        <option value="active">Active</option><option value="archived">Archived</option>
+                    </select>
+                </label>
+                <input type="search" aria-label="Search stored files" placeholder="Search files…" value={search} onChange={event => setSearch(event.target.value)} />
+            </div>
         </div>
         {busy && <div className="files-skeleton-list" role="status" aria-label="Loading files">{[1, 2, 3].map(value => <div className="files-skeleton-row" key={value}><span /><div><i /><i /></div></div>)}</div>}
         {!busy && owner && visible.length > 0 && <div className="files-list" aria-label="Stored files">
             {visible.map(file => <div className="files-list-row" key={file.id}>
                 <FileGlyph mimeType={file.mimeType} />
                 <div className="files-item-details"><strong title={file.fileName}>{file.fileName}</strong><span>{prettySize(file.byteSize)} · {file.mimeType} · {prettyDate(file.createdAt)}</span></div>
-                <span className="files-privacy">Private</span>
+                <span className="files-privacy">{fileStatus === 'archived' ? 'Archived' : 'Private'}</span>
                 <div className="files-item-actions">
-                    <button type="button" className="ghost" disabled={mutating} onClick={() => void onDownload(file)} aria-label={`Download ${file.fileName}`}>Download</button>
-                    <button type="button" className="ghost danger" disabled={mutating} onClick={() => void onArchive(file)} aria-label={`Archive ${file.fileName}`}>Archive</button>
+                    {fileStatus === 'archived'
+                        ? <button type="button" className="ghost" disabled={mutating} onClick={() => void onRestore(file)} aria-label={`Restore ${file.fileName}`}>Restore</button>
+                        : <>
+                            <button type="button" className="ghost" disabled={mutating} onClick={() => void onDownload(file)} aria-label={`Download ${file.fileName}`}>Download</button>
+                            <button type="button" className="ghost danger" disabled={mutating} onClick={() => void onArchive(file)} aria-label={`Archive ${file.fileName}`}>Archive</button>
+                        </>}
                 </div>
             </div>)}
         </div>}
         {!busy && !error && !owner && <div className="files-empty">Select a storage owner to explore their files.</div>}
-        {!busy && !error && owner && !entries.length && <div className="files-empty"><h3>No files yet</h3><p>Upload a file to store it privately with this {kind}. It will not appear in the public Portfolio media library.</p></div>}
+        {!busy && !error && owner && !entries.length && <div className="files-empty">{fileStatus === 'archived'
+            ? <><h3>No archived files</h3><p>Files you archive from this {kind} will appear here and can be restored while the original bytes are retained.</p></>
+            : <><h3>No files yet</h3><p>Upload a file to store it privately with this {kind}. It will not appear in the public Portfolio media library.</p></>}</div>}
         {!busy && !error && owner && entries.length > 0 && visible.length === 0 && <div className="files-empty">No files match your search.</div>}
     </section>;
 }

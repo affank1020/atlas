@@ -25,9 +25,9 @@ async function postFiles<T>(action: string, data: object): Promise<T> {
     return response.json() as Promise<T>;
 }
 
-export async function listFiles(owner: FileOwner): Promise<AtlasFile[]> {
-    if (IS_MOCK_MODE) return (demoFiles.get(key(owner)) ?? []).map(item => item.file);
-    return postFiles<AtlasFile[]>('list', { owner });
+export async function listFiles(owner: FileOwner, status: AtlasFile['status'] = 'active'): Promise<AtlasFile[]> {
+    if (IS_MOCK_MODE) return (demoFiles.get(key(owner)) ?? []).filter(item => item.file.status === status).map(item => item.file);
+    return postFiles<AtlasFile[]>('list', { owner, status });
 }
 
 export async function uploadFile(owner: FileOwner, file: File): Promise<AtlasFile> {
@@ -65,7 +65,7 @@ export async function downloadFile(owner: FileOwner, file: AtlasFile): Promise<v
     let blob: Blob;
     if (IS_MOCK_MODE) {
         const item = (demoFiles.get(key(owner)) ?? []).find(entry => entry.file.id === file.id);
-        if (!item) throw new Error('File not found.');
+        if (!item || item.file.status !== 'active') throw new Error('File not found.');
         blob = item.bytes;
     } else {
         const response = await fetch(`${API_BASE}/api/files/download`, {
@@ -92,8 +92,20 @@ export async function downloadFile(owner: FileOwner, file: AtlasFile): Promise<v
 
 export async function archiveFile(owner: FileOwner, fileId: string): Promise<void> {
     if (IS_MOCK_MODE) {
-        demoFiles.set(key(owner), (demoFiles.get(key(owner)) ?? []).filter(item => item.file.id !== fileId));
+        const item = (demoFiles.get(key(owner)) ?? []).find(item => item.file.id === fileId && item.file.status === 'active');
+        if (!item) throw new Error('File not found.');
+        item.file = { ...item.file, status: 'archived', updatedAt: new Date().toISOString() };
         return;
     }
     await postFiles('archive', { owner, fileId });
+}
+
+export async function restoreFile(owner: FileOwner, fileId: string): Promise<AtlasFile> {
+    if (IS_MOCK_MODE) {
+        const item = (demoFiles.get(key(owner)) ?? []).find(item => item.file.id === fileId && item.file.status === 'archived');
+        if (!item) throw new Error('Archived file not found.');
+        item.file = { ...item.file, status: 'active', updatedAt: new Date().toISOString() };
+        return item.file;
+    }
+    return postFiles<AtlasFile>('restore', { owner, fileId });
 }
