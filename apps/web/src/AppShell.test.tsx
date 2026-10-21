@@ -26,6 +26,7 @@ test('shell exposes focused navigation and keeps experimental tools out of the h
     expect(within(sidebar).getByRole('link', { name: 'Nodes' })).toHaveAttribute('href', '#/nodes');
     expect(within(sidebar).getByRole('link', { name: 'Monitoring' })).toHaveAttribute('href', '#/monitoring');
     expect(within(sidebar).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '#/projects');
+    expect(within(sidebar).getByRole('link', { name: 'Applications' })).toHaveAttribute('href', '#/applications');
     expect(within(sidebar).queryByText('Workspace')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Sessions/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Portfolio' })).not.toBeInTheDocument();
@@ -43,6 +44,20 @@ test('shell exposes focused navigation and keeps experimental tools out of the h
     expect(screen.queryByRole('dialog', { name: 'Search Atlas' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
     expect(screen.getByRole('button', { name: 'Close menu' })).toHaveAttribute('aria-expanded', 'true');
+});
+test('only the content pane scrolls and route navigation resets its scroll position', () => {
+    vi.mocked(callTool).mockResolvedValue([]);
+    const { container } = render(<Provider store={store}><AppShell page="projects" contentClass=""><h1>Projects</h1></AppShell></Provider>);
+    const frame = container.querySelector<HTMLDivElement>('.content-frame');
+    expect(frame).not.toBeNull();
+    expect(frame).toContainElement(screen.getByRole('main'));
+    expect(container.querySelector('.topbar')).not.toBeNull();
+    expect(container.querySelector('.sidebar')).not.toBeNull();
+
+    if (!frame) return;
+    frame.scrollTop = 350;
+    fireEvent(window, new Event('hashchange'));
+    expect(frame.scrollTop).toBe(0);
 });
 test('project sections retain an overview deep link and indicate the selected section', () => {
     render(<ProjectNav projectId="p" section="views" />);

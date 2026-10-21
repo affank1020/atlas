@@ -34,7 +34,7 @@ const getEntryMedia=(entry:Entry,assets:Media[])=>{
 export function Portfolio(){
  const schemaQuery=useApplicationRead<Schema[]>('get_portfolio_schemas'),entryQuery=useApplicationRead<Entry[]>('list_portfolio_entries'),dashboardQuery=useApplicationRead<Dashboard>('get_portfolio_dashboard'),mediaQuery=useApplicationRead<Media[]>('list_portfolio_media');
  const schemas=schemaQuery.data??EMPTY,entries=entryQuery.data??EMPTY,dashboard=dashboardQuery.data,media=mediaQuery.data??EMPTY;
- const [type,setType]=useState<ContentType>("projects"),[selectedId,setSelectedId]=useState<string>(),[draft,setDraft]=useState<Record<string,unknown>>({}),[view,setView]=useState<"content"|"media">("content");
+ const [type,setType]=useState<ContentType>("projects"),[selectedId,setSelectedId]=useState<string>(),[draft,setDraft]=useState<Record<string,unknown>>({}),[view,setView]=useState<"content"|"media">(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("tab") === "media" ? "media" : "content");
  const [busy,setBusy]=useState(""),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [creating,setCreating]=useState(false),[search,setSearch]=useState("");
  const dirty=JSON.stringify(draft)!==JSON.stringify(selectedId?entries.find(entry=>entry.id===selectedId)?.data??{}:{});

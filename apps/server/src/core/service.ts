@@ -1,6 +1,6 @@
 import { AuditService, appendAudit } from "./audit.js";
 import { randomUUID } from "node:crypto";
-import type { AtlasRepository, CatalogueRead } from "./repository.js";
+import type { AtlasRepository, CatalogueRead, ProjectResourceCounts } from "./repository.js";
 import type { AtlasData, AtlasRecord, AuditEvent, AuditOperation, FieldDefinition, Page, Project, RecordData, RecordFilter, SortSpec, Store } from "../types.js";
 
 import { AtlasError } from "../shared/errors.js";
@@ -15,6 +15,17 @@ export class CoreService {
     catalogue(input: CatalogueRead) { return this.store.readCatalogue ? this.store.readCatalogue(input) : this.store.snapshot(); }
     async status() { const data = this.store.countCatalogue ? undefined : await this.store.snapshot(); const counts=(items:{archivedAt?:string}[])=>({active:active(items).length,archived:items.filter((item)=>!!item.archivedAt).length,total:items.length}); const {projects,stores,records,views}=this.store.countCatalogue ? await this.store.countCatalogue() : {projects:counts(data!.projects),stores:counts(data!.stores),records:counts(data!.records),views:counts(data!.views)}; return { product: "Atlas", version: "2.0.0", storage: "postgresql", schemaVersion: data?.schemaVersion ?? 1, projects:projects.active, stores:stores.active, records:records.active, views:views.active, counts:{projects,stores,records,views}, subsystems:{views:{status:"available",stage:3},fabric:{status:"active",visibility:"public"}} }; }
     async listProjects(includeArchived = false) { return active((await this.catalogue({ includeArchived })).projects, includeArchived); }
+    /** Return lightweight per-project counts without fetching record payloads on PostgreSQL. */
+    async countProjectResources(includeArchived = false): Promise<Record<string, ProjectResourceCounts>> {
+        if (this.store.countProjectResources) return this.store.countProjectResources(includeArchived);
+        const data = await this.store.snapshot();
+        const counts: Record<string, ProjectResourceCounts> = {};
+        for (const project of active(data.projects, includeArchived)) counts[project.id] = { stores: 0, records: 0, views: 0 };
+        for (const store of active(data.stores, includeArchived)) { const entry = counts[store.projectId]; if (entry) entry.stores++; }
+        for (const record of active(data.records, includeArchived)) { const entry = counts[record.projectId]; if (entry) entry.records++; }
+        for (const view of active(data.views, includeArchived)) { const entry = counts[view.projectId]; if (entry) entry.views++; }
+        return counts;
+    }
     async getProject(id: string, includeArchived = false) { return this.requireProject(await this.catalogue({ projectId: id, includeArchived }), id, includeArchived); }
     async createProject(input: { name: string; description?: string } & Client) {
         return this.store.transaction((data) => { const name = cleanText(input.name, "Project name"); this.unique(data.projects, name, "project"); const stamp = now(); const project: Project = { id: randomUUID(), name, ...(input.description !== undefined && { description: input.description }), createdAt: stamp, updatedAt: stamp }; data.projects.push(project); this.audit(data, "project.created", input.client, project.id, undefined, undefined, undefined, project); return project; });

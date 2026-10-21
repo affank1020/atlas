@@ -14,9 +14,8 @@ const labels: Record<SearchKind, string> = {
 };
 const shortcuts: Result[] = [
     { id: 'shortcut-projects', kind: 'project', title: 'Browse projects', description: 'All Atlas projects', context: 'Navigate', href: '#/projects', score: 0, source: 'shortcut' },
-    { id: 'shortcut-apps', kind: 'application', title: 'Find an application', description: 'Search launchable Atlas applications', context: 'Search', href: '#/projects', score: 0, source: 'shortcut' },
-    { id: 'shortcut-data', kind: 'store', title: 'Explore data', description: 'Stores and records across projects', context: 'Navigate', href: '#/data', score: 0, source: 'shortcut' },
-    { id: 'shortcut-views', kind: 'view', title: 'Browse views', description: 'Open Atlas interfaces', context: 'Navigate', href: '#/views', score: 0, source: 'shortcut' },
+    { id: 'shortcut-apps', kind: 'application', title: 'Find an application', description: 'Search launchable Atlas applications', context: 'Search', href: '#/applications', score: 0, source: 'shortcut' },
+    { id: 'shortcut-data', kind: 'store', title: 'Explore data', description: 'PostgreSQL and object storage overview', context: 'Navigate', href: '#/data', score: 0, source: 'shortcut' },
     { id: 'shortcut-nodes', kind: 'node', title: 'Inspect node activity', description: 'Nodes, hosted workspaces and recent operations', context: 'Navigate', href: '#/nodes', score: 0, source: 'shortcut' },
     { id: 'shortcut-status', kind: 'node', title: 'Open monitoring', description: 'Server status and node connectivity', context: 'Navigate', href: '#/monitoring', score: 0, source: 'shortcut' },
     { id: 'shortcut-activity', kind: 'node', title: 'Review Atlas activity', description: 'Recent changes and operations', context: 'Navigate', href: '#/activity', score: 0, source: 'shortcut' },

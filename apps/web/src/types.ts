@@ -1,6 +1,6 @@
 export type FieldType = "string" | "number" | "boolean" | "date" | "datetime" | "enum" | "array" | "object";
 export type FieldDefinition = { name: string; type: FieldType; required?: boolean; enumValues?: string[]; default?: unknown; description?: string };
-export type Project = { id: string; name: string; description?: string; createdAt: string; updatedAt: string; archivedAt?: string };
+export type Project = { id: string; name: string; description?: string; createdAt: string; updatedAt: string; archivedAt?: string; metrics?: { stores: number; records: number; views: number; applications: number } };
 export type Store = { id: string; projectId: string; name: string; description?: string; schema: { version: number; fields: FieldDefinition[] }; createdAt: string; updatedAt: string; archivedAt?: string };
 export type AtlasRecord = { id: string; projectId: string; storeId: string; data: Record<string, unknown>; createdAt: string; updatedAt: string; archivedAt?: string };
 // Keep unknown/future adapter operations readable without a frontend schema release.

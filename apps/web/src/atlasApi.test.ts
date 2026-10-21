@@ -70,7 +70,7 @@ test('manual refresh and failed background revalidation keep the last usable pro
     mounted.unsubscribe(); refreshed.unsubscribe(); failed.unsubscribe(); unsubscribeMutations();
 });
 
-test('a record write invalidates its store and project View previews only', async () => {
+test('a record write invalidates its records, previews and project resource counts', async () => {
     const counts = new Map<string, number>();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
         const name = url.split('/').pop()!;
@@ -84,10 +84,10 @@ test('a record write invalidates its store and project View previews only', asyn
     const preview = store.dispatch(atlasApi.endpoints.renderView.initiate({ projectId: 'p', viewId: 'v', params: {} }));
     await Promise.all([projects, records, otherRecords, preview]);
     await callTool('create_record', { projectId: 'p', storeId: 's', data: {} });
-    await Promise.all([store.dispatch(atlasApi.endpoints.listRecords.initiate({ projectId: 'p', storeId: 's', limit: 25, offset: 0 })), store.dispatch(atlasApi.endpoints.renderView.initiate({ projectId: 'p', viewId: 'v', params: {} }))]);
+    await Promise.all([store.dispatch(atlasApi.endpoints.listProjects.initiate({ includeArchived: false })), store.dispatch(atlasApi.endpoints.listRecords.initiate({ projectId: 'p', storeId: 's', limit: 25, offset: 0 })), store.dispatch(atlasApi.endpoints.renderView.initiate({ projectId: 'p', viewId: 'v', params: {} }))]);
     expect(counts.get('list_records')).toBe(3); // p twice, q once
     expect(counts.get('render_view')).toBe(2);
-    expect(counts.get('list_projects')).toBe(1);
+    expect(counts.get('list_projects')).toBe(2); // refreshed per-project record totals
     projects.unsubscribe(); records.unsubscribe(); otherRecords.unsubscribe(); preview.unsubscribe(); unsubscribeMutations();
 });
 

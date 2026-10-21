@@ -12,7 +12,7 @@ export type ApplicationManifest = {
     slug: string;
     name: string;
     description: string;
-    projectId: string;
+    projectId: string | null;
 };
 
 // First-party UI components ship with Atlas Web; the Server registry controls
@@ -43,9 +43,9 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
     </section>;
 }
 
-export function ApplicationWindow({ projectId, slug }: { projectId: string; slug: string }) {
+export function ApplicationWindow({ projectId, slug }: { projectId?: string; slug: string }) {
     useListProjectsQuery({ includeArchived: false });
-    const { data: application, error: queryError, isLoading: busy, refetch } = useApplicationRead<ApplicationManifest>('get_application', { projectId, slug });
+    const { data: application, error: queryError, isLoading: busy, refetch } = useApplicationRead<ApplicationManifest>('get_application', projectId ? { projectId, slug } : { slug });
     const error = queryError?.message ?? '';
     useEffect(() => {
         if (!application) return;
@@ -54,14 +54,14 @@ export function ApplicationWindow({ projectId, slug }: { projectId: string; slug
         return () => { document.title = previous; };
     }, [application]);
     useRouteTiming("application-manifest", `${projectId}/${slug}`, !!application);
-    const currentApplication = application?.projectId === projectId && application.slug === slug ? application : undefined;
+    const currentApplication = (application?.projectId ?? null) === (projectId ?? null) && application?.slug === slug ? application : undefined;
     useEffect(() => {
-        if (currentApplication) rememberWork({ href: `#/projects/${projectId}/applications/${slug}`, name: currentApplication.name, projectId, kind: 'Application' });
+        if (currentApplication) rememberWork({ href: projectId ? `#/projects/${projectId}/applications/${slug}` : `#/applications/${slug}`, name: currentApplication.name, projectId: projectId ?? null, kind: 'Application' });
     }, [projectId, slug, currentApplication?.name]);
     const Component = currentApplication ? applicationComponents[currentApplication.type] : undefined;
     return <div className="application-window">
         <header className="application-window-bar">
-            <a href={`#/projects/${projectId}/applications`} className="application-back">← Project Applications</a>
+            <a href={projectId ? `#/projects/${projectId}/applications` : '#/applications'} className="application-back">← {projectId ? 'Project Applications' : 'All Applications'}</a>
             {slug !== 'portfolio' && <button onClick={() => void refetch()}>Refresh application</button>}<span className="application-window-brand">Atlas{IS_MOCK_MODE ? " · Mock data" : ""} / {application?.name ?? 'Application'}</span>
         </header>
         <main className="application-window-main">

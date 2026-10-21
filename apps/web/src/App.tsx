@@ -1,10 +1,12 @@
-import { WorkspaceHome, WorkspaceLibrary, WorkspaceSettings, MonitoringOverview, DeveloperHub } from './Workspace';
+import { WorkspaceHome, WorkspaceSettings, MonitoringOverview, DeveloperHub } from './Workspace';
+import { DataOverview } from './DataOverview';
 import { rememberWork } from './recentWork';
 import { beginRoute, useRouteTiming } from './performance';
 import { Nodes } from './Nodes';
 import { Modal } from "./Dialog";
 import { AppShell, ProjectNav, type ProjectSection } from "./AppShell";
 import { ProjectOverview, ViewContainer } from "./ProjectOverview";
+import "./projects.css";
 import { ActivityFeed, ActivityRows } from "./ActivityFeed";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { ViewPage } from "./ViewPage";
@@ -18,9 +20,11 @@ import { AskAtlas } from "./AskAtlas";
 import { AskPortfolio } from "./AskPortfolio";
 const Portfolio = lazy(() => import("./Portfolio").then(module => ({ default: module.Portfolio })));
 import { ProjectApplications, ApplicationWindow } from "./Applications";
+import { ApplicationsDirectory } from "./ApplicationsDirectory";
+import { CatalogueHeading, CatalogueToolbar, filterCatalogue } from './CatalogueBrowse';
 import type { AtlasRecord, AuditEvent, FieldDefinition, FilterOperator, Page, Project, RecordFilter, SortSpec, Store, View } from "./types";
 
-type Route = { page: "views" | "data" | "settings" | "monitoring" | "developer" | "nodes" | "overview" | "projects" | "activity" | "ask-atlas" | "ask-portfolio" | "portfolio" | "fabric" } | { page: "project"; projectId: string; section: ProjectSection } | { page: "store"; projectId: string; storeId: string; tab: "records" | "schema" | "audit" | "query" | "bulk" } | { page: "view"; projectId: string; viewId: string } | { page: "application"; projectId: string; slug: string };
+type Route = { page: "applications" | "data" | "settings" | "monitoring" | "developer" | "nodes" | "overview" | "projects" | "activity" | "ask-atlas" | "ask-portfolio" | "portfolio" | "fabric" } | { page: "project"; projectId: string; section: ProjectSection } | { page: "store"; projectId: string; storeId: string; tab: "records" | "schema" | "audit" | "query" | "bulk" } | { page: "view"; projectId: string; viewId: string } | { page: "application"; projectId?: string; slug: string };
 const EMPTY_PAGE: Page<AtlasRecord> = { items: [], total: 0, limit: 25, offset: 0 };
 const TYPES = ["string", "number", "boolean", "date", "datetime", "enum", "array", "object"] as const;
 const OPS: FilterOperator[] = ["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"];
@@ -32,7 +36,11 @@ function parseRoute(): Route {
     if (parts[0] === "projects" && parts[1] && parts[2] === "applications" && parts[3]) return { page: "application", projectId: parts[1], slug: parts[3] };
     if (parts[0] === "projects" && parts[1]) return { page: "project", projectId: parts[1], section: (["data", "views", "applications", "workspaces", "activity", "settings"].includes(parts[2]) ? parts[2] : "overview") as ProjectSection };
     if (parts[0] === "projects") return { page: "projects" };
-    if (["views", "data", "settings", "monitoring", "developer"].includes(parts[0])) return { page: parts[0] } as Route;
+    if (parts[0] === "applications" && parts[1]) return { page: "application", slug: parts[1] };
+    if (parts[0] === "applications") return { page: "applications" };
+    // Old global Views bookmarks now open Projects; Views remain inside each project.
+    if (parts[0] === 'views') return { page: 'projects' };
+    if (["data", "settings", "monitoring", "developer"].includes(parts[0])) return { page: parts[0] } as Route;
     // Preserve existing shared Infrastructure links while moving its content to Monitoring.
     if (parts[0] === "infrastructure") return { page: "monitoring" };
     if (parts[0] === "nodes") return { page: "nodes" };
@@ -71,15 +79,60 @@ function App() {
     beginRoute(JSON.stringify(route));
     const askPage = route.page === "ask-atlas" || route.page === "ask-portfolio";
     if (route.page === "application") return <ApplicationWindow projectId={route.projectId} slug={route.slug} />;
-    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === 'monitoring' && <MonitoringOverview />}{route.page === 'developer' && <DeveloperHub />}{route.page === 'settings' && <WorkspaceSettings />}{(route.page === 'views' || route.page === 'data') && <WorkspaceLibrary key={route.page} kind={route.page} />}{route.page === "overview" && <WorkspaceHome />}{route.page === "projects" && <Projects />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "activity" && <Activity />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Suspense fallback={<p role="status">Loading portfolio interface…</p>}><Portfolio /></Suspense>}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
+    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === 'monitoring' && <MonitoringOverview />}{route.page === 'developer' && <DeveloperHub />}{route.page === 'settings' && <WorkspaceSettings />}{route.page === 'data' && <DataOverview />}{route.page === "overview" && <WorkspaceHome />}{route.page === "projects" && <Projects />}{route.page === "applications" && <ApplicationsDirectory />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "activity" && <Activity />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Suspense fallback={<p role="status">Loading portfolio interface…</p>}><Portfolio /></Suspense>}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
 }
 
 function Projects() {
     const mutate = useAtlasMutation();
     const [search, setSearch] = useState("");
-    const archived = useAppSelector(state => state.preferences.includeArchivedProjects); const dispatch = useAppDispatch(); const setArchived = (value: boolean) => dispatch(setIncludeArchivedProjects(value)); const [create, setCreate] = useState(false); const [error, setError] = useState(""); const list = queryResult<Project[]>(useListProjectsQuery({ includeArchived: archived }));
-    const submit = async (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); const f = new FormData(e.currentTarget); try { await mutate("create_project", { name: f.get("name"), description: f.get("description") }); setCreate(false); list.refresh(); } catch (x) { setError((x as Error).message); } };
-    return <><PageHead eyebrow="Your Atlas" title="Projects" copy="Spaces for your work, ideas, and everyday life." actions={<><label className="toggle"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Include archived</label><button className="ghost" disabled={list.isFetching} onClick={list.refresh}>↻ Refresh</button><button onClick={() => setCreate(true)}>New project</button></>} /><ErrorBox message={error || list.error} /><Loading show={list.busy} />{list.isFetching && list.data && <small role="status">Refreshing…</small>}<div className="browse-toolbar"><label>Search projects<input type="search" placeholder="Find a project…" value={search} onChange={event => setSearch(event.target.value)} /></label><span>{list.data?.length ?? 0} projects</span></div><div className="project-browser">{list.data?.filter(p => `${p.name} ${p.description ?? ""}`.toLowerCase().includes(search.toLowerCase())).map(p => <button className="project-card" key={p.id} onClick={() => go(`/projects/${p.id}`)}><div className="project-monogram" aria-hidden="true">{p.name.slice(0, 1).toUpperCase()}</div><h2>{p.name}</h2><p>{p.description || "No description provided."}</p><small>{p.archivedAt ? "Archived · " : ""}Updated {fmt(p.updatedAt)}</small><span className="row-arrow" aria-hidden="true">↗</span></button>)}</div>{list.data && !list.data.some(p => `${p.name} ${p.description ?? ""}`.toLowerCase().includes(search.toLowerCase())) && <Empty>No projects match this view.</Empty>}{create && <Modal title="Create project" onClose={() => setCreate(false)}><form onSubmit={submit} className="form"><label>Name<input name="name" required autoFocus /></label><label>Description<textarea name="description" /></label><div className="form-actions"><button type="button" className="ghost" onClick={() => setCreate(false)}>Cancel</button><button>Create project</button></div></form></Modal>}</>;
+    const archived = useAppSelector(state => state.preferences.includeArchivedProjects);
+    const dispatch = useAppDispatch();
+    const setArchived = (value: boolean) => dispatch(setIncludeArchivedProjects(value));
+    const [create, setCreate] = useState(false);
+    const [error, setError] = useState("");
+    const list = queryResult<Project[]>(useListProjectsQuery({ includeArchived: archived, withMetrics: true }));
+    const filtered = filterCatalogue(list.data ?? [], search, p => `${p.name} ${p.description ?? ''}`);
+    const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const f = new FormData(e.currentTarget);
+        try {
+            await mutate("create_project", { name: f.get("name"), description: f.get("description") });
+            setCreate(false);
+            list.refresh();
+        } catch (x) {
+            setError((x as Error).message);
+        }
+    };
+    return <div className="projects-page catalogue-page">
+        <CatalogueHeading title="Projects" actions={<>
+            <label className="toggle"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Include archived</label>
+            <button className="ghost" disabled={list.isFetching} onClick={list.refresh}>↻ Refresh</button>
+            <button onClick={() => setCreate(true)}>New project</button>
+        </>} />
+        <ErrorBox message={error || list.error} />
+        <Loading show={list.busy} />
+        {list.isFetching && list.data && <small role="status">Refreshing…</small>}
+        <CatalogueToolbar label="Search projects" placeholder="Find a project…" query={search}
+            onQueryChange={setSearch} count={filtered?.length ?? 0} itemName="project" />
+        <div className="project-browser">
+            {filtered?.map(p => <button className="project-card" key={p.id} onClick={() => go(`/projects/${p.id}`)}>
+                <h2>{p.name}</h2>
+                <p>{p.description || "No description provided."}</p>
+                {(p.metrics || p.archivedAt) && <span className="project-metrics">
+                    {p.archivedAt && <span>Archived</span>}
+                    {p.metrics && <>
+                        <span>{p.metrics.stores} stores</span>
+                        <span>{p.metrics.records.toLocaleString()} records</span>
+                        <span>{p.metrics.views} views</span>
+                        <span>{p.metrics.applications} apps</span>
+                    </>}
+                </span>}
+                <span className="row-arrow" aria-hidden="true">↗</span>
+            </button>)}
+        </div>
+        {list.data && filtered?.length === 0 && <Empty>No projects match this view.</Empty>}
+        {create && <Modal title="Create project" onClose={() => setCreate(false)}><form onSubmit={submit} className="form"><label>Name<input name="name" required autoFocus /></label><label>Description<textarea name="description" /></label><div className="form-actions"><button type="button" className="ghost" onClick={() => setCreate(false)}>Cancel</button><button>Create project</button></div></form></Modal>}
+    </div>;
 }
 
 function ProjectDetail({ id, section }: { id: string; section: ProjectSection }) {

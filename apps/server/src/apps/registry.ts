@@ -1,9 +1,8 @@
 import { z } from 'zod';
 import { AtlasError } from '../shared/errors.js';
 
-/**
- * Code-defined first-party Applications. An Application belongs to an existing
- * Project; it is not a View, an independent server or an executable upload.
+/** Code-defined first-party Applications, optionally associated with a Project.
+ * These are not Views, independent servers or executable uploads.
  */
 export type ApplicationTool = {
     name: string;
@@ -17,11 +16,11 @@ export type ApplicationDefinition = {
     slug: string;
     name: string;
     description: string;
-    projectId: string;
+    projectId?: string | null;
     tools: ApplicationTool[];
 };
 
-export type ApplicationSummary = Pick<ApplicationDefinition, 'type' | 'slug' | 'name' | 'description' | 'projectId'>;
+export type ApplicationSummary = Pick<ApplicationDefinition, 'type' | 'slug' | 'name' | 'description'> & { projectId: string | null };
 
 export class ApplicationRegistry {
     private readonly applications = new Map<string, ApplicationDefinition>();
@@ -29,29 +28,35 @@ export class ApplicationRegistry {
 
     constructor(definitions: ApplicationDefinition[]) {
         for (const application of definitions) {
-            const key = `${application.projectId}/${application.slug}`;
+            const key = `${application.projectId ?? '@standalone'}/${application.slug}`;
             if (this.applications.has(key)) throw new Error(`Duplicate Atlas Application: ${key}`);
             if (!/^[a-z][a-z0-9-]*$/.test(application.slug)) throw new Error(`Invalid Application slug: ${application.slug}`);
             this.applications.set(key, application);
             for (const operation of application.tools) {
-                if (this.operations.has(operation.name) || operation.name === 'list_applications' || operation.name === 'get_application')
+                if (this.operations.has(operation.name) || ['list_applications', 'list_all_applications', 'get_application'].includes(operation.name))
                     throw new Error(`Duplicate Atlas Application operation: ${operation.name}`);
                 this.operations.set(operation.name, operation);
             }
         }
     }
 
-    list(projectId: string): ApplicationSummary[] {
-        return [...this.applications.values()]
-            .filter(app => app.projectId === projectId)
-            .map(({ type, slug, name, description, projectId }) => ({ type, slug, name, description, projectId }));
+    private summary(app: ApplicationDefinition): ApplicationSummary {
+        const { type, slug, name, description } = app;
+        return { type, slug, name, description, projectId: app.projectId ?? null };
     }
 
-    get(projectId: string, slug: string): ApplicationSummary {
-        const app = this.applications.get(`${projectId}/${slug}`);
-        if (!app) throw new AtlasError('Application not found in this project.', 'NOT_FOUND');
-        const { type, name, description } = app;
-        return { type, slug, name, description, projectId };
+    list(projectId: string): ApplicationSummary[] {
+        return this.listAll().filter(app => app.projectId === projectId);
+    }
+
+    listAll(): ApplicationSummary[] {
+        return [...this.applications.values()].map(app => this.summary(app));
+    }
+
+    get(projectId: string | null, slug: string): ApplicationSummary {
+        const app = this.applications.get(`${projectId ?? '@standalone'}/${slug}`);
+        if (!app) throw new AtlasError('Application not found.', 'NOT_FOUND');
+        return this.summary(app);
     }
 
     tools(): Pick<ApplicationTool, 'name' | 'description' | 'inputSchema'>[] {

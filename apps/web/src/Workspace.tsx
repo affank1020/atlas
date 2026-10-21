@@ -14,24 +14,9 @@ export function WorkspaceHeading({ title, copy, children }: { title: string; cop
 export function QueryNotice({ loading, error, retry }: { loading: boolean; error: unknown; retry: () => unknown }) {
     return <>{loading && <p className="workspace-loading" role="status">Loading…</p>}{!!error && <div className="notice error" role="alert">Unable to load this section. <button className="ghost" onClick={() => retry()}>Try again</button></div>}</>;
 }
-function ProjectSymbol({ name }: { name: string }) {
-    const category = name.toLowerCase();
-    const isUniversity = /university|learning|study/.test(category);
-    const isResearch = /research|final year|fyp/.test(category);
-    const isCareer = /career|job/.test(category);
-    const isPortfolio = /portfolio/.test(category);
-    return <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        {isUniversity ? <><path d="m2 9 10-5 10 5-10 5zM6 11v6c3.5 3 8.5 3 12 0v-6M22 9v7" /></>
-            : isResearch ? <><path d="M9 3h6M10 3v7L4 20h16l-6-10V3M7 16h10" /></>
-            : isCareer ? <><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13c5 3 13 3 18 0M10 14h4" /></>
-            : isPortfolio ? <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M10 10v10" /></>
-            : <><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></>}
-    </svg>;
-}
 export function ProjectRows({ projects }: { projects: Project[] }) {
     return <div className="home-project-grid">{projects.map(project =>
         <a className="home-project-card" key={project.id} href={`#/projects/${project.id}`}>
-            <span className="home-project-symbol"><ProjectSymbol name={project.name} /></span>
             <strong>{project.name}</strong>
             <small>{project.description || 'Open project workspace'}</small>
             {project.archivedAt && <span className="badge muted">Archived</span>}
@@ -42,15 +27,24 @@ export function ProjectRows({ projects }: { projects: Project[] }) {
 type HostedWorkspace = { id: string; projectId: string; name: string; nodeId: string; nodeName: string };
 const workspaceDetailsCache = new Map<string, AtlasNode>();
 
-function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects }: { nodes: AtlasNode[] | undefined; nodesUnavailable: boolean; refreshKey: number; projects: Project[] }) {
+function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects, onDetailsUnavailable }: { nodes: AtlasNode[] | undefined; nodesUnavailable: boolean; refreshKey: number; projects: Project[]; onDetailsUnavailable: (value: boolean) => void }) {
     const [items, setItems] = useState<HostedWorkspace[]>([]);
     const [loading, setLoading] = useState(true);
     const [failed, setFailed] = useState(false);
     useEffect(() => {
-        if (!nodes) { setLoading(!nodesUnavailable); setFailed(nodesUnavailable); setItems([]); return; }
-        if (!nodes.length) { setItems([]); setLoading(false); setFailed(false); return; }
+        if (!nodes) {
+            setLoading(!nodesUnavailable); setFailed(nodesUnavailable); setItems([]);
+            onDetailsUnavailable(false);
+            return;
+        }
+        if (!nodes.length) {
+            setItems([]); setLoading(false); setFailed(false);
+            onDetailsUnavailable(false);
+            return;
+        }
         const controller = new AbortController();
         setLoading(true); setFailed(false);
+        onDetailsUnavailable(false);
         const readNode = (node: AtlasNode) => {
             const cached = refreshKey === 0 ? workspaceDetailsCache.get(node.id) : undefined;
             if (cached) return Promise.resolve(cached);
@@ -59,7 +53,9 @@ function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects }: { nod
         };
         void Promise.allSettled(nodes.map(readNode)).then(results => {
             if (controller.signal.aborted) return;
-            setFailed(results.some(item => item.status === 'rejected'));
+            const unavailable = results.some(item => item.status === 'rejected');
+            setFailed(unavailable);
+            onDetailsUnavailable(unavailable);
             setItems(results.flatMap((result, index) => result.status === 'fulfilled'
                 ? (result.value.workspaces ?? []).map(workspace => ({
                     id: workspace.id, projectId: workspace.projectId, name: workspace.name,
@@ -68,14 +64,13 @@ function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects }: { nod
             setLoading(false);
         });
         return () => controller.abort();
-    }, [nodes, nodesUnavailable, refreshKey]);
+    }, [nodes, nodesUnavailable, refreshKey, onDetailsUnavailable]);
     const projectNames = useMemo(() => new Map(projects.map(p => [p.id, p.name])), [projects]);
     const total = nodes?.reduce((sum, node) => sum + node.hostedWorkspaceCount, 0);
     return <section className="overview-card" aria-label="Hosted workspaces">
         <div className="overview-card-head"><h2>Workspaces</h2><a href="#/projects">Projects <span aria-hidden="true">↗</span></a></div>
         <div className="overview-card-feature"><strong>{total ?? '—'}</strong><span>Hosted across {nodes?.length ?? '—'} nodes</span></div>
         {loading && <p className="overview-muted" role="status">Loading workspace details…</p>}
-        {!loading && failed && <p className="overview-muted" role="status">Some workspace details are unavailable.</p>}
         {!loading && items.length === 0 && <p className="overview-muted">{failed ? 'Open the Nodes view to inspect assignments.' : 'No workspaces currently assigned.'}</p>}
         <div className="overview-compact-list">{!loading && items.slice(0, 5).map(workspace =>
             <a key={workspace.id} href={`#/projects/${workspace.projectId}/workspaces`} className="overview-compact-row">
@@ -86,22 +81,23 @@ function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects }: { nod
     </section>;
 }
 
-function HomeRecent({ items, kind, projectIds }: {
+function HomeRecent({ items, projects }: {
     items: ReturnType<typeof useRecentWork>;
-    kind: 'Application' | 'View';
-    projectIds: Set<string>;
+    projects: Project[];
 }) {
-    const filtered = items.filter(item => item.kind === kind && projectIds.has(item.projectId)).slice(0, 4);
-    return <section className="overview-card" aria-label={kind === 'Application' ? 'Recent applications' : 'Recent views'}>
-        <div className="overview-card-head"><h2>{kind === 'Application' ? 'Applications' : 'Views'}</h2><a href={kind === 'Application' ? '#/projects' : '#/views'}>Browse <span aria-hidden="true">↗</span></a></div>
-        <p className="overview-card-subtitle">Recently opened {kind === 'Application' ? 'applications' : 'views'}</p>
+    const projectNames = new Map(projects.map(project => [project.id, project.name]));
+    // Recent work is already ordered newest-first, across both applications and views.
+    const filtered = items.filter((item): item is typeof item & { projectId: string } =>
+        item.projectId !== null && (item.kind === 'Application' || item.kind === 'View') && projectNames.has(item.projectId)).slice(0, 5);
+    return <section className="overview-card" aria-label="Recently used">
+        <div className="overview-card-head"><h2>Recently used</h2></div>
         {filtered.length ? <div className="overview-compact-list">{filtered.map(item =>
-            <a key={item.href} className="overview-compact-row" href={kind === 'View'
+            <a key={item.href} className="overview-compact-row" href={item.kind === 'View'
                 ? standaloneViewUrl({ projectId: item.projectId, id: item.href.split('/').pop()!, slug: item.viewSlug })
                 : item.href} target="_blank" rel="noopener noreferrer">
-                <span className="overview-item-main"><strong>{item.name}</strong><small>{kind}</small></span>
+                <span className="overview-item-main"><strong>{item.name}</strong><small>{item.kind} · {projectNames.get(item.projectId)}</small></span>
                 <span aria-hidden="true">↗</span>
-            </a>)}</div> : <p className="overview-muted">No {kind === 'Application' ? 'applications' : 'views'} opened in this browser session.</p>}
+            </a>)}</div> : <p className="overview-muted">No applications or views opened in this browser session.</p>}
     </section>;
 }
 
@@ -111,9 +107,17 @@ export function WorkspaceHome() {
     const nodes = useWorkspaceNodesQuery(undefined);
     const recent = useRecentWork();
     const [workspaceRefresh, setWorkspaceRefresh] = useState(0);
-    const projectIds = useMemo(() => new Set((projects.data ?? []).map(project => project.id)), [projects.data]);
+    const [workspaceDetailsUnavailable, setWorkspaceDetailsUnavailable] = useState(false);
     const online = nodes.data?.filter(node => node.status === 'online').length;
     const workspaceCount = nodes.data?.reduce((sum, node) => sum + node.hostedWorkspaceCount, 0);
+    const disconnected = (nodes.data ?? []).filter(node => node.status !== 'online');
+    const healthIssues = [
+        ...(status.error ? ['Atlas Server could not be reached.'] : []),
+        ...(nodes.error ? ['Node status could not be checked.'] : []),
+        ...(disconnected.length === 1 ? [`${disconnected[0].name} is ${disconnected[0].status}.`] :
+            disconnected.length > 1 ? [`${disconnected.length} nodes are offline or unavailable.`] : []),
+        ...(workspaceDetailsUnavailable && !nodes.error && !disconnected.length ? ['Some workspace details could not be loaded.'] : []),
+    ];
     const topProjects = [...(projects.data ?? [])].sort((a, b) =>
         (Date.parse(b.updatedAt ?? '') || 0) - (Date.parse(a.updatedAt ?? '') || 0)).slice(0, 4);
     const refresh = () => {
@@ -125,6 +129,11 @@ export function WorkspaceHome() {
             <div><h1>Home</h1></div>
             <div className="actions"><button className="ghost" onClick={refresh} disabled={projects.isFetching || status.isFetching || nodes.isFetching}>Refresh</button></div>
         </header>
+        {healthIssues.length > 0 && <aside className="overview-attention" role="status" aria-label="Attention needed">
+            <span className="overview-attention-mark" aria-hidden="true">!</span>
+            <div className="overview-attention-copy"><strong>Needs attention</strong><p>{healthIssues.join(' ')}</p></div>
+            <a href="#/monitoring">Monitoring <span aria-hidden="true">↗</span></a>
+        </aside>}
         <div className="overview-metrics" aria-label="Atlas totals">
             <a href="#/projects" className="overview-metric"><span>Projects</span><strong>{projects.data?.length ?? '—'}</strong><small>Active projects</small></a>
             <a href="#/data" className="overview-metric"><span>Data stores</span><strong>{status.data?.stores ?? '—'}</strong><small>{status.error ? 'Unavailable' : 'Atlas storage'}</small></a>
@@ -139,8 +148,7 @@ export function WorkspaceHome() {
                     <ProjectRows projects={topProjects} />
                     {!projects.isLoading && !projects.error && projects.data?.length === 0 && <p className="overview-muted">No active projects.</p>}
                 </section>
-                <HomeRecent items={recent} kind="Application" projectIds={projectIds} />
-                <HomeRecent items={recent} kind="View" projectIds={projectIds} />
+                <HomeRecent items={recent} projects={projects.data ?? []} />
             </div>
             <div className="overview-content-column">
                 <section className="overview-card" aria-label="System health">
@@ -150,7 +158,7 @@ export function WorkspaceHome() {
                             <strong>Atlas Server</strong>
                             <small>{status.data ? `v${status.data.version} · ${status.data.storage}` : status.error ? 'Unable to reach server' : 'Checking connection…'}</small>
                         </span>
-                        <span className={`overview-status ${status.data ? 'online' : status.error ? 'offline' : 'pending'}`}>{status.data ? 'Connected' : status.error ? 'Unavailable' : 'Checking'}</span>
+                        <span className={`overview-status ${status.error ? 'offline' : status.data ? 'online' : 'pending'}`}>{status.error ? 'Unavailable' : status.data ? 'Connected' : 'Checking'}</span>
                     </div>
                     {nodes.data?.map(node => <div className="overview-service" key={node.id}>
                         <span className="overview-item-main"><strong>{node.name}</strong><small>{node.platform === 'linux' ? 'Linux node / server runtime' : node.platform === 'darwin' ? 'macOS node' : node.platform || 'Node'} · {node.hostedWorkspaceCount} workspaces</small></span>
@@ -159,18 +167,8 @@ export function WorkspaceHome() {
                     {nodes.isLoading && <p className="overview-muted" role="status">Loading nodes…</p>}
                     {nodes.error && <p className="overview-muted">Node status unavailable. <button className="overview-inline-button" onClick={() => void nodes.refetch()}>Retry</button></p>}
                     {nodes.data?.length === 0 && <p className="overview-muted">No nodes registered.</p>}
-                    <a href="#/nodes" className="overview-card-bottom-link">View nodes and connections <span aria-hidden="true">↗</span></a>
                 </section>
-                <HomeWorkspaces nodes={nodes.data} nodesUnavailable={!!nodes.error} refreshKey={workspaceRefresh} projects={projects.data ?? []} />
-                <section className="overview-card" aria-label="Data overview">
-                    <div className="overview-card-head"><h2>Data</h2><a href="#/data">Open data <span aria-hidden="true">↗</span></a></div>
-                    <p className="overview-card-subtitle">{status.data?.storage ? `${status.data.storage} storage` : 'Atlas storage'}</p>
-                    <div className="overview-data-summary">
-                        <div><strong>{status.data?.stores ?? '—'}</strong><span>Stores</span></div>
-                        <div><strong>{status.data?.records?.toLocaleString() ?? '—'}</strong><span>Records</span></div>
-                        <div><strong>{status.data?.schemaVersion ?? '—'}</strong><span>Schema version</span></div>
-                    </div>
-                </section>
+                <HomeWorkspaces nodes={nodes.data} nodesUnavailable={!!nodes.error} refreshKey={workspaceRefresh} projects={projects.data ?? []} onDetailsUnavailable={setWorkspaceDetailsUnavailable} />
             </div>
         </div>
     </div>;

@@ -61,13 +61,15 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         // canonical form for discovery and strict JWT `iss` validation.
         oauthIssuer = issuer.toString();
     }
+    const portfolio = loadPortfolioConfig(env);
     return {
         databaseUrl, host, port,
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
             issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
-        retrieval: loadRetrievalConfig(env), portfolio: loadPortfolioConfig(env),
+        retrieval: loadRetrievalConfig(env), portfolio,
+        storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }
 export type ServerConfig = ReturnType<typeof loadServerConfig>;
