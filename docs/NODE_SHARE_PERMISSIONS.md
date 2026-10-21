@@ -16,9 +16,14 @@ read the clipboard. The destination must be online with
 the clipboard.
 
 For backwards compatibility, `ATLAS_DEVICE_SHARE_PAIRS` is still accepted,
-but such approvals appear as **Read-only**. Remove the environment variable
-and restart the Server to retire them; the web UI cannot silently override an
-environment policy. With no grants anywhere, sharing is denied by default.
+environment-only pairs appear as **Read-only**. Both a database grant and an
+environment grant may be active for the same directional pair. The Nodes page
+shows **both independent origins** and permits removing the Atlas-managed
+grant even while the environment grant remains active. The remaining
+environment permission still authorises sharing. To retire access entirely,
+revoke the Atlas-managed approval, then remove the environment pair and
+restart the Server. An environment-only pair cannot be revoked through the UI.
+With no grants anywhere, sharing is denied by default.
 
 The Android sender currently requires a **manual target UUID**. A separate
 scoped, Node-credential-authenticated recipient directory will consume these

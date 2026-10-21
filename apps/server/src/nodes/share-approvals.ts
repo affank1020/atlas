@@ -21,24 +21,26 @@ export class NodeShareApprovals {
     async list(): Promise<NodeShareApproval[]> {
         const result = await this.pool.query(
             'SELECT source_node_id, target_node_id FROM node_share_approvals ORDER BY source_node_id,target_node_id');
-        const entries = new Map<string, NodeShareApproval>();
-        for (const row of result.rows) {
-            const sourceNodeId = String(row.source_node_id), targetNodeId = String(row.target_node_id);
-            entries.set(this.key(sourceNodeId, targetNodeId), { sourceNodeId, targetNodeId, origin: 'managed' });
-        }
+        // A pair may have two independently effective permissions. Keep both
+        // visible: an environment overlay must never conceal a managed grant.
+        const entries: NodeShareApproval[] = result.rows.map(row => ({
+            sourceNodeId: String(row.source_node_id), targetNodeId: String(row.target_node_id), origin: 'managed',
+        }));
         for (const pair of this.environmentPairs) {
             const [sourceNodeId, targetNodeId] = pair.split(':');
-            entries.set(pair, { sourceNodeId: sourceNodeId!, targetNodeId: targetNodeId!, origin: 'environment' });
+            entries.push({ sourceNodeId: sourceNodeId!, targetNodeId: targetNodeId!, origin: 'environment' });
         }
-        return [...entries.values()].sort((a, b) =>
-            this.key(a.sourceNodeId, a.targetNodeId).localeCompare(this.key(b.sourceNodeId, b.targetNodeId)));
+        return entries.sort((a, b) =>
+            this.key(a.sourceNodeId, a.targetNodeId).localeCompare(this.key(b.sourceNodeId, b.targetNodeId))
+            || a.origin.localeCompare(b.origin));
     }
 
     async update(input: {sourceNodeId: string; targetNodeId: string; enabled: boolean}, caller: ShareAuditClient = 'atlas-server') {
         const sourceNodeId = input.sourceNodeId.toLowerCase(), targetNodeId = input.targetNodeId.toLowerCase();
         if (sourceNodeId === targetNodeId) throw new AtlasError('A Node cannot share with itself.', 'SHARE_DENIED');
-        if (this.environmentPairs.has(this.key(sourceNodeId, targetNodeId)))
-            throw new AtlasError('This approval is managed through ATLAS_DEVICE_SHARE_PAIRS.', 'SHARE_ENV_MANAGED');
+        const environmentGranted = this.environmentPairs.has(this.key(sourceNodeId, targetNodeId));
+        if (environmentGranted && input.enabled)
+            throw new AtlasError('This pair is already approved by ATLAS_DEVICE_SHARE_PAIRS.', 'SHARE_ENV_MANAGED');
         const db = await this.pool.connect();
         try {
             await db.query('BEGIN');
@@ -62,8 +64,11 @@ export class NodeShareApprovals {
                         [sourceNodeId, targetNodeId]);
                 }
             } else {
-                await db.query('DELETE FROM node_share_approvals WHERE source_node_id=$1 AND target_node_id=$2',
+                const removed = await db.query(
+                    'DELETE FROM node_share_approvals WHERE source_node_id=$1 AND target_node_id=$2 RETURNING source_node_id',
                     [sourceNodeId, targetNodeId]);
+                if (environmentGranted && !removed.rowCount)
+                    throw new AtlasError('Only the server environment grants this pair; remove that setting and restart the Server.', 'SHARE_ENV_MANAGED');
             }
             // Only UUIDs in the audit trail, never shared content.
             await db.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at)

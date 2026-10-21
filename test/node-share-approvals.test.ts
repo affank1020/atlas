@@ -135,3 +135,30 @@ test('MCP share permission mutations have transport-authored audit provenance', 
         await server.close();
     }
 });
+
+test('overlapping managed and environment grants remain visible and independently revocable', async () => {
+    const f = await databaseFixture();
+    const identity = new NodeIdentity(f.store.pool);
+    const a = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Sender',platform:'android'});
+    const b = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Mac',platform:'darwin'});
+    const key = a.nodeId + ':' + b.nodeId;
+    const managed = new NodeShareApprovals(f.store.pool);
+    await managed.update({sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:true});
+    const overlay = new NodeShareApprovals(f.store.pool, new Set([key]));
+    assert.deepEqual(await overlay.list(), [
+        {sourceNodeId:a.nodeId,targetNodeId:b.nodeId,origin:'environment'},
+        {sourceNodeId:a.nodeId,targetNodeId:b.nodeId,origin:'managed'},
+    ]);
+    await overlay.update({sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false});
+    assert.deepEqual(await overlay.list(), [
+        {sourceNodeId:a.nodeId,targetNodeId:b.nodeId,origin:'environment'},
+    ]);
+    assert.equal(await overlay.allowed(a.nodeId,b.nodeId),true,'Environment independently permits the share');
+    assert.equal(await managed.allowed(a.nodeId,b.nodeId),false,'Underlying DB grant is removed');
+    await assert.rejects(overlay.update({sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false}),
+        (err:any)=>err.code==='SHARE_ENV_MANAGED');
+    // After the server restarts without the environment pair, nothing reactivates.
+    const restarted = new NodeShareApprovals(f.store.pool);
+    assert.deepEqual(await restarted.list(),[]);
+    assert.equal(await restarted.allowed(a.nodeId,b.nodeId),false);
+});
