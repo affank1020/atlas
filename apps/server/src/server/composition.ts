@@ -18,6 +18,7 @@ import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
+import { NodeFileIngestService } from './node-file-ingest.js';
 import { ApplicationRegistry } from '../apps/registry.js';
 import { portfolioApplication } from '../apps/portfolio-definition.js';
 import { FootballTrainingService, footballTrainingApplication } from '../apps/football-training.js';
@@ -38,6 +39,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const media = new PortfolioMediaService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2);
     const files = new AtlasFilesService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2);
     const identity = new NodeIdentity(repository.pool);
+    const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity);
     const nodeGateway = new RemoteNodeGateway(nodes);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
@@ -45,7 +47,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files]);
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football)]);
-    const services = { config, catalog, storageUsage, nodes, identity, nodeGateway, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, catalog, storageUsage, nodes, identity, nodeGateway, nodeFileIngest, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;
