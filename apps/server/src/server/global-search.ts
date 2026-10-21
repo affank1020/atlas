@@ -61,7 +61,7 @@ export function interpretSearch(query: string): { term: string; intent: Intent; 
     const lower = query.toLocaleLowerCase();
     const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower);
     const logSource = /\b(stderr|errors?|error\s+logs?)\b/.test(lower) ? 'stderr' as const : 'stdout' as const;
-    const requestedLines = /\b(\d{1,3})\s*(?:errors?\s*)?lines?\b/.exec(lower)?.[1];
+    const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr)\s*)?lines?\b/.exec(lower)?.[1];
     const logLines = requestedLines ? Math.min(Math.max(Number(requestedLines), 1), 200) : 100;
     const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
     const intent: Intent = nodeActivity || nodeLogs ? 'node'
