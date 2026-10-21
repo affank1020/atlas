@@ -39,6 +39,24 @@ GitHub clones join the matching logical repository immediately.
 The added logical ID is stripped from transport messages to Nodes so remote
 Node protocol v2 remains compatible with already connected Nodes.
 
+When a verified source checkout is recognised, any existing Atlas-managed
+feature worktrees that inherited its provisional `local` logical identity are
+moved with it, in the same database transaction, including archived records.
+A subsequent feature checkout inherits the now-recognised repository identity.
+A pre-existing `git` group is never bulk-reassigned based on the origin of
+one member.
+
+`update_workspace` continues to rename an individual checkout. For a
+single-checkout `local` Workspace, its logical display name is also updated
+atomically. Renaming a checkout in a multi-checkout or `git` Workspace does
+not rename the repository-level identity; explicit logical rename support
+will be added separately.
+
+Managed feature retirement **requires** a GitHub PR merged for the exact
+feature HEAD into the repository default branch, in addition to Node-side
+cleanliness, index flag, process and provenance guards. GitHub inspection
+failures or missing merged-PR evidence never trigger local checkout deletion.
+
 ## Limitations before a later cleanup
 
 - Project links are still stored against legacy node-bound checkout IDs.
