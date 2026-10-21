@@ -59,6 +59,9 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     };
     for (const name of Object.keys(nodeSchemas) as NodeToolName[]) tool(name, nodeDescriptions[name], nodeSchemas[name].shape);
 
+    tool("read_server_diagnostics", "Read bounded, non-sensitive Atlas Server process diagnostics since the current restart, not Docker stdout/stderr or retained container logs.", {
+        limit: z.number().int().min(1).max(100).default(30),
+    });
     tool("get_atlas_status", "Report Atlas availability and structured-data counts.", {});
     tool("get_storage_usage", "Read PostgreSQL storage sizes and Cloudflare R2 analytics without credentials.", { refresh: z.boolean().optional() });
     tool("list_projects", "List active projects, optionally including archived projects.", include);
