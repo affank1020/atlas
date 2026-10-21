@@ -206,8 +206,9 @@ export class WorkspaceService {
             if (x.projectId) await db.requireActiveProject(x.projectId);
             await db.lockWorkspace(workspace.id);
             const current = x.projectId ? await db.get(x.projectId, workspace.id, false) : await db.getById(workspace.id, false);
-            if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath)
-                throw new AtlasError('Workspace binding changed; retry the operation.', 'CONFLICT');
+            if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath ||
+                current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                throw new AtlasError('Workspace binding or repository association changed; retry the operation.', 'CONFLICT');
             if (target) {
                 await db.lockWorkspace(target.id);
                 const latest = await db.getById(target.id);
