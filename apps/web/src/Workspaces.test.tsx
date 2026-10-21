@@ -121,6 +121,77 @@ test('multiple worktrees on one Node have distinct labels and a compact checkout
     expect(within(inspector).getByText('/srv/atlas/node-setup')).toBeInTheDocument();
 });
 
+test('duplicate checkout names on the same Node have unique full-path selector options', async () => {
+    const checkouts = [
+        { ...repo, id: 'clone-a', rootPath: '/srv/atlas/workspaces/atlas-a' },
+        { ...repo, id: 'clone-b', rootPath: '/srv/atlas/workspaces/atlas-b' },
+        { ...repo, id: 'feature-a', name: 'Feature A', rootPath: '/srv/atlas/workspaces/feature-a' },
+        { ...repo, id: 'feature-b', name: 'Feature B', rootPath: '/srv/atlas/workspaces/feature-b' },
+    ];
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return checkouts;
+        if (name === 'list_logical_workspaces') return [{
+            id: 'atlas-logical', name: 'Atlas', repository: 'affank1020/atlas',
+            kind: 'git', checkouts,
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha,
+            originRepository: 'affank1020/atlas', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    await within(browser).findByText('1 Workspace');
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas' }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const selector = within(inspector).getByRole('combobox', { name: 'Choose checkout' });
+    expect(within(selector).getByRole('option', {
+        name: 'Atlas · Linux VPS · /srv/atlas/workspaces/atlas-a',
+    })).toHaveValue('clone-a');
+    expect(within(selector).getByRole('option', {
+        name: 'Atlas · Linux VPS · /srv/atlas/workspaces/atlas-b',
+    })).toHaveValue('clone-b');
+    const optionNames = within(selector).getAllByRole('option').map(option => option.textContent);
+    expect(new Set(optionNames).size).toBe(optionNames.length);
+    fireEvent.change(selector, { target: { value: 'clone-b' } });
+    expect(location.hash).toContain('workspace=clone-b');
+    expect(within(inspector).getByText('/srv/atlas/workspaces/atlas-b')).toBeInTheDocument();
+});
+
+test('duplicate names in a small checkout group show both directory paths before selection', async () => {
+    const checkouts = [
+        { ...repo, id: 'clone-a', rootPath: '/srv/atlas/workspaces/atlas-a' },
+        { ...repo, id: 'clone-b', rootPath: '/srv/atlas/workspaces/atlas-b' },
+    ];
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return checkouts;
+        if (name === 'list_logical_workspaces') return [{
+            id: 'atlas-logical', name: 'Atlas', repository: 'affank1020/atlas',
+            kind: 'git', checkouts,
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha,
+            originRepository: 'affank1020/atlas', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    await within(browser).findByText('1 Workspace');
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas' }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const group = within(inspector).getByRole('group', { name: 'Choose Node checkout' });
+    expect(within(group).getByRole('button', { name: /\/srv\/atlas\/workspaces\/atlas-a/ })).toBeInTheDocument();
+    const second = within(group).getByRole('button', { name: /\/srv\/atlas\/workspaces\/atlas-b/ });
+    expect(second).toBeInTheDocument();
+    fireEvent.click(second);
+    expect(location.hash).toContain('workspace=clone-b');
+    expect(within(inspector).getByText('/srv/atlas/workspaces/atlas-b')).toBeInTheDocument();
+});
+
 test('repository recognition uses Node Git inspection and never sends caller-chosen identity', async () => {
     const mac = { ...repo, id: 'mac', nodeId: 'mac-node', rootPath: '/mac/portfolio' };
     const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
