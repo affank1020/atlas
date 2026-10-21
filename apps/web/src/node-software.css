@@ -16,3 +16,8 @@
 .node-software-summary > div { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; font-size:.8rem; }
 .node-software-summary dt { color:var(--text-secondary); }
 .node-software-summary dd { margin:0; text-align:right; overflow-wrap:anywhere; }
+
+.node-software-preflight { border-top: 1px solid var(--border); padding-top: 12px; margin: 10px 0; }
+.node-software-preflight button { font-size: .78rem; }
+.node-software-preflight p { font-size: .76rem; line-height: 1.6; color: var(--text-secondary); margin: 9px 0 0; overflow-wrap: anywhere; }
+.node-software-preflight p span { display: block; }
