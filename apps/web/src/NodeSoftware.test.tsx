@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { NodeSoftware, NodeSoftwareSummary, releaseUpdateState, type NodeRelease } from './NodeSoftware';
 import { callTool } from './api';
@@ -68,4 +68,56 @@ it('non-Linux Nodes never expose a Linux update preflight control', async () => 
         status: 'online', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0, version: '2.0.0',
     }} />);
     expect(screen.queryByRole('button', { name: /Check Linux update eligibility/ })).not.toBeInTheDocument();
+});
+
+it('invalidates a completed eligibility result when the same Node is revoked or updated', async () => {
+    const linux = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host',
+        platform: 'linux', version: '1.9.9', status: 'online' as const,
+        credentialState: 'active', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_node_releases'
+        ? { state: 'ready', releases: [release], checkedAt: '' }
+        : { nodeId: linux.id, status: 'candidate', reason: 'A newer release is available.',
+            candidate: release, canInstall: false, canActivate: false, provenanceVerified: false });
+    const view = render(<NodeSoftwareSummary node={linux} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+    expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
+
+    // Parent refresh does not remount the selected Node details.
+    view.rerender(<NodeSoftwareSummary node={{ ...linux, credentialState: 'revoked', status: 'offline' }} />);
+    expect(screen.queryByText(/Candidate identified/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check Linux update eligibility' })).toBeEnabled();
+    // Returning to the original snapshot must not resurrect the old result.
+    view.rerender(<NodeSoftwareSummary node={linux} />);
+    expect(screen.queryByText(/Candidate identified/)).not.toBeInTheDocument();
+    view.rerender(<NodeSoftwareSummary node={{ ...linux, version: '2.0.0+abc123abc123' }} />);
+    expect(screen.queryByText(/Candidate identified/)).not.toBeInTheDocument();
+});
+
+it('discards an in-flight eligibility result after a same-ID runtime changes', async () => {
+    const linux = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host',
+        platform: 'linux', version: '1.9.9', status: 'online' as const,
+        credentialState: 'active', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    let finish!: (value: unknown) => void;
+    const pending = new Promise(resolve => { finish = resolve; });
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_node_releases'
+        ? { state: 'ready', releases: [release], checkedAt: '' }
+        : pending);
+    const view = render(<NodeSoftwareSummary node={linux} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+    view.rerender(<NodeSoftwareSummary node={{ ...linux, version: '2.0.0+abc123abc123', status: 'offline' }} />);
+    expect(screen.queryByRole('button', { name: 'Checking…' })).not.toBeInTheDocument();
+    await act(async () => {
+        finish({ nodeId: linux.id, status: 'candidate', reason: 'Stale candidate',
+            candidate: release, canInstall: false, canActivate: false, provenanceVerified: false });
+        await pending;
+    });
+    expect(screen.queryByText(/Candidate identified/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Stale candidate/)).not.toBeInTheDocument();
+    view.rerender(<NodeSoftwareSummary node={linux} />);
+    await waitFor(() => expect(screen.queryByText(/Candidate identified/)).not.toBeInTheDocument());
 });
