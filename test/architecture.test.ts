@@ -57,6 +57,14 @@ test('dependency boundaries hold transitively, including compatibility re-export
     }
 });
 
+test('Node topology stacks before laptop shell widths cause server-card overlap', async () => {
+    // Source-level guard: the real four-node layout still needs a browser visual check.
+    const css = await readFile('apps/web/src/workspaces.css', 'utf8');
+    const stackRule = css.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.node-topology-layout\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    assert.ok(stackRule, 'Expected a single-column topology media rule');
+    assert.ok(Number(stackRule[1]) >= 1240, 'Topology must stack before the map becomes too narrow');
+});
+
 test('Atlas Control exposes Server, Node and Web as separate services with legacy aliases', async () => {
     const source = await readFile('scripts/atlas-control.mjs', 'utf8');
     assert.match(source, /server: \{ label: "Atlas Server"/);
