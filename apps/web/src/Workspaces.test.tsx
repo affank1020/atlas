@@ -237,8 +237,10 @@ test('logical Workspace Project associations are shared, selectable and removabl
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('link_logical_workspace_project', {
         logicalWorkspaceId: 'logical-portfolio', projectId: projectB.id,
     }));
-    expect(await within(section).findByText('Deployment')).toBeInTheDocument();
-    fireEvent.click(within(section).getByRole('button', { name: 'Detach Portfolio' }));
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Workspace Projects' }))
+        .getByRole('button', { name: 'Detach Deployment' })).toBeInTheDocument());
+    fireEvent.click(within(screen.getByRole('region', { name: 'Workspace Projects' }))
+        .getByRole('button', { name: 'Detach Portfolio' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('unlink_logical_workspace_project', {
         logicalWorkspaceId: 'logical-portfolio', projectId: projectA.id,
     }));
