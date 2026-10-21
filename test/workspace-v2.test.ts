@@ -29,6 +29,9 @@ test('migration 019 backfills logical Workspace IDs without modifying legacy che
     assert.equal(checkout.rootPath, '/old/portfolio');
     assert.equal(checkout.nodeId, node);
     assert.equal(checkout.projectId, project.id);
+    // The new logical reader uses the canonical Project link table added
+    // in migration 020. Verify the old identity first, then advance schema.
+    await store.pool.query(await readFile('apps/server/migrations/020_logical_workspace_project_links.sql', 'utf8'));
     const logical = await repository.listLogical();
     assert.equal(logical.length, 1);
     assert.equal(logical[0].id, checkoutId);
