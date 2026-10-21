@@ -55,15 +55,21 @@ const commandWords = new Set([
     'some','specific','get','take','bring','up','recent','latest','last','tail','read','status','details',
     'application','applications','apps','app','project','projects','view','views',
     'data','store','stores','record','records','node','nodes','workspace','workspaces',
-    'logs','log','journal','systemd','activity','events','history','server','infrastructure', 'lines', 'line', 'error', 'errors', 'stderr', 'stdout'
+    'logs','log','activity','events','history','server','infrastructure', 'lines', 'line', 'error', 'errors', 'stderr', 'stdout'
 ]);
 export function interpretSearch(query: string): { term: string; intent: Intent; nodeActivity: boolean; nodeLogs: boolean; logSource: 'stdout' | 'stderr'; logLines: number } {
     const lower = query.toLocaleLowerCase();
-    const nodeLogs = /\b(logs?|stderr|stdout|journal|systemd)\b|\berror\s+(?:lines?|output)\b/.test(lower);
+    // "journal" may be a document title, not operational output. Only interpret
+    // journal/systemd vocabulary as logs when a Node/runtime or explicit log
+    // context is present; preserve these terms for general Fabric searches.
+    const nodeContext = /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
+    const journalContext = /\b(?:journal|systemd)\b/.test(lower) &&
+        (nodeContext || /\b(?:journal|systemd)\s+(?:logs?|lines?|output)\b|\b(?:logs?|tail)\s+(?:journal|systemd)\b|\bsystemd\s+(?:service|unit)\b/.test(lower));
+    const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower) || journalContext;
     const logSource = /\b(stderr|errors?|error\s+logs?)\b/.test(lower) ? 'stderr' as const : 'stdout' as const;
     const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr|journal|systemd)\s*)?lines?\b/.exec(lower)?.[1];
     const logLines = requestedLines ? Math.min(Math.max(Number(requestedLines), 1), 200) : 100;
-    const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
+    const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && nodeContext;
     const intent: Intent = nodeActivity || nodeLogs ? 'node'
         : /\b(apps?|applications?|launch)\b/.test(lower) ? 'application'
         : /\bworkspaces?\b/.test(lower) ? 'workspace'
@@ -76,7 +82,7 @@ export function interpretSearch(query: string): { term: string; intent: Intent; 
         : /\bservers?|infrastructure|health\b/.test(lower) ? 'infrastructure'
         : /\bdata\b/.test(lower) ? 'store' : null;
     const term = lower.replace(/\b\d{1,3}\b/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').split(' ')
-        .filter(word => word && !commandWords.has(word)).join(' ').trim();
+        .filter(word => word && !commandWords.has(word) && !(nodeLogs && (word === 'journal' || word === 'systemd'))).join(' ').trim();
     return { term, intent, nodeActivity, nodeLogs, logSource, logLines };
 }
 
