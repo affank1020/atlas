@@ -16,6 +16,7 @@ import { PortfolioMediaService, PortfolioService, PORTFOLIO_PROJECT_ID, PORTFOLI
 import { WorkspaceService } from '../workspaces/application.js';
 import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
+import { ServerDiagnostics } from './diagnostics.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
 import { NodeFileIngestService } from './node-file-ingest.js';
@@ -30,6 +31,7 @@ import type { NodeRuntime } from '../nodes/runtime.js';
 export function composeServer(config: ServerConfig = loadServerConfig(), executionHost?: NodeRuntime) {
     const repository = new AtlasStore(config.databaseUrl);
     const catalog = new CoreService(repository);
+    const diagnostics = new ServerDiagnostics(config.serverDiagnosticsEnabled);
     const storageUsage = new StorageUsageService(repository.pool, config.storageAnalytics);
     const fabric = createFabric(config.databaseUrl, new OllamaEmbeddingProvider(config.retrieval.embeddingModel, config.ai.baseUrl));
     const retrieval = new RetrievalService(fabric.search, fabric.context, fabric.authority);
@@ -46,10 +48,12 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
-    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files]);
+    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files],
+        message => { diagnostics.record('background_task_failed'); console.error(message); });
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football)]);
-    const services = { config, catalog, storageUsage, nodes, identity, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    diagnostics.record('server_initialised');
+    const services = { config, catalog, diagnostics, storageUsage, nodes, identity, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;
