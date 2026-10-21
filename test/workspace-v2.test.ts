@@ -7,6 +7,7 @@ import { PostgresNodeRepository } from '../apps/server/src/infrastructure/databa
 import { NodeRouter } from '../apps/server/src/nodes/router.js';
 import { NodeService } from '../apps/server/src/nodes/service.js';
 import type { ExecutionHost } from '../apps/server/src/workspaces/runtime.js';
+import { nodeRequestSchema, validateNodeOperation } from '../packages/protocol/src/node-protocol.js';
 
 after(cleanupDatabases);
 
@@ -64,8 +65,10 @@ test('draft PR publication rejects a workspace whose origin, branch, or HEAD doe
     const runtime: ExecutionHost = {
         getCapabilities: () => ['workspace.files', 'workspace.git'],
         bind: async root => root,
-        execute: async (_workspace, operation) => {
+        execute: async (currentWorkspace, operation, input) => {
             assert.equal(operation, 'workspace_git_status');
+            assert.equal(input.workspaceId, currentWorkspace.id, 'Server must send the Workspace ID to the Node');
+            assert.equal(validateNodeOperation(operation, input).success, true, 'Node-side Git status schema must accept server inspection');
             return gitStatus;
         },
     };
@@ -90,6 +93,30 @@ test('draft PR publication rejects a workspace whose origin, branch, or HEAD doe
     const success = await svc.call('workspace_git_open_pull_request', input) as any;
     assert.equal(success.number, 19);
     assert.equal(brokerCalls, 1);
+});
+
+test('Node protocol accepts a Project-independent Workspace without relaxing Git operation validation', () => {
+    const id = '00000000-0000-4000-8000-000000000021';
+    const nodeId = '00000000-0000-4000-8000-000000000022';
+    const request = {
+        type: 'request', kind: 'execute',
+        requestId: '00000000-0000-4000-8000-000000000023',
+        workspace: {
+            id, nodeId, projectId: null, name: 'Independent Git checkout',
+            rootPath: '/trusted/checkout', kind: 'generic', adapter: null,
+            status: 'active', devTasks: {},
+            createdAt: '2026-10-21T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z',
+        },
+        operation: 'workspace_git_status', input: { workspaceId: id },
+    };
+    assert.equal(nodeRequestSchema.safeParse(request).success, true,
+        'The Node transport must accept independent Workspaces');
+    assert.equal(validateNodeOperation('workspace_git_status', request.input).success, true);
+    assert.equal(validateNodeOperation('workspace_git_status', {}).success, false,
+        'Git status still requires an explicit Workspace ID');
+    assert.equal(nodeRequestSchema.safeParse({
+        ...request, workspace: { ...request.workspace, projectId: 'not-a-uuid' },
+    }).success, false, 'Malformed Project associations still fail closed');
 });
 
 test('managed worktree creation auto-registers an independent Workspace and removal archives it', async t => {
