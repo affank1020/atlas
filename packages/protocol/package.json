@@ -12,6 +12,7 @@
     "./workspace-operations": "./dist/workspace-operations.js",
     "./runtime": "./dist/runtime.js",
     "./node-protocol": "./dist/node-protocol.js",
+    "./device-protocol": "./dist/device-protocol.js",
     "./errors": "./dist/errors.js",
     "./node-model": "./dist/node-model.js"
   },

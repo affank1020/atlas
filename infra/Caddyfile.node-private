@@ -1,12 +1,13 @@
 # Local HTTP-only ingress for Tailscale's TLS-terminated TCP forwarding.
 # Not exposed to the public internet. Tailscale terminates TLS and this
-# sidecar permits ONLY the Node WebSocket and one-use enrolment endpoint.
+# sidecar permits only the Node WebSocket, one-use enrolment and optional
+# Node credential-authenticated file upload endpoint (disabled by default).
 {
     auto_https off
 }
 
 :8080 {
-    @node path /node/connect /node/enrol
+    @node path /node/connect /node/enrol /node/files/upload /node/files/resumable/*
     handle @node {
         reverse_proxy server:3000
     }

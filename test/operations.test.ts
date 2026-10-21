@@ -104,7 +104,7 @@ test("private Tailscale Node ingress is opt-in, loopback-only and path-restricte
   const deploy = readFileSync(".github/workflows/deploy.yml", "utf8");
   assert.ok(compose.includes('profiles: ["tailscale"]'));
   assert.ok(compose.includes('"127.0.0.1:3100:8080"'));
-  assert.ok(config.includes("@node path /node/connect /node/enrol"));
+  assert.ok(config.includes("@node path /node/connect /node/enrol /node/files/upload"));
   assert.ok(config.includes('respond "Not found" 404'));
   assert.ok(!config.includes("/api/tools"));
   assert.ok(!config.includes("/mcp"));

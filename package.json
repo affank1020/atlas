@@ -25,6 +25,8 @@
     "test:mac-ui": "bash scripts/build-node-ui.sh --check",
     "db:migrate": "node scripts/db.mjs migrate",
     "db:status": "node scripts/db.mjs status",
+    "files:audit": "node apps/server/dist/server/files-audit-cli.js --dry-run",
+    "files:staging:maintenance": "node apps/server/dist/server/node-transfer-maintenance-cli.js",
     "workspace:register-atlas": "node scripts/register-atlas-workspace.mjs",
     "verify:remote-node": "node --import tsx scripts/verify-remote-node.mjs",
     "build:views": "npm run build -w @atlas/view-runtime",

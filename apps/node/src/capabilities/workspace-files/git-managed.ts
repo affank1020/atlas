@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, realpath, rmdir } from 'node:fs/promises';
+import { mkdir, realpath, rmdir, readdir, lstat, readFile, readlink } from 'node:fs/promises';
 import path from 'node:path';
 import { AtlasError } from '@atlas/protocol/errors';
 import { verifyGitLayout, type WorkspaceFiles } from './files.js';
@@ -109,7 +109,93 @@ export async function createManagedWorktree(root: string, files: WorkspaceFiles,
     if (!registered) throw new AtlasError('Worktree creation outcome is uncertain; inspect the repository.', 'OUTCOME_UNCERTAIN');
     return { rootPath: targetPath, branch, head, sourceHead: head };
 }
-export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
+/** Approximate actual allocated disk blocks rather than claiming every logical
+ * file byte will be reclaimed. No symlink traversal or unbounded recursion. */
+async function estimateCheckoutBytes(target: string): Promise<number> {
+    const pending = [target];
+    let entries = 0;
+    let blocks = 0;
+    while (pending.length) {
+        const directory = pending.pop()!;
+        for (const item of await readdir(directory, { withFileTypes: true })) {
+            if (++entries > 100_000)
+                throw new AtlasError('Worktree size inspection exceeds its safe file limit.', 'CAPABILITY_UNAVAILABLE');
+            const entry = path.join(directory, item.name);
+            const info = await lstat(entry);
+            blocks += (info.blocks ?? Math.ceil(info.size / 512)) * 512;
+            if (item.isDirectory()) pending.push(entry);
+        }
+    }
+    return blocks;
+}
+
+/** An active shell, editor or task whose working directory is inside the
+ * checkout can make retirement destructive. Fail closed without revealing
+ * unrelated processes. No arbitrary commands or user-provided executable. */
+async function assertNoActiveWorkingDirectories(target: string) {
+    // Prefer the OS process-file inspector. Linux procfs can deny same-UID
+    // cwd inspections in CI/container namespaces even when no checkout user
+    // is active. An unavailable lsof falls back to procfs, never "safe".
+    const lsof = process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof';
+    try {
+        const output = (await exec(lsof, ['-nP', '-d', 'cwd', '-Fn'], {
+            timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
+            env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+        })).stdout;
+        if (output.split('\n').some(line => line.startsWith('n') &&
+            (line.slice(1) === target || within(target, line.slice(1)))))
+            throw new AtlasError('A process is currently working inside this worktree; local files were preserved.', 'CONFLICT');
+        return;
+    } catch (error) {
+        if (error instanceof AtlasError) throw error;
+        if (process.platform !== 'linux' || (error as NodeJS.ErrnoException).code !== 'ENOENT')
+            throw new AtlasError('Cannot verify active worktree processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE');
+    }
+
+    // Linux fallback for VPS installations without lsof. Inspect same-UID
+    // process working directories, without reading argv or environment.
+    let processes: string[];
+    try { processes = (await readdir('/proc')).filter(name => /^[0-9]+$/.test(name)); }
+    catch { throw new AtlasError('Cannot inspect running processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE'); }
+    if (processes.length > 4096)
+        throw new AtlasError('Too many processes to verify safe retirement.', 'CAPABILITY_UNAVAILABLE');
+    for (const pid of processes) {
+        try {
+            const status = await readFile(`/proc/${pid}/status`, 'utf8');
+            const uid = status.match(/^Uid:\s+(\d+)/m)?.[1];
+            if (uid === undefined) throw new Error('Could not verify process ownership');
+            if (Number(uid) !== process.getuid?.()) continue;
+            const cwd = await readlink(`/proc/${pid}/cwd`);
+            if (cwd === target || within(target, cwd))
+                throw new AtlasError('A process is currently working inside this worktree; local files were preserved.', 'CONFLICT');
+        } catch (error) {
+            if (error instanceof AtlasError) throw error;
+            if (['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
+            throw new AtlasError('Cannot verify active worktree processes; local files were preserved.', 'CAPABILITY_UNAVAILABLE');
+        }
+    }
+}
+
+/** Git status can hide local modifications for assume-unchanged and
+ * skip-worktree index entries. Git worktree remove may still delete them.
+ * Refuse any flagged tracked entry, including sparse-checkout entries,
+ * rather than trusting a misleading clean porcelain status. */
+async function assertNoHiddenTrackedFiles(targetPath: string) {
+    // -v shows lowercase tags for assume-unchanged and S for skip-worktree.
+    // -z protects filenames with newlines, spaces, and unusual characters.
+    const index = await run(targetPath, ['ls-files', '-v', '-z', '--cached']);
+    for (const entry of index.split('\0')) {
+        if (!entry) continue;
+        if (entry.length < 3 || entry[1] !== ' ')
+            throw new AtlasError('Could not inspect Git index flags; local files were preserved.', 'CONFLICT');
+        const tag = entry[0]!;
+        if (tag === 'S' || (tag >= 'a' && tag <= 'z'))
+            throw new AtlasError('Worktree has assume-unchanged or skip-worktree Git index flags; local files were preserved.', 'CONFLICT');
+    }
+}
+
+/** Read-only inspection; deletion repeats these checks immediately before Git removal. */
+export async function preflightManagedWorktreeRetirement(root: string, files: WorkspaceFiles,
     targetPath: string, expectedHead: string, expectedBranch: string) {
     const entries = await allWorktrees(root, files);
     if (!branchAllowed(expectedBranch)) throw new AtlasError('Invalid expected managed branch.', 'WORKSPACE_DENIED');
@@ -121,13 +207,33 @@ export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
     if (target.branch !== expectedBranch) throw new AtlasError('Worktree branch changed since Atlas created it.', 'CONFLICT');
     if (target.head !== expectedHead) throw new AtlasError('Worktree HEAD changed.', 'CONFLICT');
     await verifyGitLayout(targetPath, files);
-    if (await run(targetPath, ['status', '--porcelain', '--untracked-files=all']))
-        throw new AtlasError('Worktree has uncommitted or untracked files.', 'CONFLICT');
-    // No --force and NO branch deletion. Unpushed commits survive in the branch.
+    if (await run(targetPath, ['status', '--porcelain', '--untracked-files=all', '--ignored=matching']))
+        throw new AtlasError('Worktree has uncommitted, untracked or ignored files; local files were preserved.', 'CONFLICT');
+    // This check is REQUIRED even when porcelain reports a clean checkout.
+    await assertNoHiddenTrackedFiles(targetPath);
+    await assertNoActiveWorkingDirectories(targetPath);
+    const estimatedReclaimedBytes = await estimateCheckoutBytes(targetPath);
+    return { eligible: true, rootPath: targetPath, head: expectedHead,
+        branch: target.branch, estimatedReclaimedBytes };
+}
+
+export async function removeManagedWorktree(root: string, files: WorkspaceFiles,
+    targetPath: string, expectedHead: string, expectedBranch: string) {
+    const preflight = await preflightManagedWorktreeRetirement(root, files, targetPath, expectedHead, expectedBranch);
+    // No --force, no recursive fs deletion and NO branch deletion. A failed Git
+    // removal preserves local data; successful Git removal deletes the checkout.
     await run(root, ['worktree', 'remove', targetPath]);
     if ((await allWorktrees(root, files)).some(x => x.rootPath === targetPath))
         throw new AtlasError('Worktree removal outcome is uncertain.', 'OUTCOME_UNCERTAIN');
-    return { removed: true, rootPath: targetPath, preservedBranch: target.branch, head: expectedHead };
+    try {
+        await lstat(targetPath);
+        throw new AtlasError('Git removed the worktree registration but its local directory still exists.', 'OUTCOME_UNCERTAIN');
+    } catch (error) {
+        if (error instanceof AtlasError) throw error;
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+            throw new AtlasError('Could not verify removal of the local directory.', 'OUTCOME_UNCERTAIN');
+    }
+    return { removed: true, rootPath: targetPath, preservedBranch: preflight.branch, head: expectedHead, estimatedReclaimedBytes: preflight.estimatedReclaimedBytes };
 }
 
 /** A repository-management Workspace is rooted at an explicitly configured

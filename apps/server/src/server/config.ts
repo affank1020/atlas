@@ -36,6 +36,22 @@ export function loadNodeConfig(env: NodeJS.ProcessEnv = process.env) {
     if (execution !== 'remote') throw new Error('Atlas Server requires ATLAS_NODE_EXECUTION=remote; run Atlas Node independently.');
     return { name: env.ATLAS_NODE_NAME?.trim() || hostname() || 'Local Node', execution };
 }
+/** Explicit, directional and deny-by-default Node share approvals. No wildcard support. */
+export function loadDeviceShareConfig(env: NodeJS.ProcessEnv = process.env) {
+    const approvedPairs = new Set<string>();
+    const value = env.ATLAS_DEVICE_SHARE_PAIRS?.trim() ?? '';
+    if (!value) return { approvedPairs };
+    const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+    for (const item of value.split(',')) {
+        const pair = item.trim().split(':').map(x => x.trim().toLowerCase());
+        if (pair.length !== 2 || !uuid.test(pair[0]!) || !uuid.test(pair[1]!) || pair[0] === pair[1])
+            throw new Error('ATLAS_DEVICE_SHARE_PAIRS must contain directional sourceUUID:targetUUID pairs.');
+        approvedPairs.add(pair[0] + ':' + pair[1]);
+    }
+    if (approvedPairs.size > 64) throw new Error('ATLAS_DEVICE_SHARE_PAIRS permits at most 64 explicit pairs.');
+    return { approvedPairs };
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -67,6 +83,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
             issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
+        nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
+        deviceShares: loadDeviceShareConfig(env),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },

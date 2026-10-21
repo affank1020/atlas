@@ -16,16 +16,37 @@ test('mock catalogue supports linked projects, stores and paginated records', ()
     expect(mockTool<Page<AtlasRecord>>('list_records', { projectId: projects[0].id, storeId: stores[0].id, limit: 1, offset: 1 }).items[0].id).not.toBe(first.items[0].id);
 });
 
-test('demo nodes have inspectable workspace details and a simulated offline node', () => {
-    const nodes = mockTool<Array<{ id: string; name: string; status: string }>>('list_nodes');
-    expect(nodes).toHaveLength(2);
+test('demo nodes include inspectable desktop and Android mobile fixtures', () => {
+    const nodes = mockTool<Array<{ id: string; name: string; status: string; platform: string; deviceType?: string; hostedWorkspaceCount: number }>>('list_nodes');
+    expect(nodes).toHaveLength(4);
     expect(nodes.find(node => node.name === 'Demo Linux VPS')?.status).toBe('offline');
     expect(nodes.find(node => node.name === 'Demo MacBook')?.status).toBe('online');
+    for (const [name, deviceType] of [['Demo Android Tablet', 'tablet'], ['Demo Android Phone', 'phone']]) {
+        const mobile = nodes.find(node => node.name === name);
+        expect(mobile).toMatchObject({ status: 'online', platform: 'android', deviceType, hostedWorkspaceCount: 0 });
+    }
     for (const node of nodes) {
         const detail = mockTool<{ workspaces: Array<{ nodeId: string }> }>('get_node', { nodeId: node.id });
-        expect(detail.workspaces.length).toBeGreaterThan(0);
+        expect(detail.workspaces).toHaveLength(node.hostedWorkspaceCount);
         expect(detail.workspaces.every(item => item.nodeId === node.id)).toBe(true);
     }
+});
+
+test('mock Workspace lookups accept explicit checkoutId and the legacy selector', () => {
+    const projects = mockTool<typeof mockProjects>('list_projects');
+    const linked = projects.flatMap(project =>
+        mockTool<Array<{ id: string; name: string }>>('list_project_workspaces', { projectId: project.id })
+            .map(checkout => ({ ...checkout, projectId: project.id })));
+    expect(linked.length).toBeGreaterThan(0);
+    const chosen = linked[0];
+    const viaCheckout = mockTool<{ id: string; name: string }>('get_workspace', {
+        projectId: chosen.projectId, checkoutId: chosen.id,
+    });
+    const viaLegacy = mockTool<{ id: string; name: string }>('get_workspace', {
+        projectId: chosen.projectId, workspaceId: chosen.id,
+    });
+    expect(viaCheckout.id).toBe(chosen.id);
+    expect(viaCheckout).toEqual(viaLegacy);
 });
 
 test('search understands portfolio requests and supplies explicitly simulated log actions', () => {

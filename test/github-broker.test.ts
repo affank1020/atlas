@@ -110,6 +110,45 @@ test('reject changed remote heads and never surface GitHub response bodies', asy
     });
 });
 
+test('retirement requires a merged PR for the exact HEAD and default branch (including squash merges)', async () => {
+    const broker = new GitHubBroker(env, (async (url) => {
+        const u = String(url);
+        if (u.includes('/app/installations?')) return response(200, installations);
+        if (u.endsWith('/access_tokens')) return response(201, tokenBody);
+        if (u === 'https://api.github.com/repos/affank1020/portfolio-site')
+            return response(200, { default_branch: 'main' });
+        assert.match(u, /\/pulls\?state=closed&head=affank1020%3Aatlas%2Ffeature&per_page=100$/);
+        return response(200, [
+            { number: 13, html_url: 'https://github.com/affank1020/portfolio-site/pull/13',
+                merged_at: null, head: { sha: head }, base: { ref: 'main' } },
+            { number: 14, html_url: 'https://github.com/affank1020/portfolio-site/pull/14',
+                merged_at: '2026-10-20T12:00:00Z', head: { sha: head }, base: { ref: 'main' } },
+        ]);
+    }) as typeof fetch);
+    assert.deepEqual(await broker.verifyMergedPullRequest(repo, 'atlas/feature', head), {
+        number: 14, url: 'https://github.com/affank1020/portfolio-site/pull/14',
+    });
+    await assert.rejects(broker.verifyMergedPullRequest(repo, 'atlas/feature', 'b'.repeat(40)), /No merged PR matches/);
+    await assert.rejects(broker.verifyMergedPullRequest(repo, 'main', head), /Invalid worktree retirement/);
+});
+
+test('retirement fails closed if a PR merged into a different base or is still open', async () => {
+    const broker = new GitHubBroker(env, (async (url) => {
+        const u = String(url);
+        if (u.includes('/app/installations?')) return response(200, installations);
+        if (u.endsWith('/access_tokens')) return response(201, tokenBody);
+        if (u === 'https://api.github.com/repos/affank1020/portfolio-site')
+            return response(200, { default_branch: 'main' });
+        return response(200, [
+            { number: 21, html_url: 'https://github.com/affank1020/portfolio-site/pull/21',
+                merged_at: '2026-10-20T12:00:00Z', head: { sha: head }, base: { ref: 'develop' } },
+            { number: 22, html_url: 'https://github.com/affank1020/portfolio-site/pull/22',
+                merged_at: null, head: { sha: head }, base: { ref: 'main' } },
+        ]);
+    }) as typeof fetch);
+    await assert.rejects(broker.verifyMergedPullRequest(repo, 'atlas/feature', head), /No merged PR matches/);
+});
+
 test('public push schema rejects injected GitHub secrets and Node requires brokered token', () => {
     const input = { projectId: workspaceId, workspaceId, branch: 'atlas/test', expectedHead: head, repository: repo };
     assert.equal(workspaceSchemas.workspace_git_push_branch.safeParse(input).success, true);

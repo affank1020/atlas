@@ -42,6 +42,8 @@ const records: AtlasRecord[] = stores.flatMap((entry, storeIndex) =>
 );
 const nodeMac = uuid(20, 1);
 const nodeLinux = uuid(20, 2);
+const nodeAndroidTablet = uuid(20, 3);
+const nodeAndroidPhone = uuid(20, 4);
 const workspaces = [
     { id: uuid(21, 1), projectId: mockProjects[0].id, nodeId: nodeMac, name: 'Atlas Demo Repo', rootPath: '/demo/atlas', kind: 'generic', adapter: null },
     { id: uuid(21, 2), projectId: mockProjects[2].id, nodeId: nodeMac, name: 'Football Demo', rootPath: '/demo/football', kind: 'unity', adapter: 'unity' },
@@ -51,6 +53,9 @@ const nodes: AtlasNode[] = [
     { id: nodeMac, name: 'Demo MacBook', status: 'online', platform: 'darwin', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], lastSeen: stamp, hostedWorkspaceCount: 2 },
     // Deliberately disconnected in local mock mode to preview the Home health warning.
     { id: nodeLinux, name: 'Demo Linux VPS', status: 'offline', platform: 'linux', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git'], lastSeen: stamp, hostedWorkspaceCount: 1 },
+    // Android fixtures preview future mobile nodes; they are not enrolled runtimes.
+    { id: nodeAndroidTablet, name: 'Demo Android Tablet', status: 'online', platform: 'android', deviceType: 'tablet', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
+    { id: nodeAndroidPhone, name: 'Demo Android Phone', status: 'online', platform: 'android', deviceType: 'phone', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
 ];
 const activity: AuditEvent[] = [
     { id: uuid(30, 1), occurredAt: stamp, client: 'demo', operation: 'workspace.git_status', projectId: mockProjects[0].id, workspaceId: workspaces[0].id, resulting: { branch: 'demo/main' } },
@@ -90,6 +95,9 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
     const storeId = str(input.storeId);
     const nodeId = str(input.nodeId);
     const workspaceId = str(input.workspaceId);
+    // Mirror the public server alias for checkout-oriented reads; audit APIs
+    // keep using their existing workspaceId filter.
+    const checkoutId = str(input.checkoutId ?? input.workspaceId);
     let result: unknown;
     switch (name) {
         case 'get_atlas_status': result = status; break;
@@ -127,6 +135,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
             result = page(records.filter(r => r.projectId === projectId && r.storeId === storeId), input); break;
         case 'list_views': result = []; break;
         case 'list_nodes': result = nodes; break;
+        case 'list_node_releases': result = { state: 'ready', releases: [], checkedAt: stamp, source: 'github-releases' }; break;
         case 'get_node':
             result = { ...nodes.find(node => node.id === nodeId), workspaces: workspaces.filter(w => w.nodeId === nodeId),
                 activity: activity.filter(a => workspaces.some(w => w.nodeId === nodeId && w.id === a.workspaceId)).map(a => ({ operation: a.operation, createdAt: a.occurredAt })) }; break;
@@ -137,7 +146,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         ] }; break;
         case 'workspace_git_list_worktrees': result = { worktrees: [] }; break;
         case 'list_project_workspaces': result = workspaces.filter(w => w.projectId === projectId); break;
-        case 'get_workspace': result = workspaces.find(w => w.projectId === projectId && w.id === workspaceId); break;
+        case 'get_workspace': result = workspaces.find(w => w.projectId === projectId && w.id === checkoutId); break;
         case 'workspace_git_status': result = { available: true, branch: 'demo/main', dirty: false, changes: [], truncated: false }; break;
         case 'workspace_list_dev_tasks': result = []; break;
         case 'workspace_list_files': result = { entries: [{ path: 'README.md', type: 'file' }, { path: 'src', type: 'directory' }], truncated: false }; break;

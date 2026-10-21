@@ -17,7 +17,8 @@ test('one-use enrolment, per-Node authentication, rotation, revocation and durab
     await assert.rejects(identity.authenticate(b.nodeId, a.credential), (error: any) => error.code === 'NODE_AUTH_INVALID');
     const project = await fixture.catalog.createProject({ name: 'Placement' });
     const defaultNode = (await new PostgresNodeRepository(fixture.store.pool).getDefault()).id;
-    const inserted = await fixture.store.pool.query("INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id) VALUES(gen_random_uuid(),$1,'Placed','/tmp','generic',NULL,$2) RETURNING id", [project.id, defaultNode]);
+    const logical = await fixture.store.pool.query("INSERT INTO logical_workspaces(id,name) VALUES(gen_random_uuid(),'Placed') RETURNING id");
+    const inserted = await fixture.store.pool.query("INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id) VALUES(gen_random_uuid(),$1,'Placed','/tmp','generic',NULL,$2,$3) RETURNING id", [project.id, defaultNode, logical.rows[0].id]);
     const workspaceId = inserted.rows[0].id;
     await identity.assign({ projectId: project.id, workspaceId, nodeId: a.nodeId, expectedNodeId: defaultNode });
     await assert.rejects(identity.assign({ projectId: project.id, workspaceId, nodeId: b.nodeId, expectedNodeId: defaultNode }), (error: any) => error.code === 'CONFLICT');
