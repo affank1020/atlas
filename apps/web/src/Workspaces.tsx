@@ -71,7 +71,8 @@ export function Workspaces() {
     const provisionNode = online.find(n => n.id === nodeId);
     const managers = all.filter(w => w.nodeId === nodeId && w.kind === 'generic');
     const groups = useMemo(() => logical.length ? logical :
-        all.map(w => ({ id: w.id, name: w.name, repository: null, kind: 'local' as const, checkouts: [w] })), [logical, all]);
+        all.map(w => ({ id: w.id, name: w.name, repository: null, kind: 'local' as const,
+            projectIds: w.projectId ? [w.projectId] : [], checkouts: [w] })), [logical, all]);
     const entries = useMemo(() => groups.map(group => ({
         ...group,
         checkouts: group.checkouts.filter(checkout => !nodeFilter || checkout.nodeId === nodeFilter),
