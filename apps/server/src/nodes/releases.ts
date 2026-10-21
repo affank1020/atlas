@@ -1,8 +1,9 @@
 /**
  * Verified distribution catalogue for standalone desktop Nodes.
  *
- * GitHub Releases is the one artifact store. The trusted publication workflow
- * creates unique release tags and a Sigstore build-provenance attestation;
+ * GitHub Releases is the one artifact store. The publisher produces an
+ * attestation, but the catalogue cannot independently verify its signature,
+ * workflow or source identity. Never claim provenance is verified here.
  * Actions' expiring temporary artifacts are never offered as downloads.
  * This service is read-only and has no GitHub credentials or update authority.
  */
@@ -21,7 +22,8 @@ export type NodeRelease = {
     checksumUrl: string;
     sha256: string;
     releaseUrl: string;
-    signature: 'github-build-provenance';
+    /** GitHub's asset digest is NOT a cryptographic provenance verification. */
+    provenance: 'unverified';
 };
 
 export type NodeReleaseCatalogue = {
@@ -68,7 +70,7 @@ function parseRelease(value: GithubRelease): NodeRelease[] {
         notes: typeof value.body === 'string' ? value.body.slice(0, 4000) : '',
         downloadUrl: expectedArchiveUrl, checksumUrl: expectedChecksumUrl,
         sha256: digest, releaseUrl: value.html_url,
-        signature: 'github-build-provenance' as const,
+        provenance: 'unverified' as const,
     };
     return [{ ...base, platform: 'linux' }, { ...base, platform: 'darwin' }];
 }
