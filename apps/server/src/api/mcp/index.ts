@@ -50,7 +50,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         list_node_releases: 'Discover verified, published macOS and Linux Node releases; no deployment is performed.',
         plan_node_update: 'Read-only compatibility and provenance preflight for one Linux Node. NEVER installs, restarts or authorises a Node update.',
         get_node: 'Inspect one Node, its assigned Workspaces and recent activity without exposing credentials.',
-        read_node_logs: 'Read a bounded, redacted tail from one connected Node’s predefined Atlas stdout or stderr log. No paths or shell commands.',
+        read_node_logs: 'Read a bounded, redacted tail from a connected Node: macOS stdout/stderr or the fixed Linux atlas-node.service journal. Defaults follow the selected Node platform. No paths or shell commands.',
         create_node_enrolment: 'Issue a one-use Node enrolment token valid for ten minutes.',
         update_node: 'Rename a persistent Node.',
         rotate_node_credential: 'Invalidate a Node credential and issue a one-use reenrolment token. Disconnects the Node.',

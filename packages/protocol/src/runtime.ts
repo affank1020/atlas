@@ -10,7 +10,7 @@ export interface NodeRuntime {
     }): Promise<{ accepted: boolean }>;
     getCapabilities(): NodeCapability[];
     bind(rootPath: string): Promise<string>;
-    readLogs?(source: 'stdout' | 'stderr', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;
+    readLogs?(source: 'stdout' | 'stderr' | 'journal', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;
     execute(workspace: Workspace, operation: NodeOperation, input: Record<string, any>): Promise<unknown>;
 }
 export const requiredCapability: Record<NodeOperation, NodeCapability> = {

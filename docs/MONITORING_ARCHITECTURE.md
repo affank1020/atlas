@@ -12,7 +12,7 @@ Audit baseline: Atlas `main` (2026-10-21, commit `093d780`). This document recor
 | Store audit history | `StoreAudit` in `App.tsx` | Keep revision evidence until scoped replacement has feature parity |
 | Node recent activity | `NodeIdentity.activity` queries `after_state.nodeId` | Not a separate audit database; metadata association differs from `workspace_id` |
 | macOS Node logs | `node-logs.ts`, approved `node.log` / `node-error.log` | Read-only 256 KiB scan, <=200 lines, <=48 KiB redacted output |
-| Linux Node logs | systemd journal for `atlas-node` | Existing file-tail capability is not available on Linux; requires dedicated fixed-unit adapter |
+| Linux Node logs | `journalctl` for fixed `atlas-node.service` unit | Read-only adapter with a 200-line / 48 KiB tail, no shell or caller-controlled journal units; returns unavailable without privilege escalation |
 | Atlas Server logs | production process / container stdout | No approved read API; requires fixed-service adapter and authorization |
 | Application output | Football Training trainer consoles and per-run output | Remains inside its application; dispatch and infrastructure failures belong in Monitoring |
 | Global search | Node log action, activity shortcut and node links | Route operational searches to Monitoring as sections gain parity |
@@ -26,7 +26,7 @@ Audit baseline: Atlas `main` (2026-10-21, commit `093d780`). This document recor
 * Audit payload snapshots can contain data fields. Respect the existing Atlas authentication boundary, avoid serializing credentials in new diagnostic emitters, and implement a bounded server-side safe-detail projection before widening operator access.
 * The macOS log adapter redacts known token patterns and refuses paths/symlinks; it does not guarantee full retention or universal redaction. Logs remain bounded tails, never archive evidence.
 * Node lifecycle is partly in audit rows (via `NodeIdentity`), but not all runtime events have a complete project / Node association. Do not imply comprehensive event coverage.
-* Linux journal and Server process logs require an allowlisted service/unit, fixed bounds, redaction and explicit read permissions. No shell, arbitrary paths, or caller-selected journal units.
+* Linux journal reads target only `atlas-node.service` with a fixed journalctl binary and arguments, a three-second timeout, 256 KiB scan and 48 KiB visible output cap. Journal timestamps are retained as emitted. Permission failures return unavailable, never a privileged retry; no shell, arbitrary paths, or caller-selected journal units. Atlas Server process/container logs still require a separate approved adapter.
 * The 5-second auto-refresh on the old feed is wasteful. Monitoring uses explicit refresh and cache-independent read requests; future optional live mode should be visibility-aware and throttled.
 * The authoritative source for specialised model-training logs stays inside Football Training. Copy only meaningful Atlas infrastructure outcomes, not training line streams.
 
@@ -34,7 +34,7 @@ Audit baseline: Atlas `main` (2026-10-21, commit `093d780`). This document recor
 
 1. **Activity and navigation (first PR):** query `audit_events` with parameterised filters, total and offset/limit; preserve legacy audit tools; add Monitoring tabs, deep links and old Activity bookmark support. Basic macOS Node log reader remains read-only. Indexes cover principal read patterns.
 2. **Contextual previews (follow-up PR):** remove Project Overview's full scrolling feed; use a reusable 3–5 event card with View all. Add Node and Workspace/checkout previews and Store shortcut, preserving revision drill-down.
-3. **Technical logs (follow-up PR):** audited Server and Linux fixed-source adapters, timestamp parsing, explicit offline/unauthorised/truncated states, bounded copy and tests for symlink and secret handling.
+3. **Technical logs (follow-up PR):** Linux fixed-unit journal adapter reuses the existing Node log capability and Monitoring UI with bounded reads and redaction tests; Atlas Server container logs still require a separately reviewed fixed-source adapter and authorization.
 4. **Operational quality (follow-up PR):** confirmed health signals (not guessed), correlated requests/results across page boundaries, richer associations, safe diagnostic projection, sensible polling and observability measures.
 
 ## Compatibility and validation

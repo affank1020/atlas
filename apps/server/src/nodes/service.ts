@@ -67,7 +67,13 @@ export class NodeService {
             const runtime = this.runtimes.get(x.nodeId);
             if (node.status !== 'online' || !runtime) throw new AtlasError('Node is not connected.', 'NODE_OFFLINE');
             if (!node.capabilities.includes('node.logs') || !runtime.readLogs) throw new AtlasError('Node log retrieval is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
-            return runtime.readLogs(x.source, x.lines);
+            // Resolve the omitted source *after* determining the selected Node's platform.
+            // Preserve explicitly requested sources: never silently turn stderr into journal.
+            const source = x.source ?? (node.platform === 'linux' ? 'journal' : 'stderr');
+            if ((node.platform === 'linux' && source !== 'journal') ||
+                (node.platform !== 'linux' && source === 'journal'))
+                throw new AtlasError('Selected log source is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
+            return runtime.readLogs(source, x.lines);
         }
         if (name === 'create_node_enrolment') return this.requireIdentity().ticket();
         if (name === 'update_node') return this.requireIdentity().update(x.nodeId, x.name);
