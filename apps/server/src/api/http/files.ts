@@ -9,7 +9,7 @@ const MAX_UPLOAD_BODY_BYTES = 35 * 1024 * 1024;
 // code unit (e.g. CJK characters). The decoded name is still validated by
 // AtlasFilesService.upload, including its 255-character limit.
 const MAX_ENCODED_FILE_NAME_LENGTH = 255 * 9;
-const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive']);
+const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive', 'restore']);
 const BINARY_HEADERS = 'content-type,x-atlas-owner-kind,x-atlas-owner-id,x-atlas-file-name,x-atlas-file-type';
 
 function sendJson(response: ServerResponse, status: number, value: unknown) {
@@ -147,7 +147,10 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
         // Validate the owner exists before any storage lookup or upload.
         await requireActiveOwner(owner, services);
         if (action === 'list') {
-            sendJson(response, 200, await services.files.list(owner));
+            const status = body.status ?? 'active';
+            if (status !== 'active' && status !== 'archived')
+                throw new AtlasError('Invalid Files listing status.');
+            sendJson(response, 200, await services.files.list(owner, status));
         } else if (action === 'upload') {
             const encoded = body.base64;
             if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4 ||
@@ -179,9 +182,11 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
                 'referrer-policy': 'no-referrer',
             });
             response.end(bytes);
-        } else {
+        } else if (action === 'archive') {
             await services.files.archive(owner, safeFileId(body.fileId));
             sendJson(response, 200, { archived: true });
+        } else {
+            sendJson(response, 200, await services.files.restore(owner, safeFileId(body.fileId)));
         }
     } catch (error) {
         const known = error instanceof AtlasError;

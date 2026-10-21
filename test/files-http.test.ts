@@ -13,7 +13,7 @@ const differentProject = randomUUID();
 const origin = 'https://atlas.example.test';
 
 test('private Files HTTP API is owner-scoped and denies untrusted origins', async () => {
-    const entries = new Map<string, { name: string; bytes: Buffer }>();
+    const entries = new Map<string, { name: string; bytes: Buffer; status: 'active' | 'archived' }>();
     const requests: string[] = [];
     const appSlugs = ['portfolio'];
     const services = {
@@ -26,21 +26,32 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         workspaces: { repository: { getById: async () => { throw new AtlasError('Workspace not found.', 'NOT_FOUND'); } } },
         applications: { listAll: () => appSlugs.map(slug => ({ slug })) },
         files: {
-            list: async (owner: { kind: string; id: string }) =>
-                owner.id === projectId ? [...entries].map(([id, item]) => ({ id, fileName: item.name, byteSize: item.bytes.length })) : [],
+            list: async (owner: { kind: string; id: string }, status: 'active' | 'archived' = 'active') =>
+                owner.id === projectId ? [...entries].filter(([, item]) => item.status === status)
+                    .map(([id, item]) => ({ id, fileName: item.name, byteSize: item.bytes.length, status })) : [],
             upload: async (input: { owner: { id: string }; fileName: string; bytes: Buffer; visibility: string }) => {
                 assert.equal(input.visibility, 'private');
                 const id = randomUUID();
-                entries.set(id, { name: input.fileName, bytes: input.bytes });
+                entries.set(id, { name: input.fileName, bytes: input.bytes, status: 'active' });
                 return { id, fileName: input.fileName, byteSize: input.bytes.length, visibility: input.visibility };
             },
             download: async (owner: { id: string }, id: string) => {
                 const item = entries.get(id);
-                if (!item || owner.id !== projectId) throw new AtlasError('Not found.', 'NOT_FOUND');
+                if (!item || item.status !== 'active' || owner.id !== projectId) throw new AtlasError('Not found.', 'NOT_FOUND');
                 return { file: { fileName: item.name }, bytes: item.bytes };
             },
             archive: async (owner: { id: string }, id: string) => {
-                if (owner.id !== projectId || !entries.delete(id)) throw new AtlasError('Not found.', 'NOT_FOUND');
+                const item = entries.get(id);
+                if (owner.id !== projectId || !item || item.status !== 'active')
+                    throw new AtlasError('Not found.', 'NOT_FOUND');
+                item.status = 'archived';
+            },
+            restore: async (owner: { id: string }, id: string) => {
+                const item = entries.get(id);
+                if (owner.id !== projectId || !item || item.status !== 'archived')
+                    throw new AtlasError('Not found.', 'NOT_FOUND');
+                item.status = 'active';
+                return { id, fileName: item.name, status: 'active' };
             },
         },
     } as unknown as ServerServices;
@@ -148,7 +159,18 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         assert.equal((await post('archive', { owner, fileId: binaryFile.id })).status, 200);
         assert.equal((await post('archive', { owner, fileId: unicodeFile.id })).status, 200);
         assert.equal((await (await post('list', { owner })).json() as unknown[]).length, 0);
+        assert.equal((await (await post('list', { owner, status: 'archived' })).json() as unknown[]).length, 3);
         assert.equal((await post('download', { owner, fileId: file.id })).status, 404);
+        assert.equal((await post('list', { owner, status: 'active\' OR true --' })).status, 400);
+        assert.equal((await post('list', { owner: { kind: 'project', id: differentProject }, status: 'archived' })).status, 404);
+        assert.equal((await post('restore', { owner: { kind: 'project', id: differentProject }, fileId: file.id })).status, 404);
+        assert.equal((await post('restore', { owner, fileId: randomUUID() })).status, 404);
+        const recovered = await post('restore', { owner, fileId: file.id });
+        assert.equal(recovered.status, 200);
+        assert.equal((await recovered.json() as { status: string }).status, 'active');
+        assert.deepEqual(Buffer.from(await (await post('download', { owner, fileId: file.id })).arrayBuffer()), content);
+        assert.equal((await (await post('list', { owner, status: 'archived' })).json() as unknown[]).length, 2);
+        assert.equal((await post('restore', { owner, fileId: file.id })).status, 404);
     } finally {
         server.closeAllConnections();
         await new Promise<void>(resolve => server.close(() => resolve()));

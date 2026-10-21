@@ -16,9 +16,10 @@
 - `#/files` is the Atlas Web Files browser. It lists existing projects,
   workspaces and applications, and lets the admin upload, download and archive
   their private files, with per-owner search and skeleton loading states.
-- The endpoints `POST /api/files/{list,upload,download,archive}` accept JSON
+- The endpoints `POST /api/files/{list,upload,download,archive,restore}` accept JSON
   with `owner: { kind, id }`. Upload uses `{ fileName, mimeType, base64 }`;
-  download and archive require `fileId`.
+  download, archive and restore require `fileId`. List accepts optional
+  `status: 'active' | 'archived'` (default `active`).
 - These routes are deliberately **not MCP tools**, and are **not public Portfolio
   routes**. Production /api/files/* is covered by Caddy's existing admin Basic
   Auth, and Atlas Server is bound to the container network and VPS loopback,
@@ -56,6 +57,22 @@
   configured `ATLAS_MEDIA_DIR`. When all four existing `ATLAS_R2_*` variables
   are set, new Files uploads use the configured private R2 bucket.
 
+## Archive recovery (PR follow-up)
+
+- Atlas Files now offers an **Active / Archived** filter scoped to the same
+  project, workspace or application. Archive retains PostgreSQL metadata and
+  original bytes; archived entries are not directly downloadable.
+- `POST /api/files/restore` reactivates only an archived file belonging to
+  the specified active owner. It reads and verifies the retained object's byte
+  length and SHA-256 checksum **before** restoring metadata. Missing or corrupt
+  bytes cannot be restored. This works with existing local storage and R2's
+  configured local fallback.
+- Restore does not expose files, delete bytes, or bypass admin authentication.
+  Multiple files with the same name remain independently addressable by ID.
+- **No automatic purging or expiry is enabled.** Before adding destructive
+  garbage collection, establish and test off-site backups, database/object
+  reconciliation, a minimum retention period, and a dry-run operation.
+
 ## Mobile-node readiness
 
 - Screenshot and document bytes now have a binary transport that mobile and
@@ -72,7 +89,7 @@
 
 ## Limitations and further work
 
-- Archive updates PostgreSQL metadata only. It **does not delete bytes** from
+- Archive and restore update PostgreSQL metadata only. They **do not delete bytes** from
   R2 or local storage. There is no retention timer, physical garbage collection,
   automatic backup, quota enforcement or per-owner storage billing yet.
 - No public CDN delivery, presigned uploads or client-side R2 credentials.

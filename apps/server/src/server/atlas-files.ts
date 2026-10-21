@@ -48,11 +48,12 @@ export class AtlasFilesService {
     }
     async close() { await this.pool.end(); }
 
-    async list(ownerInput: FileOwner): Promise<AtlasFile[]> {
+    async list(ownerInput: FileOwner, status: AtlasFile["status"] = "active"): Promise<AtlasFile[]> {
         const owner = ownerScope(ownerInput);
+        if (status !== "active" && status !== "archived") throw new AtlasError("Invalid Atlas Files status.");
         const result = await this.pool.query(
-            "SELECT * FROM atlas_files WHERE owner_kind=$1 AND owner_id=$2 AND status='active' ORDER BY created_at DESC",
-            [owner.kind, owner.id]);
+            "SELECT * FROM atlas_files WHERE owner_kind=$1 AND owner_id=$2 AND status=$3 ORDER BY created_at DESC",
+            [owner.kind, owner.id, status]);
         return result.rows.map(fileRow);
     }
     async upload(input: {
@@ -87,6 +88,17 @@ export class AtlasFilesService {
         if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
         return fileRow(result.rows[0]);
     }
+    private async verifiedBytes(row: Record<string, unknown>): Promise<Buffer> {
+        const bytes = await this.objects.get(String(row.storage_key)).catch(error => {
+            if (error instanceof ObjectNotFound) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+            throw error;
+        });
+        // Never return or restore metadata for missing, corrupted or truncated bytes.
+        if (bytes.length !== Number(row.byte_size) ||
+            createHash("sha256").update(bytes).digest("hex") !== row.checksum)
+            throw new Error("Atlas Files object integrity verification failed.");
+        return bytes;
+    }
     async download(ownerInput: FileOwner, id: string): Promise<{ file: AtlasFile; bytes: Buffer }> {
         const owner = ownerScope(ownerInput);
         const result = await this.pool.query(
@@ -94,16 +106,7 @@ export class AtlasFilesService {
             [id,owner.kind,owner.id]);
         if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
         const row = result.rows[0]!;
-        const bytes = await this.objects.get(row.storage_key).catch(error => {
-            if (error instanceof ObjectNotFound) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
-            throw error;
-        });
-        // Metadata is not evidence that the underlying bytes are intact.
-        // Never serve a truncated or corrupted object, including from local fallback.
-        if (bytes.length !== Number(row.byte_size) ||
-            createHash("sha256").update(bytes).digest("hex") !== row.checksum)
-            throw new Error("Atlas Files object integrity verification failed.");
-        return { file: fileRow(row), bytes };
+        return { file: fileRow(row), bytes: await this.verifiedBytes(row) };
     }
     async archive(ownerInput: FileOwner, id: string): Promise<void> {
         const owner = ownerScope(ownerInput);
@@ -111,6 +114,21 @@ export class AtlasFilesService {
             "UPDATE atlas_files SET status='archived',updated_at=now() WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND status='active' RETURNING id",
             [id,owner.kind,owner.id]);
         if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
-        // Physical deletion and retention are deliberate follow-up work.
+        // Archiving never deletes physical bytes. A separate, explicit policy
+        // and verified backup are required before implementing garbage collection.
+    }
+    async restore(ownerInput: FileOwner, id: string): Promise<AtlasFile> {
+        const owner = ownerScope(ownerInput);
+        const result = await this.pool.query(
+            "SELECT * FROM atlas_files WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND status='archived'",
+            [id, owner.kind, owner.id]);
+        if (!result.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+        // Verify retained bytes before making the file downloadable again.
+        await this.verifiedBytes(result.rows[0]);
+        const restored = await this.pool.query(
+            "UPDATE atlas_files SET status='active',updated_at=now() WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND status='archived' RETURNING *",
+            [id, owner.kind, owner.id]);
+        if (!restored.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+        return fileRow(restored.rows[0]);
     }
 }

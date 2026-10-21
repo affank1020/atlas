@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -32,7 +33,19 @@ test("Shared Atlas Files default to private and isolate owner-scoped reads, list
         await assert.rejects(files.archive(otherApp, saved.id), /not found/);
         await files.archive(portfolio, saved.id);
         assert.deepEqual(await files.list(portfolio), []);
+        assert.deepEqual((await files.list(portfolio, "archived")).map(file => file.id), [saved.id]);
+        assert.deepEqual(await files.list(otherApp, "archived"), []);
         await assert.rejects(files.download(portfolio, saved.id), /not found/);
+        await assert.rejects(files.restore(otherApp, saved.id), /not found/);
+        await assert.rejects(files.restore(portfolio, randomUUID()), /not found/);
+        const restored = await files.restore(portfolio, saved.id);
+        assert.equal(restored.status, "active");
+        assert.deepEqual((await files.list(portfolio)).map(file => file.id), [saved.id]);
+        assert.deepEqual(await files.list(portfolio, "archived"), []);
+        assert.equal((await files.download(portfolio, saved.id)).bytes.toString(), "Test artifact");
+        await assert.rejects(files.restore(portfolio, saved.id), /not found/);
+        await files.archive(portfolio, saved.id);
+        await assert.rejects(files.list(portfolio, "active' OR 1=1 --" as "active"), /status/);
     } finally {
         await files.close();
         await rm(root, { recursive: true, force: true });
@@ -75,7 +88,11 @@ test("Downloads reject corrupted or truncated local objects before returning byt
         await assert.rejects(files.download(portfolio, saved.id), /integrity verification failed/);
         await writeFile(objectPath, Buffer.from("truncated"));
         await assert.rejects(files.download(portfolio, saved.id), /integrity verification failed/);
+        await files.archive(portfolio, saved.id);
+        await assert.rejects(files.restore(portfolio, saved.id), /integrity verification failed/,
+            "corrupt archived bytes cannot become active again");
         await writeFile(objectPath, original);
+        await files.restore(portfolio, saved.id);
         assert.deepEqual((await files.download(portfolio, saved.id)).bytes, original);
     } finally {
         await files.close();
