@@ -40,6 +40,9 @@ export async function readAtlasLinuxJournal(lines: number, runner: JournalRunner
             let bytes = 0;
             for (const line of output.split('\n').reverse()) {
                 const size = Buffer.byteLength(line, 'utf8') + (kept.length ? 1 : 0);
+                // A single oversized newest entry must not hide readable earlier lines.
+                // Never emit partial entries (especially incomplete redacted secrets).
+                if (size > OUTPUT_LIMIT) continue;
                 if (bytes + size > OUTPUT_LIMIT) break;
                 kept.push(line);
                 bytes += size;
