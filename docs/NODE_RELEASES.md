@@ -85,9 +85,13 @@ authenticity. Before trusting an archive for Linux, use the dedicated host
 helper:
 
 ```bash
-# GitHub CLI >= 2.102.0 (security-fixed verifier), tar, node and Linux required
-bash scripts/linux-node-trusted-stage.sh verify atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
-sudo bash scripts/linux-node-trusted-stage.sh install atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+# GitHub CLI >= 2.102.0, tar, node and Linux required.
+# Download bundle as your normal GitHub CLI-authenticated user (NOT sudo):
+archive="atlas-node-v2.0.0-<12-character-commit>.tar.gz"  # replace with your release filename
+gh attestation download "$archive" -R affank1020/atlas
+bundle="sha256:$(sha256sum "$archive" | awk '{print $1}').jsonl"
+bash scripts/linux-node-trusted-stage.sh verify "$archive" "$archive.sha256" "$bundle"
+sudo bash scripts/linux-node-trusted-stage.sh install "$archive" "$archive.sha256" "$bundle"
 ```
 
 The helper first checks the portable archive format, checksum, and embedded
@@ -98,12 +102,20 @@ identity
 `https://github.com/affank1020/atlas/.github/workflows/node-package.yml@refs/heads/main`,
 the SLSA v1 provenance predicate, and a GitHub-hosted runner. It fails closed
 when the attestation is unavailable, unsigned or does not match. This
-requires online GitHub access and working GitHub CLI attestation support;
-manually supplied SHA-256 files do not override the verifier.
+requires authenticated GitHub access from the **unprivileged user**
+for `gh attestation download`, but not from the root installer: it verifies
+the signed bundle locally with `gh attestation verify --bundle`. The bundle is
+untrusted input and cannot bypass certificate/source constraints. The installer
+refuses an absent bundle; never pass GitHub tokens through sudo or use
+`sudo -E`. GitHub CLI may fetch or refresh Sigstore trust roots, but does not
+require root API authentication for bundle verification. Offline verification
+cannot independently detect whether a repository has since been renamed or its
+old name reused; verify repository identity online during procurement.
 
-The root-only `install` action copies the archive and checksum into a
-private root-owned staging directory **before** verifying them and passes
-those same copied bytes to the existing `linux-node-release.sh install`
+The root-only `install` action copies the archive, checksum and
+attestation bundle into a private root-owned staging directory **before**
+verifying the bundle locally without a root GitHub CLI login, then passes
+those same copied archive/checksum bytes to the existing `linux-node-release.sh install`
 installer, preventing a caller from changing the artifact between checks.
 It installs into `/opt/atlas-node/releases` but **never** modifies the
 `current`/`previous` symlinks, systemd service, credentials, Atlas Server,
