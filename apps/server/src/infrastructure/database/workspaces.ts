@@ -10,7 +10,7 @@ class WorkspaceReader {
     constructor(protected readonly db: Pool | PoolClient) {}
     async get(projectId: string, id: string, includeArchived = false) {
         const result = await this.db.query(
-            'SELECT w.* FROM workspaces w JOIN workspace_project_links l ON l.workspace_id=w.id WHERE l.project_id=$1 AND w.id=$2 AND ($3 OR w.archived_at IS NULL)',
+            'SELECT w.* FROM workspaces w JOIN logical_workspace_project_links l ON l.logical_workspace_id=w.logical_workspace_id WHERE l.project_id=$1 AND w.id=$2 AND ($3 OR w.archived_at IS NULL)',
             [projectId, id, includeArchived]);
         if (!result.rowCount) throw new AtlasError('Workspace not found in this project.', 'NOT_FOUND');
         return row(result.rows[0]);
@@ -77,7 +77,24 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
             'SELECT kind FROM logical_workspaces WHERE id=$1 FOR UPDATE', [source.logicalWorkspaceId]);
         if (!previous.rowCount)
             throw new AtlasError('Logical Workspace was not found.', 'CONFLICT');
+        // Existing repository identity cannot be silently changed: its Project
+        // associations may cover several independent clones and must not leak
+        // into a different repository following an origin rewrite.
+        if (previous.rows[0].kind === 'git') {
+            const existing = await this.connection.query(
+                'SELECT repository FROM logical_workspaces WHERE id=$1',
+                [source.logicalWorkspaceId]);
+            if (existing.rows[0]?.repository?.toLowerCase() !== repository.toLowerCase())
+                throw new AtlasError('Git origin changed; register a new checkout identity before associating Projects.', 'CONFLICT');
+        }
         const logicalId = await this.repositoryIdentity(repository, source.name);
+        // Preserve every Project association before the provisional group is
+        // removed. The destination takes the union (e.g. Mac + Linux Projects).
+        await this.connection.query(
+            `INSERT INTO logical_workspace_project_links(logical_workspace_id,project_id)
+             SELECT $2,project_id FROM logical_workspace_project_links
+             WHERE logical_workspace_id=$1 ON CONFLICT DO NOTHING`,
+            [source.logicalWorkspaceId, logicalId]);
         if (previous.rows[0].kind === 'local') {
             await this.connection.query(
                 'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE logical_workspace_id=$1',
@@ -89,6 +106,7 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
                 'UPDATE workspaces SET logical_workspace_id=$2,updated_at=now() WHERE id=$1',
                 [workspaceId, logicalId]);
         }
+        await this.syncLogicalProjects(logicalId);
         // Remove a provisional identity only after its last checkout moves.
         await this.connection.query(
             `DELETE FROM logical_workspaces WHERE id=$1 AND kind='local'
@@ -110,26 +128,65 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
                 [randomUUID(), input.projectId ?? null, input.name, input.rootPath, input.kind,
                     input.kind === 'unity' ? 'unity' : null, input.nodeId, logicalId]);
             const workspace = row(result.rows[0]);
-            if (input.projectId) await this.link(workspace.id, input.projectId);
-            return workspace;
+            if (input.projectId) await this.linkLogical(logicalId, input.projectId);
+            else await this.syncLogicalProjects(logicalId);
+            return this.getById(workspace.id);
         } catch (error: any) {
             if (error.code === '23505') throw new AtlasError('This Node directory is already registered as an active Workspace.', 'CONFLICT');
             throw error;
         }
     }
+    /** Keep the checkout-era join table and primary Project column in sync
+     * during the rolling API migration. Logical links are authoritative. */
+    private async syncLogicalProjects(logicalWorkspaceId: string) {
+        await this.connection.query(
+            `INSERT INTO workspace_project_links(workspace_id,project_id)
+             SELECT w.id,lp.project_id
+             FROM workspaces w JOIN logical_workspace_project_links lp
+               ON lp.logical_workspace_id=w.logical_workspace_id
+             WHERE w.logical_workspace_id=$1 ON CONFLICT DO NOTHING`,
+            [logicalWorkspaceId]);
+        await this.connection.query(
+            `DELETE FROM workspace_project_links p USING workspaces w
+             WHERE p.workspace_id=w.id AND w.logical_workspace_id=$1
+               AND NOT EXISTS (SELECT 1 FROM logical_workspace_project_links lp
+                               WHERE lp.logical_workspace_id=$1 AND lp.project_id=p.project_id)`,
+            [logicalWorkspaceId]);
+        await this.connection.query(
+            `UPDATE workspaces w SET project_id=(
+                 SELECT lp.project_id FROM logical_workspace_project_links lp
+                 WHERE lp.logical_workspace_id=$1
+                 ORDER BY (lp.project_id=w.project_id) DESC,lp.created_at,lp.project_id LIMIT 1
+             ),updated_at=now()
+             WHERE w.logical_workspace_id=$1 AND w.project_id IS DISTINCT FROM (
+                 SELECT lp.project_id FROM logical_workspace_project_links lp
+                 WHERE lp.logical_workspace_id=$1
+                 ORDER BY (lp.project_id=w.project_id) DESC,lp.created_at,lp.project_id LIMIT 1
+             )`,
+            [logicalWorkspaceId]);
+    }
+    async linkLogical(logicalWorkspaceId: string, projectId: string) {
+        await this.connection.query(
+            `INSERT INTO logical_workspace_project_links(logical_workspace_id,project_id)
+             VALUES($1,$2) ON CONFLICT DO NOTHING`,
+            [logicalWorkspaceId,projectId]);
+        await this.syncLogicalProjects(logicalWorkspaceId);
+    }
+    async unlinkLogical(logicalWorkspaceId: string, projectId: string) {
+        await this.connection.query(
+            'DELETE FROM logical_workspace_project_links WHERE logical_workspace_id=$1 AND project_id=$2',
+            [logicalWorkspaceId,projectId]);
+        await this.syncLogicalProjects(logicalWorkspaceId);
+    }
+    // Compatibility endpoints now modify the logical Workspace that owns the
+    // selected checkout, rather than a particular Node's directory.
     async link(workspaceId: string, projectId: string) {
-        await this.connection.query(
-            'INSERT INTO workspace_project_links(workspace_id,project_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
-            [workspaceId, projectId]);
-        await this.connection.query(
-            'UPDATE workspaces SET project_id=COALESCE(project_id,$2),updated_at=now() WHERE id=$1', [workspaceId, projectId]);
+        const checkout = await this.getById(workspaceId);
+        await this.linkLogical(checkout.logicalWorkspaceId!, projectId);
     }
     async unlink(workspaceId: string, projectId: string) {
-        await this.connection.query(
-            'DELETE FROM workspace_project_links WHERE workspace_id=$1 AND project_id=$2', [workspaceId, projectId]);
-        await this.connection.query(
-            'UPDATE workspaces w SET project_id=(SELECT project_id FROM workspace_project_links WHERE workspace_id=$1 ORDER BY created_at LIMIT 1),updated_at=now() WHERE w.id=$1 AND w.project_id=$2',
-            [workspaceId, projectId]);
+        const checkout = await this.getById(workspaceId);
+        await this.unlinkLogical(checkout.logicalWorkspaceId!, projectId);
     }
     async update(id: string, name: string | undefined, archive: boolean) {
         const result = archive
@@ -157,7 +214,7 @@ export class PostgresWorkspaceRepository extends WorkspaceReader implements Work
     constructor(private readonly pool: Pool) { super(pool); }
     async list(projectId: string, includeArchived = false) {
         return (await this.pool.query(
-            'SELECT w.* FROM workspaces w JOIN workspace_project_links l ON l.workspace_id=w.id WHERE l.project_id=$1 AND ($2 OR w.archived_at IS NULL) ORDER BY w.created_at,w.id',
+            'SELECT w.* FROM workspaces w JOIN logical_workspace_project_links l ON l.logical_workspace_id=w.logical_workspace_id WHERE l.project_id=$1 AND ($2 OR w.archived_at IS NULL) ORDER BY w.created_at,w.id',
             [projectId, includeArchived])).rows.map(row);
     }
     async listAll(includeArchived = false, nodeId?: string) {
@@ -170,6 +227,8 @@ export class PostgresWorkspaceRepository extends WorkspaceReader implements Work
             `SELECT l.id AS logical_id, l.name AS logical_name,
                     l.repository AS logical_repository, l.kind AS logical_kind,
                     l.created_at AS logical_created_at, l.updated_at AS logical_updated_at,
+                    ARRAY(SELECT project_id FROM logical_workspace_project_links lp
+                          WHERE lp.logical_workspace_id=l.id ORDER BY lp.project_id) AS logical_project_ids,
                     w.*
              FROM logical_workspaces l
              JOIN workspaces w ON w.logical_workspace_id=l.id
@@ -182,6 +241,7 @@ export class PostgresWorkspaceRepository extends WorkspaceReader implements Work
                 entry = {
                     id: record.logical_id, name: record.logical_name,
                     repository: record.logical_repository, kind: record.logical_kind,
+                    projectIds: record.logical_project_ids,
                     createdAt: new Date(record.logical_created_at).toISOString(),
                     updatedAt: new Date(record.logical_updated_at).toISOString(),
                     checkouts: [],
