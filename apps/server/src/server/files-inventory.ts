@@ -34,7 +34,10 @@ export async function scanLocalFiles(root: string, limit: number): Promise<{ obj
     let stat;
     try { stat = await lstat(root); }
     catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { objects: [], truncated: false };
+        // A missing or unmounted configured directory is not an empty scan.
+        // Fail closed rather than reporting misleading "0 objects, complete".
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+            throw new Error('Atlas Files audit local storage root is missing or unmounted.');
         throw error;
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Files audit root must be a real directory.');
