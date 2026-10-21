@@ -103,7 +103,8 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
     try {
         await server.connect(a); await client.connect(b);
         const { tools } = await client.listTools();
-        const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
+        const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node',
+            'list_node_share_approvals', 'update_node_share_approval'];
         const additivePortfolio = ['patch_portfolio_entry', 'preview_portfolio_entry', 'set_portfolio_media'];
         const gitWrites = ['workspace_git_create_branch', 'workspace_git_switch_branch', 'workspace_git_stage', 'workspace_git_commit', 'workspace_git_push_branch', 'workspace_git_open_pull_request'];
         // Checkout-aware tools now expose an additive checkoutId selector.
