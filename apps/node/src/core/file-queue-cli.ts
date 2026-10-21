@@ -38,7 +38,7 @@ try {
         // Explicit operator acknowledgement: old upload might already have
         // committed despite an ambiguous response. Inspect server first.
         const next=await queue.restartWithNewId(args[0]!);
-        console.log(JSON.stringify({queued:true,uploadId:next}));
+        console.log(JSON.stringify({queued:true,queueId:args[0],uploadId:next}));
     } else if (action === 'discard' && args.length===1) {
         await queue.discard(args[0]!);
         console.log(JSON.stringify({discarded:true}));
