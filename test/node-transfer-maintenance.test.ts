@@ -146,6 +146,66 @@ test('a successful resumable init refreshes inactivity age before cleanup can cl
     } finally { await env.close(); }
 });
 
+test('expired upload UUIDs stay reserved across resumable and one-shot retries',async()=>{
+    const env=await setup();
+    try {
+        const uploadId=await env.add({ageDays:9,bytes:5});
+        const identity=new NodeIdentity(env.pool);
+        const ingest=new NodeFileIngestService(env.pool,identity,env.files);
+        const resumable=new NodeResumableTransferService(env.pool,ingest);
+        const input={nodeId:env.node.nodeId,credential:env.node.credential,
+            workspaceId:env.workspaceId,uploadId,fileName:'capture.png',
+            mimeType:'image/png',byteSize:5,checksum:CHECKSUM};
+        const before=await env.pool.query('SELECT COUNT(*)::int AS count FROM node_file_expired_upload_ids');
+        assert.equal(before.rows[0].count,0);
+        assert.equal((await expireNodeTransferCheckpoints(env.pool)).removedSessions,1);
+        const fence=await env.pool.query(
+            'SELECT node_id,upload_id FROM node_file_expired_upload_ids WHERE node_id=$1 AND upload_id=$2',
+            [env.node.nodeId,uploadId]);
+        assert.equal(fence.rowCount,1);
+        const conflict=(error:unknown)=> (error as {code?:string}).code==='CONFLICT';
+        await assert.rejects(resumable.init(input),conflict,
+            'an exact offline retry still requires a new UUID after expiration');
+        await assert.rejects(resumable.init({...input,fileName:'changed.png',checksum:'b'.repeat(64)}),
+            conflict,'expired UUID cannot be rebound to different metadata');
+        const otherWorkspaceId=randomUUID();
+        await env.pool.query('INSERT INTO logical_workspaces(id,name) VALUES($1,$2)',
+            [otherWorkspaceId,'Another checkout']);
+        await env.pool.query(`INSERT INTO workspaces(id,name,root_path,kind,adapter,node_id,logical_workspace_id)
+            VALUES($1,'Another checkout','/another','generic',NULL,$2,$1)`,
+            [otherWorkspaceId,env.node.nodeId]);
+        await assert.rejects(resumable.init({...input,workspaceId:otherWorkspaceId}),
+            conflict,'expired UUID cannot migrate to another workspace of the same Node');
+        await assert.rejects(ingest.ingest({
+            nodeId:input.nodeId,credential:input.credential,workspaceId:input.workspaceId,
+            uploadId,fileName:'capture.png',mimeType:'image/png',bytes:Buffer.from('fresh'),
+        }),conflict,'one-shot upload cannot silently consume the expired resumable UUID');
+        const freshId=randomUUID();
+        assert.equal((await resumable.init({...input,uploadId:freshId})).completed,false);
+        assert.equal((await env.pool.query(
+            'SELECT COUNT(*)::int AS count FROM node_file_upload_receipts WHERE node_id=$1 AND upload_id=$2',
+            [env.node.nodeId,uploadId])).rows[0].count,0);
+        assert.equal((await env.files.list({kind:'workspace',id:env.workspaceId})).length,0);
+    } finally { await env.close(); }
+});
+
+test('tombstone insertion errors roll back cleanup without deleting any chunk bytes',async()=>{
+    const env=await setup();
+    try {
+        const uploadId=await env.add({ageDays:9,bytes:5});
+        await env.pool.query(`INSERT INTO node_file_expired_upload_ids(node_id,upload_id)
+            VALUES($1,$2)`,[env.node.nodeId,uploadId]);
+        await assert.rejects(expireNodeTransferCheckpoints(env.pool),
+            (error:unknown)=>(error as {code?:string}).code==='23505');
+        assert.equal((await env.pool.query(
+            'SELECT COUNT(*)::int AS count FROM node_file_transfer_sessions WHERE upload_id=$1',
+            [uploadId])).rows[0].count,1);
+        assert.equal((await env.pool.query(
+            'SELECT COUNT(*)::int AS count FROM node_file_transfer_parts WHERE upload_id=$1',
+            [uploadId])).rows[0].count,1);
+    } finally { await env.close(); }
+});
+
 test('invalid timestamps and unsafe batch sizes fail closed',async()=>{
     const env=await setup();
     try{
