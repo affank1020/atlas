@@ -19,6 +19,10 @@ describe('Monitoring deep links', () => {
         expect(parseMonitoringHash('#/monitoring?tab=logs&source=secrets&lines=999&nodeId=n'))
             .toEqual({ tab: 'logs', filters: { nodeId: 'n' } });
     });
+    it('preserves the approved fixed journal source in a bookmark', () => {
+        expect(parseMonitoringHash('#/monitoring?tab=logs&nodeId=linux-node&source=journal&lines=25'))
+            .toEqual({ tab: 'logs', filters: { nodeId: 'linux-node', source: 'journal', lines: '25' } });
+    });
     it('defaults unknown tabs to Overview', () => {
         expect(parseMonitoringHash('#/monitoring?tab=other')).toEqual({ tab: 'overview', filters: {} });
     });
