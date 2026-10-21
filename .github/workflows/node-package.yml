@@ -160,4 +160,4 @@ jobs:
           gh release create "$tag" "$file" "$file.sha256" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" --latest=false \
             --title "Atlas Node v${version} (${GITHUB_SHA:0:12})" \
-            --notes "$(printf 'Atlas-Node-Release-Sequence: %s\\n\\n%s' "$GITHUB_RUN_NUMBER" 'Standalone macOS/Linux Node runtime archive. Node wire protocol v2. Requires Node.js 20+. This is NOT an Atlas Server release and does not change registered Node identities. Verify the SHA-256 file and GitHub build-provenance attestation before staging. Linux activation remains a separate explicit operation; macOS auto-update is not provided.')"
+            --notes "$(printf 'Atlas-Node-Release-Sequence: %s\n\n%s' "$GITHUB_RUN_NUMBER" 'Standalone macOS/Linux Node runtime archive. Node wire protocol v2. Requires Node.js 20+. This is NOT an Atlas Server release and does not change registered Node identities. Verify the SHA-256 file and GitHub build-provenance attestation before staging. Linux activation remains a separate explicit operation; macOS auto-update is not provided.')"
