@@ -27,7 +27,7 @@ test('shell exposes focused navigation and keeps experimental tools out of the h
     expect(within(sidebar).getByRole('link', { name: 'Monitoring' })).toHaveAttribute('href', '#/monitoring');
     expect(within(sidebar).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '#/projects');
     expect(within(sidebar).getByRole('link', { name: 'Applications' })).toHaveAttribute('href', '#/applications');
-    expect(within(sidebar).queryByText('Workspace')).not.toBeInTheDocument();
+    expect(within(sidebar).getByRole('link', { name: 'Workspaces' })).toHaveAttribute('href', '#/workspaces');
     expect(screen.queryByRole('link', { name: /Sessions/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Portfolio' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Ask Portfolio' })).not.toBeInTheDocument();

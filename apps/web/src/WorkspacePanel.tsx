@@ -53,7 +53,7 @@ export function WorkspacePanel({ projectId, archived = false }: { projectId: str
         try { setPreview(await callTool('workspace_read_file', { projectId, workspaceId: workspace!.id, path })); } catch (e) { setError((e as Error).message); }
     }
     return <section className="panel" aria-label="Workspace">
-        <div className="panel-head"><div><p className="eyebrow">Workspace</p><h2>Project resource</h2></div><button disabled={busy || archived} onClick={refresh}>{busy ? 'Checking…' : 'Refresh'}</button></div>
+        <div className="panel-head"><div><p className="eyebrow">Workspace</p><h2>Project resource</h2></div><div className="actions"><a href="#/workspaces" className="ghost">Browse all</a><button disabled={busy || archived} onClick={refresh}>{busy ? 'Checking…' : 'Refresh'}</button></div></div>
         <div className="workspace-body">
         {error && <p role="alert">{error}</p>}
         {archived ? <p>This project is archived. Workspace access is disabled.</p> : workspace ? <>

@@ -5,7 +5,7 @@ export type AtlasNode = {
     id: string; name: string; status: 'online' | 'offline' | 'unavailable';
     platform?: string; version?: string | null; credentialState?: string; credentialUpdatedAt?: string | null;
     capabilities: string[]; lastSeen: string | null; hostedWorkspaceCount: number;
-    workspaces?: { id: string; projectId: string; name: string; kind: string }[];
+    workspaces?: { id: string; projectId: string | null; name: string; kind: string }[];
     activity?: {operation: string; createdAt: string}[];
 };
 const labels: Record<string, string> = { 'workspace.files': 'Filesystem', 'workspace.git': 'Git', 'workspace.dev': 'Development', unity: 'Unity' };
@@ -73,7 +73,7 @@ function NodeInspector({ node, detail, loading, detailError, nodes, onClose, onC
         <section className="node-inspector-section">
             <h3>Hosted workspaces <span>{current.hostedWorkspaceCount}</span></h3>
             {detail?.workspaces?.length ? <ul className="node-workspace-list">{detail.workspaces.map(workspace => <li key={workspace.id}>
-                <a href={'#/projects/' + workspace.projectId + '/workspaces'}>{workspace.name}</a>
+                <a href={'#/workspaces?workspace=' + encodeURIComponent(workspace.id)}>{workspace.name}</a>
                 <select aria-label={'Assign ' + workspace.name + ' to Node'} value={node.id} onChange={event => {
                     const target = event.target.value;
                     if (target === node.id) return;

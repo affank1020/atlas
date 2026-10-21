@@ -53,6 +53,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                     {link('#/applications', 'Applications', page === 'applications', 'applications')}
                     {link('#/data', 'Data', page === 'data' || page === 'store', 'data')}
                     {link('#/nodes', 'Nodes', page === 'nodes', 'nodes')}
+                    {link('#/workspaces', 'Workspaces', page === 'workspaces', 'workspaces')}
                     {link('#/monitoring', 'Monitoring', page === 'monitoring', 'monitoring')}
                 </div>
                 <div className="sidebar-projects">
