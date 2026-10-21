@@ -97,6 +97,14 @@ export class NodeResumableTransferService {
                 if (session.workspace_id !== input.workspaceId || session.file_name !== input.fileName ||
                     session.mime_type !== input.mimeType || session.byte_size !== input.byteSize ||
                     session.checksum !== input.checksum) throw conflicting();
+                // A legitimate resume is activity: refresh retention while we
+                // hold the session row lock. A maintenance delete racing this
+                // init either waits/skips or wins before any resume succeeds.
+                // Do not refresh a finalizing/completed claim.
+                if (session.status === 'active')
+                    await db.query(`UPDATE node_file_transfer_sessions SET updated_at=clock_timestamp()
+                        WHERE node_id=$1 AND upload_id=$2 AND status='active'`,
+                        [input.nodeId,input.uploadId]);
             } else {
                 // The existing one-shot Node route shares the receipt namespace.
                 const receipt = await db.query('SELECT 1 FROM node_file_upload_receipts WHERE node_id=$1 AND upload_id=$2',
