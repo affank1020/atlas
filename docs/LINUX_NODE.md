@@ -75,11 +75,20 @@ The legacy `linux-node-release.sh verify/install` only checks checksum,
 bundle structure, and metadata. It does **not** establish who built an
 archive; do not treat it as a trusted installation path by itself.
 
-For production staging use:
+For production staging, download attestations as your normal
+GitHub CLI-authenticated user and then supply that local bundle to the
+root installer:
 ```bash
-bash scripts/linux-node-trusted-stage.sh verify atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
-sudo bash scripts/linux-node-trusted-stage.sh install atlas-node-v*.tar.gz atlas-node-v*.tar.gz.sha256
+archive="atlas-node-v2.0.0-<12-character-commit>.tar.gz"  # replace with the release filename
+gh attestation download "$archive" -R affank1020/atlas
+bundle="sha256:$(sha256sum "$archive" | awk '{print $1}').jsonl"
+bash scripts/linux-node-trusted-stage.sh verify "$archive" "$archive.sha256" "$bundle"
+sudo bash scripts/linux-node-trusted-stage.sh install "$archive" "$archive.sha256" "$bundle"
 ```
+Do not use `sudo -E` or give root the user's GitHub token. The root installer
+copies the archive, checksum and bundle privately and uses offline
+`gh attestation verify --bundle` (no root GitHub authentication).
+An installation without the bundle fails closed.
 This fails unless patched GitHub CLI 2.102.0 or later verifies the exact
 main-branch `node-package.yml` signing identity, source SHA and SLSA
 provenance. The install operation stages a release without activating it.
