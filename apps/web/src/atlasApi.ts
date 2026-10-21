@@ -26,6 +26,7 @@ export function mutationTags({ name, input }: AtlasMutation): Tag[] {
     // Files retains the owner list across navigation. Every operation that can
     // add, rename, move or retire a Workspace must invalidate that cached list.
     if (['create_workspace', 'update_workspace', 'archive_workspace', 'link_workspace_project', 'unlink_workspace_project',
+        'link_logical_workspace_project', 'unlink_logical_workspace_project',
         'assign_workspace_node', 'workspace_git_clone_repository', 'workspace_git_create_worktree',
         'workspace_git_remove_worktree'].includes(name)) return [tag('ApplicationData', 'workspaces')];
     const projectId = String(input.projectId ?? '');

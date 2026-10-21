@@ -4,7 +4,8 @@ import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
 type Workspace = { id: string; nodeId: string; projectId: string | null; name: string; rootPath: string; kind: string; status: string };
-type LogicalWorkspace = { id: string; name: string; repository: string | null; kind: 'git' | 'local'; checkouts: Workspace[] };
+type LogicalWorkspace = { id: string; name: string; repository: string | null; kind: 'git' | 'local'; projectIds?: string[]; checkouts: Workspace[] };
+type ProjectLink = { id: string; name: string; archivedAt?: string };
 type Repository = { repository: string; private: boolean; defaultBranch: string; archived: boolean };
 type GitStatus = { available: boolean; reason?: string; branch?: string; head?: string; originRepository?: string | null; dirty?: boolean; changes?: {path: string; status: string}[] };
 type Worktree = { rootPath: string; head: string; branch: string | null };
@@ -31,6 +32,8 @@ export function Workspaces() {
     const [all, setAll] = useState<Workspace[]>([]);
     const [logical, setLogical] = useState<LogicalWorkspace[]>([]);
     const [repositories, setRepositories] = useState<Repository[]>([]);
+    const [projects, setProjects] = useState<ProjectLink[]>([]);
+    const [projectToLink, setProjectToLink] = useState('');
     const [catalogError, setCatalogError] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
@@ -73,7 +76,8 @@ export function Workspaces() {
     const provisionNode = online.find(n => n.id === nodeId);
     const managers = all.filter(w => w.nodeId === nodeId && w.kind === 'generic');
     const groups = useMemo(() => logical.length ? logical :
-        all.map(w => ({ id: w.id, name: w.name, repository: null, kind: 'local' as const, checkouts: [w] })), [logical, all]);
+        all.map(w => ({ id: w.id, name: w.name, repository: null, kind: 'local' as const,
+            projectIds: w.projectId ? [w.projectId] : [], checkouts: [w] })), [logical, all]);
     const entries = useMemo(() => groups.map(group => ({
         ...group,
         checkouts: group.checkouts.filter(checkout => !nodeFilter || checkout.nodeId === nodeFilter),
@@ -84,6 +88,8 @@ export function Workspaces() {
             .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
     const selectedLogical = (logical.length ? logical : groups)
         .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
+    const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
+    const availableProjects = projects.filter(project => !project.archivedAt && !linkedProjects.includes(project.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
     const canPublish = !!(status?.available && status.originRepository && status.branch?.startsWith('atlas/') &&
         status.head && !status.dirty && selectedNode?.status === 'online');
@@ -132,6 +138,15 @@ export function Workspaces() {
         return () => { live = false; };
     }, [revision]);
     useEffect(() => {
+        let live = true;
+        // Include archived Projects for readable existing chips; only active
+        // Projects are eligible for new associations.
+        callTool<ProjectLink[]>('list_projects', { includeArchived: true }).then(result => {
+            if (live && Array.isArray(result)) setProjects(result);
+        }).catch(() => { /* Browsing works without the Project catalogue. */ });
+        return () => { live = false; };
+    }, [revision]);
+    useEffect(() => {
         if (!nodeId && online.length) setNodeId(online[0].id);
     }, [nodeId, nodes]);
     useEffect(() => {
@@ -160,6 +175,7 @@ export function Workspaces() {
         setBranch('atlas/'); setTargetPath(''); setFeatureName(''); setPrTitle(''); setPrBody(''); setDraftPR(undefined);
     }, [selected?.id]);
     useEffect(() => { setRetirement(undefined); }, [selected?.id, revision]);
+    useEffect(() => { setProjectToLink(''); }, [selectedLogical?.id]);
 
     function choose(id: string) {
         setSelectedId(id);
@@ -194,6 +210,18 @@ export function Workspaces() {
             setRevision(value => value + 1);
         } catch (cause) { setError(message(cause)); }
         finally { setWorking(false); }
+    }
+    async function linkProject() {
+        if (!selectedLogical || !projectToLink || !availableProjects.some(project => project.id === projectToLink)) return;
+        await mutate(() => callTool('link_logical_workspace_project', {
+            logicalWorkspaceId: selectedLogical.id, projectId: projectToLink,
+        }), 'Project associated with the entire logical Workspace.', () => setProjectToLink(''));
+    }
+    async function unlinkProject(projectId: string) {
+        if (!selectedLogical) return;
+        await mutate(() => callTool('unlink_logical_workspace_project', {
+            logicalWorkspaceId: selectedLogical.id, projectId,
+        }), 'Project detached from the logical Workspace; checkouts and files preserved.');
     }
     async function register(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -372,6 +400,29 @@ export function Workspaces() {
                 </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
                     <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
                     <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
+                    {logical.length > 0 && selectedLogical && <section className="wm-project-links" aria-label="Workspace Projects">
+                        <h3>Projects <span>Shared by every checkout</span></h3>
+                        <div className="wm-project-chips">
+                            {linkedProjects.length ? linkedProjects.map(projectId => {
+                                const project = projects.find(item => item.id === projectId);
+                                const projectName = project?.name || projectId;
+                                return <span className="wm-project-chip" key={projectId}>
+                                    <span title={projectId}>{projectName}{project?.archivedAt ? ' (archived)' : ''}</span>
+                                    <button type="button" className="wm-project-remove" aria-label={'Detach ' + projectName}
+                                        disabled={working || IS_MOCK_MODE} onClick={() => unlinkProject(projectId)}>×</button>
+                                </span>;
+                            }) : <span className="wm-hint">No Projects associated</span>}
+                        </div>
+                        {!!availableProjects.length && <div className="wm-project-add">
+                            <select aria-label="Project to associate" value={projectToLink} disabled={working || IS_MOCK_MODE}
+                                onChange={event => setProjectToLink(event.target.value)}>
+                                <option value="">Choose a Project</option>
+                                {availableProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+                            </select>
+                            <button type="button" className="ghost" disabled={!projectToLink || working || IS_MOCK_MODE}
+                                onClick={linkProject}>Associate</button>
+                        </div>}
+                    </section>}
                     {(selectedLogical?.checkouts.length || 0) > 1 && (selectedLogical!.checkouts.length > 3
                         ? <label className="wm-checkout-select">Choose checkout
                             <select value={selected.id} onChange={event => choose(event.target.value)} aria-label="Choose checkout">
@@ -400,7 +451,7 @@ export function Workspaces() {
                             {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
                         <p className="wm-checkout-name">{selected.name}</p>
                         <p className="wm-path">{selected.rootPath}</p>
-                        <p className="wm-hint">{selected.kind} checkout · {selected.projectId ? 'Project linked' : 'Project-independent'}</p>
+                        <p className="wm-hint">{selected.kind} checkout · {linkedProjects.length ? 'Workspace Projects linked' : 'Project-independent'}</p>
                     </div>
                     {inspecting && <p role="status" className="wm-sr-only">{inspectedId === selected.id ? 'Refreshing checkout…' : 'Inspecting checkout…'}</p>}
                     {inspectionError && <p role="alert" className="wm-hint error">{inspectionError}</p>}

@@ -4,7 +4,7 @@ export type Workspace = { id: string; logicalWorkspaceId?: string; nodeId: strin
 /** One logical development identity, with zero or more node-bound checkouts. */
 export type LogicalWorkspace = {
     id: string; name: string; repository: string | null; kind: 'git' | 'local';
-    checkouts: Workspace[]; createdAt: string; updatedAt: string;
+    projectIds: string[]; checkouts: Workspace[]; createdAt: string; updatedAt: string;
 };
 export interface WorkspaceAdapter {
     status(workspace: Workspace): Promise<unknown>;

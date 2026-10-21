@@ -71,8 +71,34 @@ failures or missing merged-PR evidence never trigger local checkout deletion.
 
 ## Limitations before a later cleanup
 
-- Project links are still stored against legacy node-bound checkout IDs.
-  Logical Workspace-level Project associations need a separate migration.
+- Migration `021_logical_workspace_project_links.sql` makes optional Project
+  associations belong to the logical Workspace. The migration unions links
+  from all existing checkouts, including archived ones, and maintains the
+  checkout-era join table and primary Project field as a compatibility mirror.
+  It does not move or delete checkout files, Node bindings or audit history.
+- `list_logical_workspaces` returns `projectIds` once per logical Workspace.
+  `link_logical_workspace_project` and `unlink_logical_workspace_project`
+  manage those associations independently of Node or checkout selection.
+- Legacy `link_workspace_project` and `unlink_workspace_project` still accept
+  a checkout ID, but now update the *entire logical Workspace*. Similarly,
+  `list_project_workspaces` and Project-scoped checkout operations recognise
+  any checkout in an associated logical Workspace. The old checkout
+  `projectId` remains a nullable, representative compatibility field, not
+  the authoritative many-to-many association.
+- Newly cloned GitHub repositories and managed worktrees inherit all Project
+  links when they join an existing logical Workspace; the root manager's
+  Project is still not implicitly transferred to a fresh repository.
+- A verified local group joining an existing Git Workspace unions its Project
+  links with the destination before retiring the provisional identity.
+  Changing an already-recognised repository's Git origin does not silently
+  transfer its Project associations to a different repository.
+- When a new managed worktree is created, it inherits only the *current*
+  logical Workspace associations under the transaction lock. A stale
+  checkout primary cannot reattach a Project removed concurrently.
+- Archived Projects can be detached through both logical and legacy
+  unlink tools. Both link tools still require an active Project. The
+  Workspaces UI names archived associations and excludes them from
+  the association picker.
 - Existing unverified clones remain separate until their Nodes are online and
   the explicit reconciliation is performed; no name-based fallback.
 - Branch, dirty status and storage are per checkout, not per logical Workspace.
@@ -84,7 +110,8 @@ failures or missing merged-PR evidence never trigger local checkout deletion.
   Git repository identities with only archived checkouts are retained.
 
 Do not remove old checkout rows or force-delete directories during this
-transition. Run a database backup before migration, verify old Workspace IDs
-remain addressable, reconcile Portfolio Site on both Nodes, and check that
-`list_logical_workspaces` shows a single Portfolio logical identity with both
-checkout paths before releasing the updated UI to everyone.
+transition. **Backup PostgreSQL before migration 020.** Verify the union of
+Project IDs on Portfolio Site (Mac and Linux), that original checkout IDs remain
+addressable, that Project-scoped tools still work, and that a fresh managed
+worktree inherits Project associations. Do not drop the legacy association
+table until all callers and historical scripts have migrated to logical IDs.

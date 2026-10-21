@@ -12,6 +12,7 @@ export interface WorkspaceTransaction extends WorkspaceReader {
     rollback(): Promise<void>;
     release(): void;
     requireActiveProject(projectId: string, lock?: boolean): Promise<void>;
+    requireProject(projectId: string, lock?: boolean): Promise<void>;
     lockWorkspace(id: string): Promise<void>;
     lockExecution(binding: string): Promise<void>;
     managedWorktreeBranch(workspaceId: string, rootPath: string): Promise<string | null>;
@@ -19,6 +20,8 @@ export interface WorkspaceTransaction extends WorkspaceReader {
     attachRepository(workspaceId: string, repository: string): Promise<Workspace>;
     link(workspaceId: string, projectId: string): Promise<void>;
     unlink(workspaceId: string, projectId: string): Promise<void>;
+    linkLogical(logicalWorkspaceId: string, projectId: string): Promise<void>;
+    unlinkLogical(logicalWorkspaceId: string, projectId: string): Promise<void>;
     update(id: string, name: string | undefined, archive: boolean): Promise<Workspace>;
 }
 export interface WorkspaceRepository extends WorkspaceReader {

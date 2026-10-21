@@ -19,8 +19,38 @@ export class WorkspaceService {
         if (name === 'list_github_repositories') return this.github.listRepositories();
         if (name === 'list_workspaces') return this.repository.listAll(x.includeArchived, x.nodeId);
         if (name === 'list_logical_workspaces') return this.repository.listLogical(x.includeArchived);
-        if (x.projectId) await this.catalog.getProject(x.projectId, x.includeArchived);
+        if (x.projectId) await this.catalog.getProject(x.projectId,
+            x.includeArchived || name === 'unlink_logical_workspace_project' || name === 'unlink_workspace_project');
         if (name === 'list_project_workspaces') return this.repository.list(x.projectId, x.includeArchived);
+        if (name === 'link_logical_workspace_project' || name === 'unlink_logical_workspace_project') {
+            const group = (await this.repository.listLogical()).find(item => item.id === x.logicalWorkspaceId);
+            if (!group?.checkouts.length)
+                throw new AtlasError('Active logical Workspace not found.', 'NOT_FOUND');
+            const representative = group.checkouts[0];
+            const db = await this.repository.connect();
+            try {
+                await db.begin();
+                if (name === 'unlink_logical_workspace_project') await db.requireProject(x.projectId, true);
+                else await db.requireActiveProject(x.projectId, true);
+                // Serialize logical mutations with reconciliation and feature
+                // worktree registration; never bind a link to a stale group.
+                await db.lockExecution(`logical-workspace:${group.id}`);
+                await db.lockWorkspace(representative.id);
+                const current = await db.getById(representative.id);
+                if (current.logicalWorkspaceId !== group.id)
+                    throw new AtlasError('Logical Workspace changed; refresh and retry.', 'CONFLICT');
+                if (name === 'link_logical_workspace_project')
+                    await db.linkLogical(group.id, x.projectId);
+                else await db.unlinkLogical(group.id, x.projectId);
+                const updated = await db.getById(representative.id);
+                await db.audit(updated, name === 'link_logical_workspace_project'
+                    ? 'workspace.logical_project_linked' : 'workspace.logical_project_unlinked',
+                    x.client, { logicalWorkspaceId: group.id, projectId: x.projectId });
+                await db.commit();
+                return (await this.repository.listLogical()).find(item => item.id === group.id);
+            } catch (error) { await db.rollback(); throw error; }
+            finally { db.release(); }
+        }
         if (name === 'create_workspace') {
             const binding = await this.runtime.bindDefault(x.rootPath, x.nodeId);
             const db = await this.repository.connect();
@@ -75,8 +105,13 @@ export class WorkspaceService {
             const db = await this.repository.connect();
             try {
                 await db.begin();
-                await db.requireActiveProject(x.projectId, true);
+                if (name === 'unlink_workspace_project') await db.requireProject(x.projectId, true);
+                else await db.requireActiveProject(x.projectId, true);
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
                 await db.lockWorkspace(workspace.id);
+                const current = await db.getById(workspace.id);
+                if (current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                    throw new AtlasError('Workspace association changed; refresh and retry.', 'CONFLICT');
                 if (name === 'link_workspace_project') await db.link(workspace.id, x.projectId);
                 else await db.unlink(workspace.id, x.projectId);
                 const updated = await db.getById(workspace.id);
@@ -267,11 +302,13 @@ export class WorkspaceService {
                 if (boundPath !== expectedPath || result.rootPath !== expectedPath)
                     throw new AtlasError('Created checkout binding changed.', 'CONFLICT');
                 const registered = await db.insert({ nodeId: workspace.nodeId,
-                    // A manager directory is infrastructure, not the cloned repo's Project.
-                    // Clones start independent unless explicitly scoped; feature worktrees
-                    // inherit their source Project if no Project was supplied.
-                    projectId: name === 'workspace_git_clone_repository'
-                        ? (x.projectId ?? null) : (x.projectId ?? workspace.projectId),
+                    // Project links belong to the logical Workspace. A feature
+                    // checkout inherits its canonical links through insert()'s
+                    // syncLogicalProjects(), never from a stale checkout primary
+                    // captured before locking. Clones remain independent unless
+                    // the caller explicitly provided a Project scope.
+                    ...(name === 'workspace_git_clone_repository' && x.projectId
+                        ? { projectId: x.projectId } : {}),
                     rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic',
                     // A feature worktree inherits the source's logical identity.
                     // A fresh clone joins the globally verified repository identity.
