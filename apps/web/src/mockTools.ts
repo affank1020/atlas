@@ -222,6 +222,11 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
             }
             break;
         }
+        case 'read_server_diagnostics': result = {
+            source: 'atlas-server-process', available: true, startedAt: stamp,
+            retention: 'current-process', truncated: false,
+            events: [{ at: stamp, code: 'server_initialised', level: 'info', message: '[demo] Server runtime initialised' }],
+        }; break;
         case 'read_node_logs': result = {
             source: input.source ?? 'stdout', available: true, truncated: false,
             lines: ['[demo] Atlas node fixture initialised', '[demo] Workspace connection healthy', '[demo] No real server logs were accessed'],
