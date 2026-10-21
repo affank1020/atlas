@@ -58,6 +58,8 @@ test('macOS share receiver rejects declined, expired, busy and interrupted share
 
 test('NSPasteboard bridge always requests plain UTF-8 strings (including RTF-like and Unicode)', () => {
     const payloads = [String.raw`{\rtf1\ansi Literal, not rich text`, '%!PS-Adobe-3.0', 'مرحبا 中文 😊 café', 'line 1\\nline 2'];
+    assert.ok(payloads[0]!.startsWith(String.raw`{\rtf1`),
+        'CI must exercise the literal single-backslash RTF header');
     for (const text of payloads) {
         const script = plainTextPasteboardScript(text);
         assert.ok(script.includes('$.NSPasteboardTypeString'));
