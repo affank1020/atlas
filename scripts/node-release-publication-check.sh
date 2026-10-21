@@ -16,7 +16,7 @@ git -C "$repo" merge-base --is-ancestor "$source_sha" "$main_ref" ||
 # .github/workflows/node-package.yml. A Web-only or docs-only commit cannot
 # suppress the release because it won't trigger a replacement build.
 changed_paths="$(git -C "$repo" diff --name-only "$source_sha" "$main_ref")"
-if grep -Eq '^((apps/node|packages/protocol)/|package(-lock)?\.json$|scripts/package-node-release\.mjs$|\.github/workflows/node-package\.yml$)' <<< "$changed_paths"; then
+if grep -Eq '^((apps/node|packages/protocol)/|package(-lock)?\.json$|scripts/(package-node-release\.mjs|node-release-publication-check\.sh)$|\.github/workflows/node-package\.yml$)' <<< "$changed_paths"; then
   echo superseded
 else
   echo current
