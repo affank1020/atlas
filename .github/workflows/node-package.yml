@@ -2,6 +2,14 @@ name: Atlas Node Package
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/node/**"
+      - "packages/protocol/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/package-node-release.mjs"
+      - ".github/workflows/node-package.yml"
   push:
     branches: [main]
     paths:
