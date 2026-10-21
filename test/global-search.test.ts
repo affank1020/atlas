@@ -84,3 +84,22 @@ test('Linux log search selects only the fixed unit journal while preserving requ
     assert.equal(hit?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=37');
     assert.match(hit?.description || '', /systemd journal/);
 });
+
+test('journal and systemd search vocabulary resolves Linux Node links even without journal in the Node name', async () => {
+    const deps = dependencies();
+    deps.nodes.call = async (name: string) => name === 'list_nodes'
+        ? [{ ...node, platform: 'linux', name: 'Atlas Linux VPS' }]
+        : { workspaces: [] };
+    for (const [phrase, count] of [
+        ['show Linux node journal logs', 100],
+        ['show the last 37 journal lines from my Linux node', 37],
+        ['show Linux node systemd journal', 100],
+        ['show the last 25 systemd lines from my Linux node', 25],
+    ] as const) {
+        const result = await searchEverywhere(deps, { query: phrase });
+        const link = result.results.find(item => item.kind === 'node');
+        assert.ok(link, phrase);
+        assert.equal(link.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=' + count, phrase);
+        assert.match(link.description, /systemd journal/);
+    }
+});
