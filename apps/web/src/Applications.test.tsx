@@ -31,6 +31,15 @@ test('A launched Application renders a dedicated page without the project View h
     vi.mocked(callTool).mockImplementation(async name => (name === 'list_projects' ? [] : manifest) as never);
     render(<ApplicationWindow projectId="project-portfolio" slug="portfolio" />);
     expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
+    const topbar = screen.getByRole('banner');
+    expect(topbar).toHaveClass('topbar');
+    expect(topbar.querySelector('.brand-period')).toHaveTextContent('.');
+    expect(topbar.querySelector('.brand-period')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('link', { name: /atlas/i })).toHaveAttribute('href', '#/');
+    expect(screen.getByRole('button', { name: 'Search Atlas' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#/activity');
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
+    expect(screen.getByRole('main')).toHaveClass('application-window-main');
     expect(readRecentWork()[0]).toMatchObject({ name: 'Portfolio', kind: 'Application', href: '#/projects/project-portfolio/applications/portfolio' });
     expect(screen.getByRole('link', { name: /Project Applications/ })).toHaveAttribute('href', '#/projects/project-portfolio/applications');
     expect(callTool).toHaveBeenCalledWith('get_application', { projectId: 'project-portfolio', slug: 'portfolio' }, expect.any(AbortSignal));

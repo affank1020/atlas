@@ -254,7 +254,7 @@ body { background: #0c0d10; }
   overflow: clip;
   color: var(--text-primary);
 }
-.app-shell .topbar {
+:is(.app-shell, .application-window) .topbar {
   position: relative;
   grid-column: 1 / -1;
   grid-row: 1;
@@ -269,7 +269,7 @@ body { background: #0c0d10; }
   border-bottom: 1px solid var(--border);
 }
 /* A restrained signature accent beneath the wordmark, not another filled control. */
-.app-shell .topbar::after {
+:is(.app-shell, .application-window) .topbar::after {
   content: "";
   position: absolute;
   bottom: -1px;
@@ -279,7 +279,7 @@ body { background: #0c0d10; }
   background: linear-gradient(90deg, var(--accent-solid), transparent);
   pointer-events: none;
 }
-.app-shell .brand {
+:is(.app-shell, .application-window) .brand {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
@@ -287,15 +287,15 @@ body { background: #0c0d10; }
   margin: 0;
   color: var(--text-primary);
 }
-.app-shell .brand b {
+:is(.app-shell, .application-window) .brand b {
   font-size: 1.75rem;
   font-weight: 640;
   line-height: 1;
   letter-spacing: -.05em;
 }
-.app-shell .brand-period { color: var(--accent); }
+:is(.app-shell, .application-window) .brand-period { color: var(--accent); }
 .header-actions { display: flex; align-items: center; gap: 12px; }
-.app-shell .header-icon-link {
+:is(.app-shell, .application-window) .header-icon-link {
   display: grid;
   width: 32px;
   height: 32px;
@@ -305,8 +305,8 @@ body { background: #0c0d10; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.app-shell .header-icon-link:hover { color: var(--text-primary); background: var(--surface-elevated); }
-.app-shell .header-icon-link[aria-current="page"] { color: var(--accent); }
+:is(.app-shell, .application-window) .header-icon-link:hover { color: var(--text-primary); background: var(--surface-elevated); }
+:is(.app-shell, .application-window) .header-icon-link[aria-current="page"] { color: var(--accent); }
 .shell-icon { flex: none; display: block; }
 .app-shell .sidebar {
   grid-column: 1;
@@ -520,7 +520,7 @@ body { background: #0c0d10; }
     min-height: 0;
     border-radius: 0;
   }
-  .app-shell .topbar { grid-column: 1; grid-row: 1; height: 66px; margin: 0 24px; padding: 0 2px; }
+  :is(.app-shell, .application-window) .topbar { grid-column: 1; grid-row: 1; height: 66px; margin: 0 24px; padding: 0 2px; }
   .app-shell .sidebar {
     grid-column: 1; grid-row: 2;
     display: block; height: auto;
@@ -535,7 +535,7 @@ body { background: #0c0d10; }
   .app-shell .nav-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; min-height: 34px; padding: 5px 10px; font-size: .76rem; }
 }
 @media (max-width: 620px) {
-  .app-shell .topbar { gap: 10px; margin: 0 18px; padding: 0; }
+  :is(.app-shell, .application-window) .topbar { gap: 10px; margin: 0 18px; padding: 0; }
   .app-shell .sidebar { padding-inline: 20px; }
   .app-shell .content-frame > main { padding: 30px 22px 56px; }
   .app-shell .workspace-section { margin-bottom: 32px; }
@@ -544,7 +544,7 @@ body { background: #0c0d10; }
   .app-shell .project-browser .project-card { padding: 20px; }
   .app-shell .workspace-list .workspace-row { padding: 16px 18px; }
   .app-shell .header-actions { gap: 2px; }
-  .app-shell .header-icon-link { display: none; }
+  :is(.app-shell, .application-window) .header-icon-link { display: none; }
   .home-project-grid, .app-shell .project-browser { grid-template-columns: 1fr; }
   .app-shell .recent-grid { grid-template-columns: 1fr; }
   .app-shell .page-head { gap: 14px; }
