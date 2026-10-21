@@ -11,9 +11,13 @@ checksum as GitHub Actions artifacts (14-day retention). After a successful
 main-branch packaging run, the workflow also attests the archive with GitHub
 Sigstore build provenance and publishes **immutable-by-name** GitHub Release
 assets under `node-v<version>-<12-character-source-commit>`. Publication
-refuses to overwrite an existing tag. Publication is serialized and checks that
-the packaged source SHA is still the tip of `main`; superseded runs skip
-publication. Prerelease SemVer builds may be packaged and tested but are
+refuses to overwrite an existing tag. Publication is serialized and checks
+whether any Node packaging input changed between the packaged commit and
+current `main`. Web-only and docs-only changes must not suppress the
+last valid Node build; newer Node/protocol/packaging changes supersede it.
+Each successful publication includes a monotonic GitHub Actions run number
+(`Atlas-Node-Release-Sequence`) in its release notes.
+Prerelease SemVer builds may be packaged and tested but are
 **never published to the stable channel**. Enable GitHub's **immutable releases**
 repository setting before treating the channel as production-grade. The
 published release has no Server/Web files, credentials or environment config.
@@ -23,10 +27,12 @@ validating archive naming, matching checksum assets, canonical download URLs,
 GitHub-provided SHA-256 digests, full source commit IDs and unique source commits.
 The stable catalogue excludes SemVer prereleases even if GitHub's prerelease
 flag is false. For different stable versions it compares SemVer; for builds
-sharing the same version it asks GitHub to confirm source ancestry instead of
-trusting publication timestamps. Incomparable, divergent, or unavailable Git
-history results in an unavailable catalogue rather than an arbitrary latest
-release. The catalogue
+sharing the same version it sorts by the publisher's monotonic workflow
+sequence, never by completion/publication timestamps. An entry with no valid
+sequence or full matching source commit is not offered. Conflicting sequences
+fail closed. Catalogue refresh requires only the single GitHub Releases list
+request; it does not perform per-release Git comparison requests.
+The catalogue
 does **not** import expiring workflow artifacts or debug APKs and does not
 install, restart, or re-enrol Nodes.
 
