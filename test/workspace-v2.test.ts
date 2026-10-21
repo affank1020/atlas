@@ -134,6 +134,113 @@ test('logical Projects unite Mac/Linux checkouts, survive new worktrees, and hon
     assert.equal((await repo.getById(sibling.id)).projectId,p3.id);
 });
 
+test('explicit checkoutId selects the same physical Node checkout as legacy workspaceId', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Checkout contract' });
+    const seen: { checkoutId: string; operation: string; input: any }[] = [];
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async (checkout, operation, input) => {
+            assert.equal('logicalWorkspaceId' in checkout, false);
+            assert.equal('checkoutId' in input, false,
+                'The Node v2 protocol accepts only the historical workspaceId field');
+            assert.equal('targetCheckoutId' in input, false);
+            assert.equal(input.workspaceId, checkout.id);
+            assert.equal(validateNodeOperation(operation as any, input).success, true);
+            seen.push({ checkoutId: checkout.id, operation, input });
+            return { operation, rootPath: checkout.rootPath };
+        },
+    };
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const svc = new WorkspaceService(catalog, repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const checkout: any = await svc.call('create_workspace', {
+        name: 'Mac checkout', rootPath: '/host/checkout-explicit', projectId: project.id, kind: 'generic',
+    });
+    const selected: any = await svc.call('get_workspace', { checkoutId: checkout.id });
+    const legacy: any = await svc.call('get_workspace', { workspaceId: checkout.id });
+    assert.deepEqual(selected, legacy);
+    assert.equal(selected.id, checkout.id);
+    assert.notEqual(selected.logicalWorkspaceId, checkout.id,
+        'New registrations use independent logical identity and physical checkout IDs');
+
+    assert.deepEqual(await svc.call('workspace_git_status', { checkoutId: checkout.id }),
+        await svc.call('workspace_git_status', { workspaceId: checkout.id }));
+    assert.deepEqual(await svc.call('workspace_read_file', {
+        checkoutId: checkout.id, projectId: project.id, path: 'README.md',
+    }), { operation: 'workspace_read_file', rootPath: '/host/checkout-explicit' });
+    assert.deepEqual(seen.map(x => x.checkoutId), [checkout.id,checkout.id,checkout.id]);
+    await assert.rejects(svc.call('get_workspace', {
+        checkoutId: checkout.id, workspaceId: checkout.id,
+    }), /exactly one/i);
+    await assert.rejects(svc.call('workspace_git_status', {}), /exactly one/i);
+    await assert.rejects(svc.call('workspace_git_status', {
+        checkoutId: checkout.logicalWorkspaceId,
+    }), /not found/i, 'A logical Workspace ID must not resolve as a checkout');
+    await assert.rejects(svc.call('workspace_read_file', {
+        checkoutId: checkout.id, workspaceId: checkout.id, path: 'README.md',
+    }), /exactly one/i);
+    await assert.rejects(svc.call('workspace_read_file', {
+        checkoutId: checkout.id, projectId: '00000000-0000-4000-8000-000000000099',
+        path: 'README.md',
+    }), /not found/i, 'Explicit checkout does not bypass Project scoping');
+    assert.equal(seen.length,3,'Ambiguous or invalid checkout requests never reach the Node');
+});
+
+test('targetCheckoutId on retirement preflight keeps server-owned path and legacy compatibility', async () => {
+    const { catalog, store } = await databaseFixture();
+    let dispatched = false;
+    const runtime: ExecutionHost = {
+        getCapabilities: () => ['workspace.files', 'workspace.git'],
+        bind: async root => root,
+        execute: async () => { dispatched = true; throw new Error('Unexpected Node execution'); },
+    };
+    const repository = new PostgresWorkspaceRepository(store.pool);
+    const svc = new WorkspaceService(catalog,repository,
+        new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')));
+    const source: any = await svc.call('create_workspace', {
+        name: 'Source', rootPath: '/trusted/checkout-source', kind: 'generic',
+    });
+    const tx = await repository.connect();
+    let target: any;
+    try {
+        await tx.begin();
+        target = await tx.insert({ name: 'Feature', rootPath: '/trusted/checkout-feature', kind: 'generic',
+            nodeId: source.nodeId, logicalWorkspaceId: source.logicalWorkspaceId });
+        await tx.commit();
+    } catch (error) { await tx.rollback(); throw error; }
+    finally { tx.release(); }
+    const head = 'a'.repeat(40);
+    const report: any = await svc.call('workspace_git_retirement_preflight', {
+        checkoutId: source.id, targetCheckoutId: target.id, expectedHead: head,
+    });
+    assert.equal(report.eligible, false);
+    assert.match(report.reason, /Atlas-managed/i);
+    const legacy: any = await svc.call('workspace_git_retirement_preflight', {
+        workspaceId: source.id, targetWorkspaceId: target.id, expectedHead: head,
+    });
+    assert.deepEqual(report, legacy);
+    assert.equal(dispatched, false, 'Missing provenance must fail closed before Node dispatch');
+    await assert.rejects(svc.call('workspace_git_retirement_preflight', {
+        checkoutId: source.id, targetCheckoutId: target.id,
+        targetWorkspaceId: target.id, expectedHead: head,
+    }), /exactly one/i);
+    await assert.rejects(svc.call('workspace_git_remove_worktree', {
+        checkoutId: source.id, targetCheckoutId: target.id,
+        targetPath: '/untrusted', expectedHead: head,
+    }), /Unrecognized key|unrecognized/i, 'Caller cannot supply a destructive path');
+});
+
+test('Node v2 schemas remain strict despite the new server-only checkoutId selector', () => {
+    const checkout = '00000000-0000-4000-8000-000000000017';
+    assert.equal(validateNodeOperation('workspace_git_status', { workspaceId: checkout }).success, true);
+    assert.equal(validateNodeOperation('workspace_git_status', { checkoutId: checkout }).success, false);
+    assert.equal(validateNodeOperation('workspace_git_status', {
+        workspaceId: checkout, checkoutId: checkout,
+    }).success, false);
+});
+
 test('Workspace V2 supports Project-independent registration and multiple optional Project links', async () => {
     const { catalog, store } = await databaseFixture();
     const p1 = await catalog.createProject({ name: 'Research' });
