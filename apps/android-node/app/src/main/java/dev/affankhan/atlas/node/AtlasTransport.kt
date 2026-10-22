@@ -82,6 +82,13 @@ internal class AtlasTransport {
                     }
                     return
                 }
+                // A structurally recognisable but expired/out-of-range incoming
+                // share gets an explicit rejection, not a disconnection that
+                // would disrupt all other Node capabilities and deliveries.
+                incomingDeviceShareRequestId(text)?.let { requestId ->
+                    webSocket.send(incomingDeviceShareResponse(requestId, IncomingShareOutcome.EXPIRED))
+                    return
+                }
                 val shareReply = parseShareReply(text)
                 val directoryReply = parseRecipientsReply(text)
                 if (shareReply != null || directoryReply != null) {
