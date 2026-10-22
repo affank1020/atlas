@@ -19,8 +19,9 @@ recovery guarantee.
    Configure the recovery bucket through `ATLAS_R2_RECOVERY_ENDPOINT`,
    `ATLAS_R2_RECOVERY_BUCKET`, `ATLAS_R2_RECOVERY_ACCESS_KEY_ID`,
    `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY`. The seeder **fails closed** if
-   the recovery configuration is missing, points to the same endpoint/bucket,
-   or shares either access-key ID or secret with the primary.
+   the recovery configuration is missing, identifies the same Cloudflare
+   account (even when bucket or jurisdiction differs), points to the same
+   endpoint/bucket, or shares either access-key ID or secret with the primary.
 3. Grant minimum required primary **GET** access and recovery **GET + PUT**
    access on the respective buckets. Keep both buckets private; do not add
    DELETE permissions to the seeding credential. Confirm your recovery bucket
@@ -119,9 +120,64 @@ A status of `failed` or `empty` exits with code 2; a configuration or remote
 failure exits with code 1 and redacted details. `partial` exits 0 but must not
 be considered proof of complete seeding.
 
-**After seeding:** independently run
-`npm run files:r2:verify-recovery` against the same destination. The verifier
-is read-only and has its own limits and cursor. Separately implement and test
-consistent **PostgreSQL** backup, an isolated restore of both metadata and
-objects, credential recovery, retention, and periodic scheduling. This CLI
-alone does not provide any of those protections.
+## Whole-catalog verification after seeding
+
+For a recoverability check across the *whole bounded catalog*, rather than
+manually repeating the small sampled verifier's cursor, run:
+
+```sh
+npm run build:server
+npm run files:r2:verify-catalog
+# If the report indicates a cap hit, rerun with a larger limit (up to 200):
+npm run files:r2:verify-catalog -- --max-records=200
+```
+
+This is a **read-only** command: one PostgreSQL `SELECT` captures up to
+`maxRecords+1` committed Files metadata rows from a single SQL statement
+snapshot. Only the first `maxRecords` rows (default **100**, maximum **200**)
+are checked sequentially against the **effective Atlas Files read source**
+(primary R2, or **only after confirmed NoSuchKey**, the bounded legacy local
+Files root) and the independent recovery R2 bucket. This matches the seeder's
+read precedence for pre-R2 Files that still exist solely on local disk.
+The operator host must have the correct `ATLAS_MEDIA_DIR` available and
+must be able to read any legacy objects; a missing/unmounted root causes an
+inconclusive failure instead of silently accepting absent Files. R2 access,
+network, authorization, NoSuchBucket and malformed 404 errors **never**
+authorize local fallback. No DB transaction is held during remote requests.
+No seed/PUT/DELETE, plaintext download to disk, server route or scheduler is
+introduced. Note that a run may download up to 25 MiB per object **from each
+bucket** for Files that are in primary R2. Local legacy reads replace
+primary-R2 GET payloads when its key is confirmed missing, so R2 costs
+and operator runtime vary by catalog composition.
+
+A report may be `passed` **only** if all captured rows fit under the limit,
+the catalog is nonempty, and every row passed checksum/metadata validation for
+**the effective live source and independent recovery copy**. The report's
+`primarySource: "effective-atlas-files"` denotes that precedence, while
+`verifiedPrimaryViaLegacyLocal` counts only checksum-verified local-only
+source objects. **A pass with this count above zero does not mean those
+objects have been migrated to primary R2**; it confirms the live local
+fallback and independent backup are both recoverable. Preserve the legacy
+local volume until migration/recovery strategy is complete.
+
+`partial` means the cap was reached; `failed` means at
+least one invalid, missing or corrupt object; `empty` is not a pass. Only
+`passed` exits 0; any other result exits 2, and an unexpected DB/R2 error
+exits 1 without leaking endpoints/credentials. At most ten opaque File IDs
+appear as failure examples; no filenames or object bytes are logged.
+
+**Scope matters:** The report describes the database metadata visible to its
+*one SELECT statement*; later writes are not covered. This is evidence for
+object-level recoverability **at that observation**, not a shared
+PostgreSQL/R2 point-in-time snapshot or proof of full application recovery.
+Re-run after recent writes or seeding changes, and use the isolated
+PostgreSQL recovery drill plus the operator
+[recovery acceptance runbook](RECOVERY_ACCEPTANCE.md) before claiming DR ready.
+
+The existing `npm run files:r2:verify-recovery` remains available for
+targeted small-batch debugging with explicit cursors. Neither verifier
+creates or updates backup copies.
+
+Finally, plan and test an isolated restore of both PostgreSQL metadata and
+objects, credential recovery, retention, and periodic scheduling. Seeding
+and object verification alone do not provide those protections.

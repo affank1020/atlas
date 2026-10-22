@@ -356,7 +356,9 @@ recovery point are required for full disaster recovery.
   `DATABASE_URL` on the trusted server host. Independently configure
   `ATLAS_R2_RECOVERY_ENDPOINT`, `ATLAS_R2_RECOVERY_BUCKET`,
   `ATLAS_R2_RECOVERY_ACCESS_KEY_ID`, and
-  `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY` for **a distinct backup bucket**.
+  `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY` for **a distinct bucket in a
+  separately identified Cloudflare account**. A second bucket in the primary
+  account does not provide account-loss recovery.
   Supply read-only R2 GET permissions to both sets of credentials when
   running the drill. The **backup access-key ID and secret must each differ**
   from the primary credentials even when using a different bucket; configure

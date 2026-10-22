@@ -21,17 +21,27 @@ export type SeedStore = {
 /** Match the live Files read precedence, but never fall back when the R2
  * source failed for anything other than an explicitly confirmed NoSuchKey.
  * Both stores must implement bounded reads, including local legacy files. */
+export type BoundedPrimarySource = Pick<SeedStore, 'getBounded'> & {
+    /** Provenance of a bounded read, for verification reports. */
+    getBoundedWithSource(key: string, maxBytes: number):
+        Promise<{ bytes: Buffer; source: 'primary-r2' | 'legacy-local' }>;
+};
 export function createR2SeedPrimarySource(remote: Pick<SeedStore, 'getBounded'>,
-    local: Pick<SeedStore, 'getBounded'>): Pick<SeedStore, 'getBounded'> {
-    return {
-        async getBounded(key: string, maxBytes: number): Promise<Buffer> {
-            try { return await remote.getBounded(key, maxBytes); }
-            catch (error) {
+    local: Pick<SeedStore, 'getBounded'>): BoundedPrimarySource {
+    const source: BoundedPrimarySource = {
+        async getBoundedWithSource(key, maxBytes) {
+            try {
+                return { bytes: await remote.getBounded(key, maxBytes), source: 'primary-r2' as const };
+            } catch (error) {
                 if (!(error instanceof ObjectNotFound)) throw error;
-                return local.getBounded(key, maxBytes);
+                return { bytes: await local.getBounded(key, maxBytes), source: 'legacy-local' as const };
             }
         },
+        async getBounded(key, maxBytes) {
+            return (await source.getBoundedWithSource(key, maxBytes)).bytes;
+        },
     };
+    return source;
 }
 
 export type SeedOptions = { apply: boolean; maxFiles: number; cursor?: string };

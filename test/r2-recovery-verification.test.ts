@@ -57,6 +57,18 @@ test('Recovery configs must be independent and complete; CLI refuses mutation fl
         ...backupEnv,ATLAS_R2_RECOVERY_ENDPOINT:primaryConfig.endpoint,
         ATLAS_R2_RECOVERY_BUCKET:primaryConfig.bucket,
     },primaryConfig),/must differ/);
+    assert.throws(()=>loadRecoveryR2Config({
+        ...backupEnv, ATLAS_R2_RECOVERY_ENDPOINT:primaryConfig.endpoint,
+    },primaryConfig),/separately identified Cloudflare account/,
+    'distinct bucket in the same Cloudflare account is not offsite-account recovery');
+    assert.throws(()=>loadRecoveryR2Config({
+        ...backupEnv, ATLAS_R2_RECOVERY_ENDPOINT:
+            'https://0123456789abcdef.eu.r2.cloudflarestorage.com/',
+    },primaryConfig),/separately identified Cloudflare account/,
+    'account ID, not region-specific origin, defines independence');
+    assert.throws(()=>loadRecoveryR2Config({
+        ...backupEnv, ATLAS_R2_RECOVERY_ENDPOINT:'https://unknown.example/',
+    },primaryConfig),/separately identified Cloudflare account/);
     // Distinct buckets—even in different accounts—must not reuse a token
     // identity or secret: the two stores must have separate credentials.
     assert.throws(()=>loadRecoveryR2Config({
