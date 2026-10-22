@@ -42,8 +42,17 @@ class AtlasWireTest {
                 .put("expiresAt", java.time.Instant.ofEpochMilli(expiry).toString()).toString()
         assertEquals("Hello 🎉", parseIncomingDeviceShare(raw(), now)?.text)
         assertEquals(requestId, parseIncomingDeviceShare(raw(), now)?.requestId)
-        assertEquals(null, parseIncomingDeviceShare(raw(), now + 46_000))
-        assertEquals(null, parseIncomingDeviceShare(raw(expiry = now + 61_000), now))
+        // A server-issued 45s deadline is still valid when the tablet's clock
+        // differs by 20s in either direction. The foreground prompt duration
+        // is independently measured with elapsedRealtime().
+        assertEquals("Hello 🎉", parseIncomingDeviceShare(raw(), now - 20_000)?.text)
+        assertEquals("Hello 🎉", parseIncomingDeviceShare(raw(), now + 20_000)?.text)
+        assertEquals("Hello 🎉", parseIncomingDeviceShare(raw(), now + 46_000)?.text)
+        assertEquals(null, parseIncomingDeviceShare(raw(), now + INCOMING_MAX_CLOCK_SKEW_MS + 46_000))
+        assertEquals(null, parseIncomingDeviceShare(raw(expiry = now + INCOMING_SERVER_TTL_MS +
+            INCOMING_MAX_CLOCK_SKEW_MS + 1), now))
+        assertEquals(requestId, incomingDeviceShareRequestId(raw()))
+        assertEquals(null, incomingDeviceShareRequestId("""{"type":"request","kind":"workspace","requestId":"$requestId"}"""))
         assertEquals(null, parseIncomingDeviceShare(raw(body = ""), now))
         assertEquals(null, parseIncomingDeviceShare(raw(body = "x".repeat(MAX_SHARE_CHARACTERS + 1)), now))
         assertEquals(null, parseIncomingDeviceShare(raw().replace("device_share", "workspace"), now))
@@ -83,6 +92,8 @@ class AtlasWireTest {
                     assertEquals("SHARE_CLIPBOARD_FAILED", response.getJSONObject("error").getString("code"))
                 IncomingShareOutcome.REPLAY ->
                     assertEquals("SHARE_REPLAY", response.getJSONObject("error").getString("code"))
+                IncomingShareOutcome.EXPIRED ->
+                    assertEquals("SHARE_EXPIRED", response.getJSONObject("error").getString("code"))
             }
         }
         assertTrue(runCatching {
