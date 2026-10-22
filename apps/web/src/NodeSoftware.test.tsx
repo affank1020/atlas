@@ -306,3 +306,35 @@ it('shows a clean read-only Software card for the built-in demo Linux VPS', asyn
     expect(screen.queryByRole('button', { name: 'Cancel update request' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Prepare update request/ })).not.toBeInTheDocument();
 });
+
+it('shows a claimed Node update as reserved rather than approved or installed', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host', platform: 'linux',
+        status: 'online' as const, credentialState: 'active',
+        credentialUpdatedAt: '2026-10-21T10:00:00.000Z',
+        version: '1.9.9', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_update_intents') return [{
+            id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+            installedVersion: node.version, targetVersion: release.version,
+            targetCommit: release.commit, status: 'claimed',
+            createdAt: new Date(Date.now() - 60000).toISOString(),
+            expiresAt: new Date(Date.now() - 1000).toISOString(),
+            approved: false, executable: false,
+        }];
+        if (name === 'list_node_releases') return { state: 'ready', checkedAt: '', releases: [release] };
+        if (name === 'plan_node_update') return {
+            nodeId: node.id, status: 'candidate', reason: 'A stable release is available.',
+            candidate: release, canInstall: false, canActivate: false, provenanceVerified: false,
+        };
+        throw new Error('Unexpected tool ' + name);
+    });
+    render(<NodeSoftwareSummary node={node} />);
+    expect(await screen.findByText('Update request: claimed')).toBeInTheDocument();
+    expect(screen.getByText(/not a host approval or proof of installation/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Check Linux update eligibility' }));
+    expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Prepare update request/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cancel update request/ })).not.toBeInTheDocument();
+});
