@@ -122,7 +122,8 @@ Call `{ "repository": "affank1020/atlas", "page": 1 }`, then inspect the
 returned PR numbers and `nextPage`. GitHub pages can shift when PRs are
 created, so this list is for discovery **only**; it does not imply all PRs were
 checked or all history was imported. A full page indicates only a *possible*
-next page. Discovery requires an Atlas GitHub App installation, but does not
+next page; discovery stops at page 100 (up to 5,000 PRs), returning
+`truncatedAtLimit: true` when that final page is full. Discovery requires an Atlas GitHub App installation, but does not
 write records or require trusted-publisher configuration.
 
 Select **1–8 explicit, distinct PR numbers** for each backfill batch. Nothing

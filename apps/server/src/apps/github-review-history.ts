@@ -113,6 +113,7 @@ export class GitHubReviewHistoryReader {
             })),
             // A full page is only a *possible* continuation, never a completeness claim.
             nextPage: data.length === 50 && page < 100 ? page + 1 : null,
+            truncatedAtLimit: data.length === 50 && page === 100,
         };
     }
 

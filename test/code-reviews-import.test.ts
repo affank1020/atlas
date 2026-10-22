@@ -374,3 +374,34 @@ test('batch preview detects duplicate GitHub identities across selected PRs with
     await assert.rejects(service.backfillPullRequests(repository, [69, 70], false), /conflicts with its source/);
     assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 0);
 });
+
+test('discover Application tool supplies defaults, caps pages and returns read-only selection metadata', async () => {
+    const { catalog } = await fixture();
+    const calls: number[] = [];
+    const service = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        discover: async (_repo: string, page: number) => {
+            calls.push(page);
+            return { repository, page, items: [
+                { number: 69, title: 'Test PR', state: 'closed' as const, draft: false },
+            ], nextPage: null, truncatedAtLimit: false };
+        },
+    }, trusted);
+    const api = new ApplicationRegistry([codeReviewsApplication(service)]);
+    const discovered = await api.invoke('code_reviews_discover_pull_requests', { repository }) as any;
+    assert.equal(discovered.items[0].number, 69);
+    assert.deepEqual(calls, [1]);
+    await assert.rejects(api.invoke('code_reviews_discover_pull_requests', { repository, page: 101 }));
+    assert.deepEqual(calls, [1]);
+});
+
+test('an empty matching review timeline yields zero counts rather than a completeness claim', async () => {
+    const { catalog, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+    }, trusted);
+    const result = await service.backfillPullRequests(repository, [68], false);
+    assert.equal(result.results[0]?.sourceReviews, 0);
+    assert.equal(result.totals.runsCreated, 0);
+    assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 0);
+});
