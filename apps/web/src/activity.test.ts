@@ -66,4 +66,9 @@ it('does not hide a correlated failure behind a later successful event', () => {
     expect(items).toHaveLength(1);
     expect(items[0].status).toBe('failed');
     expect(items[0].description).toBe('Push rejected');
+    expect(items[0].timestamp).toBe('2026-10-22T08:01:00Z');
+    expect(items[0].details).toMatchObject({
+        timestamp: '2026-10-22T08:01:00Z',
+        evidenceTimestamp: '2026-10-22T08:00:00Z',
+    });
 });
