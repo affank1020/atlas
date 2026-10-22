@@ -174,6 +174,8 @@ with tempfile.TemporaryDirectory() as td:
         elif command[1]==str(e.LIFECYCLE) and command[2]=="plan":
             log.append("plan")
         elif command[1]==str(e.LIFECYCLE) and command[2]=="activate":
+            assert command[3:] == ["v2.0.1-"+source[:12],
+                "--expect-current", "v2.0.0-"+"c"*12], command
             log.append("activate")
             installed[0]="2.0.1+"+source[:12]
         else:raise AssertionError("unexpected privileged command")
@@ -187,6 +189,7 @@ with tempfile.TemporaryDirectory() as td:
     assert Store(None).status(ident)["status"]=="claimed"
     receipt=e.ReceiptStore(Store(None)).read(ident)
     assert receipt["stage"]=="activated"
+    assert not list(state.glob(".executor-input-*")), "successful upgrade must remove private snapshots"
     refuses(lambda:e._execute(ident,archive,checksum,bundle,approval_module=m,runner=shell))
     assert log==["verify","watchdog-enabled","watchdog-active","node-active","server","install","plan","activate"],"replay must stop before any mutation"
 print("execution receipt and no-replay proof passed")
@@ -229,6 +232,7 @@ with tempfile.TemporaryDirectory() as td:
     bundle=base/"bundle";bundle.write_bytes(b"c")
     def run(args,**opts):
         if args[1]==str(e.LIFECYCLE) and args[2]=="activate":
+            assert args[3:] == ["v2.0.1-"+source[:12], "--expect-current", "v2.0.0-"+"c"*12]
             raise RuntimeError("simulated interrupted activation")
     try:e._execute(ident,archive,checksum,bundle,approval_module=m,runner=run)
     except RuntimeError:pass
