@@ -75,6 +75,7 @@ export class PostgresRepository implements AtlasRepository {
     async queryMonitoringActivity(input: MonitoringActivityQuery): Promise<MonitoringActivityPage> {
         const limit = Math.min(Math.max(Number.isInteger(input.limit) ? input.limit! : 30, 1), 100);
         const offset = Math.min(Math.max(Number.isInteger(input.offset) ? input.offset! : 0, 0), 10000);
+        if (input.groupOperations) return this.queryMonitoringOperations(input, limit, offset);
         const values: unknown[] = [];
         const where: string[] = [];
         const param = (value: unknown) => { values.push(value); return '$' + values.length; };
@@ -123,6 +124,103 @@ export class PostgresRepository implements AtlasRepository {
         const limitParam = param(limit), offsetParam = param(offset);
         const result = await this.query('SELECT a.* FROM audit_events a' + condition + ' ORDER BY a.created_at DESC,a.id DESC LIMIT ' + limitParam + ' OFFSET ' + offsetParam, values);
         return { items: result.rows.map(auditFromRow), total: Number(count.rows[0].total), limit, offset };
+    }
+
+    /**
+     * Correlate audit attempt members before filtering and paging. Member rows are
+     * returned unchanged; only their group is counted as a single operation.
+     * A single SQL statement provides a consistent count and page snapshot.
+     */
+    private async queryMonitoringOperations(input: MonitoringActivityQuery, limit: number, offset: number): Promise<MonitoringActivityPage> {
+        const values: unknown[] = [];
+        const param = (value: unknown) => { values.push(value); return '$' + values.length; };
+        // These identify the owner/checkout of the attempt; other filters must
+        // match at group level so they cannot separate the request from its result.
+        const scope: string[] = [];
+        if (input.projectId) scope.push('a.project_id=' + param(uuid(input.projectId)));
+        if (input.workspaceId) scope.push('a.workspace_id=' + param(uuid(input.workspaceId)));
+        if (input.checkoutId) scope.push('a.workspace_id=' + param(uuid(input.checkoutId)));
+        if (input.client) scope.push('lower(a.client)=lower(' + param(input.client) + ')');
+
+        const aggregates: string[] = [];
+        const matches: string[] = [];
+        const matchAny = (expression: string) => {
+            const field = 'matched_' + aggregates.length;
+            aggregates.push('bool_or(COALESCE(' + expression + ', false)) AS ' + field);
+            matches.push('g.' + field);
+        };
+        if (input.storeId) matchAny('a.store_id=' + param(uuid(input.storeId)));
+        if (input.recordId) matchAny('a.record_id=' + param(uuid(input.recordId)));
+        if (input.nodeId) {
+            const id = param(uuid(input.nodeId)?.toLowerCase());
+            matchAny("(a.after_state->>'nodeId'=" + id
+                + " OR a.after_state->>'previousNodeId'=" + id
+                + " OR (a.operation IN ('node.share.approved','node.share.revoked') AND "
+                + "(a.after_state->>'sourceNodeId'=" + id
+                + " OR a.after_state->>'targetNodeId'=" + id + ')))');
+        }
+        if (input.operation) matchAny('a.operation=' + param(input.operation));
+        if (input.category) {
+            const op = `CASE WHEN a.operation IN ('workspace.mutation_requested', 'workspace.mutation_failed')
+                AND (a.after_state->>'operation') ~ '^workspace[.][a-z][a-z0-9_]*$'
+                THEN a.after_state->>'operation' ELSE a.operation END`;
+            const category = `CASE WHEN ${op} LIKE 'view.%' THEN 'view'
+                WHEN ${op} LIKE 'node.%' THEN 'node'
+                WHEN ${op} LIKE 'workspace.git_%' THEN 'git'
+                WHEN ${op} LIKE 'workspace.dev_%' THEN 'dev'
+                WHEN ${op} LIKE 'workspace.unity_%' THEN 'unity'
+                WHEN ${op} LIKE 'workspace.file_%' OR ${op}='workspace.files_searched' THEN 'files'
+                WHEN ${op} LIKE 'workspace.%' THEN 'workspace' ELSE 'core' END`;
+            matchAny('(' + category + ')=' + param(input.category));
+        }
+        if (input.search?.trim()) {
+            const pattern = param('%' + input.search.trim().replace(/[%_]/g, char => '\\' + char) + '%');
+            matchAny("(a.operation ILIKE " + pattern + " OR a.client ILIKE " + pattern
+                + " OR a.after_state->>'error' ILIKE " + pattern
+                + " OR a.after_state->>'task' ILIKE " + pattern + ")");
+        }
+        if (input.from) matches.push('g.latest_at >= ' + param(input.from) + '::timestamptz');
+        if (input.to) matches.push('g.latest_at <= ' + param(input.to) + '::timestamptz');
+        if (input.outcome === 'failed') matches.push('g.failed');
+        if (input.outcome === 'pending') matches.push('NOT g.failed AND NOT g.has_terminal');
+        if (input.outcome === 'completed') matches.push('NOT g.failed AND g.has_terminal');
+
+        const sizeParam = param(limit);
+        const startParam = param(offset);
+        const failed = `(a.operation LIKE '%_failed'
+            OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error')
+            OR a.after_state->>'success'='false')`;
+        const sql = `
+            WITH base AS (
+                SELECT a.*,
+                    CASE WHEN a.operation LIKE 'workspace.%'
+                        AND jsonb_typeof(a.after_state->'attemptId') = 'string'
+                        AND length(a.after_state->>'attemptId') > 0
+                    THEN concat('attempt:', coalesce(a.project_id::text,''), ':',
+                        coalesce(a.workspace_id::text,''), ':', a.after_state->>'attemptId')
+                    ELSE 'event:' || a.id::text END AS group_key
+                FROM audit_events a${scope.length ? ' WHERE ' + scope.join(' AND ') : ''}
+            ), grouped AS (
+                SELECT a.group_key, max(a.created_at) AS latest_at,
+                    bool_or(COALESCE(${failed}, false)) AS failed,
+                    bool_or(a.operation <> 'workspace.mutation_requested') AS has_terminal
+                    ${aggregates.length ? ', ' + aggregates.join(', ') : ''}
+                FROM base a GROUP BY a.group_key
+            ), matches AS (
+                SELECT g.group_key, g.latest_at FROM grouped g
+                ${matches.length ? ' WHERE ' + matches.join(' AND ') : ''}
+            ), page AS (
+                SELECT * FROM matches ORDER BY latest_at DESC, group_key DESC
+                LIMIT ${sizeParam} OFFSET ${startParam}
+            )
+            SELECT a.*, totals.total FROM
+                (SELECT count(*)::int AS total FROM matches) totals
+                LEFT JOIN page p ON true
+                LEFT JOIN base a ON a.group_key = p.group_key
+            ORDER BY p.latest_at DESC, p.group_key DESC, a.created_at DESC, a.id DESC`;
+        const result = await this.query(sql, values);
+        return { items: result.rows.filter(row => row.id !== null).map(auditFromRow),
+            total: Number(result.rows[0]?.total ?? 0), limit, offset };
     }
     async readAudit(input: AuditRead): Promise<AuditEvent[]> {
         const values: unknown[] = [];
