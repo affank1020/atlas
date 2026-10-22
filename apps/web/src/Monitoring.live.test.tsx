@@ -91,6 +91,26 @@ test('in-flight polling never overlaps, even if a read runs longer than the inte
     expect(callTool).toHaveBeenCalledTimes(2);
 });
 
+test('paging into history automatically disables live mode and its timers', async () => {
+    vi.useFakeTimers();
+    location.hash = '#/monitoring?tab=activity&live=1';
+    vi.mocked(callTool).mockResolvedValue({
+        ...activity('latest'), total: 70,
+    } as never);
+    render(<MonitoringPage />);
+    await flush();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent(window, new Event('hashchange'));
+    await flush();
+    expect(location.hash).toContain('offset=30');
+    expect(location.hash).not.toContain('live=1');
+    expect(screen.getByRole('button', { name: 'Start live updates' })).toBeInTheDocument();
+    const observed = vi.mocked(callTool).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(callTool).toHaveBeenCalledTimes(observed);
+});
+
 test('late live response from an abandoned scope cannot replace the current Activity feed', async () => {
     location.hash = '#/monitoring?tab=activity&live=1&client=first';
     let finishOld!: (page: unknown) => void;
