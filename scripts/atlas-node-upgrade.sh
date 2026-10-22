@@ -47,14 +47,23 @@ archive="atlas-node-$release.tar.gz"
 cd "$(dirname -- "${BASH_SOURCE[0]}")"
 sha256sum -c "$archive.sha256"
 # Only the Linux Node service will restart. sudo prompts once over the SSH TTY.
+# The root-owned libexec implementation is the SAME one invoked by the
+# independent crash-recovery systemd timer. Never call an old PATH executable.
+lifecycle=/usr/local/libexec/atlas-node-lifecycle.sh
 sudo -v
+sudo -n test -x "$lifecycle" ||
+  { echo "Recovery-aware Node lifecycle not installed. Provision watchdog first." >&2; exit 1; }
+# Refuse to stage/activate before the required watchdog is installed and live.
+sudo -n systemctl is-enabled --quiet atlas-node-lifecycle-recover.timer &&
+  sudo -n systemctl is-active --quiet atlas-node-lifecycle-recover.timer ||
+  { echo "Node recovery watchdog is not enabled and active." >&2; exit 1; }
 if ! sudo -n test -d "/opt/atlas-node/releases/$release"; then
   sudo -n bash ./linux-node-release.sh verify "$archive" "$archive.sha256"
   sudo -n bash ./linux-node-release.sh install "$archive" "$archive.sha256"
 fi
-sudo -n atlas-node-lifecycle plan "$release"
-sudo -n atlas-node-lifecycle activate "$release"
-sudo -n atlas-node-lifecycle status
+sudo -n "$lifecycle" plan "$release"
+sudo -n "$lifecycle" activate "$release"
+sudo -n "$lifecycle" status
 REMOTE
 
 echo "Target Linux Node: $release"
