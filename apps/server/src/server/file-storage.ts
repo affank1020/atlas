@@ -174,7 +174,7 @@ export class R2ObjectStore implements ObjectStore {
             if (length !== null && total !== Number(length))
                 throw new Error("R2 GET 404 response length mismatch.");
             const xml = Buffer.concat(chunks, total).toString("utf8");
-            if (/^\\s*(?:<\\?xml[^>]*>\\s*)?<Error(?:\\s[^>]*)?>\\s*<Code>\\s*NoSuchKey\\s*<\\/Code>[\\s\\S]*<\\/Error>\\s*$/.test(xml))
+            if (/^\s*(?:<\?xml[^>]*>\s*)?<Error(?:\s[^>]*)?>\s*<Code>\s*NoSuchKey\s*<\/Code>[\s\S]*<\/Error>\s*$/.test(xml))
                 throw new ObjectNotFound();
             throw new Error("R2 GET failed (HTTP 404; not a confirmed missing key).");
         }
