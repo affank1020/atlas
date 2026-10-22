@@ -34,12 +34,18 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         const controller = new AbortController();
         setLoading(true); setError(''); setPage(undefined);
         const input = Object.fromEntries(Object.entries(filters).filter(([key, value]) => key !== 'offset' && value));
-        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT }, controller.signal)
+        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true }, controller.signal)
             .then(value => { if (!controller.signal.aborted) setPage(value); })
             .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
             .finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => controller.abort();
     }, [JSON.stringify(filters), offset, refresh]);
+    const operationCount = page ? new Set(page.items.map(event => {
+        const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
+        const attempt = typeof details.attemptId === 'string' ? details.attemptId : '';
+        return event.operation.startsWith('workspace.') && attempt
+            ? `attempt:${event.projectId ?? ''}:${event.workspaceId ?? ''}:${attempt}` : event.id;
+    })).size : 0;
     const changePage = (next: number) => { location.hash = monitoringHash('activity', { ...filters, offset: String(next) }); };
     return <section className="panel activity-panel" aria-label="Monitoring activity">
         <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions"><button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button></div></div>
@@ -58,7 +64,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         {loading && <p role="status" className="empty">Loading audit history…</p>}
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
         {page && <><div className="activity-scroll"><ActivityRows events={page.items} />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
-            <div className="monitoring-pagination"><span>{page.total ? `${page.offset + 1}–${page.offset + page.items.length} of ${page.total}` : '0 events'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + page.items.length >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
+            <div className="monitoring-pagination"><span>{page.total ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total}` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
 }
