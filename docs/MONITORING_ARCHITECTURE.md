@@ -42,6 +42,14 @@ Node health is based on **effective status and last-seen heartbeat**, not report
 
 This is **an on-demand, point-in-time snapshot**, not a continuously monitored SLA. It does not prove Docker/container health, CPU/disk/memory capacity, background job correctness, Ollama availability, external integration health, cross-replica health or durable log retention. Operators can inspect Activity and Logs separately. Future health providers/alerts require distinct reviewed PRs.
 
+## Safe Monitoring Activity details and context navigation
+
+The Monitoring Activity screen opts into `query_monitoring_activity({ safeDetails: true })`. The projection runs **after** the existing SQL / snapshot history grouping, filter matching, count and pagination; it returns only fixed safe scalar operational markers (validated attempt/Node references, action codes, outcome, timing and boolean flags). The original immutable audit rows and legacy `get_audit_history` / `get_recent_activity` responses are unchanged, as is `query_monitoring_activity` without the opt-in flag.
+
+The projection explicitly excludes arbitrary `previous` snapshots, unrecognised `resulting` fields, raw error messages, paths, command output, credentials and nested objects. The web Monitoring renderer independently applies the same narrow allowlist to handle rolling-version deployment where an older Server might ignore the flag. These are safeguards against accidental exposure in Monitoring, **not** a new authorization boundary: clients that already have permission to request the legacy/raw audit API retain that access. Arbitrary client names, top-level resource IDs and even allowlisted strings still carry their existing sensitivity considerations and must not be treated as general-purpose public data.
+
+Activity rows provide deep links to server-side filtered Project, Checkout and Node activity, without guessing logical-Workspace identity or claiming full trace correlation. The links navigate to the existing Monitoring Activity filters; access policy is unchanged. Operation detail and timestamps remain grounded in the existing immutable audit events. Data omitted by this projection must be investigated through appropriately authorized, legacy audit tools rather than expanding the Monitoring payload again.
+
 ## Delivery sequence
 
 1. **Activity and navigation (first PR):** query `audit_events` with parameterised filters, total and offset/limit; preserve legacy audit tools; add Monitoring tabs, deep links and old Activity bookmark support. Basic macOS Node log reader remains read-only. Indexes cover principal read patterns.
