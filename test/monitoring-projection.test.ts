@@ -69,3 +69,11 @@ test('only bounded safe operation evidence necessary for correlation and failure
         stderrTruncated: true,
     });
 });
+
+test('safe projection preserves workspace identity in the envelope but never relays arbitrary Workspace display text', () => {
+    const raw = audit({ workspaceName: 'TOP_SECRET_DISPLAY_NAME', name: 'TOP_SECRET_NAME', task: 'build' });
+    const projected = projectMonitoringEvent(raw);
+    assert.equal(projected.workspaceId, raw.workspaceId);
+    assert.deepEqual(projected.resulting, { task: 'build' });
+    assert.ok(!JSON.stringify(projected).includes('TOP_SECRET'));
+});
