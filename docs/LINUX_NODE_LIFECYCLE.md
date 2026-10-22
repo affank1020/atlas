@@ -39,6 +39,9 @@ read credentials, contact Atlas Server, or initiate new updates.
 
 ```bash
 sudo install -D -o root -g root -m 0755 scripts/linux-node-lifecycle.sh /usr/local/libexec/atlas-node-lifecycle.sh
+# Replace the legacy PATH command as well, rather than retaining an unsafe old binary.
+sudo ln -sfnT /usr/local/libexec/atlas-node-lifecycle.sh /usr/local/bin/atlas-node-lifecycle
+sudo test "$(readlink -f /usr/local/bin/atlas-node-lifecycle)" = /usr/local/libexec/atlas-node-lifecycle.sh
 sudo install -o root -g root -m 0644 scripts/atlas-node-lifecycle-recover.service /etc/systemd/system/
 sudo install -o root -g root -m 0644 scripts/atlas-node-lifecycle-recover.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -47,10 +50,16 @@ systemctl is-active atlas-node-lifecycle-recover.timer
 ```
 
 Run these commands **on the VPS** with the reviewed scripts present. Do not
-run them from the Mac against local systemd. An explicit Linux activation or
-rollback now refuses to proceed on the production release root unless the
-timer is both enabled and active. No timer is enabled or host service changed
-merely by merging this code.
+run them from the Mac against local systemd. The normal `./atlasctl vps
+node-upgrade` flow now invokes the **same absolute,
+root-owned `/usr/local/libexec/atlas-node-lifecycle.sh`** as the recovery
+timer; it fails before staging when that implementation or the timer is
+missing. The `/usr/local/bin/atlas-node-lifecycle` compatibility symlink
+also replaces the previous PATH executable. Do not execute a stale lifecycle
+binary installed elsewhere, including one in `/usr/bin`. An explicit Linux
+activation or rollback refuses to proceed on the production release root
+unless the timer is both enabled and active. No timer is enabled or host
+service changed merely by merging this code.
 
 An activation writes a root-owned, synced `/opt/atlas-node/.activation-pending`
 journal identifying the previous and attempted release plus the fixed
@@ -96,10 +105,10 @@ Read-only status from a checkout on your Mac:
 From the VPS (use sudo for status and mutations because diagnostics are owned by the service account):
 
 \`\`\`bash
-sudo bash linux-node-lifecycle.sh status
-bash linux-node-lifecycle.sh plan v2.0.0-<12-digit-commit-prefix>
-sudo bash linux-node-lifecycle.sh activate v2.0.0-<12-digit-commit-prefix>
-sudo bash linux-node-lifecycle.sh rollback
+sudo /usr/local/libexec/atlas-node-lifecycle.sh status
+/usr/local/libexec/atlas-node-lifecycle.sh plan v2.0.0-<12-digit-commit-prefix>
+sudo /usr/local/libexec/atlas-node-lifecycle.sh activate v2.0.0-<12-digit-commit-prefix>
+sudo /usr/local/libexec/atlas-node-lifecycle.sh rollback
 \`\`\`
 
 The script refuses unmanaged targets, incomplete dependency trees, absent
@@ -135,7 +144,7 @@ VPS Node. GitHub Actions artifacts expire after their configured retention
 period; rerun the packaging workflow if the latest artifact has expired.
 
 After separately reviewing the source and running the Linux installer to stage a
-new version, use `sudo atlas-node-lifecycle plan vVERSION-SHA` and then the
+new version, use `sudo /usr/local/libexec/atlas-node-lifecycle.sh plan vVERSION-SHA` and then the
 explicit `activate` command. Do not reinstall the current version or activate
 the old vulnerable release. The updater is deliberately not yet an unattended
 remote-root process.
