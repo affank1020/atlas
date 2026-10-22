@@ -83,6 +83,12 @@ export class PostgresRepository implements AtlasRepository {
             const value = input[key as keyof MonitoringActivityQuery];
             if (value) where.push(column + '=' + param(uuid(String(value))));
         }
+        if (input.logicalWorkspaceId) {
+            const logicalId = param(uuid(input.logicalWorkspaceId));
+            // Resolve historical audit checkout IDs through the *current*
+            // registered physical checkout membership. Include archived rows.
+            where.push('EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.logical_workspace_id=' + logicalId + '::uuid)');
+        }
         if (input.nodeId) {
             const id = param(uuid(input.nodeId)?.toLowerCase());
             where.push("(a.after_state->>'nodeId'=" + id +
@@ -140,6 +146,10 @@ export class PostgresRepository implements AtlasRepository {
         if (input.projectId) scope.push('a.project_id=' + param(uuid(input.projectId)));
         if (input.workspaceId) scope.push('a.workspace_id=' + param(uuid(input.workspaceId)));
         if (input.checkoutId) scope.push('a.workspace_id=' + param(uuid(input.checkoutId)));
+        if (input.logicalWorkspaceId) {
+            const logicalId = param(uuid(input.logicalWorkspaceId));
+            scope.push('EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.logical_workspace_id=' + logicalId + '::uuid)');
+        }
         if (input.client) scope.push('lower(a.client)=lower(' + param(input.client) + ')');
 
         const projections: string[] = [];
