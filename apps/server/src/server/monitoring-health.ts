@@ -15,6 +15,18 @@ export type MonitoringHealth = {
             state: NodeHealthState; lastSeen: string | null; ageSeconds: number | null }> };
 };
 
+const HEALTH_DEADLINE_MS = 2_200;
+// Presentation deadline is independent of pg's query / connection timeouts.
+// The dedicated health pool also bounds real pool acquisition and SQL execution,
+// so a timed-out read does not leave indefinite queued database work behind.
+function withinDeadline<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Health source deadline exceeded')), timeoutMs);
+    });
+    return Promise.race([task, deadline]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
 const STALE_MS = 90_000; // Gateway closes missed heartbeats after 45 s; allow scheduling jitter.
 function state(node: AtlasNode, nowMs: number): { state: NodeHealthState; ageSeconds: number | null } {
     const seenMs = node.lastSeen === null ? NaN : Date.parse(node.lastSeen);
@@ -34,6 +46,7 @@ export class MonitoringHealthService {
         private readonly registry: { list: () => Promise<AtlasNode[]> },
         private readonly now: () => Date = () => new Date(),
         private readonly clock: () => number = () => performance.now(),
+        private readonly deadlineMs = HEALTH_DEADLINE_MS,
     ) { this.startedAt = now().toISOString(); }
 
     async read(raw: unknown = {}): Promise<MonitoringHealth> {
@@ -41,9 +54,16 @@ export class MonitoringHealthService {
         const checkedAt = this.now();
         const started = this.clock();
         let databaseLatencyMs: number | undefined;
-        const probe = this.database.query({ text: 'SELECT 1', query_timeout: 2_000 })
-            .then(result => { databaseLatencyMs = Math.max(0, Math.round(this.clock() - started)); return result; });
-        const [db, directory] = await Promise.allSettled([probe, this.registry.list()]);
+        const probe = withinDeadline(
+            this.database.query({ text: 'SELECT 1', query_timeout: 1_500 })
+                .then(result => { databaseLatencyMs = Math.max(0, Math.round(this.clock() - started)); return result; }),
+            this.deadlineMs,
+        );
+        // Do not await an unbounded Node directory promise during an incident.
+        // In production the dedicated pool separately limits acquisition & query
+        // lifetime; this deadline guarantees a conservative snapshot response.
+        const directoryRead = withinDeadline(Promise.resolve().then(() => this.registry.list()), this.deadlineMs);
+        const [db, directory] = await Promise.allSettled([probe, directoryRead]);
         const database = db.status === 'fulfilled'
             ? { status: 'reachable' as const, latencyMs: databaseLatencyMs ?? 0 }
             : { status: 'unavailable' as const };
