@@ -24,12 +24,14 @@ export function classifyGitPushFailure(error: unknown): AtlasError {
     .map(value => value.slice(0, 32768)).join('\n');
   if (failure?.killed === true || failure?.code === 'ETIMEDOUT' || failure?.signal === 'SIGTERM')
     return new AtlasError('Git push timed out. Check Node connectivity and retry after verifying the remote branch.', 'GIT_PUSH_TIMEOUT');
-  if (/workflow(s)? (?:permission|scope)|without .?workflows.? permission|refusing to allow .*workflow|\.github\/workflows/i.test(output))
+  // A workflow filename may appear in a branch-ruleset rejection; only an
+  // explicit permission denial establishes a missing workflow permission.
+  if (/protected branch|repository rule|rule violations|GH006|GH013/i.test(output))
+    return new AtlasError('GitHub repository rules or branch protection rejected the push.', 'GIT_PUSH_PROTECTED');
+  if (/workflow(s)? (?:write )?(?:permission|scope)(?: (?:denied|missing|required))?|without ['"`]?workflows['"`]? permission|refusing to allow [^\n]*workflow[^\n]*without [^\n]*workflows permission/i.test(output))
     return new AtlasError('GitHub rejected a workflow-file update. Approve Workflows: read and write permission for the Atlas GitHub App installation.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
   if (/non-fast-forward|fetch first|stale info|\[rejected\].*\(.*(?:fetch|behind|non-fast-forward)/i.test(output))
     return new AtlasError('GitHub rejected the push because the remote branch has diverged. Fetch and reconcile changes; Atlas will not force-push.', 'GIT_PUSH_NON_FAST_FORWARD');
-  if (/protected branch|repository rule|rule violations|GH006|GH013/i.test(output))
-    return new AtlasError('GitHub repository rules or branch protection rejected the push.', 'GIT_PUSH_PROTECTED');
   if (/authentication failed|permission denied|access denied|not authorized|write access .*not granted|HTTP (?:401|403)|requested URL returned error: (?:401|403)/i.test(output))
     return new AtlasError('GitHub rejected Git push authentication or authorization. Check the App installation and repository write access.', 'GIT_PUSH_AUTH_FAILED');
   if (/could not resolve host|failed to connect|couldn.t connect|connection (?:timed out|reset|refused)|network is unreachable|SSL connect|TLS handshake|requested URL returned error: 5\d\d|HTTP 5\d\d/i.test(output))
@@ -57,6 +59,17 @@ async function approvedGitRoot(root: string, legacyVariable: string) {
   return false;
 }
 export async function gitWrite(root: string, files: WorkspaceFiles, operation: string, input: Record<string, any>) {
+  try {
+    return await executeGitWrite(root, files, operation, input);
+  } catch (error) {
+    // All Git preflight commands must produce safe Node protocol errors, not just
+    // the final push. Preserve deliberate authorization and validation failures.
+    if (operation !== 'workspace_git_push_branch' || error instanceof AtlasError) throw error;
+    throw classifyGitPushFailure(error);
+  }
+}
+
+async function executeGitWrite(root: string, files: WorkspaceFiles, operation: string, input: Record<string, any>) {
   await files.resolve(root, '');
   if (!await approvedGitRoot(root, 'ATLAS_GIT_WRITE_ROOTS'))
     throw new AtlasError('Git writes are not approved for this workspace.', 'CAPABILITY_UNAVAILABLE');
@@ -129,16 +142,12 @@ export async function gitWrite(root: string, files: WorkspaceFiles, operation: s
     const basic = Buffer.from(`x-access-token:${input.githubToken}`).toString('base64');
     // The short-lived token is supplied in child environment, not argv, Git config or a file.
     // Force Git to refuse redirects so the authenticated request cannot follow an arbitrary host.
-    try {
-      await run(root, ['-c', 'http.followRedirects=false', 'push', '--porcelain', '--',
-        `https://github.com/${input.repository}.git`, `HEAD:refs/heads/${branch}`], {
-        GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-        GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
-      }, 45000);
-    } catch (error) {
-      throw classifyGitPushFailure(error);
-    }
+    await run(root, ['-c', 'http.followRedirects=false', 'push', '--porcelain', '--',
+      `https://github.com/${input.repository}.git`, `HEAD:refs/heads/${branch}`], {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    }, 45000);
     return { repository: input.repository, branch, head: input.expectedHead, pushed: true };
   }
   throw new AtlasError('Unsupported Git operation.', 'INVALID_REQUEST');

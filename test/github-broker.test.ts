@@ -54,17 +54,20 @@ test('Git pushes use a separate repository-scoped token with workflow-write, wit
     assert.equal(await broker.gitPublishToken(repo), tokenBody.token);
 });
 
-test('Git publishing fails clearly if workflow-write has not been approved or granted', async () => {
+test('ambiguous token endpoint failures retain redacted, generic GitHub request errors', async () => {
     for (const status of [403, 422]) {
         const broker = new GitHubBroker(env, (async url =>
             String(url).includes('/app/installations?') ? response(200, installations) :
                 response(status, { message: 'secret upsteam detail ghs_shall-not-leak' })) as typeof fetch);
         await assert.rejects(broker.gitPublishToken(repo), (error: any) => {
-            assert.equal(error.code, 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
-            assert.doesNotMatch(error.message, /ghs_shall-not-leak|secret upsteam/);
+            assert.equal(error.code, 'GITHUB_REQUEST_FAILED');
+            assert.match(error.message, new RegExp(`HTTP ${status}`));
+            assert.doesNotMatch(error.message, /ghs_shall-not-leak|secret upsteam|workflow-write token/);
             return true;
         });
     }
+    // A returned token with a missing scope *is* positive evidence of
+    // unapproved permissions; unlike the ambiguous HTTP statuses above.
     const missing = new GitHubBroker(env, (async url =>
         String(url).includes('/app/installations?') ? response(200, installations) :
             response(201, { ...tokenBody, permissions: { contents: 'write' } })) as typeof fetch);

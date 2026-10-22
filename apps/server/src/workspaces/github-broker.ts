@@ -68,17 +68,10 @@ export class GitHubBroker {
         const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
             : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : { contents: 'read' };
         const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
-        let result: TokenResponse;
-        try {
-            result = await this.request(`/app/installations/${installationId}/access_tokens`, 'POST', this.jwt(), body) as TokenResponse;
-        } catch (error) {
-            // GitHub may reject a requested permission until the App's permission
-            // change has been approved by the installation owner. Never echo its body.
-            if (purpose === 'push' && error instanceof AtlasError && error.code === 'GITHUB_REQUEST_FAILED' &&
-                /\(HTTP (?:403|422)\)/.test(error.message))
-                throw new AtlasError('GitHub could not issue a workflow-write token. Check Workflows: read and write permission and approve the GitHub App installation update.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
-            throw error;
-        }
+        // HTTP 403 and 422 also cover throttling and validation failures. Do
+        // not infer missing permission from status alone or echo GitHub bodies.
+        // A successful token response must explicitly confirm workflow-write.
+        const result = await this.request(`/app/installations/${installationId}/access_tokens`, 'POST', this.jwt(), body) as TokenResponse;
         if (!result.token) throw new AtlasError('GitHub App did not issue a token.', 'GITHUB_REQUEST_FAILED');
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
