@@ -31,7 +31,7 @@ export type ExpectedRootUpdate = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const VERSION = /^[0-9]+[.][0-9]+[.][0-9]+[+][0-9a-f]{12}$/;
-const BASE64_SIGNATURE = /^(?:[A-Za-z0-9+/]{4}){21}==$/;
+const BASE64_SIGNATURE = /^(?:[A-Za-z0-9+/]{4}){21}[A-Za-z0-9+/]{2}==$/;
 
 function validFields(value: Record<string, unknown>) {
     return Object.keys(value).sort().join(',') ===
