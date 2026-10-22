@@ -7,6 +7,29 @@ import { AtlasError } from "../shared/errors.js";
 type Client = { client?: string };
 const now = () => new Date().toISOString();
 const active = <T extends { archivedAt?: string }>(items: T[], includeArchived = false) => items.filter((item) => includeArchived || !item.archivedAt);
+/** Accept explicit-offset ISO timestamps whose calendar date and clock components are real.
+ * JavaScript Date.parse silently normalizes impossible days such as February 30.
+ * Restrict the accepted shape so values can also be cast by PostgreSQL timestamptz.
+ */
+const validTimestamp = (value: unknown): value is string => {
+    if (typeof value !== 'string') return false;
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+    if (!match) return false;
+    const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone] = match;
+    const year = Number(yearText), month = Number(monthText), day = Number(dayText);
+    const hour = Number(hourText), minute = Number(minuteText), second = Number(secondText);
+    if (year < 1 || month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+    if (day < 1 || day > daysInMonth) return false;
+    if (zone !== 'Z') {
+        const offsetHour = Number(zone.slice(1, 3));
+        const offsetMinute = Number(zone.slice(4, 6));
+        if (offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) return false;
+    }
+    return !Number.isNaN(Date.parse(value));
+};
+
 const cleanText = (value: string, label: string) => { const result = value.trim(); if (!result) throw new AtlasError(`${label} cannot be empty.`); return result; };
 
 export class CoreService {
@@ -86,5 +109,5 @@ export class CoreService {
     audit = appendAudit;
     private validateSchema(fields: FieldDefinition[]) { if (!Array.isArray(fields) || fields.length === 0) throw new AtlasError("A store schema must contain at least one field."); const seen = new Set<string>(); return fields.map((raw) => { const field = structuredClone(raw); if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(field.name)) throw new AtlasError(`Invalid field name '${field.name}'. Use letters, numbers, and underscores, starting with a letter.`); if (seen.has(field.name)) throw new AtlasError(`Duplicate schema field '${field.name}'.`); seen.add(field.name); if (field.type === "enum" && (!field.enumValues?.length || new Set(field.enumValues).size !== field.enumValues.length)) throw new AtlasError(`Enum field '${field.name}' requires unique enumValues.`); if (field.type !== "enum" && field.enumValues) throw new AtlasError(`enumValues is only valid for enum fields ('${field.name}').`); if (field.default !== undefined) this.assertType(field, field.default); return field; }); }
     private validateRecord(fields: FieldDefinition[], input: RecordData) { if (!input || typeof input !== "object" || Array.isArray(input)) throw new AtlasError("Record data must be an object."); const known = new Map(fields.map((x) => [x.name, x])); for (const key of Object.keys(input)) if (!known.has(key)) throw new AtlasError(`Unknown record field '${key}'.`); const output: RecordData = structuredClone(input); for (const field of fields) { if (output[field.name] === undefined && field.default !== undefined) output[field.name] = structuredClone(field.default); if (output[field.name] === undefined) { if (field.required) throw new AtlasError(`Required field '${field.name}' is missing.`); continue; } this.assertType(field, output[field.name]); } return output; }
-    assertType(field: FieldDefinition, value: unknown) { let valid = false; switch (field.type) { case "string": valid = typeof value === "string"; break; case "number": valid = typeof value === "number" && Number.isFinite(value); break; case "boolean": valid = typeof value === "boolean"; break; case "date": valid = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)); break; case "datetime": valid = typeof value === "string" && !Number.isNaN(Date.parse(value)); break; case "enum": valid = typeof value === "string" && !!field.enumValues?.includes(value); break; case "array": valid = Array.isArray(value); break; case "object": valid = !!value && typeof value === "object" && !Array.isArray(value); } if (!valid) throw new AtlasError(`Field '${field.name}' must be a valid ${field.type}${field.type === "enum" ? ` (${field.enumValues?.join(", ")})` : ""}.`); }
+    assertType(field: FieldDefinition, value: unknown) { let valid = false; switch (field.type) { case "string": valid = typeof value === "string"; break; case "number": valid = typeof value === "number" && Number.isFinite(value); break; case "boolean": valid = typeof value === "boolean"; break; case "date": valid = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)); break; case "datetime": valid = validTimestamp(value); break; case "enum": valid = typeof value === "string" && !!field.enumValues?.includes(value); break; case "array": valid = Array.isArray(value); break; case "object": valid = !!value && typeof value === "object" && !Array.isArray(value); } if (!valid) throw new AtlasError(`Field '${field.name}' must be a valid ${field.type}${field.type === "enum" ? ` (${field.enumValues?.join(", ")})` : ""}.`); }
 }

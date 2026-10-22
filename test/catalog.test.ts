@@ -104,3 +104,45 @@ test("datetime sorting uses instants across mixed timezone offsets and fractiona
         sort: [{ field: "reviewedAt", direction: "asc" }], limit: 4 });
     assert.deepEqual(asc.items.map(row => row.data.label), ["first", "third", "second", "fourth"]);
 });
+
+test("datetime writes reject parser-normalized or database-incompatible values", async () => {
+    const { catalog } = await fixture();
+    const project = await catalog.createProject({ name: "Strict datetimes" });
+    const store = await catalog.createStore({ projectId: project.id, name: "Runs",
+        fields: [{ name: "reviewedAt", type: "datetime", required: true }] });
+    const invalid = [
+        "2026-02-30T12:00:00Z", "2025-02-29T12:00:00Z", "2026-04-31T12:00:00Z",
+        "2026-10-22T24:00:00Z", "2026-10-22T12:60:00Z", "2026-10-22T12:00:60Z",
+        "2026-10-22T12:00:00+14:30", "2026-10-22T12:00:00", "not a date",
+    ];
+    for (const reviewedAt of invalid)
+        await assert.rejects(
+            catalog.createRecord({ projectId: project.id, storeId: store.id, data: { reviewedAt } }),
+            /must be a valid datetime/, reviewedAt);
+    for (const reviewedAt of [
+        "2024-02-29T12:00:00Z", "2026-10-22T13:00:00.123456+01:00",
+        "2026-10-22T12:00:00.100Z",
+    ])
+        await catalog.createRecord({ projectId: project.id, storeId: store.id, data: { reviewedAt } });
+    assert.equal((await catalog.queryRecords({ projectId: project.id, storeId: store.id })).total, 3);
+});
+
+test("legacy invalid datetime rows cannot abort PostgreSQL timestamp sorts or pagination", async () => {
+    const { catalog, store: repository } = await fixture();
+    const project = await catalog.createProject({ name: "Legacy datetime records" });
+    const store = await catalog.createStore({ projectId: project.id, name: "Review runs",
+        fields: [{ name: "reviewedAt", type: "datetime", required: true }] });
+    // Model a value accepted by older Atlas versions before strict calendar validation.
+    await repository.pool.query(
+        "INSERT INTO records(id,store_id,schema_version,data,created_at,updated_at) VALUES(gen_random_uuid(),$1,1,$2::jsonb,now(),now())",
+        [store.id, JSON.stringify({ reviewedAt: "2026-02-30T12:00:00Z" })]);
+    for (const reviewedAt of ["2026-03-01T12:00:00Z", "2026-03-02T12:00:00.100Z"])
+        await catalog.createRecord({ projectId: project.id, storeId: store.id, data: { reviewedAt } });
+    const first = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2, offset: 0 });
+    const second = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2, offset: 2 });
+    assert.equal(first.total, 3);
+    assert.deepEqual([...first.items, ...second.items].map(row => row.data.reviewedAt),
+        ["2026-03-02T12:00:00.100Z", "2026-03-01T12:00:00Z", "2026-02-30T12:00:00Z"]);
+});
