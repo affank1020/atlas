@@ -9,6 +9,8 @@ export type MonitoringActivityQuery = {
     limit?: number; offset?: number;
     /** Opt-in: paginate correlated operations, returning all immutable member events for each operation. */
     groupOperations?: boolean;
+    /** Opt-in: omit arbitrary before/after audit snapshots from Monitoring responses. */
+    safeDetails?: boolean;
 };
 export type MonitoringActivityPage = { items: AuditEvent[]; total: number; limit: number; offset: number };
 export type EntityCounts = { active: number; archived: number; total: number };
