@@ -70,7 +70,7 @@ export class AuditService {
                     && (!input.nodeId || any((event, d) => d.nodeId === input.nodeId || d.previousNodeId === input.nodeId
                         || (['node.share.approved', 'node.share.revoked'].includes(event.operation)
                             && ([d.sourceNodeId, d.targetNodeId] as unknown[]).some(value => String(value ?? '').toLowerCase() === input.nodeId!.toLowerCase()))))
-                    && (!input.operation || any(event => event.operation === input.operation))
+                    && (!input.operation || any(event => event.operation === input.operation || operationName(event) === input.operation))
                     && (!input.category || any(event => category(operationName(event)) === input.category))
                     && (!search || any((event, d) => [event.operation, event.client, d.error, d.task]
                         .some(value => String(value ?? '').toLowerCase().includes(search))));
