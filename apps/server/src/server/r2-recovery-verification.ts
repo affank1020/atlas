@@ -8,12 +8,16 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 // PostgreSQL uuid permits values outside UUIDv1-v8, including nil UUIDs.
 // Pagination must traverse ALL such rows even when metadata validation fails.
 const CURSOR_UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+export function assertRecoveryFileCursor(cursor?: string): void {
+    if (cursor !== undefined && !CURSOR_UUID.test(cursor))
+        throw new Error('Invalid R2 recovery cursor.');
+}
 export const R2_RECOVERY_DEFAULT_FILES = 3;
 export const R2_RECOVERY_MAX_FILES = 10;
 export const R2_RECOVERY_MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 export type RecoveryObjectStore = { getBounded(key: string, maxBytes: number): Promise<Buffer> };
-type FileRow = { id: string; storage_key: string; checksum: string; byte_size: number | string };
+export type FileRow = { id: string; storage_key: string; checksum: string; byte_size: number | string };
 export type RecoveryVerification = {
     mode: 'read-only';
     status: 'passed' | 'failed' | 'partial' | 'empty';
@@ -62,12 +66,11 @@ export function parseRecoveryVerifyArgs(args: string[]): { maxFiles: number; cur
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > R2_RECOVERY_MAX_FILES)
         throw new Error('Recovery verification checks 1 to 10 files per invocation.');
     const cursor = cursors[0]?.slice('--cursor='.length);
-    if (cursor !== undefined && !CURSOR_UUID.test(cursor))
-        throw new Error('Invalid R2 recovery cursor.');
+    assertRecoveryFileCursor(cursor);
     return { maxFiles, ...(cursor !== undefined ? { cursor } : {}) };
 }
 
-function validated(row: FileRow): boolean {
+export function validatedRecoveryFileMetadata(row: FileRow): boolean {
     const size = Number(row.byte_size);
     return UUID.test(row.id) && SHA256.test(row.checksum) && FILE_KEY.test(row.storage_key) &&
         Number.isSafeInteger(size) && size > 0 && size <= R2_RECOVERY_MAX_FILE_BYTES &&
@@ -99,8 +102,7 @@ export async function verifyR2Recovery(input: {
     const maxFiles = input.maxFiles ?? R2_RECOVERY_DEFAULT_FILES;
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > R2_RECOVERY_MAX_FILES)
         throw new Error('Invalid R2 recovery verification limit.');
-    if (input.cursor !== undefined && !CURSOR_UUID.test(input.cursor))
-        throw new Error('Invalid R2 recovery cursor.');
+    assertRecoveryFileCursor(input.cursor);
 
     const query = await input.database.query<FileRow>(
         'SELECT id,storage_key,checksum,byte_size FROM atlas_files ' +
@@ -121,7 +123,7 @@ export async function verifyR2Recovery(input: {
     };
     for (const row of rows) {
         result.checked++;
-        if (!validated(row)) {
+        if (!validatedRecoveryFileMetadata(row)) {
             result.invalidMetadata++;
             if (result.failureFileIds.length < 10) result.failureFileIds.push(row.id);
             continue;
