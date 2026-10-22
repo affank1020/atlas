@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Operator-only restore drill. No mounts, published ports or production DB writes.
+# Operator-only restore drill. Pinned recovery Docker daemon, no bind mounts or production DB writes.
 set -euo pipefail
 umask 077
 mode=''
@@ -74,12 +74,27 @@ permissions="$(stat -c %a -- "$identity")"
 [[ ! -e infra/production.env ]] || die 'refusing drill in a production deployment directory; use an isolated recovery host'
 command -v age >/dev/null || die 'age decryptor is missing'
 command -v docker >/dev/null || die 'Docker is missing'
+# Ignore default Docker contexts by pinning every invocation to the same local
+# Unix socket. Refuse remote endpoint/context/TLS overrides entirely. Explicit
+# operator approval of the recovery daemon ID is required before decryption.
+for override in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG DOCKER_TLS_VERIFY DOCKER_CERT_PATH; do
+  [[ -z "${!override:-}" ]] ||
+    die 'Docker context/host/TLS overrides are not permitted for an isolated recovery drill'
+done
+approved_docker_id="${ATLAS_RECOVERY_DOCKER_ID:-}"
+[[ "$approved_docker_id" =~ ^[A-Za-z0-9:._-]{8,128}$ ]] ||
+  die 'set ATLAS_RECOVERY_DOCKER_ID to the independently verified recovery daemon ID'
+docker_recovery() { command docker --host unix:///var/run/docker.sock "$@"; }
+actual_docker_id="$(docker_recovery info --format '{{.ID}}' 2>/dev/null)" ||
+  die 'cannot inspect the pinned local recovery Docker daemon'
+[[ "$actual_docker_id" == "$approved_docker_id" ]] ||
+  die 'pinned local Docker daemon ID does not match the approved recovery daemon'
 
 container="atlas-pg-drill-$(date -u +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
 started=false
 cleanup() {
   if [[ "$started" == true ]]; then
-    docker rm -f "$container" >/dev/null 2>&1 ||
+    docker_recovery rm -f "$container" >/dev/null 2>&1 ||
       printf 'WARNING: failed to stop isolated restore container; remove the drill container manually.\n' >&2
   fi
 }
@@ -87,17 +102,37 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-# Hard-coded, ephemeral, networkless PostgreSQL 16 container: no bind mounts,
-# Compose files or published ports. Never use a supplied database URL.
-started=true
-docker run --detach --rm --name "$container" --network none \
+# Explicit bounded tmpfs at PGDATA overrides postgres:16-alpine's declared
+# VOLUME. Plaintext database pages stay on the approved recovery host's tmpfs
+# (which may be swapped by the host), not an anonymous host-backed volume.
+# No bind mounts, Compose files, published ports or supplied database URLs.
+docker_recovery run --detach --rm --name "$container" --network none \
+  --tmpfs /var/lib/postgresql/data:rw,nosuid,nodev,noexec,size=1536m,mode=0700 \
   --memory 2g --cpus 2 --security-opt no-new-privileges:true \
   --env POSTGRES_DB=atlas_recovery --env POSTGRES_USER=atlas_recovery \
   --env POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine >/dev/null ||
   die 'could not start the isolated PostgreSQL container'
+started=true
+# Fail before decrypting unless Docker confirms no anonymous image VOLUME,
+# host bind/volume, or network. Never display raw inspect output.
+if ! docker_recovery inspect --format '{{json .}}' "$container" 2>/dev/null |
+  node -e '
+    let input=""; process.stdin.on("data", c => {input+=c; if(input.length>500000) process.exit(2);});
+    process.stdin.on("end", () => {try {
+      const c=JSON.parse(input), h=c.HostConfig;
+      const flags=h?.Tmpfs?.["/var/lib/postgresql/data"];
+      if(h?.NetworkMode!=="none" || typeof flags!=="string" ||
+         !flags.split(",").includes("size=1536m") ||
+         !Array.isArray(c.Mounts) || c.Mounts.some(m=>m.Type!=="tmpfs") ||
+         (Array.isArray(h.Binds) && h.Binds.length!==0) ||
+         (h.PortBindings && Object.keys(h.PortBindings).length!==0)) process.exit(3);
+    }catch{process.exit(4);}});
+  '; then
+  die 'Docker isolation inspection failed: expected networkless tmpfs-only recovery container'
+fi
 ready=false
 for _ in $(seq 1 30); do
-  if docker exec "$container" pg_isready -U atlas_recovery -d atlas_recovery >/dev/null 2>&1; then
+  if docker_recovery exec "$container" pg_isready -U atlas_recovery -d atlas_recovery >/dev/null 2>&1; then
     ready=true
     break
   fi
@@ -106,7 +141,7 @@ done
 [[ "$ready" == true ]] || die 'isolated PostgreSQL did not become ready'
 # Plaintext exists only in a pipe, never a host file.
 if age --decrypt --identity "$identity" "$archive" 2>/dev/null |
-   docker exec -i "$container" pg_restore --no-owner --no-acl \
+   docker_recovery exec -i "$container" pg_restore --no-owner --no-acl \
      --exit-on-error --single-transaction -U atlas_recovery -d atlas_recovery >/dev/null 2>/dev/null; then
   :
 else
@@ -114,7 +149,7 @@ else
 fi
 # Representative Atlas schema/data checks, read-only inside disposable DB.
 for table in projects stores records; do
-  count="$(docker exec "$container" psql -U atlas_recovery -d atlas_recovery \
+  count="$(docker_recovery exec "$container" psql -U atlas_recovery -d atlas_recovery \
     -X -A -t -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM public.$table" 2>/dev/null)" ||
     die 'representative restored Atlas tables could not be queried'
   [[ "$count" =~ ^[0-9]+$ ]] || die 'invalid restored row count'
@@ -125,8 +160,8 @@ done
 post_sha="$(sha256sum -- "$archive" | awk '{print $1}')" || die 'post-restore checksum unavailable'
 [[ "$post_sha" == "$expected_sha" ]] || die 'archive changed during restore; result cannot be trusted'
 # Remove the database BEFORE reporting success; a cleanup failure is a failure.
-docker rm -f "$container" >/dev/null 2>&1 ||
+docker_recovery rm -f "$container" >/dev/null 2>&1 ||
   die 'could not remove isolated restore container; investigate and remove it manually'
 started=false
-printf '{"status":"isolated_restore_passed","archiveCiphertextSha256":"%s","sourceDatabase":"%s","targetDatabase":"atlas_recovery","postgresMajor":16,"noNetwork":true,"noHostMounts":true,"databaseRestored":true,"r2ObjectsRestored":false}\n' \
+printf '{"status":"isolated_restore_passed","archiveCiphertextSha256":"%s","sourceDatabase":"%s","targetDatabase":"atlas_recovery","postgresMajor":16,"noNetwork":true,"noHostBackedDatabaseVolume":true,"databaseRestored":true,"r2ObjectsRestored":false}\n' \
   "$expected_sha" "$database"
