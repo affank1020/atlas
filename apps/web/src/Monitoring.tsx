@@ -37,6 +37,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         const controller = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
         let inFlight = false;
+        let lastSettledAt: number | undefined;
         setPage(undefined); setError(''); setLastUpdated(undefined);
         // URL state controls the UI only; never forward it to the audit API.
         const input = Object.fromEntries(Object.entries(filters)
@@ -54,6 +55,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
                 .finally(() => {
                     inFlight = false;
                     if (controller.signal.aborted) return;
+                    lastSettledAt = Date.now();
                     setLoading(false);
                     // Schedule *after completion*: slow requests never overlap.
                     if (live && document.visibilityState !== 'hidden')
@@ -62,10 +64,15 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         };
         const onVisibilityChange = () => {
             if (!live) return;
-            // No background polling. Resume with one immediate read when visible.
+            // No background polling. Visibility changes must not bypass the
+            // 30-second cooldown (e.g. rapid tab switching by an operator).
             if (timer) clearTimeout(timer);
             timer = undefined;
-            if (document.visibilityState === 'visible' && !inFlight) read();
+            if (document.visibilityState !== 'visible' || inFlight) return;
+            const remaining = lastSettledAt === undefined ? 0
+                : Math.max(0, ACTIVITY_LIVE_POLL_MS - (Date.now() - lastSettledAt));
+            if (remaining === 0) read();
+            else timer = setTimeout(read, remaining);
         };
         if (live) document.addEventListener('visibilitychange', onVisibilityChange);
         if (!live || document.visibilityState !== 'hidden') read();
