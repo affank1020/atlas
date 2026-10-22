@@ -77,6 +77,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var reconnectDelayMs = 1_000L
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
+    private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
+    private var incomingTimeoutTask: Runnable? = null
+    var incomingShare by mutableStateOf<IncomingDeviceShare?>(null)
+        private set
+    var inboxStatus by mutableStateOf("No incoming shares yet.")
+        private set
     private var pendingShareRequestId: String? = null
     private val directoryLookup = RecipientLookupGate(RECIPIENT_REFRESH_COOLDOWN_MS)
     private val pendingRecipientsRequestId: String? get() = directoryLookup.pendingRequestId
@@ -167,6 +173,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         connectionGeneration++
         pendingRetry?.let(handler::removeCallbacks)
         pendingRetry = null
+        clearIncomingShare(decline = true)
         cancelBackgroundSocket(socket)
         socket = null
         clearRecipientLookup()
@@ -196,6 +203,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         is ConnectionEvent.Offline -> {
                             connectionStatus = event.detail
                             clearRecipientLookup()
+                            clearIncomingShare()
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -247,12 +255,82 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         else "Approved devices could not be loaded."
                     }
                 }
+            }, { incoming, respond ->
+                handler.post {
+                    if (!foreground || generation != connectionGeneration ||
+                        connectionStatus != "Online") {
+                        respond(IncomingShareOutcome.DECLINED)
+                        return@post
+                    }
+                    if (incomingShare != null) {
+                        respond(IncomingShareOutcome.BUSY)
+                        return@post
+                    }
+                    val remaining = incoming.expiresAtMs - System.currentTimeMillis()
+                    if (remaining <= 0L) {
+                        respond(IncomingShareOutcome.DECLINED)
+                        return@post
+                    }
+                    // Foreground-only, single active dialog and no implicit acceptance.
+                    incomingShare = incoming
+                    pendingIncomingResponse = respond
+                    val expires = Runnable {
+                        if (incomingShare?.requestId == incoming.requestId) {
+                            finishIncomingShare(IncomingShareOutcome.DECLINED)
+                        }
+                    }
+                    incomingTimeoutTask = expires
+                    handler.postDelayed(expires, minOf(remaining, 15_000L))
+                }
             })
         } catch (_: Exception) {
             connectionStatus = "Could not connect to Atlas."
             scheduleRetry()
             null
         }
+    }
+
+
+    /** A share counts as accepted only after a human clicks Copy and Android writes it. */
+    fun copyIncomingShare(copyText: (String) -> Unit) {
+        val share = incomingShare ?: return
+        if (!foreground || connectionStatus != "Online" ||
+            System.currentTimeMillis() >= share.expiresAtMs) {
+            finishIncomingShare(IncomingShareOutcome.DECLINED)
+            return
+        }
+        val outcome = try {
+            copyText(share.text)
+            IncomingShareOutcome.ACCEPTED
+        } catch (_: Exception) {
+            IncomingShareOutcome.COPY_FAILED
+        }
+        finishIncomingShare(outcome)
+    }
+
+    fun declineIncomingShare() {
+        finishIncomingShare(IncomingShareOutcome.DECLINED)
+    }
+
+    private fun finishIncomingShare(outcome: IncomingShareOutcome) {
+        val reply = pendingIncomingResponse ?: return
+        clearIncomingShare()
+        inboxStatus = when (outcome) {
+            IncomingShareOutcome.ACCEPTED -> "Incoming text copied to clipboard."
+            IncomingShareOutcome.DECLINED -> "Incoming text declined or expired."
+            IncomingShareOutcome.COPY_FAILED -> "Could not copy incoming text."
+            IncomingShareOutcome.BUSY -> "Incoming text was not accepted."
+        }
+        reply(outcome)
+    }
+
+    private fun clearIncomingShare(decline: Boolean = false) {
+        incomingTimeoutTask?.let(handler::removeCallbacks)
+        incomingTimeoutTask = null
+        val reply = pendingIncomingResponse
+        pendingIncomingResponse = null
+        incomingShare = null // No inbox disk storage or retained message content.
+        if (decline) reply?.invoke(IncomingShareOutcome.DECLINED)
     }
 
     private fun scheduleRetry() {
@@ -377,6 +455,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         clearRecipientLookup()
         sharePending = false
         shareStatus = "Nothing sent yet"
+        inboxStatus = "No incoming shares yet."
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
         foreground = wasForeground
