@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
 import java.time.Instant
+import java.security.MessageDigest
 import java.util.UUID
 
 /** Separates app-release version, protocol v2 and the HTTPS/WSS transport address. */
@@ -75,13 +76,50 @@ internal fun parseIncomingDeviceShare(raw: String, nowMs: Long = System.currentT
         IncomingDeviceShare(requestId, deliveryId, sourceId, body, deadline)
     }.getOrNull()
 
-internal enum class IncomingShareOutcome { ACCEPTED, DECLINED, BUSY, COPY_FAILED }
+internal enum class IncomingShareOutcome { ACCEPTED, DECLINED, BUSY, COPY_FAILED, REPLAY }
+
+/** Volatile five-minute replay guard; holds digests and decisions, never share text. */
+internal class RecentIncomingShares {
+    private data class Receipt(val digest: String, val result: IncomingShareOutcome, val at: Long)
+    private val seen = linkedMapOf<String, Receipt>()
+
+    private fun fingerprint(share: IncomingDeviceShare): String {
+        val hash = MessageDigest.getInstance("SHA-256")
+        hash.update(share.sourceNodeId.lowercase().toByteArray(Charsets.UTF_8))
+        hash.update(0)
+        hash.update(share.text.toByteArray(Charsets.UTF_8))
+        return hash.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun lookup(share: IncomingDeviceShare, nowMs: Long = System.currentTimeMillis()): IncomingShareOutcome? {
+        prune(nowMs)
+        val old = seen[share.deliveryId.lowercase()] ?: return null
+        return if (old.digest == fingerprint(share)) old.result else IncomingShareOutcome.REPLAY
+    }
+
+    fun remember(share: IncomingDeviceShare, result: IncomingShareOutcome, nowMs: Long = System.currentTimeMillis()) {
+        if (result !in setOf(IncomingShareOutcome.ACCEPTED, IncomingShareOutcome.DECLINED)) return
+        prune(nowMs)
+        if (seen.size >= 512) seen.remove(seen.keys.first())
+        seen[share.deliveryId.lowercase()] = Receipt(fingerprint(share), result, nowMs)
+    }
+
+    private fun prune(nowMs: Long) {
+        val iter = seen.entries.iterator()
+        while (iter.hasNext()) if (nowMs - iter.next().value.at >= 300_000L) iter.remove()
+    }
+}
 
 internal fun incomingDeviceShareResponse(requestId: String, outcome: IncomingShareOutcome): String {
     require(validNodeId(requestId))
     val result = JSONObject().put("type", "response").put("requestId", requestId)
-    if (outcome == IncomingShareOutcome.BUSY || outcome == IncomingShareOutcome.COPY_FAILED) {
-        val code = if (outcome == IncomingShareOutcome.BUSY) "SHARE_BUSY" else "SHARE_CLIPBOARD_FAILED"
+    if (outcome == IncomingShareOutcome.BUSY || outcome == IncomingShareOutcome.COPY_FAILED ||
+        outcome == IncomingShareOutcome.REPLAY) {
+        val code = when (outcome) {
+            IncomingShareOutcome.BUSY -> "SHARE_BUSY"
+            IncomingShareOutcome.REPLAY -> "SHARE_REPLAY"
+            else -> "SHARE_CLIPBOARD_FAILED"
+        }
         return result.put("ok", false).put("error", JSONObject()
             .put("code", code).put("message", "Receiving Node could not accept this share.")).toString()
     }
