@@ -74,6 +74,13 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
     private var pendingShareRequestId: String? = null
+    private var pendingRecipientsRequestId: String? = null
+    var recipients by mutableStateOf<List<ShareRecipient>>(emptyList())
+        private set
+    var recipientsLoading by mutableStateOf(false)
+        private set
+    var recipientsError by mutableStateOf<String?>(null)
+        private set
     var shareTarget by mutableStateOf("")
         private set
     var shareStatus by mutableStateOf("Nothing sent yet")
@@ -153,6 +160,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pendingRetry = null
         cancelBackgroundSocket(socket)
         socket = null
+        pendingRecipientsRequestId = null
+        recipientsLoading = false
+        recipients = emptyList()
+        recipientsError = null
+        shareTarget = ""
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -174,9 +186,15 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         ConnectionEvent.Online -> {
                             reconnectDelayMs = 1_000
                             connectionStatus = "Online"
+                            refreshRecipients()
                         }
                         is ConnectionEvent.Offline -> {
                             connectionStatus = event.detail
+                            pendingRecipientsRequestId = null
+                            recipientsLoading = false
+                            recipients = emptyList()
+                            recipientsError = null
+                            shareTarget = ""
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -207,6 +225,25 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         else -> "Recipient declined the share."
                     }
                 }
+            }, { reply ->
+                handler.post {
+                    if (!foreground || generation != connectionGeneration ||
+                        reply.requestId != pendingRecipientsRequestId) return@post
+                    pendingRecipientsRequestId = null
+                    recipientsLoading = false
+                    if (reply.recipients != null) {
+                        recipients = reply.recipients
+                        recipientsError = null
+                        if (recipients.none { it.nodeId.equals(shareTarget, ignoreCase = true) && it.available })
+                            shareTarget = ""
+                    } else {
+                        recipients = emptyList()
+                        shareTarget = ""
+                        recipientsError = if (reply.errorCode == "SHARE_RATE_LIMIT")
+                            "Device refresh is too frequent. Try again shortly."
+                        else "Approved devices could not be loaded."
+                    }
+                }
             })
         } catch (_: Exception) {
             connectionStatus = "Could not connect to Atlas."
@@ -232,8 +269,27 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         shareStatus = "New draft loaded. It has not been sent."
     }
 
-    fun editShareTarget(value: String) {
-        if (!sharePending) shareTarget = value.trim().take(36)
+    fun refreshRecipients() {
+        if (!foreground || connectionStatus != "Online" || sharePending || recipientsLoading) return
+        val ws = socket ?: return
+        val requestId = UUID.randomUUID().toString()
+        pendingRecipientsRequestId = requestId
+        recipientsLoading = true
+        recipientsError = null
+        recipients = emptyList()
+        shareTarget = ""
+        if (!ws.send(recipientDirectoryMessage(requestId))) {
+            pendingRecipientsRequestId = null
+            recipientsLoading = false
+            recipientsError = "Approved devices could not be loaded."
+        }
+    }
+
+    fun selectRecipient(nodeId: String) {
+        if (!sharePending && !recipientsLoading && recipientsError == null &&
+            recipients.any { it.nodeId.equals(nodeId, ignoreCase = true) && it.available }) {
+            shareTarget = nodeId
+        }
     }
 
     fun sendCurrentDraft() {
@@ -241,9 +297,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val text = session.draft
         val ws = socket
         if (!foreground || connectionStatus != "Online" || pairedNode == null ||
-            pendingShareRequestId != null || !validNodeId(target) || text.isBlank() ||
+            pendingShareRequestId != null || pendingRecipientsRequestId != null ||
+            recipientsLoading || recipientsError != null ||
+            recipients.none { it.nodeId.equals(target, ignoreCase = true) && it.available } ||
+            !validNodeId(target) || text.isBlank() ||
             text.length > MAX_SHARE_CHARACTERS || target.equals(pairedNode?.nodeId, ignoreCase = true)) {
-            shareStatus = "Pair your Node, connect, and enter a different valid destination Node ID."
+            shareStatus = "Connect and choose an available approved receiving device."
             return
         }
         val requestId = UUID.randomUUID().toString()
@@ -268,6 +327,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         unrecoverableIdentity = false
         connectionStatus = "Not enrolled"
         shareTarget = ""
+        recipients = emptyList()
+        recipientsLoading = false
+        recipientsError = null
+        pendingRecipientsRequestId = null
         sharePending = false
         shareStatus = "Nothing sent yet"
         // Forgetting while the Activity is open must not prevent a new pair

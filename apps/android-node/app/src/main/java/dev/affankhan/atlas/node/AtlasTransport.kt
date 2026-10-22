@@ -50,6 +50,7 @@ internal class AtlasTransport {
         version: String,
         listener: (ConnectionEvent) -> Unit,
         onShareReply: (ShareReply) -> Unit,
+        onRecipientsReply: (RecipientsReply) -> Unit,
     ): WebSocket {
         val endpoint = parseAtlasEndpoint(node.origin)
         val request = Request.Builder()
@@ -73,9 +74,13 @@ internal class AtlasTransport {
                     }
                     return
                 }
-                val reply = parseShareReply(text)
-                if (reply != null) {
-                    onShareReply(reply)
+                val shareReply = parseShareReply(text)
+                val directoryReply = parseRecipientsReply(text)
+                if (shareReply != null || directoryReply != null) {
+                    // Error envelopes share the same wire shape. Callers correlate
+                    // requestId to their pending operation and ignore other replies.
+                    shareReply?.let(onShareReply)
+                    directoryReply?.let(onRecipientsReply)
                     return
                 }
                 // Android is sender-only: no incoming Workspace or device commands.
