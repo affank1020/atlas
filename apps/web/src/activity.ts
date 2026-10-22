@@ -15,7 +15,7 @@ export function safeMonitoringEvent(event: AuditEvent): AuditEvent {
         ? event.resulting as Record<string, unknown> : {};
     const clean: Record<string, string | boolean | number> = {};
     const ref = /^[a-zA-Z0-9._:-]{1,80}$/;
-    const op = /^workspace\\.[a-z][a-z0-9_]{0,63}$/;
+    const op = /^workspace\.[a-z][a-z0-9_]{0,63}$/;
     const action = /^[a-z][a-z0-9_]{0,63}$/;
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const outcomes = new Set(['completed', 'pending', 'failed', 'failed_or_uncertain', 'error', 'editor_error', 'success']);
