@@ -9,6 +9,21 @@ const socketPath = () => join(homedir(), 'Library', 'Application Support', 'Atla
 const MAX_REQUEST = 80 * 1024;
 const MAX_RESULT = 16 * 1024;
 
+/**
+ * Node names and platforms are receiver-controlled metadata. Render them as
+ * inert text: strip ASCII/C1 terminal control bytes (including ESC, CSI, OSC,
+ * CR/LF and backspace), Unicode line separators, and bidi override controls.
+ * Keep normal non-ASCII letters and emoji intact.
+ */
+export function safeTerminalLabel(value) {
+    return String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ');
+}
+
+export function formatShareRecipientOption(recipient, index) {
+    return '  ' + (index + 1) + '. ' + safeTerminalLabel(recipient.name) +
+        ' (' + safeTerminalLabel(recipient.platform) + ')';
+}
+
 function checkSocket(path) {
     const parent = lstatSync(dirname(path));
     const entry = lstatSync(path);
@@ -74,7 +89,7 @@ export async function shareFromMacClipboard() {
         return;
     }
     console.log('Share clipboard text (' + text.length + ' characters) to an approved Atlas Node:');
-    ready.forEach((item, i) => console.log('  ' + (i + 1) + '. ' + item.name + ' (' + item.platform + ')'));
+    ready.forEach((item, i) => console.log(formatShareRecipientOption(item, i)));
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
         const answer = (await rl.question('Choose device number (Enter to cancel): ')).trim();
