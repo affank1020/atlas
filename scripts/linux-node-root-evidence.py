@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import fcntl
 import importlib.machinery
 import importlib.util
@@ -25,6 +26,7 @@ import tempfile
 EXECUTOR = Path("/usr/local/libexec/atlas-node-update-executor")
 HOST_KEY = Path("/etc/atlas-node/update-evidence-ed25519.key")
 NODE_STATUS = Path("/var/lib/atlas-node/.local/state/atlas/node-status.json")
+LIFECYCLE_LOCK = Path("/run/lock/atlas-node-lifecycle.lock")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 SHA = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+[.][0-9]+[.][0-9]+[+][0-9a-f]{12}$")
@@ -74,6 +76,37 @@ def check_private_key(path: Path) -> None:
                 stat.S_IMODE(actual.st_mode) & 0o077 or
                 (info.st_dev, info.st_ino) != (actual.st_dev, actual.st_ino)):
             raise Refused("Host-root private key changed during secure open.")
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def hold_lifecycle_lock(path: Path = LIFECYCLE_LOCK, *, owner_uid: int = 0):
+    """Acquire the SAME flock as manual activate/rollback/recover.
+
+    The executor's private flock does not serialize with manual lifecycle
+    operators. Keep this lifecycle lock from BEFORE sampling the current
+    symlink until the Ed25519 signature has been written.
+    """
+    parent = path.parent
+    while True:
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner_uid or stat.S_IMODE(info.st_mode) & 0o022:
+            raise Refused("Lifecycle lock parent is not root controlled.")
+        if parent == parent.parent:
+            break
+        parent = parent.parent
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid or
+                stat.S_IMODE(info.st_mode) & 0o022):
+            raise Refused("Unsafe lifecycle lock file.")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refused("Another manual lifecycle operation is in progress.") from None
+        yield
     finally:
         os.close(fd)
 
@@ -202,8 +235,12 @@ def attest(intent_id: str, challenge: str, *, executor=None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Refused("Another root-managed update is in progress.") from None
-        return _attest(intent_id, challenge, executor=executor,
-                       key=key, signer=signer, runner=runner)
+        # Legacy/manual lifecycle uses this *different* flock, so pin the
+        # active symlink/rollback source for the entire verification and
+        # signing window, including interactive operator confirmation.
+        with hold_lifecycle_lock():
+            return _attest(intent_id, challenge, executor=executor,
+                           key=key, signer=signer, runner=runner)
     finally:
         os.close(fd)
 
