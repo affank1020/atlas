@@ -77,6 +77,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var reconnectDelayMs = 1_000L
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
+    private val recentIncoming = RecentIncomingShares()
     private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
     private var incomingTimeoutTask: Runnable? = null
     var incomingShare by mutableStateOf<IncomingDeviceShare?>(null)
@@ -266,6 +267,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         respond(IncomingShareOutcome.BUSY)
                         return@post
                     }
+                    recentIncoming.lookup(incoming)?.let { decision ->
+                        respond(decision)
+                        return@post
+                    }
                     val remaining = incoming.expiresAtMs - System.currentTimeMillis()
                     if (remaining <= 0L) {
                         respond(IncomingShareOutcome.DECLINED)
@@ -314,12 +319,14 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     private fun finishIncomingShare(outcome: IncomingShareOutcome) {
         val reply = pendingIncomingResponse ?: return
+        val share = incomingShare ?: return
+        recentIncoming.remember(share, outcome)
         clearIncomingShare()
         inboxStatus = when (outcome) {
             IncomingShareOutcome.ACCEPTED -> "Incoming text copied to clipboard."
             IncomingShareOutcome.DECLINED -> "Incoming text declined or expired."
             IncomingShareOutcome.COPY_FAILED -> "Could not copy incoming text."
-            IncomingShareOutcome.BUSY -> "Incoming text was not accepted."
+            IncomingShareOutcome.BUSY, IncomingShareOutcome.REPLAY -> "Incoming text was not accepted."
         }
         reply(outcome)
     }
