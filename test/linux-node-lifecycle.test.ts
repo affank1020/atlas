@@ -210,3 +210,29 @@ test('failed manual rollback does not re-activate its rejected newer release', {
     assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
     assert.equal(existsSync(join(f.root, '.activation-pending')), false);
 });
+
+test('guarded activation refuses a legacy manual release change under the lifecycle lock', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    // An executor can activate only when the exact approved starting build
+    // still holds the current symlink inside the lifecycle's own flock.
+    const invalid = f.run(['activate', f.newer.name, '--expect-current', 'wrong']);
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /Invalid expected current release/);
+
+    const manual = f.run(['activate', f.newer.name]);
+    assert.equal(manual.status, 0, manual.stderr);
+    const eventsBefore = readFileSync(f.log, 'utf8');
+    const guarded = f.run(['activate', f.old.name, '--expect-current', f.old.name]);
+    assert.notEqual(guarded.status, 0, 'concurrent manual update must invalidate approved source');
+    assert.match(guarded.stderr, /no longer matches the host-approved starting release/);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.newer.folder);
+    assert.equal(readlinkSync(join(f.root, 'previous')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+    assert.equal(readFileSync(f.log, 'utf8'), eventsBefore, 'no service actions on stale source');
+
+    // The exact source guard is still usable when no other updater intervened.
+    const expected = f.run(['activate', f.old.name, '--expect-current', f.newer.name]);
+    assert.equal(expected.status, 0, expected.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+});
