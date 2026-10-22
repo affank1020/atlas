@@ -83,12 +83,31 @@ def load_approval_module():
 
 
 def read_node_config(path: Path) -> dict[str, str]:
+    parent = path.parent
+    while True:
+        directory = parent.lstat()
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or
+                stat.S_IMODE(directory.st_mode) & 0o022):
+            raise Refused("Host Node config parent is not root-controlled.")
+        if parent == parent.parent:
+            break
+        parent = parent.parent
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or (stat.S_IMODE(info.st_mode) & 0o022):
         raise Refused("Host Node config must be a root-owned regular file.")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
-        raw = os.read(fd, MAX_SMALL_FILE + 1)
+        actual = os.fstat(fd)
+        if (not stat.S_ISREG(actual.st_mode) or actual.st_uid != 0 or
+                stat.S_IMODE(actual.st_mode) & 0o022 or
+                actual.st_dev != info.st_dev or actual.st_ino != info.st_ino):
+            raise Refused("Host Node config changed during secure opening.")
+        raw = bytearray()
+        while len(raw) <= MAX_SMALL_FILE:
+            part = os.read(fd, MAX_SMALL_FILE + 1 - len(raw))
+            if not part:
+                break
+            raw.extend(part)
     finally:
         os.close(fd)
     if len(raw) > MAX_SMALL_FILE:
@@ -303,17 +322,17 @@ class ReceiptStore:
             raise Refused("Execution receipt is too large.")
         fd, name = tempfile.mkstemp(prefix=".pending-", dir=self.directory)
         try:
-            os.fchmod(fd, 0o600)
-            view = memoryview(raw)
-            while view:
-                count = os.write(fd, view)
-                if count <= 0:
-                    raise Refused("Receipt write stopped before completion.")
-                view = view[count:]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        try:
+            try:
+                os.fchmod(fd, 0o600)
+                view = memoryview(raw)
+                while view:
+                    count = os.write(fd, view)
+                    if count <= 0:
+                        raise Refused("Receipt write stopped before completion.")
+                    view = view[count:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
             if create:
                 os.link(name, self._path(record["intentId"]), follow_symlinks=False)
             else:
