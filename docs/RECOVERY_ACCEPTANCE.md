@@ -62,7 +62,11 @@ the legacy Files volume and both independent R2 storage configurations:
 3. Accept a `passed` catalog report only when `truncated:false`,
    `verifiedBoth === checked`, the catalog is nonempty, and every
    missing/corrupt/invalid counter is zero. Record `checked`,
-   `snapshotObservedAt`, failure counts, and the report's scope.
+   `verifiedPrimaryViaLegacyLocal`, `snapshotObservedAt`, failure counts,
+   and the report's scope. A local-fallback count above zero means verified
+   primary reads still depend on a legacy disk volume; do not describe
+   those Files as physically present in primary R2. The *recovery R2*
+   bytes are nevertheless verified against the source metadata.
    A post-snapshot write is **not** covered by the prior report.
 
 The catalog verifier compares backup object bytes against metadata from
