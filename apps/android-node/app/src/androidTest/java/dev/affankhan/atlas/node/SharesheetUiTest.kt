@@ -22,6 +22,7 @@ class SharesheetUiTest {
     @get:Rule val compose = createComposeRule()
     private var state by mutableStateOf(CompanionSession())
     private var selected by mutableStateOf("")
+    private var refreshCooldown by mutableStateOf(false)
     private val senderNode = StoredNode("https://atlas.example.com",
         "123e4567-e89b-42d3-a456-426614174000", "a".repeat(43), "Samsung")
     private val mac = ShareRecipient("123e4567-e89b-42d3-a456-426614174002", "MacBook", "darwin", "online", true)
@@ -45,6 +46,7 @@ class SharesheetUiTest {
                 shareTarget = selected,
                 recipients = if (ready) listOf(mac, offline) else emptyList(),
                 recipientsLoading = false,
+                recipientsCooldown = refreshCooldown,
                 recipientsError = null,
                 onSelectRecipient = { selected = it },
                 onRefreshRecipients = {},
@@ -81,6 +83,20 @@ class SharesheetUiTest {
         compose.onNodeWithTag("share-submit").assertIsNotEnabled()
         compose.onNodeWithTag("recipient-" + offline.nodeId).assertIsNotEnabled()
         compose.onNodeWithTag("recipient-" + mac.nodeId).performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
+    }
+
+    @Test fun immediateManualRefreshIsDisabledWithoutLosingSelectedReadyRecipient() {
+        mount(ready = true)
+        compose.runOnIdle {
+            state = state.navigate(Section.SEND).editDraft("Ready to send")
+            selected = mac.nodeId
+            refreshCooldown = true
+        }
+        compose.onNodeWithTag("refresh-recipients").assertIsNotEnabled()
+        compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
+        compose.runOnIdle { refreshCooldown = false }
+        compose.onNodeWithTag("refresh-recipients").performScrollTo().assertIsEnabled()
         compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
     }
 

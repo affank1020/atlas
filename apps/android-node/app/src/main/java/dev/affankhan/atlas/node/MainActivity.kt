@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 shareTarget = model.shareTarget,
                 recipients = model.recipients,
                 recipientsLoading = model.recipientsLoading,
+                recipientsCooldown = model.recipientsCooldown,
                 recipientsError = model.recipientsError,
                 onSelectRecipient = model::selectRecipient,
                 onRefreshRecipients = model::refreshRecipients,
@@ -116,6 +117,7 @@ internal fun AtlasCompanion(
     shareTarget: String,
     recipients: List<ShareRecipient>,
     recipientsLoading: Boolean,
+    recipientsCooldown: Boolean,
     recipientsError: String?,
     onSelectRecipient: (String) -> Unit,
     onRefreshRecipients: () -> Unit,
@@ -155,6 +157,7 @@ internal fun AtlasCompanion(
                             shareTarget = shareTarget,
                             recipients = recipients,
                             recipientsLoading = recipientsLoading,
+                            recipientsCooldown = recipientsCooldown,
                             recipientsError = recipientsError,
                             onSelectRecipient = onSelectRecipient,
                             onRefreshRecipients = onRefreshRecipients,
@@ -182,6 +185,7 @@ internal fun AtlasCompanion(
                             shareTarget = shareTarget,
                             recipients = recipients,
                             recipientsLoading = recipientsLoading,
+                            recipientsCooldown = recipientsCooldown,
                             recipientsError = recipientsError,
                             onSelectRecipient = onSelectRecipient,
                             onRefreshRecipients = onRefreshRecipients,
@@ -225,6 +229,7 @@ private fun CompanionContent(
     shareTarget: String,
     recipients: List<ShareRecipient>,
     recipientsLoading: Boolean,
+    recipientsCooldown: Boolean,
     recipientsError: String?,
     onSelectRecipient: (String) -> Unit,
     onRefreshRecipients: () -> Unit,
@@ -246,7 +251,7 @@ private fun CompanionContent(
                 unreadableIdentity, onClearRecovery, onPair,
             )
             Section.SEND -> SendContent(session, node, connection, onEditDraft,
-                shareTarget, recipients, recipientsLoading, recipientsError, onSelectRecipient,
+                shareTarget, recipients, recipientsLoading, recipientsCooldown, recipientsError, onSelectRecipient,
                 onRefreshRecipients, shareStatus, sharePending, onSend, onLoadDeferredShare)
             Section.INBOX -> InfoCard(
                 "No incoming items",
@@ -277,6 +282,7 @@ private fun SendContent(
     shareTarget: String,
     recipients: List<ShareRecipient>,
     recipientsLoading: Boolean,
+    recipientsCooldown: Boolean,
     recipientsError: String?,
     onSelectRecipient: (String) -> Unit,
     onRefreshRecipients: () -> Unit,
@@ -305,9 +311,10 @@ private fun SendContent(
     Text("Approved receiving devices", style = MaterialTheme.typography.titleMedium)
     Button(
         onClick = onRefreshRecipients,
-        enabled = node != null && connection == "Online" && !sharePending && !recipientsLoading,
+        enabled = node != null && connection == "Online" && !sharePending &&
+            !recipientsLoading && !recipientsCooldown,
         modifier = Modifier.testTag("refresh-recipients"),
-    ) { Text(if (recipientsLoading) "Refreshing…" else "Refresh devices") }
+    ) { Text(if (recipientsLoading) "Refreshing…" else if (recipientsCooldown) "Refresh available shortly" else "Refresh devices") }
     when {
         node == null || connection != "Online" -> Text("Connect to Atlas to discover approved devices.")
         recipientsLoading -> Text("Loading approved devices…")
