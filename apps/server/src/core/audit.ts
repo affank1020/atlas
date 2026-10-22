@@ -45,7 +45,10 @@ export class AuditService {
                 && (!input.checkoutId || event.workspaceId === input.checkoutId)
                 && (!input.storeId || event.storeId === input.storeId)
                 && (!input.recordId || event.recordId === input.recordId)
-                && (!input.nodeId || details.nodeId === input.nodeId || details.previousNodeId === input.nodeId)
+                && (!input.nodeId || details.nodeId === input.nodeId || details.previousNodeId === input.nodeId
+                    || (['node.share.approved', 'node.share.revoked'].includes(event.operation)
+                        && (String(details.sourceNodeId ?? '').toLowerCase() === input.nodeId.toLowerCase()
+                            || String(details.targetNodeId ?? '').toLowerCase() === input.nodeId.toLowerCase())))
                 && (!input.operation || event.operation === input.operation)
                 && (!input.category || category(categorisedOperation) === input.category)
                 && (!input.client || event.client.toLowerCase() === input.client.toLowerCase())

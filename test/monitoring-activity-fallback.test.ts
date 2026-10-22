@@ -42,3 +42,25 @@ test('snapshot Monitoring category filters honour original mutations and preserv
     assert.equal(native.total, 1);
     assert.equal(native.items[0].operation, 'project.created');
 });
+
+test('snapshot Monitoring filters both sharing endpoints without broadening unrelated operations', async () => {
+    const sender = '00000000-0000-4000-8000-000000000001';
+    const receiver = '00000000-0000-4000-8000-000000000002';
+    const unrelated = '00000000-0000-4000-8000-000000000003';
+    const events: AuditEvent[] = [
+        { id:'1',occurredAt:'2026-10-22T10:01:00.000Z',client:'atlas-mcp',
+          operation:'node.share.approved',resulting:{sourceNodeId:sender,targetNodeId:receiver} },
+        { id:'2',occurredAt:'2026-10-22T10:02:00.000Z',client:'atlas-http',
+          operation:'node.share.revoked',resulting:{sourceNodeId:sender,targetNodeId:receiver} },
+        { id:'3',occurredAt:'2026-10-22T10:03:00.000Z',client:'test',
+          operation:'node.created',resulting:{sourceNodeId:sender,targetNodeId:receiver} },
+    ];
+    const store = {snapshot:async () => ({auditEvents:events})} as unknown as AtlasRepository;
+    const audit = new AuditService(store);
+    for (const nodeId of [sender,receiver]) {
+        const result = await audit.monitoring({nodeId,category:'node'});
+        assert.equal(result.total,2);
+        assert.deepEqual(result.items.map(x => x.operation).sort(),['node.share.approved','node.share.revoked']);
+    }
+    assert.equal((await audit.monitoring({nodeId:unrelated,category:'node'})).total,0);
+});
