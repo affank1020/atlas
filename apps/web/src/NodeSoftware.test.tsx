@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, expect, it, vi } from 'vitest';
 import { NodeSoftware, NodeSoftwareSummary, releaseUpdateState, type NodeRelease, type NodeUpdateIntent } from './NodeSoftware';
 import { callTool } from './api';
+import { mockTool } from './mockTools';
 vi.mock('./api', () => ({ callTool: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const release: NodeRelease = {
@@ -288,4 +289,20 @@ it('reconciles persisted intent after uncertain prepare result, even if eligibil
         expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
         await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled());
     } finally { confirm.mockRestore(); }
+});
+
+it('shows a clean read-only Software card for the built-in demo Linux VPS', async () => {
+    const linux = mockTool<Array<{ id: string; name: string }>>('list_nodes')
+        .find(item => item.name === 'Demo Linux VPS');
+    expect(linux).toBeDefined();
+    const demo = mockTool<Parameters<typeof NodeSoftwareSummary>[0]['node']>('get_node', { nodeId: linux!.id });
+    vi.mocked(callTool).mockImplementation(async (name, input = {}) => mockTool(name, input));
+    render(<NodeSoftwareSummary node={demo} />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith(
+        'list_node_update_intents', { nodeId: demo.id, limit: 20 },
+    ));
+    await waitFor(() => expect(screen.queryByText('Loading saved update requests…')).not.toBeInTheDocument());
+    expect(screen.queryByText(/Update request error/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel update request' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Prepare update request/ })).not.toBeInTheDocument();
 });
