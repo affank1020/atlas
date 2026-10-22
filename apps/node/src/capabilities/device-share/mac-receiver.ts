@@ -58,7 +58,9 @@ if (!data) throw Error('Invalid clipboard bytes');
 const value = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
 if (!value) throw Error('Clipboard text is not UTF-8');
 const pasteboard = $.NSPasteboard.generalPasteboard;
-pasteboard.clearContents();
+// setStringForType requires the type to have been declared first.
+// declareTypesOwner also clears existing clipboard contents atomically.
+pasteboard.declareTypesOwner($.NSArray.arrayWithObject($.NSPasteboardTypeString), null);
 if (!pasteboard.setStringForType(value, $.NSPasteboardTypeString))
     throw Error('Could not write macOS plain-text pasteboard');
 `;
@@ -94,7 +96,13 @@ export class MacShareReceiver {
                 this.store(input.deliveryId, digest, false);
                 return { accepted: false };
             }
-            await this.copy(input.text, signal);
+            try {
+                await this.copy(input.text, signal);
+            } catch {
+                // Never forward JXA errors or clipboard content to the sender/logs.
+                if (signal?.aborted) throw new AtlasError('Share interrupted.', 'SHARE_EXPIRED');
+                throw new AtlasError('Mac could not write the clipboard.', 'SHARE_CLIPBOARD_FAILED');
+            }
             this.store(input.deliveryId, digest, true);
             return { accepted: true };
         } finally {
