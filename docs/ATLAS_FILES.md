@@ -340,6 +340,77 @@
 - No scheduled job, automatic deletion, production flag changes or R2
   credential modifications are included.
 
+## Cloudflare R2 recovery verification — read-only operator drill
+
+**This is a recovery *verification* command, not a backup system.** Atlas
+does not create or schedule backup copies here. Provision an independently
+managed private R2 backup and PostgreSQL backups before treating Atlas Files
+as recoverable. In particular, a second bucket in the same Cloudflare account
+does not protect against loss of that account; use an independently controlled
+account and verify its retention, access controls, key custody and replication
+procedure. A signed database backup and an object backup from a consistent
+recovery point are required for full disaster recovery.
+
+- Configure normal primary `ATLAS_R2_ENDPOINT`, `ATLAS_R2_BUCKET`,
+  `ATLAS_R2_ACCESS_KEY_ID`, `ATLAS_R2_SECRET_ACCESS_KEY` and
+  `DATABASE_URL` on the trusted server host. Independently configure
+  `ATLAS_R2_RECOVERY_ENDPOINT`, `ATLAS_R2_RECOVERY_BUCKET`,
+  `ATLAS_R2_RECOVERY_ACCESS_KEY_ID`, and
+  `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY` for **a distinct backup bucket**.
+  Supply read-only R2 GET permissions to both sets of credentials when
+  running the drill. The **backup access-key ID and secret must each differ**
+  from the primary credentials even when using a different bucket; configure
+  separately scoped read-only backup tokens rather than granting a primary
+  credential access to recovery storage. Missing/partial backup settings,
+  credential reuse, or the same source and destination bucket **abort the
+  check**; it never silently falls back to reading the source twice.
+- Run `npm run build:server`, then
+  `npm run files:r2:verify-recovery` on a trusted host. The script adds
+  `--dry-run` automatically. An optional
+  `npm run files:r2:verify-recovery -- --max-files=5` checks 5 catalogue
+  entries, maximum 10. To continue a bounded catalogue walk, pass the exact
+  returned `nextCursor` using `--cursor=<file-uuid>`. Recovery scans page by
+  the immutable PostgreSQL file UUID, **not** by the R2 storage key, so
+  malformed or empty storage keys can be counted as failures without
+  preventing later files from being checked. No arbitrary storage key is
+  accepted as a CLI cursor. A supplied cursor never counts as an initial
+  full-catalogue scan. Only the initial run **without** a cursor that
+  reaches the end and verifies every row can return `status: "passed"`.
+  Every sampled or subsequent cursor run remains `partial` even when all
+  inspected bytes are correct, because it cannot by itself prove whole-catalogue
+  coverage.
+- All `atlas_files` rows, including archived entries and corrupted
+  records with even an empty storage key, are included in the uncursored
+  scan. Invalid metadata counts as a failure rather than being skipped from
+  a superficially complete report. The command selects up to 11 metadata
+  rows for bounded pagination, then performs
+  at most **two signed GETs per checked file**: one from primary R2, one from
+  its separately configured recovery bucket. Both responses are streamed with
+  a hard 25-MiB per-object read cap and checked against the committed SHA-256
+  and length. Default workload is at most six GET requests (three files);
+  maximum workload is twenty GETs and approximately 500 MiB transferred.
+  Each checked file's complete bytes are read into memory only within the
+  25-MiB cap, never written to disk, a temporary recovery bucket or Atlas.
+  These GET operations consume R2 read requests and bandwidth.
+- Output contains counts for verified primary, verified backup, both verified,
+  missing or corrupt objects, and at most ten opaque failing File IDs for
+  investigation. It excludes file names, contents, signed headers and secrets.
+  A missing backup, a mismatched hash, or invalid metadata is `failed`; an
+  empty catalogue is `empty` rather than proof of a working backup.
+  An authentication, network, rate-limit, truncated response, or unexpected
+  error aborts as **inconclusive** instead of manufacturing a successful
+  report. Non-passing runs exit nonzero.
+- **No PUT, DELETE, metadata updates, public API, recurring task or automatic
+  restore is introduced.** The existing inventory audit remains independent.
+  The command verifies that the *currently referenced* backup objects can
+  be read and their bytes reconstructed in memory; it does not prove that
+  periodic backup jobs actually exist, unsampled files are covered, point-in-
+  time recovery is consistent, Cloudflare account failures are survivable,
+  or the PostgreSQL metadata/credentials can be restored. Follow this drill
+  with a separately reviewed full backup/restore run into an isolated
+  environment and independent account, recording restore time and checksums.
+  Do not enable production native uploads based solely on a partial report.
+
 ## Limitations and further work
 
 - Archive and restore update PostgreSQL metadata only. They **do not delete bytes** from
