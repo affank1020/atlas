@@ -29,6 +29,67 @@ GitHub App publishing credentials and does not run unattended.
 The manual verify/install/plan/activate commands below remain available for
 recovery or constrained environments.
 
+## Independent interrupted-activation recovery (required for production)
+
+**Before the next activation**, install the recovery watchdog from a reviewed
+checkout onto the Linux host. It runs independently of the Node process, so it
+can still restore the old Node when the SSH caller, updater or Node process
+dies during restart. The watcher does not retrieve releases, grant approvals,
+read credentials, contact Atlas Server, or initiate new updates.
+
+```bash
+sudo install -D -o root -g root -m 0755 scripts/linux-node-lifecycle.sh /usr/local/libexec/atlas-node-lifecycle.sh
+# Replace the legacy PATH command as well, rather than retaining an unsafe old binary.
+sudo ln -sfnT /usr/local/libexec/atlas-node-lifecycle.sh /usr/local/bin/atlas-node-lifecycle
+sudo test "$(readlink -f /usr/local/bin/atlas-node-lifecycle)" = /usr/local/libexec/atlas-node-lifecycle.sh
+sudo install -o root -g root -m 0644 scripts/atlas-node-lifecycle-recover.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 scripts/atlas-node-lifecycle-recover.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now atlas-node-lifecycle-recover.timer
+systemctl is-active atlas-node-lifecycle-recover.timer
+```
+
+Run these commands **on the VPS** with the reviewed scripts present. Do not
+run them from the Mac against local systemd. The normal `./atlasctl vps
+node-upgrade` flow now invokes the **same absolute,
+root-owned `/usr/local/libexec/atlas-node-lifecycle.sh`** as the recovery
+timer; it fails before staging when that implementation or the timer is
+missing. The `/usr/local/bin/atlas-node-lifecycle` compatibility symlink
+also replaces the previous PATH executable. Do not execute a stale lifecycle
+binary installed elsewhere, including one in `/usr/bin`. An explicit Linux
+activation or rollback refuses to proceed on the production release root
+unless the timer is both enabled and active. No timer is enabled or host
+service changed merely by merging this code.
+
+An activation writes a root-owned, synced `/opt/atlas-node/.activation-pending`
+journal identifying the previous and attempted release plus the fixed
+operation (activate/rollback) **before** changing the `current` pointer.
+Successful activation clears it after Node reconnection and the rollback
+pointer is committed. If a new update version does not reconnect, the lifecycle
+script restores the prior release; the marker remains until that release
+reconnects. If the lifecycle process is killed, the independent timer invokes
+`recover` repeatedly (including shortly after boot): it restores the original
+release for an interrupted upgrade, but **completes the requested rollback**
+for an interrupted manual rollback. A failed manual rollback stays pending
+rather than silently reactivating the rejected version. Recovery restarts
+**only** `atlas-node.service`.
+Pending recovery blocks any new activation. Journal contents are validated
+against already installed releases, and recovery never accepts a URL, command
+or path from the Node or Atlas Server.
+
+To inspect a stalled update, check `sudo bash /usr/local/libexec/atlas-node-lifecycle.sh status`,
+`systemctl status atlas-node-lifecycle-recover.timer`, and
+`journalctl -u atlas-node-lifecycle-recover.service`. If needed, run
+`sudo bash /usr/local/libexec/atlas-node-lifecycle.sh recover`. Do not manually
+delete the pending marker; if the original release is missing or the current
+pointer has changed unexpectedly, recovery deliberately fails and needs
+operator investigation.
+
+This is **host crash recovery only**, not remote host approval, an autonomous
+update executor, or Atlas-side execution reporting. A power-loss drill and a
+full operational rollback drill must still be run on a nonproduction Node
+before relying on it for production updates.
+
 ## Status, activation and rollback
 
 The initial install has a \`/opt/atlas-node/current\` symlink and a running
@@ -44,14 +105,14 @@ Read-only status from a checkout on your Mac:
 From the VPS (use sudo for status and mutations because diagnostics are owned by the service account):
 
 \`\`\`bash
-sudo bash linux-node-lifecycle.sh status
-bash linux-node-lifecycle.sh plan v2.0.0-<12-digit-commit-prefix>
-sudo bash linux-node-lifecycle.sh activate v2.0.0-<12-digit-commit-prefix>
-sudo bash linux-node-lifecycle.sh rollback
+sudo /usr/local/libexec/atlas-node-lifecycle.sh status
+/usr/local/libexec/atlas-node-lifecycle.sh plan v2.0.0-<12-digit-commit-prefix>
+sudo /usr/local/libexec/atlas-node-lifecycle.sh activate v2.0.0-<12-digit-commit-prefix>
+sudo /usr/local/libexec/atlas-node-lifecycle.sh rollback
 \`\`\`
 
 The script refuses unmanaged targets, incomplete dependency trees, absent
-credentials, inactive services, and concurrent lifecycle commands. Activation
+credentials, inactive services, a missing recovery watchdog, and concurrent lifecycle commands. Activation
 atomically switches the symlink, restarts **only** \`atlas-node.service\`, and
 checks the service PID matches a freshly connected Node status report.
 If connection is not confirmed within the bounded timeout, it restores the
@@ -83,7 +144,7 @@ VPS Node. GitHub Actions artifacts expire after their configured retention
 period; rerun the packaging workflow if the latest artifact has expired.
 
 After separately reviewing the source and running the Linux installer to stage a
-new version, use `sudo atlas-node-lifecycle plan vVERSION-SHA` and then the
+new version, use `sudo /usr/local/libexec/atlas-node-lifecycle.sh plan vVERSION-SHA` and then the
 explicit `activate` command. Do not reinstall the current version or activate
 the old vulnerable release. The updater is deliberately not yet an unattended
 remote-root process.

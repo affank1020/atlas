@@ -43,8 +43,12 @@ function fixture() {
         '  is-active) exit 0 ;;',
         '  show) echo 4242 ;;',
         '  restart)',
+        '    if [[ "${ATLAS_TEST_KILL_ACTIVATOR:-0}" == "1" ]]; then',
+        '      kill -KILL "$PPID"',
+        '      sleep 0.1',
+        '    fi',
         '    target="$(readlink "$ATLAS_LIFECYCLE_ROOT/current")"',
-        '    if [[ "$ATLAS_TEST_FAIL_TARGET" == "$target" ]]; then',
+        '    if [[ "$ATLAS_TEST_FAIL_TARGET" == "$target" || "${ATLAS_TEST_FAIL_ALL:-0}" == "1" ]]; then',
         '      printf \'{"pid":4242,"state":"reconnecting"}\' > "$ATLAS_LIFECYCLE_STATUS_FILE"',
         '    else',
         '      printf \'{"pid":4242,"state":"connected"}\' > "$ATLAS_LIFECYCLE_STATUS_FILE"',
@@ -71,6 +75,28 @@ function fixture() {
 test('Linux Node lifecycle script parses', () => {
     const check = spawnSync('bash', ['-n', script], { encoding: 'utf8' });
     assert.equal(check.status, 0, check.stderr);
+});
+
+test('noncanonical production-root aliases fail before production guard checks can be bypassed', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const alias = join(f.root, 'alias');
+    symlinkSync(f.root, alias);
+    for (const unsafeRoot of [
+        '/opt/atlas-node/',
+        '/opt/atlas-node/.',
+        '/opt//atlas-node',
+        '/opt/atlas-node/../atlas-node',
+        f.root + '/',
+        f.root + '/.',
+        alias,
+    ]) {
+        const result = f.run(['activate', f.newer.name], { ATLAS_LIFECYCLE_ROOT: unsafeRoot });
+        assert.notEqual(result.status, 0, 'root alias must fail: ' + unsafeRoot);
+        assert.match(result.stderr, /canonical absolute path/, unsafeRoot);
+    }
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(f.log), false, 'no systemctl action can occur for noncanonical roots');
 });
 
 test('lifecycle status/plan are read-only, activation checks connection and records previous', { skip: !available }, t => {
@@ -102,4 +128,85 @@ test('lifecycle refuses missing target and auto-rolls back an unconnected releas
     assert.equal(f.run(['status']).status, 0);
     const events = readFileSync(f.log, 'utf8');
     assert.ok((events.match(/^restart atlas-node$/gm) ?? []).length >= 2);
+});
+
+test('killed activator leaves a durable journal; host recovery restores and restarts old Node', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const killed = f.run(['activate', f.newer.name], { ATLAS_TEST_KILL_ACTIVATOR: '1' });
+    assert.notEqual(killed.status, 0, 'a killed activation cannot report success');
+    assert.equal(readlinkSync(join(f.root, 'current')), f.newer.folder);
+    assert.equal(readFileSync(join(f.root, '.activation-pending'), 'utf8'), f.old.name + '\n' + f.newer.name + '\nactivate\n');
+    assert.match(f.run(['status']).stdout, /Recovery: pending/);
+    const blocked = f.run(['rollback']);
+    assert.notEqual(blocked.status, 0);
+    assert.match(blocked.stderr, /Pending activation must be recovered/);
+    const restored = f.run(['recover']);
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+    assert.match(restored.stdout, /Recovery completed/);
+    assert.match(readFileSync(f.log, 'utf8'), /restart atlas-node/);
+    assert.equal(f.run(['recover']).status, 0, 'recovery should be idempotent');
+});
+
+test('malformed interrupted activation journal cannot redirect or trigger a recovery', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    writeFileSync(join(f.root, '.activation-pending'), 'v2.0.0-' + 'c'.repeat(12) + '\n/other/path\n');
+    const recovery = f.run(['recover']);
+    assert.notEqual(recovery.status, 0);
+    assert.match(recovery.stderr, /Invalid pending activation journal/);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(f.log), false, 'no systemctl invocation permitted with a malformed journal');
+    assert.notEqual(f.run(['activate', f.newer.name]).status, 0);
+});
+
+test('unhealthy rollback remains pending until independent recovery observes a connection', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const failed = f.run(['activate', f.newer.name], { ATLAS_TEST_FAIL_ALL: '1' });
+    assert.notEqual(failed.status, 0);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), true,
+        'unhealthy rollback must keep the pending journal');
+    const recovered = f.run(['recover']);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+});
+
+test('interrupted manual rollback finishes rollback, never restores the rejected version', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const installed = f.run(['activate', f.newer.name]);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.newer.folder);
+    const killed = f.run(['rollback'], { ATLAS_TEST_KILL_ACTIVATOR: '1' });
+    assert.notEqual(killed.status, 0);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(readFileSync(join(f.root, '.activation-pending'), 'utf8'),
+        f.newer.name + '\n' + f.old.name + '\nrollback\n');
+    const recovered = f.run(['recover']);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder,
+        'recovery must never undo an explicitly requested rollback');
+    assert.equal(readlinkSync(join(f.root, 'previous')), f.newer.folder,
+        'recovery must also reconcile the rollback pointer');
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+});
+
+test('failed manual rollback does not re-activate its rejected newer release', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    assert.equal(f.run(['activate', f.newer.name]).status, 0);
+    const failed = f.run(['rollback'], { ATLAS_TEST_FAIL_TARGET: f.old.folder });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /host recovery will retry/);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), true);
+    const recovered = f.run(['recover']);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
 });
