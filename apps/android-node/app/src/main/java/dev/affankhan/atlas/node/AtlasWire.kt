@@ -53,6 +53,60 @@ internal fun shareMessage(
         .put("text", text).toString()
 }
 
+/** Recipients are metadata-only, strictly bounded and from an authenticated socket. */
+internal data class ShareRecipient(
+    val nodeId: String, val name: String, val platform: String,
+    val status: String, val available: Boolean,
+)
+
+internal data class RecipientsReply(
+    val requestId: String, val recipients: List<ShareRecipient>? = null,
+    val errorCode: String? = null,
+)
+
+internal fun recipientDirectoryMessage(requestId: String): String {
+    require(validNodeId(requestId))
+    return JSONObject().put("type", "device.share.recipients")
+        .put("requestId", requestId).toString()
+}
+
+internal fun parseRecipientsReply(raw: String): RecipientsReply? = runCatching {
+    val json = JSONObject(raw)
+    if (json.optString("type") != "response") return@runCatching null
+    val requestId = json.getString("requestId")
+    if (!validNodeId(requestId)) return@runCatching null
+    when (json.get("ok")) {
+        true -> {
+            val result = json.getJSONObject("result")
+            if (result.length() != 1 || !result.has("recipients")) return@runCatching null
+            val items = result.getJSONArray("recipients")
+            if (items.length() > 64) return@runCatching null
+            val seen = mutableSetOf<String>()
+            val recipients = (0 until items.length()).map { i ->
+                val target = items.getJSONObject(i)
+                if (target.length() != 5) return@runCatching null
+                val id = target.getString("nodeId")
+                val name = target.getString("name")
+                val platform = target.getString("platform")
+                val status = target.getString("status")
+                val available = target.get("available") as? Boolean ?: return@runCatching null
+                if (!validNodeId(id) || !seen.add(id.lowercase()) || name.isBlank() ||
+                    name.length > 200 || platform.isBlank() || platform.length > 80 ||
+                    status !in setOf("online", "offline", "unavailable") ||
+                    (available && status != "online")) return@runCatching null
+                ShareRecipient(id, name, platform, status, available)
+            }
+            RecipientsReply(requestId, recipients = recipients)
+        }
+        false -> {
+            val code = json.getJSONObject("error").getString("code")
+            if (!code.matches(Regex("[A-Z_]{1,80}"))) return@runCatching null
+            RecipientsReply(requestId, errorCode = code)
+        }
+        else -> null
+    }
+}.getOrNull()
+
 internal data class ShareReply(
     val requestId: String, val accepted: Boolean? = null, val errorCode: String? = null,
 )

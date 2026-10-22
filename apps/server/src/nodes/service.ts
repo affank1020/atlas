@@ -47,6 +47,20 @@ export class NodeService {
     }
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
+    /** Minimal sender-scoped directory; never return unrelated registry details. */
+    async shareRecipients(sourceId: string) {
+        const approved = await this.requireShareApprovals().targetsFor(sourceId);
+        if (!approved.size) return [];
+        const nodes = await this.list();
+        return nodes.filter(node => approved.has(node.id.toLowerCase())
+            && node.id.toLowerCase() !== sourceId.toLowerCase()
+            && node.credentialState === 'active')
+            .map(node => ({
+                nodeId: node.id, name: node.name, platform: node.platform,
+                status: node.status,
+                available: node.status === 'online' && node.capabilities.includes('device.share.receive'),
+            })).slice(0,64);
+    }
     async call(name: NodeToolName, input: unknown, caller: ShareAuditClient = 'atlas-server') {
         const parsed = nodeSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);

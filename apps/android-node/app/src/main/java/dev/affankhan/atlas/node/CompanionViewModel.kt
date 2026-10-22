@@ -5,6 +5,7 @@ import java.util.UUID
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 internal const val MAX_SHARE_CHARACTERS = 16_384
+internal const val RECIPIENT_LOOKUP_TIMEOUT_MS = 10_000L
+// A little beyond the gateway's 2-second cooldown avoids boundary races.
+internal const val RECIPIENT_REFRESH_COOLDOWN_MS = 2_500L
 
 internal data class ShareDelivery(val id: Long, val text: String? = null, val error: String? = null)
 
@@ -74,6 +78,18 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
     private var pendingShareRequestId: String? = null
+    private val directoryLookup = RecipientLookupGate(RECIPIENT_REFRESH_COOLDOWN_MS)
+    private val pendingRecipientsRequestId: String? get() = directoryLookup.pendingRequestId
+    private var recipientTimeoutTask: Runnable? = null
+    private var recipientCooldownTask: Runnable? = null
+    var recipientsCooldown by mutableStateOf(false)
+        private set
+    var recipients by mutableStateOf<List<ShareRecipient>>(emptyList())
+        private set
+    var recipientsLoading by mutableStateOf(false)
+        private set
+    var recipientsError by mutableStateOf<String?>(null)
+        private set
     var shareTarget by mutableStateOf("")
         private set
     var shareStatus by mutableStateOf("Nothing sent yet")
@@ -153,6 +169,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pendingRetry = null
         cancelBackgroundSocket(socket)
         socket = null
+        clearRecipientLookup()
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -174,9 +191,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         ConnectionEvent.Online -> {
                             reconnectDelayMs = 1_000
                             connectionStatus = "Online"
+                            refreshRecipients()
                         }
                         is ConnectionEvent.Offline -> {
                             connectionStatus = event.detail
+                            clearRecipientLookup()
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -207,6 +226,26 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         else -> "Recipient declined the share."
                     }
                 }
+            }, { reply ->
+                handler.post {
+                    if (!foreground || generation != connectionGeneration ||
+                        !directoryLookup.finish(reply.requestId)) return@post
+                    recipientTimeoutTask?.let(handler::removeCallbacks)
+                    recipientTimeoutTask = null
+                    recipientsLoading = false
+                    if (reply.recipients != null) {
+                        recipients = reply.recipients
+                        recipientsError = null
+                        if (recipients.none { it.nodeId.equals(shareTarget, ignoreCase = true) && it.available })
+                            shareTarget = ""
+                    } else {
+                        recipients = emptyList()
+                        shareTarget = ""
+                        recipientsError = if (reply.errorCode == "SHARE_RATE_LIMIT")
+                            "Device refresh is too frequent. Try again shortly."
+                        else "Approved devices could not be loaded."
+                    }
+                }
             })
         } catch (_: Exception) {
             connectionStatus = "Could not connect to Atlas."
@@ -232,8 +271,71 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         shareStatus = "New draft loaded. It has not been sent."
     }
 
-    fun editShareTarget(value: String) {
-        if (!sharePending) shareTarget = value.trim().take(36)
+    private fun clearRecipientLookup() {
+        recipientTimeoutTask?.let(handler::removeCallbacks)
+        recipientTimeoutTask = null
+        recipientCooldownTask?.let(handler::removeCallbacks)
+        recipientCooldownTask = null
+        directoryLookup.reset()
+        recipientsCooldown = false
+        recipientsLoading = false
+        recipients = emptyList()
+        recipientsError = null
+        shareTarget = ""
+    }
+
+    fun refreshRecipients() {
+        if (!foreground || connectionStatus != "Online" || sharePending || recipientsLoading) return
+        val ws = socket ?: return
+        val requestId = UUID.randomUUID().toString()
+        // Reject premature refresh *before* modifying a valid directory or selection.
+        if (!directoryLookup.start(requestId, SystemClock.elapsedRealtime())) return
+        val generation = connectionGeneration
+
+        recipientsCooldown = true
+        recipientCooldownTask?.let(handler::removeCallbacks)
+        val cooldownTask = Runnable {
+            if (foreground && generation == connectionGeneration) {
+                recipientsCooldown = false
+                recipientCooldownTask = null
+            }
+        }
+        recipientCooldownTask = cooldownTask
+        handler.postDelayed(cooldownTask, RECIPIENT_REFRESH_COOLDOWN_MS)
+
+        recipientsLoading = true
+        recipientsError = null
+        recipients = emptyList()
+        shareTarget = ""
+
+        recipientTimeoutTask?.let(handler::removeCallbacks)
+        val timeoutTask = Runnable {
+            // Ignore a late timer from an earlier socket or a completed request.
+            if (!foreground || generation != connectionGeneration ||
+                !directoryLookup.finish(requestId)) return@Runnable
+            recipientTimeoutTask = null
+            recipientsLoading = false
+            recipients = emptyList()
+            shareTarget = ""
+            recipientsError = "Approved device lookup timed out. Refresh devices to try again."
+        }
+        recipientTimeoutTask = timeoutTask
+        handler.postDelayed(timeoutTask, RECIPIENT_LOOKUP_TIMEOUT_MS)
+
+        if (!ws.send(recipientDirectoryMessage(requestId))) {
+            directoryLookup.finish(requestId)
+            handler.removeCallbacks(timeoutTask)
+            recipientTimeoutTask = null
+            recipientsLoading = false
+            recipientsError = "Approved devices could not be loaded."
+        }
+    }
+
+    fun selectRecipient(nodeId: String) {
+        if (!sharePending && !recipientsLoading && recipientsError == null &&
+            recipients.any { it.nodeId.equals(nodeId, ignoreCase = true) && it.available }) {
+            shareTarget = nodeId
+        }
     }
 
     fun sendCurrentDraft() {
@@ -241,9 +343,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val text = session.draft
         val ws = socket
         if (!foreground || connectionStatus != "Online" || pairedNode == null ||
-            pendingShareRequestId != null || !validNodeId(target) || text.isBlank() ||
+            pendingShareRequestId != null || pendingRecipientsRequestId != null ||
+            recipientsLoading || recipientsError != null ||
+            recipients.none { it.nodeId.equals(target, ignoreCase = true) && it.available } ||
+            !validNodeId(target) || text.isBlank() ||
             text.length > MAX_SHARE_CHARACTERS || target.equals(pairedNode?.nodeId, ignoreCase = true)) {
-            shareStatus = "Pair your Node, connect, and enter a different valid destination Node ID."
+            shareStatus = "Connect and choose an available approved receiving device."
             return
         }
         val requestId = UUID.randomUUID().toString()
@@ -268,6 +373,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         unrecoverableIdentity = false
         connectionStatus = "Not enrolled"
         shareTarget = ""
+        clearRecipientLookup()
         sharePending = false
         shareStatus = "Nothing sent yet"
         // Forgetting while the Activity is open must not prevent a new pair

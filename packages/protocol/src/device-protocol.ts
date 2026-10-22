@@ -16,6 +16,21 @@ export const deviceShareSubmissionSchema = z.object({
     text: deviceShareTextSchema,
 }).strict();
 
+/** A registered sender requests only its approved targets. No source ID supplied by client. */
+export const deviceShareRecipientsRequestSchema = z.object({
+    type: z.literal('device.share.recipients'),
+    requestId: z.string().uuid(),
+}).strict();
+export const deviceShareRecipientSchema = z.object({
+    nodeId: z.string().uuid(), name: z.string().min(1).max(200),
+    platform: z.string().min(1).max(80),
+    status: z.enum(['online', 'offline', 'unavailable']),
+    available: z.boolean(),
+}).strict();
+export const deviceShareRecipientsResultSchema = z.object({
+    recipients: z.array(deviceShareRecipientSchema).max(64),
+}).strict();
+
 /** Server -> Target Node: the server sets source and expiry only after authorisation. */
 export const deviceShareDeliverySchema = z.object({
     type: z.literal('request'),

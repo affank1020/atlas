@@ -5,14 +5,14 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { registrationSchema, registeredSchema, MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION } from '../../nodes/protocol.js';
 import type { NodeService } from '../../nodes/service.js';
 import { RemoteNodeRuntime } from './remote-runtime.js';
-import { deviceShareSubmissionSchema } from '@atlas/protocol/device-protocol';
+import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema } from '@atlas/protocol/device-protocol';
 import { DeviceShareRelay } from './share-relay.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
 const DEFAULT_TIMING: GatewayTiming = { heartbeatMs: 15_000, staleMs: 45_000, registrationMs: 5_000, persistMs: 60_000 };
-type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number };
+type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean };
 /** HTTP upgrade boundary. All Workspace execution still flows through NodeRouter. */
 export class RemoteNodeGateway {
     private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_NODE_FRAME_BYTES });
@@ -89,7 +89,8 @@ export class RemoteNodeGateway {
                     clearTimeout(registrationTimer);
                     const runtime = new RemoteNodeRuntime(socket, registration.capabilities);
                     const now = Date.now();
-                    session = { id: sessionId, socket, runtime, lastPong: now, lastPersisted: now, heartbeat: setInterval(() => this.heartbeat(registration.nodeId, session!), this.timing.heartbeatMs) };
+                    session = { id: sessionId, socket, runtime, lastPong: now, lastPersisted: now, lastDirectoryRead: 0, directoryPending: false,
+                        heartbeat: setInterval(() => this.heartbeat(registration.nodeId, session!), this.timing.heartbeatMs) };
                     const previous = this.sessions.get(registration.nodeId);
                     this.sessions.set(registration.nodeId, session);
                     this.nodes.attachRemote(registration.nodeId, runtime);
@@ -105,6 +106,46 @@ export class RemoteNodeGateway {
                     release();
                     if (this.registrations.get(registration.nodeId) === thisRegistration) this.registrations.delete(registration.nodeId);
                 }
+                return;
+            }
+            const directory = deviceShareRecipientsRequestSchema.safeParse(message);
+            if (directory.success) {
+                const originId = id, current = session, requestId = directory.data.requestId;
+                const respond = (ok: boolean, value: unknown) => {
+                    if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                    socket.send(JSON.stringify(ok
+                        ? { type: 'response', requestId, ok: true, result: value }
+                        : { type: 'response', requestId, ok: false, error: value }));
+                };
+                // Synchronous admission before authentication/database queries.
+                const now = Date.now();
+                if (!current || this.sessions.get(originId) !== current ||
+                    !current.runtime.getCapabilities().includes('device.share.send')) {
+                    respond(false, { code: 'SHARE_DENIED', message: 'Recipient lookup is not permitted.' });
+                    return;
+                }
+                if (current.directoryPending || now - current.lastDirectoryRead < 2_000) {
+                    respond(false, { code: 'SHARE_RATE_LIMIT', message: 'Refresh recipients less frequently.' });
+                    return;
+                }
+                current.directoryPending = true;
+                current.lastDirectoryRead = now;
+                const task = (async () => {
+                    try {
+                        await this.nodes.identity!.authenticate(originId, credential);
+                        if (this.sessions.get(originId) !== current)
+                            throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
+                        const recipients = await this.nodes.shareRecipients(originId);
+                        respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
+                    } catch (error) {
+                        const known = error instanceof AtlasError;
+                        respond(false, { code: known ? error.code : 'SHARE_UNAVAILABLE',
+                            message: known ? error.message.slice(0, 200) : 'Recipient directory is unavailable.' });
+                    } finally {
+                        current.directoryPending = false;
+                    }
+                })();
+                this.track(task);
                 return;
             }
             const share = deviceShareSubmissionSchema.safeParse(message);
