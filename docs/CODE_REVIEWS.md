@@ -114,9 +114,50 @@ automatically scan repositories, or claim historical completeness.
 Existing Code Reviewer GitHub publication continues unchanged
 until there is an independently reviewed replacement.
 
+### Bounded repository backfill
+
+The `code_reviews_discover_pull_requests` operation lists **50 GitHub pull
+requests per page** (newest created first), including open and closed PRs.
+Call `{ "repository": "affank1020/atlas", "page": 1 }`, then inspect the
+returned PR numbers and `nextPage`. GitHub pages can shift when PRs are
+created, so this list is for discovery **only**; it does not imply all PRs were
+checked or all history was imported. A full page indicates only a *possible*
+next page. Discovery requires an Atlas GitHub App installation, but does not
+write records or require trusted-publisher configuration.
+
+Select **1–8 explicit, distinct PR numbers** for each backfill batch. Nothing
+automatically selects a moving discovery page for import:
+
+1. Preview using `code_reviews_backfill_pull_requests` with
+   `{ "repository": "affank1020/atlas", "prNumbers": [69, 79] }`.
+   `apply` defaults to `false`. The response has per-PR provenance/skip
+   counts, total new/existing runs and findings, and no stored changes.
+2. After inspecting the preview, repeat the **same PR numbers** with
+   `"apply": true`. All requested GitHub review/comment snapshots are
+   fetched and validated before a **single PostgreSQL transaction**.
+   No partial writes occur if a later fetch fails or an existing record
+   conflicts. A repeat is idempotent.
+3. Continue deliberately with another set of explicit PR numbers. There is
+   **no automatic background job, webhook listener, or unattended sweep**.
+
+Both preview and apply require the previously configured repository-specific
+`ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON` publisher allowlist. Every PR
+uses the original Code Reviewer heading/actor checks, retains original GitHub
+evidence, and marks recovered findings as `unverified`. Preview simulates
+in-memory writes against a disposable catalogue snapshot to detect duplicate
+source IDs *within* the requested batch; it does not persist them.
+Concurrency with other imports between preview and apply may change counts,
+so the apply transaction revalidates everything.
+
+Batch operations fail as a whole on GitHub errors, oversized per-PR
+pagination, malformed source data or Store conflicts. The maximum of eight
+PRs per call bounds synchronous GitHub requests and database work, not the
+overall repository's history. A PR with zero matching Code Reviewer reviews
+is reported as zero new runs, **not** as evidence it was never reviewed.
+
 ## Planned follow-ups
 
-1. Repository-level batch backfill, source completeness summaries and optional GitHub webhook reconciliation.
+1. Repository-level source completeness summaries, optional GitHub webhook reconciliation and guided operator backfill UI.
 2. Validated and authorised structured review submission to Atlas, with immutable run
    receipts, idempotency, SHA freshness checks, and append-only history.
 3. Dedicated GitHub App publisher with inline findings, GitHub review submissions, and
