@@ -21,6 +21,14 @@ export type NodeRelease = {
     provenance: 'unverified';
 };
 type Catalogue = { state: 'ready' | 'unavailable'; releases: NodeRelease[]; checkedAt: string; error?: string };
+export type NodeUpdateIntent = {
+    id: string; nodeId: string;
+    targetVersion: string; targetCommit: string; installedVersion: string;
+    status: 'requested' | 'cancelled' | 'expired';
+    createdAt: string; expiresAt: string;
+    approved: false; executable: false;
+};
+
 export type LinuxNodeUpdatePlan = {
     nodeId: string;
     status: 'unsupported' | 'offline' | 'unavailable' | 'current' | 'ahead' | 'unknown' | 'candidate';
@@ -76,34 +84,158 @@ export function releaseUpdateState(installed: string | null | undefined, release
 
 export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const { catalogue, error, loading } = useSoftwareCatalogue();
-    // The same Node ID can be re-enrolled, disconnected or upgraded while this
-    // detail card stays mounted. Eligibility applies to the observed runtime
-    // snapshot, not the identity alone.
-    const nodeSnapshot = JSON.stringify([node.id, node.platform, node.version, node.status, node.credentialState]);
-    const requestGeneration = useRef(0);
+    // Eligibility is snapshot-scoped. The durable intention belongs to the
+    // Node ID, not to its currently reported version or connection state.
+    const nodeSnapshot = JSON.stringify([node.id, node.platform, node.version, node.status, node.credentialState, node.credentialUpdatedAt]);
+    const preflightGeneration = useRef(0);
+    const intentReadGeneration = useRef(0);
+    const intentMutationGeneration = useRef(0);
+    const intentMutationBusy = useRef(false);
     const [preflight, setPreflight] = useState<{ snapshot: string; result?: LinuxNodeUpdatePlan; error?: string; busy?: boolean }>();
     const currentPreflight = preflight?.snapshot === nodeSnapshot ? preflight : undefined;
+    const [intention, setIntention] = useState<{
+        nodeId: string; loading?: boolean; busy?: boolean; result?: NodeUpdateIntent; error?: string;
+    }>();
+    const currentIntent = intention?.nodeId === node.id ? intention : undefined;
+    const [clock, setClock] = useState(() => Date.now());
+    const storedIntent = currentIntent?.result;
+    const expiresAt = storedIntent?.status === 'requested' ? Date.parse(storedIntent.expiresAt) : NaN;
+    const intentStatus = storedIntent?.status === 'requested' &&
+        (!Number.isFinite(expiresAt) || expiresAt <= clock) ? 'expired' : storedIntent?.status;
+    const hasPendingIntent = intentStatus === 'requested';
+
+    function refreshIntents(nodeId: string) {
+        const generation = ++intentReadGeneration.current;
+        setIntention(current => ({
+            ...(current?.nodeId === nodeId ? current : { nodeId }),
+            nodeId, loading: true,
+        }));
+        void callTool<NodeUpdateIntent[]>('list_node_update_intents', { nodeId, limit: 20 })
+            .then(items => {
+                if (intentReadGeneration.current !== generation) return;
+                const scoped = items.filter(item => item.nodeId === nodeId);
+                const active = scoped.find(item => item.status === 'requested' &&
+                    Number.isFinite(Date.parse(item.expiresAt)) && Date.parse(item.expiresAt) > Date.now());
+                setClock(Date.now());
+                setIntention(current => current?.nodeId === nodeId ? {
+                    ...current, result: active ?? scoped[0], loading: false, error: undefined,
+                } : current);
+            }).catch(cause => {
+                if (intentReadGeneration.current !== generation) return;
+                setIntention(current => current?.nodeId === nodeId ? {
+                    ...current, loading: false,
+                    error: 'Unable to load update requests: ' + (cause instanceof Error ? cause.message : String(cause)),
+                } : current);
+            });
+    }
+
     useEffect(() => {
         setPreflight(undefined);
-        // Reject outstanding results when this snapshot changes or unmounts.
-        return () => { requestGeneration.current += 1; };
+        ++preflightGeneration.current;
+        // Preserve any known intention while reloading its authoritative
+        // state. A status/version/credential refresh must not orphan it.
+        if (node.platform === 'linux') refreshIntents(node.id);
+        else {
+            ++intentReadGeneration.current;
+            setIntention(undefined);
+        }
+        return () => { ++preflightGeneration.current; ++intentReadGeneration.current; };
     }, [nodeSnapshot]);
+
+    useEffect(() => {
+        // A mutation must survive a same-ID Node refresh or an unrelated
+        // eligibility check. It must not update a different Node after switch.
+        return () => { ++intentMutationGeneration.current; intentMutationBusy.current = false; };
+    }, [node.id]);
+
+    useEffect(() => {
+        if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
+        const timeout = window.setTimeout(() => {
+            setClock(Date.now());
+            refreshIntents(node.id);
+        }, Math.min(2_147_483_647, Math.max(1, expiresAt - Date.now() + 1)));
+        return () => window.clearTimeout(timeout);
+    }, [node.id, expiresAt]);
+
     function checkReadiness() {
         const nodeId = node.id;
         const snapshot = nodeSnapshot;
-        const generation = ++requestGeneration.current;
+        const generation = ++preflightGeneration.current;
         setPreflight({ snapshot, busy: true });
         void callTool<LinuxNodeUpdatePlan>('plan_node_update', { nodeId })
             .then(result => {
-                if (requestGeneration.current !== generation) return;
+                if (preflightGeneration.current !== generation) return;
                 setPreflight(current => current?.snapshot === snapshot ? { snapshot, result } : current);
             })
             .catch(cause => {
-                if (requestGeneration.current !== generation) return;
+                if (preflightGeneration.current !== generation) return;
                 setPreflight(current => current?.snapshot === snapshot
                     ? { snapshot, error: cause instanceof Error ? cause.message : String(cause) } : current);
             });
     }
+
+    function prepareIntent() {
+        const candidate = currentPreflight?.result?.candidate;
+        if (currentPreflight?.result?.status !== 'candidate' || !candidate || !node.version ||
+            currentIntent?.loading || hasPendingIntent || intentMutationBusy.current) return;
+        if (!window.confirm('Record a 15-minute Linux Node update request for ' + node.name +
+            ' to v' + candidate.version + '+' + candidate.commit +
+            '? This only records an intention. No Node installation, approval or restart will occur.')) return;
+        intentMutationBusy.current = true;
+        ++intentReadGeneration.current; // an older list response cannot overwrite the mutation
+        const generation = ++intentMutationGeneration.current;
+        const nodeId = node.id;
+        setIntention(current => ({
+            ...(current?.nodeId === nodeId ? current : { nodeId }),
+            nodeId, loading: false, busy: true, error: undefined,
+        }));
+        void callTool<NodeUpdateIntent>('prepare_node_update', {
+            nodeId, expectedVersion: node.version, expectedCredentialUpdatedAt: node.credentialUpdatedAt ?? null,
+            targetCommit: candidate.commit,
+        }).then(result => {
+            if (intentMutationGeneration.current !== generation) return;
+            setClock(Date.now());
+            setIntention(current => current?.nodeId === nodeId
+                ? { nodeId, result, busy: false, loading: false } : current);
+        }).catch(cause => {
+            if (intentMutationGeneration.current !== generation) return;
+            setIntention(current => current?.nodeId === nodeId ? {
+                ...current, busy: false, error: cause instanceof Error ? cause.message : String(cause),
+            } : current);
+        }).finally(() => {
+            if (intentMutationGeneration.current !== generation) return;
+            intentMutationBusy.current = false;
+            // Always reconcile: a network failure might happen AFTER the
+            // server committed the request, or while a readiness check ran.
+            refreshIntents(nodeId);
+        });
+    }
+
+    function cancelIntent() {
+        if (!storedIntent || !hasPendingIntent || intentMutationBusy.current) return;
+        intentMutationBusy.current = true;
+        ++intentReadGeneration.current;
+        const generation = ++intentMutationGeneration.current;
+        const { id: intentId, nodeId } = storedIntent;
+        setIntention(current => current?.nodeId === nodeId
+            ? { ...current, busy: true, loading: false, error: undefined } : current);
+        void callTool<NodeUpdateIntent>('cancel_node_update_intent', { nodeId, intentId })
+            .then(result => {
+                if (intentMutationGeneration.current !== generation) return;
+                setIntention(current => current?.nodeId === nodeId
+                    ? { nodeId, result, busy: false, loading: false } : current);
+            }).catch(cause => {
+                if (intentMutationGeneration.current !== generation) return;
+                setIntention(current => current?.nodeId === nodeId ? {
+                    ...current, busy: false, error: cause instanceof Error ? cause.message : String(cause),
+                } : current);
+            }).finally(() => {
+                if (intentMutationGeneration.current !== generation) return;
+                intentMutationBusy.current = false;
+                refreshIntents(nodeId);
+            });
+    }
+
     const latest = releaseForPlatform(catalogue?.releases ?? [], node.platform);
     const status = catalogue?.state === 'ready' ? releaseUpdateState(node.version, catalogue.releases, node.platform) : 'unknown';
     return <section className="node-detail-card node-detail-software" aria-label="Node software">
@@ -122,6 +254,23 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             </button>
             {currentPreflight?.result && <p role="status"><strong>{currentPreflight.result.status === 'candidate' ? 'Candidate identified' : 'No update approved'}:</strong> {currentPreflight.result.reason} <span>Update execution is not enabled.</span></p>}
             {currentPreflight?.error && <p role="alert">Unable to check update eligibility: {currentPreflight.error}</p>}
+            {currentIntent?.loading && <p role="status">Loading saved update requests…</p>}
+            {currentPreflight?.result?.status === 'candidate' && currentPreflight.result.candidate &&
+                !hasPendingIntent && !currentIntent?.loading &&
+                <button className="ghost" type="button" onClick={prepareIntent} disabled={currentIntent?.busy === true || Boolean(currentIntent?.error)}>
+                    {currentIntent?.busy ? 'Recording request…' : 'Prepare update request (no installation)'}
+                </button>}
+            {storedIntent && <div className="node-update-intent" role="status">
+                <strong>Update request: {intentStatus}</strong>
+                <p>Target v{storedIntent.targetVersion}+{storedIntent.targetCommit}.
+                    {intentStatus === 'requested' ? ' Expires ' + new Date(storedIntent.expiresAt).toLocaleString() + '.' : ''}
+                    {' '}Not approved. No installation or restart will occur.</p>
+                {intentStatus === 'requested' &&
+                    <button type="button" className="ghost" disabled={currentIntent?.busy === true || currentIntent?.loading === true} onClick={cancelIntent}>
+                        Cancel update request
+                    </button>}
+            </div>}
+            {currentIntent?.error && <p role="alert">Update request error: {currentIntent.error} <button type="button" className="ghost" onClick={() => refreshIntents(node.id)}>Reload requests</button></p>}
         </div>}
         <a href="#/nodes/software">View downloads and release notes →</a>
     </section>;

@@ -182,3 +182,35 @@ setting, not something the Node catalogue can do. Releases created with
 `immutable: false` remain excluded by the catalogue. After enabling the
 setting, publish a *new* build through the trusted Node packaging workflow;
 the immutable name/tag cannot be overwritten.
+
+## Prepared Linux Node update intentions — durable, non-executable
+
+Atlas now supports `prepare_node_update`, `list_node_update_intents` and
+`cancel_node_update_intent`. Selecting an eligible Linux release from the
+Node Software card and confirming the action records a **15-minute
+non-executable intention** in PostgreSQL; it does **not** grant operator/host
+approval or permission to install, activate or restart anything.
+
+The Server refreshes the immutable-release catalogue and re-evaluates Node
+version/build ordering before recording. It rechecks the target Node's
+persisted active credential, remote Linux platform, and exact expected
+installed version/credential update timestamp under a transactional Node row
+lock. Only the release identity and SHA-256 digest from Atlas's catalogue
+are stored; callers cannot supply archive URLs, paths or shell commands.
+At most one unexpired pending request exists for a Node, enforced by a
+partial unique index. Expired intentions are cleaned up transactionally
+when the next request is prepared. User-visible reads also show expired
+requests without changing database state.
+
+Preparation and cancellation append redacted, Node-linked events to the
+central `audit_events` stream. Those events identify the **Atlas transport**
+rather than claiming to identify the human operator. Since MCP clients may
+invoke the same tools, **intent creation is not a privileged approval**.
+
+Nothing subscribes to or executes this ledger. A subsequent host executor
+must require a separate host-authorised, single-use approval, verify the
+signed release bytes under root ownership, reconcile reconnect/rollback
+outcomes durably, and reject expired, cancelled, stale or replayed requests.
+In particular, a mere pending intention cannot be consumed as authority to
+execute privileged systemd operations. No Node credentials, server deployments,
+workspace files or database migrations are changed by preparation itself.
