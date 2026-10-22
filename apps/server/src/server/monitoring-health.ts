@@ -40,12 +40,12 @@ export class MonitoringHealthService {
         inputSchema.parse(raw);
         const checkedAt = this.now();
         const started = this.clock();
-        const [db, directory] = await Promise.allSettled([
-            this.database.query({ text: 'SELECT 1', query_timeout: 2_000 }),
-            this.registry.list(),
-        ]);
+        let databaseLatencyMs: number | undefined;
+        const probe = this.database.query({ text: 'SELECT 1', query_timeout: 2_000 })
+            .then(result => { databaseLatencyMs = Math.max(0, Math.round(this.clock() - started)); return result; });
+        const [db, directory] = await Promise.allSettled([probe, this.registry.list()]);
         const database = db.status === 'fulfilled'
-            ? { status: 'reachable' as const, latencyMs: Math.max(0, Math.round(this.clock() - started)) }
+            ? { status: 'reachable' as const, latencyMs: databaseLatencyMs ?? 0 }
             : { status: 'unavailable' as const };
         const items = directory.status === 'fulfilled'
             ? directory.value.map(node => ({
