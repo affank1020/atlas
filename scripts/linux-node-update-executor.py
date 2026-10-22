@@ -416,13 +416,13 @@ def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
 
         # Snapshot untrusted caller inputs exactly once into root-private files.
         stage_dir = Path(tempfile.mkdtemp(prefix=".executor-input-", dir=store.base))
+        archive_copy = stage_dir / ("atlas-node-" + target_name + ".tar.gz")
+        checksum_copy = stage_dir / (archive_copy.name + ".sha256")
+        bundle_copy = stage_dir / "attestations.jsonl"
         claiming_recorded = False
         try:
             fsync_dir(store.base)
             os.chmod(stage_dir, 0o700)
-            archive_copy = stage_dir / ("atlas-node-" + target_name + ".tar.gz")
-            checksum_copy = stage_dir / (archive_copy.name + ".sha256")
-            bundle_copy = stage_dir / "attestations.jsonl"
             copy_snapshot(archive, archive_copy, MAX_ARCHIVE)
             copy_snapshot(checksum, checksum_copy, MAX_SMALL_FILE)
             copy_snapshot(bundle, bundle_copy, MAX_BUNDLE)
