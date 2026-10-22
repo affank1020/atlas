@@ -1,15 +1,16 @@
-# Atlas Android Node (foundation)
+# Atlas Android Node (0.4.0 test build)
 
 Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not** an Android port of the Atlas Web UI.
 
-## Current scope (v0.1.0)
+## Current scope (v0.4.0)
 
-- Adaptive phone/tablet UI: Devices, Send, Inbox, Settings.
-- Android Sharesheet target for `text/plain` (text and URLs). Text is held only in memory, never automatically sent or added to the clipboard.
-- Explicit **not enrolled / offline** state; Send is disabled. There is no Node credential, socket, file transfer, or background service yet.
-- No blanket storage, clipboard, notification or background permissions.
+- Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
+- One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated foreground WSS.
+- Android Sharesheet `text/plain` import with memory-only draft. The app sends **only** when the user chooses an approved receiving Node by name and taps **Send**.
+- Advertises `device.share.send` only. Recipient directory is sender-scoped and unauthorised/offline targets are not selectable. Server reauthorises each share.
+- No Workspace capabilities, receiving inbox, file transfer, automatic send, blanket clipboard permission or background service.
 
-This is a scaffold, **not** a working mobile Node. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content.
+This is a **test build**, not a production-ready mobile Node. Real Samsung → Mac acceptance and stable signing are outstanding. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
 ## Develop / sideload
 
@@ -27,12 +28,13 @@ CI builds a debug APK on Android-specific changes. It is **not** production-sign
 
 See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle properties are the single source for `versionName` and `versionCode`. The Android app version is independent from Atlas Server/Node npm `2.0.0` and the wire protocol `2`.
 
-## Next slices
+## Implementation milestones
 
-1. Review Node v2 gateway envelope and add typed device capability contracts + authorization (without workspace placement).
-2. Enrolment UI backed by the existing one-time ticket API and Android Keystore-backed secret handling; require verified HTTPS/WSS, no cleartext fallback.
-3. Foreground authenticated Node registration, reconnect, truthful status and safe revocation handling.
-4. Mac receiver and end-to-end text share (explicit target selection / approval); eventually offline inbox and file workflows.
+1. Typed device capability contracts, authenticated routing and targeted authorization — implemented.
+2. One-time ticket enrolment, encrypted identity and foreground Node registration — implemented.
+3. Opt-in Mac receiver, directional managed approvals and explicit Android text send — implemented, pending physical verification.
+4. Approved receiver discovery by name — implemented in Android 0.4.0.
+5. **Next gate:** Samsung → Mac accept/decline, Unicode, offline/reconnect and revocation [E2E checks](../../docs/MOBILE_SHARE_E2E.md). Durable inbox, background delivery and file transfers remain outside this slice.
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
@@ -48,7 +50,7 @@ CI debug APKs are **signed with ephemeral keys**; installing an APK from another
 runner may require an uninstall (which destroys local app data). Do not enrol
 a real device from a CI debug APK until we introduce a stable development signer.
 
-## Pairing and presence milestone (stacked follow-up)
+## Pairing and presence milestone (implemented before 0.4.0)
 
 Android now accepts one-use enrolment tickets from Atlas Web, sends a strictly HTTPS
 `POST /node/enrol`, encrypts the resulting Node UUID/credential with an Android
@@ -88,7 +90,7 @@ including when it is mid-handshake. Emulator tests exercise Compose draft
 navigation/re-import through an isolated Compose rule; no duplicate Activity
 instance is launched by the test harness.
 
-## 0.3.0 — Explicit Android text sender (manual recipient)
+## 0.3.0 — Explicit Android text sender (historical manual recipient)
 Android now advertises only `device.share.send`, not `device.share.receive`
 or any Workspace access. In the Send tab the user chooses a target **Node UUID**
 from Atlas Web, edits/approves the text, and explicitly presses Send. Content
@@ -101,14 +103,31 @@ Status distinguishes accepted, declined, unavailable and unconfirmed delivery.
 Stale/out-of-order acknowledgements cannot mark another send as accepted.
 An outbound attempt has no offline queue and is not retried after disconnection.
 
-The recipient picker is temporarily **manual** because native Nodes must not
-reuse Atlas Web's Basic Auth/admin-only API to list devices. A scoped Node
-directory with per-peer permissions is planned. Real-device acceptance testing
-comes after the relay, Mac receiver and this sender have all passed review.
+In 0.3.0 the recipient picker was **manual** because native Nodes must not
+reuse Atlas Web's Basic Auth/admin-only API. Android 0.4.0 replaces it with an
+authenticated, sender-scoped directory, while retaining explicit Send.
 
 While a send awaits acknowledgement, a second Android Share intent is held
 in a volatile deferred slot, rather than replacing the on-screen text that
 was actually submitted. After the acknowledgement, **Load newest shared item**
 explicitly switches to the new draft. If several incoming shares arrive
 while pending, only the most recent is retained (no background queue).
-\n## 0.4.0 — Approved recipient picker\n\nAndroid uses the authenticated foreground Node WebSocket to request a bounded,\nsender-scoped directory of approved receiving Nodes. **Only** Nodes explicitly\nauthorised to receive text from this Android identity are returned, with\ndisplay names, platforms and live receiving readiness. Other Node registry\nrecords and admin-only management tools are not exposed to Android.\n\nThe Send tab lets the user select a **ready device by name**; manual recipient\nUUID entry is removed. Offline/unavailable approved devices are shown but\ncan't be selected. The list loads on connection and can be refreshed manually.\nConnection loss, authentication failure and directory-read failure clear the\nselectable list (fail closed). Shared text remains memory-only; every send is\nexplicit and re-authorised against current policy by the relay.\n\nThe server rate-limits directory reads per authenticated socket and never\npersists contents or directory responses. Re-enrolment and Node updates still\nrequire normal trusted APK signing and end-to-end device testing.\n
+
+## 0.4.0 — Approved recipient picker
+
+Android uses the authenticated foreground Node WebSocket to request a bounded,
+sender-scoped directory of approved receiving Nodes. **Only** Nodes explicitly
+authorised to receive text from this Android identity are returned, with
+display names, platforms and live receiving readiness. Other Node registry
+records and admin-only management tools are not exposed to Android.
+
+The Send tab lets the user select a **ready device by name**; manual recipient
+UUID entry is removed. Offline/unavailable approved devices are shown but
+can't be selected. The list loads on connection and can be refreshed manually.
+Connection loss, authentication failure and directory-read failure clear the
+selectable list (fail closed). Shared text remains memory-only; every send is
+explicit and re-authorised against current policy by the relay.
+
+The server rate-limits directory reads per authenticated socket and never
+persists contents or directory responses. Re-enrolment and Node updates still
+require normal trusted APK signing and end-to-end device testing.
