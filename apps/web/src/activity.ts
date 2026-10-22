@@ -5,6 +5,36 @@ export type ActivityPresentation = {
     category: ActivityCategory; title: string; description?: string; status: 'pending' | 'completed' | 'failed';
     kind: 'inspection' | 'mutation' | 'execution' | 'failure'; attemptId?: string; details: Record<string, unknown>;
 };
+/**
+ * Defence in depth when Web and Server versions are briefly mismatched.
+ * Monitoring never renders unexpected raw after_state values even if an
+ * older Server ignores the opt-in safeDetails flag.
+ */
+export function safeMonitoringEvent(event: AuditEvent): AuditEvent {
+    const original = event.resulting && typeof event.resulting === 'object' && !Array.isArray(event.resulting)
+        ? event.resulting as Record<string, unknown> : {};
+    const clean: Record<string, string | boolean | number> = {};
+    const ref = /^[a-zA-Z0-9._:-]{1,80}$/;
+    const op = /^workspace\.[a-z][a-z0-9_]{0,63}$/;
+    const action = /^[a-z][a-z0-9_]{0,63}$/;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const outcomes = new Set(['completed', 'pending', 'failed', 'failed_or_uncertain', 'error', 'editor_error', 'success']);
+    for (const key of ['attemptId','operation','nodeId','previousNodeId','sourceNodeId','targetNodeId','task','command','outcome','durationMs','exitCode','timedOut','success','stdoutTruncated','stderrTruncated']) {
+        const value = original[key];
+        if (key === 'attemptId' && typeof value === 'string' && ref.test(value)) clean[key] = value;
+        else if (key === 'operation' && typeof value === 'string' && op.test(value)) clean[key] = value;
+        else if (['nodeId','previousNodeId','sourceNodeId','targetNodeId'].includes(key) && typeof value === 'string' && uuid.test(value)) clean[key] = value;
+        else if (['task','command'].includes(key) && typeof value === 'string' && action.test(value)) clean[key] = value;
+        else if (key === 'outcome' && typeof value === 'string' && outcomes.has(value)) clean[key] = value;
+        else if (key === 'durationMs' && typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 86400000) clean[key] = value;
+        else if (key === 'exitCode' && typeof value === 'number' && Number.isInteger(value) && value >= -255 && value <= 255) clean[key] = value;
+        else if (['timedOut','success','stdoutTruncated','stderrTruncated'].includes(key) && typeof value === 'boolean') clean[key] = value;
+    }
+    return { id: event.id, occurredAt: event.occurredAt, client: event.client, operation: event.operation,
+        ...(event.projectId && { projectId: event.projectId }), ...(event.workspaceId && { workspaceId: event.workspaceId }),
+        ...(event.storeId && { storeId: event.storeId }), ...(event.recordId && { recordId: event.recordId }),
+        ...(event.viewId && { viewId: event.viewId }), resulting: clean };
+}
 export const readable = (text: string) => text.replace(/[_.-]+/g, ' ').replace(/^\w/, x => x.toUpperCase());
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const lookup = <T,>(map: Record<string, T>, key: string): T | undefined => Object.hasOwn(map, key) ? map[key] : undefined;
