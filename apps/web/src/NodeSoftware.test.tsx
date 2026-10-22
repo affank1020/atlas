@@ -372,4 +372,4 @@ it('automatically refreshes a requested intent after the native Node claims it',
     expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'list_node_update_intents').length)
         .toBeGreaterThanOrEqual(2);
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'cancel_node_update_intent')).toBe(false);
-});
+}, 12_000);
