@@ -11,6 +11,34 @@ import { WebSocketServer } from 'ws';
 import { LocalNodeRuntime } from '../apps/node/src/platforms/desktop/runtime.js';
 import { StandaloneNode } from '../apps/node/src/core/connection/standalone.js';
 import { startMacShareControlServer } from '../apps/node/src/capabilities/device-share/mac-sender-control.js';
+import { safeTerminalLabel, formatShareRecipientOption } from '../scripts/atlas-mac-share.mjs';
+
+
+test('Mac terminal recipient labels cannot execute ANSI, OSC 52, C1 or multiline controls', () => {
+    const control = '\x1b';
+    const maliciousName = 'Tablet\n2. Fake device \r' +
+        control + '[2J' + control + '[31m' +
+        control + ']52;c;SGVsbG8=\x07' + '\u009b' + '\u009d' +
+        '\u202e' + ' Samsung 🎉';
+    const maliciousPlatform = 'android\t' + control + '[H' +
+        control + ']52;c;ZGF0YQ==' + control + '\\' + '\u2028' + '🌍';
+    const option = formatShareRecipientOption({
+        name: maliciousName,
+        platform: maliciousPlatform,
+    }, 0);
+    const cleanName = safeTerminalLabel(maliciousName);
+    const cleanPlatform = safeTerminalLabel(maliciousPlatform);
+    assert.equal(option, '  1. ' + cleanName + ' (' + cleanPlatform + ')');
+    // No terminal-control characters, fake lines or bidirectional overrides.
+    assert.doesNotMatch(option, /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/);
+    assert.equal(option.split('\n').length, 1);
+    assert.ok(option.includes('Samsung 🎉'), 'ordinary Unicode survives');
+    assert.ok(option.includes('🌍'), 'platform Unicode survives');
+    assert.ok(!option.includes('\x1b]52'), 'OSC 52 cannot execute');
+    assert.ok(!option.includes('\x1b[2J'), 'screen-clearing CSI cannot execute');
+    assert.equal(safeTerminalLabel('Sámšung 🚀'), 'Sámšung 🚀');
+    assert.equal(safeTerminalLabel('Plain Mac'), 'Plain Mac');
+});
 
 test('Mac sender is disabled by default, never appears on Linux, and does not change receiving', () => {
     const ordinary = new LocalNodeRuntime([], new Map(), 'darwin');
