@@ -26,7 +26,13 @@ recovery guarantee.
    DELETE permissions to the seeding credential. Confirm your recovery bucket
    access, retention/lock policies and operational key custody separately.
    The seeder itself has no delete operation and cannot override existing
-   backup objects.
+   backup objects. The trusted host must also have the legacy `ATLAS_MEDIA_DIR`
+   mounted/configured correctly: committed Files created before primary R2
+   was enabled can exist **only** on local disk. The seeder follows the live
+   Files source read order (primary R2, then bounded local fallback only on
+   confirmed `NoSuchKey`). Any missing local storage root, symlink object,
+   unreadable/oversized local file or R2 bucket error aborts as inconclusive.
+   A local source is checksum-validated before any backup PUT.
 
 ## Dry-run first
 
@@ -51,9 +57,12 @@ The JSON report includes `mode`, `status`, `checked`, `existingVerified`,
 opaque failure file IDs. No file names, file bytes, R2 secrets or signed
 headers are printed.
 
-**Investigate any** `failed` / `empty` report, absent/corrupt primary, or
-corrupt existing backup before applying. A backup copy that exists but fails
-checksum verification is never replaced by this tool.
+**Investigate any** `failed` / `empty` report, absent/corrupt source,
+or corrupt existing backup before applying. A backup copy that exists but
+fails checksum verification is never replaced by this tool. R2 404 responses
+with `NoSuchBucket` or an unknown/malformed error body are *not* treated
+as absent objects: only an explicit `NoSuchKey` can trigger local fallback
+or planning a new backup copy.
 
 ## Explicit manual apply
 
@@ -71,9 +80,11 @@ The command never overwrites a backup object. For each valid catalog row:
 
 - Existing destination: read and checksum it; if corrupt, report a failure
   and do **not** touch it.
-- Missing destination: read the primary object, enforce the 25 MiB maximum,
-  and verify its exact SHA-256 and byte length. A missing or corrupt primary
-  is not uploaded.
+- Missing destination: read the primary R2 object or, only when that key is
+  confirmed absent, the matching local legacy object from `ATLAS_MEDIA_DIR`.
+  Both reads enforce the 25 MiB cap and exact SHA-256/byte-length validation.
+  A truly missing or corrupt source is not uploaded. Remote bucket or
+  permission errors are **not** permission to fall back to local storage.
 - Authorized copy: use signed `PutObject` with **`If-None-Match: *`**. R2
   checks this condition atomically at commit. A concurrent writer can cause
   HTTP 412; in that case, re-read and verify the winning copy.
