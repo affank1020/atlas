@@ -448,8 +448,15 @@ def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
     # description. Nesting those locks would deadlock the root executor.
     # If an administrator revokes during the Server request, claim_once
     # refuses and no privileged host mutation can occur.
-    store.claim_once(intent_id, node_id, grant["targetSha256"], installed)
-    record = receipts.mark(record, "claimed")
+    try:
+        store.claim_once(intent_id, node_id, grant["targetSha256"], installed)
+        record = receipts.mark(record, "claimed")
+    except Exception:
+        # A remote claim may have committed even if the root-local approval
+        # expired or was revoked before we could durably consume it.
+        # Never continue to installation on any uncertain local result.
+        receipts.mark(record, "requires_reconciliation")
+        raise
 
     # Host mutations happen only after BOTH one-use claims and signed bytes.
     # Input snapshots remain private and are not cleaned up on uncertainty.
