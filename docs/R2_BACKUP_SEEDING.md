@@ -19,8 +19,9 @@ recovery guarantee.
    Configure the recovery bucket through `ATLAS_R2_RECOVERY_ENDPOINT`,
    `ATLAS_R2_RECOVERY_BUCKET`, `ATLAS_R2_RECOVERY_ACCESS_KEY_ID`,
    `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY`. The seeder **fails closed** if
-   the recovery configuration is missing, points to the same endpoint/bucket,
-   or shares either access-key ID or secret with the primary.
+   the recovery configuration is missing, identifies the same Cloudflare
+   account (even when bucket or jurisdiction differs), points to the same
+   endpoint/bucket, or shares either access-key ID or secret with the primary.
 3. Grant minimum required primary **GET** access and recovery **GET + PUT**
    access on the respective buckets. Keep both buckets private; do not add
    DELETE permissions to the seeding credential. Confirm your recovery bucket
