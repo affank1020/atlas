@@ -13,6 +13,7 @@ Audit baseline: Atlas `main` (2026-10-21, commit `093d780`). This document recor
 | Node recent activity | `NodeIdentity.activity` queries `after_state.nodeId` | Not a separate audit database; metadata association differs from `workspace_id` |
 | macOS Node logs | `node-logs.ts`, approved `node.log` / `node-error.log` | Read-only 256 KiB scan, <=200 lines, <=48 KiB redacted output |
 | Linux Node logs | `journalctl` for fixed `atlas-node.service` unit | Read-only adapter with a 200-line / 48 KiB tail, no shell or caller-controlled journal units; returns unavailable without privilege escalation |
+| Live Server and Node health | `get_monitoring_health` from PostgreSQL `SELECT 1`, effective Node registry/heartbeat | On-demand read-only Monitoring Overview. Database failure, revoked/offline/unavailable/stale/unknown Nodes are distinguished; no fake CPU/disk/memory claims |
 | Atlas Server diagnostics | in-memory fixed-code ring, current server process | Bounded, non-sensitive operational diagnostics in Monitoring Logs; separate from Docker stdout/stderr |
 | Application output | Football Training trainer consoles and per-run output | Remains inside its application; dispatch and infrastructure failures belong in Monitoring |
 | Global search | Node log action, activity shortcut and node links | Route operational searches to Monitoring as sections gain parity |
@@ -30,6 +31,14 @@ Audit baseline: Atlas `main` (2026-10-21, commit `093d780`). This document recor
 * Atlas Server diagnostics capture only fixed operational event codes, never user input or exception text. The in-process ring is erased on restart and cannot reconstruct historical container stdout/stderr; container log integration still requires a separately reviewed restricted collector.\n* Linux journal reads target only `atlas-node.service` with a fixed journalctl binary and arguments, a three-second timeout, 256 KiB scan and 48 KiB visible output cap. Journal timestamps are retained as emitted. Permission failures return unavailable, never a privileged retry; no shell, arbitrary paths, or caller-selected journal units. Atlas Server process/container logs still require a separate approved adapter.
 * The 5-second auto-refresh on the old feed is wasteful. Monitoring uses explicit refresh and cache-independent read requests; future optional live mode should be visibility-aware and throttled.
 * The authoritative source for specialised model-training logs stays inside Football Training. Copy only meaningful Atlas infrastructure outcomes, not training line streams.
+
+## Live operational health snapshot
+
+The read-only `get_monitoring_health` endpoint checks PostgreSQL with `SELECT 1` (query timeout: 2 seconds) and reads the effective Node registry. It returns one UTC `checkedAt` value, the current Server process start/uptime, database reachability/probe latency and an explicit `nodes.available` bit. Failed reads do not include error text, Node metadata or credentials. The HTTP tool shares the trusted-origin boundary used by Node tools; the MCP tool uses the normal MCP authentication policy. Unknown probe input fields are rejected.
+
+Node health is based on **effective status and last-seen heartbeat**, not reported host resource metrics. A connected Node with a last-seen timestamp older than 90 seconds is `stale` (the WebSocket gateway already terminates sessions after 45 seconds of missed pongs); revoked credentials take priority, then disconnected/unavailable states. A connected Node without a valid timestamp is `unknown`, never falsely healthy. `overall` is `degraded` for database failure or an actual Node problem, `unknown` if registry/heartbeat health cannot be verified, otherwise `healthy`. Zero registered Nodes alone is not a service failure. There is no automatic remediation, alert delivery or persistent health history.
+
+This is **an on-demand, point-in-time snapshot**, not a continuously monitored SLA. It does not prove Docker/container health, CPU/disk/memory capacity, background job correctness, Ollama availability, external integration health, cross-replica health or durable log retention. Operators can inspect Activity and Logs separately. Future health providers/alerts require distinct reviewed PRs.
 
 ## Delivery sequence
 
