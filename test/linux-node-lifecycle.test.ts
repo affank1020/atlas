@@ -77,6 +77,28 @@ test('Linux Node lifecycle script parses', () => {
     assert.equal(check.status, 0, check.stderr);
 });
 
+test('noncanonical production-root aliases fail before production guard checks can be bypassed', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const alias = join(f.root, 'alias');
+    symlinkSync(f.root, alias);
+    for (const unsafeRoot of [
+        '/opt/atlas-node/',
+        '/opt/atlas-node/.',
+        '/opt//atlas-node',
+        '/opt/atlas-node/../atlas-node',
+        f.root + '/',
+        f.root + '/.',
+        alias,
+    ]) {
+        const result = f.run(['activate', f.newer.name], { ATLAS_LIFECYCLE_ROOT: unsafeRoot });
+        assert.notEqual(result.status, 0, 'root alias must fail: ' + unsafeRoot);
+        assert.match(result.stderr, /canonical absolute path/, unsafeRoot);
+    }
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(f.log), false, 'no systemctl action can occur for noncanonical roots');
+});
+
 test('lifecycle status/plan are read-only, activation checks connection and records previous', { skip: !available }, t => {
     const f = fixture();
     t.after(() => rmSync(f.root, { recursive: true, force: true }));
