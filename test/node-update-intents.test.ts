@@ -137,7 +137,14 @@ test('claimed intent is single-use, immutable and prevents a second prepare', as
 
 test('claims reject wrong credential, identity, digest, build, cancellation and expiry', async () => {
     const f = await fixture();
-    const other = await fixture();
+    // Both identities must exist in the *same* database to exercise the
+    // intent's Node scoping rather than an unknown Node credential.
+    const ticket = await f.identity.ticket();
+    const other = await f.identity.enrol({
+        token: ticket.enrolmentToken, name: 'Other Linux Node',
+        platform: 'linux', version: f.version,
+    });
+    await f.db.store.pool.query("UPDATE nodes SET status='online' WHERE id=$1", [other.nodeId]);
     const prepared = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
     const call = (credential: string, version=f.version, digest=candidate.sha256, id=prepared.id, node=f.nodeId) =>
         f.ledger.claim(node, id, credential, version, digest);
