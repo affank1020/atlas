@@ -110,14 +110,14 @@ echo "sudo $*" >> "$ATLAS_UPGRADE_TEST_LOG"
 case "$*" in
   "-v") exit 0 ;;
   "-n test -x /usr/local/libexec/atlas-node-lifecycle.sh")
-    exit "${ATLAS_TEST_MISSING_LIFECYCLE:-0}" ;;
+    exit "\${ATLAS_TEST_MISSING_LIFECYCLE:-0}" ;;
   "-n systemctl is-enabled --quiet atlas-node-lifecycle-recover.timer"|
   "-n systemctl is-active --quiet atlas-node-lifecycle-recover.timer")
-    exit "${ATLAS_TEST_MISSING_WATCHDOG:-0}" ;;
+    exit "\${ATLAS_TEST_MISSING_WATCHDOG:-0}" ;;
   "-n test -d /opt/atlas-node/releases/"*) exit 0 ;;
   "-n /usr/local/libexec/atlas-node-lifecycle.sh plan "*) exit 0 ;;
   "-n /usr/local/libexec/atlas-node-lifecycle.sh activate "*)
-    exit "${ATLAS_TEST_ACTIVATION_STATUS:-0}" ;;
+    exit "\${ATLAS_TEST_ACTIVATION_STATUS:-0}" ;;
   "-n /usr/local/libexec/atlas-node-lifecycle.sh status") exit 0 ;;
 esac
 echo "Unexpected privileged command: $*" >&2
