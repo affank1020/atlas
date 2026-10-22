@@ -8,6 +8,7 @@ import './activity.css';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
 const LIMIT = 30;
+const ACTIVITY_LIVE_POLL_MS = 30_000;
 export function localDateTimeValue(instant?: string) {
     if (!instant) return '';
     const date = new Date(instant);
@@ -21,6 +22,8 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
     const [refresh, setRefresh] = useState(0);
+    const [lastUpdated, setLastUpdated] = useState<string>();
+    const live = filters.live === '1';
     const [search, setSearch] = useState(filters.search ?? '');
     const [draft, setDraft] = useState<MonitoringFilters>(filters);
     useEffect(() => setSearch(filters.search ?? ''), [filters.search]);
@@ -32,13 +35,46 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     };
     useEffect(() => {
         const controller = new AbortController();
-        setLoading(true); setError(''); setPage(undefined);
-        const input = Object.fromEntries(Object.entries(filters).filter(([key, value]) => key !== 'offset' && value));
-        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
-            .then(value => { if (!controller.signal.aborted) setPage(value); })
-            .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
-            .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-        return () => controller.abort();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let inFlight = false;
+        setPage(undefined); setError(''); setLastUpdated(undefined);
+        // URL state controls the UI only; never forward it to the audit API.
+        const input = Object.fromEntries(Object.entries(filters)
+            .filter(([key, value]) => key !== 'offset' && key !== 'live' && value));
+        const read = () => {
+            if (controller.signal.aborted || inFlight || (live && document.visibilityState === 'hidden')) return;
+            inFlight = true;
+            setLoading(true); setError('');
+            void callTool<ActivityPage>('query_monitoring_activity',
+                { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
+                .then(value => {
+                    if (!controller.signal.aborted) { setPage(value); setLastUpdated(new Date().toLocaleTimeString()); }
+                })
+                .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
+                .finally(() => {
+                    inFlight = false;
+                    if (controller.signal.aborted) return;
+                    setLoading(false);
+                    // Schedule *after completion*: slow requests never overlap.
+                    if (live && document.visibilityState !== 'hidden')
+                        timer = setTimeout(read, ACTIVITY_LIVE_POLL_MS);
+                });
+        };
+        const onVisibilityChange = () => {
+            if (!live) return;
+            // No background polling. Resume with one immediate read when visible.
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+            if (document.visibilityState === 'visible' && !inFlight) read();
+        };
+        if (live) document.addEventListener('visibilitychange', onVisibilityChange);
+        if (!live || document.visibilityState !== 'hidden') read();
+        else setLoading(false);
+        return () => {
+            controller.abort();
+            if (timer) clearTimeout(timer);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
     }, [JSON.stringify(filters), offset, refresh]);
     const operationCount = page ? new Set(page.items.map(event => {
         const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
@@ -48,7 +84,13 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     })).size : 0;
     const changePage = (next: number) => { location.hash = monitoringHash('activity', { ...filters, offset: String(next) }); };
     return <section className="panel activity-panel" aria-label="Monitoring activity">
-        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions"><button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button></div></div>
+        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions">
+            <button type="button" className="ghost" aria-pressed={live}
+                onClick={() => location.hash = monitoringHash('activity', {
+                    ...filters, live: live ? undefined : '1', offset: undefined,
+                })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
+            <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
+        </div></div>
         <div className="activity-filters monitoring-filters">
             {([
                 ['projectId', 'Project ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
@@ -65,6 +107,9 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
         {page && <><div className="activity-scroll"><ActivityRows events={page.items} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
+        <p className="activity-footnote" role="status">{live
+            ? 'Live updates on · at most one read every 30 seconds after completion · paused in hidden tabs'
+            : 'Live updates off · manual refresh only'}{lastUpdated ? ` · Last updated ${lastUpdated}` : ''}</p>
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
 }
