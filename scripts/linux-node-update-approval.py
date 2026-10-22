@@ -129,6 +129,11 @@ def read_host_node_id(env_path: Path = NODE_ENV) -> str:
 def read_installed_version(root: Path = RELEASE_ROOT) -> str:
     if root.is_symlink():
         raise Refused("Release root must not be symlinked.")
+    if root == RELEASE_ROOT:
+        for protected in (root, root / "releases"):
+            info = protected.stat()
+            if info.st_uid != 0 or (stat.S_IMODE(info.st_mode) & 0o022):
+                raise Refused("Installed release tree is not root-owned and immutable.")
     releases = root / "releases"
     current = root / "current"
     if not current.is_symlink():
@@ -139,6 +144,11 @@ def read_installed_version(root: Path = RELEASE_ROOT) -> str:
     manifest = resolved / "atlas-node-release.json"
     if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 16384:
         raise Refused("Invalid installed release manifest.")
+    if root == RELEASE_ROOT:
+        for protected in (resolved, manifest):
+            info = protected.stat()
+            if info.st_uid != 0 or (stat.S_IMODE(info.st_mode) & 0o022):
+                raise Refused("Installed release metadata is not root-owned and immutable.")
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))
         version, commit = data["version"], data["commit"]
@@ -303,7 +313,10 @@ def read_intent_file(path: Path) -> dict:
         if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_INTENT_BYTES:
             raise Refused("Intent snapshot must be a small regular file.")
         with os.fdopen(fd, "rb", closefd=False) as source:
-            return json.load(source)
+            raw = source.read(MAX_INTENT_BYTES + 1)
+        if len(raw) > MAX_INTENT_BYTES:
+            raise Refused("Intent snapshot exceeds size limit.")
+        return json.loads(raw)
     finally:
         os.close(fd)
 
@@ -327,7 +340,10 @@ def main() -> int:
         raise Refused("Approval changes require an interactive host root session.")
     store = ApprovalStore(STATE)
     if args.command == "approve":
-        candidate = validate_intent(read_intent_file(args.intent_json),
+        # Bind the confirmation to one already-read snapshot: no reread of a
+        # mutable caller-owned JSON file after the operator confirms.
+        snapshot = read_intent_file(args.intent_json)
+        candidate = validate_intent(snapshot,
                                     read_host_node_id(), read_installed_version(), clock())
         print(f"Node: {candidate['nodeId']}\nFrom: {candidate['installedVersion']}"
               f"\nTo: {candidate['targetVersion']}+{candidate['targetCommit']}"
@@ -337,8 +353,7 @@ def main() -> int:
         required = "APPROVE " + candidate["intentId"]
         if input("Type '" + required + "' to confirm: ") != required:
             raise Refused("Host operator did not confirm the exact intent.")
-        row = store.approve(read_intent_file(args.intent_json),
-                            read_host_node_id(), read_installed_version())
+        row = store.approve(snapshot, read_host_node_id(), read_installed_version())
     elif args.command == "revoke":
         if input("Type 'REVOKE " + args.intent_id + "' to confirm: ") != "REVOKE " + args.intent_id:
             raise Refused("Host operator did not confirm revocation.")
