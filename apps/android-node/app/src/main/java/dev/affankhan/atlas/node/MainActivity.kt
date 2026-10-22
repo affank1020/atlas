@@ -60,7 +60,11 @@ class MainActivity : ComponentActivity() {
                 onNavigate = model::navigate,
                 onEditDraft = model::editDraft,
                 shareTarget = model.shareTarget,
-                onEditShareTarget = model::editShareTarget,
+                recipients = model.recipients,
+                recipientsLoading = model.recipientsLoading,
+                recipientsError = model.recipientsError,
+                onSelectRecipient = model::selectRecipient,
+                onRefreshRecipients = model::refreshRecipients,
                 shareStatus = model.shareStatus,
                 sharePending = model.sharePending,
                 onSend = model::sendCurrentDraft,
@@ -110,7 +114,11 @@ internal fun AtlasCompanion(
     onNavigate: (Section) -> Unit,
     onEditDraft: (String) -> Unit,
     shareTarget: String,
-    onEditShareTarget: (String) -> Unit,
+    recipients: List<ShareRecipient>,
+    recipientsLoading: Boolean,
+    recipientsError: String?,
+    onSelectRecipient: (String) -> Unit,
+    onRefreshRecipients: () -> Unit,
     shareStatus: String,
     sharePending: Boolean,
     onSend: () -> Unit,
@@ -145,7 +153,11 @@ internal fun AtlasCompanion(
                             onForget = onForget,
                             onEditDraft = onEditDraft,
                             shareTarget = shareTarget,
-                            onEditShareTarget = onEditShareTarget,
+                            recipients = recipients,
+                            recipientsLoading = recipientsLoading,
+                            recipientsError = recipientsError,
+                            onSelectRecipient = onSelectRecipient,
+                            onRefreshRecipients = onRefreshRecipients,
                             shareStatus = shareStatus,
                             sharePending = sharePending,
                             onSend = onSend,
@@ -168,7 +180,11 @@ internal fun AtlasCompanion(
                             onForget = onForget,
                             onEditDraft = onEditDraft,
                             shareTarget = shareTarget,
-                            onEditShareTarget = onEditShareTarget,
+                            recipients = recipients,
+                            recipientsLoading = recipientsLoading,
+                            recipientsError = recipientsError,
+                            onSelectRecipient = onSelectRecipient,
+                            onRefreshRecipients = onRefreshRecipients,
                             shareStatus = shareStatus,
                             sharePending = sharePending,
                             onSend = onSend,
@@ -207,7 +223,11 @@ private fun CompanionContent(
     onForget: () -> Unit,
     onEditDraft: (String) -> Unit,
     shareTarget: String,
-    onEditShareTarget: (String) -> Unit,
+    recipients: List<ShareRecipient>,
+    recipientsLoading: Boolean,
+    recipientsError: String?,
+    onSelectRecipient: (String) -> Unit,
+    onRefreshRecipients: () -> Unit,
     shareStatus: String,
     sharePending: Boolean,
     onSend: () -> Unit,
@@ -226,7 +246,8 @@ private fun CompanionContent(
                 unreadableIdentity, onClearRecovery, onPair,
             )
             Section.SEND -> SendContent(session, node, connection, onEditDraft,
-                shareTarget, onEditShareTarget, shareStatus, sharePending, onSend, onLoadDeferredShare)
+                shareTarget, recipients, recipientsLoading, recipientsError, onSelectRecipient,
+                onRefreshRecipients, shareStatus, sharePending, onSend, onLoadDeferredShare)
             Section.INBOX -> InfoCard(
                 "No incoming items",
                 "The receiving inbox will become available after device capability routing is implemented.",
@@ -254,7 +275,11 @@ private fun SendContent(
     connection: String,
     onEditDraft: (String) -> Unit,
     shareTarget: String,
-    onEditShareTarget: (String) -> Unit,
+    recipients: List<ShareRecipient>,
+    recipientsLoading: Boolean,
+    recipientsError: String?,
+    onSelectRecipient: (String) -> Unit,
+    onRefreshRecipients: () -> Unit,
     shareStatus: String,
     sharePending: Boolean,
     onSend: () -> Unit,
@@ -277,24 +302,41 @@ private fun SendContent(
         minLines = 3,
         maxLines = 8,
     )
-    OutlinedTextField(
-        value = shareTarget,
-        onValueChange = onEditShareTarget,
-        enabled = !sharePending,
-        label = { Text("Receiving Node ID") },
-        modifier = Modifier.fillMaxWidth().testTag("share-target"),
-        singleLine = true,
-    )
+    Text("Approved receiving devices", style = MaterialTheme.typography.titleMedium)
+    Button(
+        onClick = onRefreshRecipients,
+        enabled = node != null && connection == "Online" && !sharePending && !recipientsLoading,
+        modifier = Modifier.testTag("refresh-recipients"),
+    ) { Text(if (recipientsLoading) "Refreshing…" else "Refresh devices") }
+    when {
+        node == null || connection != "Online" -> Text("Connect to Atlas to discover approved devices.")
+        recipientsLoading -> Text("Loading approved devices…")
+        recipientsError != null -> Text(recipientsError, modifier = Modifier.testTag("recipients-error"))
+        recipients.isEmpty() -> Text("No approved receiving devices. Grant access in Atlas Web → Nodes.")
+        else -> recipients.forEach { recipient ->
+            val selected = shareTarget.equals(recipient.nodeId, ignoreCase = true)
+            Button(
+                onClick = { onSelectRecipient(recipient.nodeId) },
+                enabled = !sharePending && recipient.available,
+                modifier = Modifier.fillMaxWidth().testTag("recipient-" + recipient.nodeId),
+            ) {
+                Text((if (selected) "✓ " else "") + recipient.name + " · " + recipient.platform +
+                    " · " + if (recipient.available) "Ready" else "Offline or receiving disabled")
+            }
+        }
+    }
     Button(
         onClick = onSend,
         enabled = node != null && connection == "Online" &&
+            !recipientsLoading && recipientsError == null &&
+            recipients.any { it.available && it.nodeId.equals(shareTarget, ignoreCase = true) } &&
             validNodeId(shareTarget) && !shareTarget.equals(node.nodeId, ignoreCase = true) &&
             session.draft.isNotBlank() && !sharePending,
         modifier = Modifier.testTag("share-submit"),
     ) { Text(if (sharePending) "Waiting for approval…" else "Send to selected Node") }
     InfoCard("Delivery status", shareStatus)
     Text(
-        "The recipient must be approved in Atlas Server and online. No share is delivered until the receiving user accepts it. Target selection is manual in this first version.",
+        "Only recipients approved for this Android Node appear above. Select a ready device and confirm Send; the recipient must still accept the share. The list is refreshed on connection and on request.",
         style = MaterialTheme.typography.bodySmall,
     )
 }
