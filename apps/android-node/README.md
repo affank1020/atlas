@@ -22,7 +22,9 @@ gradle :app:assembleDebug
 # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-CI builds a debug APK on Android-specific changes. It is **not** production-signed. The app intentionally lives inside `apps/` without a `package.json` and does not change the npm build/test graph.
+CI builds a debug APK on Android-specific changes, but its runner-specific signing key is ephemeral: the artifact is for **CI validation only**, never enrolment or upgrade testing on a real Samsung. For physical acceptance, build locally under one developer OS user with a **persistent** `~/.android/debug.keystore`, verify the signing fingerprint and install that APK **before** enrolling. Follow the [required build, signing verification, and revocation procedure](../../docs/MOBILE_SHARE_E2E.md). Debug signing is for development testing, not production distribution.
+
+The app intentionally lives inside `apps/` without a `package.json` and does not change the npm build/test graph.
 
 ## Version contract
 
@@ -46,29 +48,35 @@ an Android emulator/connected device for real navigation and Sharesheet UI tests
 Share drafts survive tab changes and Activity recreation in a volatile-only ViewModel:
 no SavedState, backup, logging, or disk persistence of received content.
 
-CI debug APKs are **signed with ephemeral keys**; installing an APK from another
-runner may require an uninstall (which destroys local app data). Do not enrol
-a real device from a CI debug APK until we introduce a stable development signer.
+CI debug APKs are **signed with ephemeral keys**; they are unsuitable for
+enrolled real-device testing. Use a **locally built** debug APK whose Android
+debug signing keystore (`~/.android/debug.keystore`) remains stable across builds.
+Record the APK signing certificate SHA-256 fingerprint and verify it stays
+the same **before** updating the app. A signer mismatch must not be handled by
+an unplanned uninstall: revoke the enrolled Node in Atlas Web first, then
+reinstall and re-enrol. Do not commit, upload or distribute this debug keystore.
+See the [physical test runbook](../../docs/MOBILE_SHARE_E2E.md).
 
 ## Pairing and presence milestone (implemented before 0.4.0)
 
 Android now accepts one-use enrolment tickets from Atlas Web, sends a strictly HTTPS
 `POST /node/enrol`, encrypts the resulting Node UUID/credential with an Android
 Keystore AES-GCM key, and connects over authenticated WSS using protocol 2.
-It registers with **no device/workspace capabilities**, so it is online in Nodes
-without the ability to execute privileged Workspace requests.
+The initial pairing milestone registered with **no device/workspace capabilities**.
+Android 0.4.0 now advertises only `device.share.send`, never Workspace access
+or a receiving capability.
 
 The WebSocket is foreground-only, with bounded reconnect/backoff; backgrounding
 the app disconnects it and status reflects that. The user can clear credentials
-locally, but must revoke the Node separately in Atlas Web. Do not confuse this
-with a messaging-ready app: the Send button remains disabled until authorised
-`device.*` routing and a Mac receiver are implemented.
+locally, but must revoke the Node separately in Atlas Web. Android 0.4.0 can
+send explicit text shares **only** when the Server authorises the directional
+pair and the target is ready to receive.
 
-The Node must be accessed via a publicly trusted HTTPS origin. Do not
-sideload consecutive ephemeral CI debug APKs and expect credentials to survive
-reinstall: create a stable development signing identity before enrolled-device
-upgrade tests. Local encrypted identity has no backup recovery; rotate/re-enrol
-after reinstall or keystore loss.
+The Node must be accessed via a publicly trusted HTTPS origin. Local debug
+builds made under the same OS user use the same persistent development keystore;
+CI builds do not. Local encrypted identity has no backup recovery; revoke and
+re-enrol after an intentional reinstall, lost signing keystore, or Android
+Keystore credential loss.
 
 ## Recovery after interrupted pairing
 
