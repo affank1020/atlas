@@ -169,3 +169,42 @@ test('operation mode correlates before filtering and paginates completed attempt
     const oldMode = await audit.page({ projectId: first.id, client: 'correlation-test' });
     assert.equal(oldMode.total, 5, 'Legacy row-based pagination is unchanged');
 });
+
+
+test('grouped operation filter includes pending and failed-only request wrappers without trusting malformed metadata', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Operation filter regression', client: 'setup' });
+    const insert = async (operation: string, attemptId: string, requested: string | undefined, outcome?: string) => {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'operation-filter-test', $1, $2, $3::jsonb, now())`,
+            [operation, project.id, JSON.stringify({ attemptId, ...(requested && { operation: requested }), ...(outcome && { outcome }) })]);
+    };
+    await insert('workspace.mutation_requested', 'pending', 'workspace.git_committed');
+    await insert('workspace.mutation_failed', 'failed-only', 'workspace.git_committed', 'failed_or_uncertain');
+    await insert('workspace.git_committed', 'direct', undefined, 'completed');
+    await insert('workspace.mutation_failed', 'malformed', 'workspace.git_committed;invalid', 'failed');
+    await insert('workspace.mutation_failed', 'foreign', 'view.updated', 'failed');
+
+    const audit = new ActivityService(new AuditService(store));
+    const filter = { groupOperations: true, projectId: project.id, client: 'operation-filter-test' };
+    const requested = await audit.page({ ...filter, operation: 'workspace.git_committed' });
+    assert.equal(requested.total, 3, 'Match stored operations and validated requested operations');
+    assert.deepEqual(requested.items.map(event => event.operation).sort(),
+        ['workspace.git_committed', 'workspace.mutation_failed', 'workspace.mutation_requested']);
+
+    const pending = await audit.page({ ...filter, operation: 'workspace.git_committed', outcome: 'pending' });
+    assert.equal(pending.total, 1, 'Include pending-only requests');
+    assert.equal(pending.items[0]?.operation, 'workspace.mutation_requested');
+    const failed = await audit.page({ ...filter, operation: 'workspace.git_committed', outcome: 'failed' });
+    assert.equal(failed.total, 1, 'Include failed-only wrappers without a successful operation row');
+    assert.equal(failed.items[0]?.operation, 'workspace.mutation_failed');
+    const completed = await audit.page({ ...filter, operation: 'workspace.git_committed', outcome: 'completed' });
+    assert.equal(completed.total, 1, 'Continue matching the native operation event');
+
+    const wrapper = await audit.page({ ...filter, operation: 'workspace.mutation_failed' });
+    assert.equal(wrapper.total, 3, 'Explicit raw wrapper filtering must remain possible');
+    assert.equal((await audit.page({ ...filter, operation: 'view.updated' })).total, 0,
+        'Foreign wrapper metadata must never be reclassified as an operation');
+    assert.equal((await audit.page({ ...filter, operation: 'workspace.git_committed;invalid' })).total, 0,
+        'Malformed requested-operation metadata must not match');
+});
