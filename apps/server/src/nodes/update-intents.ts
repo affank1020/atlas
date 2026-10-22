@@ -121,7 +121,7 @@ export class NodeUpdateIntentLedger {
     async claim(nodeId: string, intentId: string, credential: string,
         expectedInstalledVersion: string, expectedSha256: string): Promise<NodeUpdateIntent> {
         if (!/^[0-9a-f]{64}$/.test(expectedSha256) ||
-            !/^\\d+\\.\\d+\\.\\d+\\+[0-9a-f]{12}$/.test(expectedInstalledVersion) ||
+            !/^[0-9]+[.][0-9]+[.][0-9]+[+][0-9a-f]{12}$/.test(expectedInstalledVersion) ||
             typeof credential !== 'string' || credential.length < 32)
             throw new AtlasError('Invalid Node update claim.', 'INVALID_INPUT');
         const credentialHash = createHash('sha256').update(credential).digest('hex');
