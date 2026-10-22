@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import test, { after } from 'node:test';
 import { AuditService } from '../apps/server/src/core/audit.js';
+import { createAtlasHttpServer } from '../apps/server/src/server.js';
 import type { AtlasRepository } from '../apps/server/src/core/repository.js';
 import type { AuditEvent } from '../apps/server/src/types.js';
 import { databaseFixture, cleanupDatabases } from './database.js';
@@ -77,4 +80,34 @@ test('snapshot adapter and PostgreSQL produce the same safe correlated projectio
     assertions(await service.monitoring({ ...filters, safeDetails: true }));
     const full = await service.monitoring(filters);
     assert.ok(full.items.some(event => JSON.stringify(event).includes(marker)));
+});
+
+test('HTTP Monitoring does not convert Web attribution header into an implicit audit Client filter', async () => {
+    const { catalog, databaseUrl } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Attribution is not a filter', client: 'different-agent' });
+    const http = createAtlasHttpServer({ databaseUrl, nodeExecution: 'remote' });
+    http.listen(0, '127.0.0.1');
+    try {
+        await once(http, 'listening');
+        const port = (http.address() as AddressInfo).port;
+        const request = async (input: object) => {
+            const response = await fetch(`http://127.0.0.1:${port}/api/tools/query_monitoring_activity`, {
+                method: 'POST', headers: {
+                    'content-type': 'application/json', 'x-atlas-client': 'Atlas Web',
+                },
+                body: JSON.stringify({ projectId: project.id, safeDetails: true, ...input }),
+            });
+            assert.equal(response.status, 200);
+            return response.json() as Promise<{ total: number; items: AuditEvent[] }>;
+        };
+        const allClients = await request({});
+        assert.equal(allClients.total, 1);
+        assert.equal(allClients.items[0]?.client, 'different-agent');
+        const explicitFilter = await request({ client: 'Atlas Web' });
+        assert.equal(explicitFilter.total, 0, 'An explicit filter still works');
+        const matchingFilter = await request({ client: 'different-agent' });
+        assert.equal(matchingFilter.total, 1);
+    } finally {
+        await new Promise<void>(resolve => http.close(() => resolve()));
+    }
 });
