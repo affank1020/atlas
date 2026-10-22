@@ -3,7 +3,6 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import { serveNodeUpdateReport } from '../apps/server/src/api/http/node-update-report.js';
-import { AtlasError } from '../apps/server/src/shared/errors.js';
 
 const nodeId = 'ff20f4df-0b6b-4e4a-8ac4-8b2485af3c37';
 const intentId = 'ad42bf7f-a74f-4ccb-a09b-a47719869f63';
