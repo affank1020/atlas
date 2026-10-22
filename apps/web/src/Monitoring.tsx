@@ -34,7 +34,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         const controller = new AbortController();
         setLoading(true); setError(''); setPage(undefined);
         const input = Object.fromEntries(Object.entries(filters).filter(([key, value]) => key !== 'offset' && value));
-        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true }, controller.signal)
+        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
             .then(value => { if (!controller.signal.aborted) setPage(value); })
             .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
             .finally(() => { if (!controller.signal.aborted) setLoading(false); });
