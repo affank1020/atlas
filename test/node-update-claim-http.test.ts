@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import { serveNodeUpdateClaim } from '../apps/server/src/api/http/node-update-claim.js';
+import { AtlasError } from '../apps/server/src/shared/errors.js';
 
 const nodeId = 'ff20f4df-0b6b-4e4a-8ac4-8b2485af3c37';
 const intentId = 'ad42bf7f-a74f-4ccb-a09b-a47719869f63';
@@ -17,17 +18,13 @@ async function fixture(options: { refuseAuth?: boolean; refuseClaim?: boolean; d
         identity: { authenticate: async (id: string, token: string) => {
             operations.push('auth:' + id + ':' + token.length);
             if (options.refuseAuth) {
-                const e = new Error('bad auth') as Error & {code: string};
-                e.code = 'NODE_AUTH_INVALID';
-                throw e;
+                throw new AtlasError('Invalid Node credential.', 'NODE_AUTH_INVALID');
             }
         }},
         nodes: { updateIntents: { claim: async (...args: unknown[]) => {
             operations.push('claim:' + JSON.stringify(args));
             if (options.refuseClaim) {
-                const e = new Error('already claimed') as Error & {code: string};
-                e.code = 'CONFLICT';
-                throw e;
+                throw new AtlasError('Already claimed.', 'CONFLICT');
             }
             return { id: intentId, nodeId, status: 'claimed', approved: false, executable: false };
         } }},
@@ -99,7 +96,7 @@ test('Node claim declines to read body until Node credential is valid', async t 
     const f = await fixture({ refuseAuth: true }); t.after(f.close);
     const res = await fetch(f.url, { method: 'POST', headers: f.headers,
         body: JSON.stringify(data) });
-    assert.notEqual(res.status, 200);
+    assert.equal(res.status, 401);
     assert.equal(f.operations.length, 1);
 });
 
@@ -107,7 +104,7 @@ test('Node claim never treats a failed reservation as host execution', async t =
     const f = await fixture({ refuseClaim: true }); t.after(f.close);
     const res = await fetch(f.url, { method: 'POST', headers: f.headers,
         body: JSON.stringify(data) });
-    assert.notEqual(res.status, 200);
+    assert.equal(res.status, 409);
     assert.equal(f.operations.length, 2);
 });
 
