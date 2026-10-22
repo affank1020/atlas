@@ -111,8 +111,7 @@ case "$*" in
   "-v") exit 0 ;;
   "-n test -x /usr/local/libexec/atlas-node-lifecycle.sh")
     exit "\${ATLAS_TEST_MISSING_LIFECYCLE:-0}" ;;
-  "-n systemctl is-enabled --quiet atlas-node-lifecycle-recover.timer"|
-  "-n systemctl is-active --quiet atlas-node-lifecycle-recover.timer")
+  "-n systemctl is-enabled --quiet atlas-node-lifecycle-recover.timer"|"-n systemctl is-active --quiet atlas-node-lifecycle-recover.timer")
     exit "\${ATLAS_TEST_MISSING_WATCHDOG:-0}" ;;
   "-n test -d /opt/atlas-node/releases/"*) exit 0 ;;
   "-n /usr/local/libexec/atlas-node-lifecycle.sh plan "*) exit 0 ;;
