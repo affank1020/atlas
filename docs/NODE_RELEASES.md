@@ -410,3 +410,56 @@ This command is **separate from** the legacy, explicitly SSH-initiated
 `./atlasctl vps node-upgrade` workflow. That older manual command must not
 be represented as a server-approved update; it does not consume an intent or
 the root-local host approval.
+
+
+## Host outcome observations (unverified, claimed fence preserved)
+
+A Linux Node's root-only executor now has a **manual** `report <intent UUID>`
+command to publish an observation from its *durable local execution receipt*
+once the local attempt has reached `activated` or
+`requires_reconciliation`. This command is a separate explicit root-terminal
+operation with `REPORT <intent UUID>` confirmation; it cannot re-execute an
+update, trigger a retry, clear a Server claim, or grant any new approval.
+
+```bash
+sudo /usr/local/libexec/atlas-node-update-executor status <intent-uuid>
+sudo /usr/local/libexec/atlas-node-update-executor report <intent-uuid>
+```
+
+The CLI reads the root-owned local receipt and Node configuration, checks
+that the reported Node identity matches this host, and refuses an
+`activated` observation if the installed release differs from the local
+receipt or an interrupted lifecycle activation is still pending.
+It sends a bounded JSON body to the fixed
+`POST /node/update-intents/report` endpoint derived from the configured
+WSS Server URL. It never accepts a caller-provided URL, HTTP proxy or
+redirect. An uncertain network result can be retried **only for the same
+report**: the Server persists its first observation and accepts an identical
+retry without creating duplicate audit entries. A contradictory second
+observation is refused and requires manual investigation.
+
+The Server endpoint is guarded by the **existing**
+`ATLAS_NODE_UPDATE_CLAIMS_ENABLED=false` deployment setting and authenticates
+the Node credential under the same database lock as the persisted claim.
+Only the *same Node* may report a matching archive digest against a previously
+`claimed` intent, and a credential rotated since preparation is rejected.
+An observation is immutable; the `node.update_outcome_reported` Monitoring
+entry records only the claimed ID and non-authoritative status, never a
+credential or filesystem path.
+
+**Trust boundary:** the unprivileged Node process possesses its Node
+credential. That credential can send a forged `activated` observation even
+without a valid host-root execution receipt. Consequently, **all reports are
+explicitly `verified: false`, `clearsClaim: false`** and must be displayed
+as *unverified host-reported outcomes*, not installed/successful releases.
+They do not update Node version, release pointers, root approval state,
+Server intent status or the per-Node uniqueness fence. The dashboard keeps
+`Last successful update: Not recorded` until a separate trusted
+verification/reconciliation design is built.
+
+This is an **observability-only prerequisite**, not completed reconciliation.
+A later independently reviewed operation must establish host-root evidence,
+check recovery and live identity and explicitly reconcile the claimed intent
+before allowing another update. Never manually mutate the claimed row or
+delete execution receipts to bypass the guard. No production deployment,
+configuration enablement or systemd restart occurs through this PR.
