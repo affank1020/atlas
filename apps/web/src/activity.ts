@@ -69,12 +69,12 @@ export function presentActivity(events: AuditEvent[], names: Record<string, stri
         else if (command) title += ` · ${readable(command)}`;
         if (status === 'pending') title = `Requested: ${title}`;
         const error = str(data.error) ?? str(object(data.error).message);
-        const workspaceName = event.workspaceId ? lookup(names, event.workspaceId) ?? str(data.workspaceName) ?? (suffix === 'created' || suffix === 'updated' || suffix === 'archived' ? str(data.name) : undefined) ?? 'Unknown workspace' : undefined;
+        const workspaceName = event.workspaceId ? lookup(names, event.workspaceId) ?? str(data.workspaceName) ?? (suffix === 'created' || suffix === 'updated' || suffix === 'archived' ? str(data.name) : undefined) ?? `Workspace ${event.workspaceId}` : undefined;
         return { id, timestamp: group[0].occurredAt, client: event.client || 'unknown-client', projectId: event.projectId,
             workspaceId: event.workspaceId, workspaceName, category, title, status, kind: failed ? 'failure' : kind,
             description: failed ? error ?? (suffix === 'dev_invoked' ? data.timedOut ? 'Task timed out.' : `Task exited with code ${data.exitCode ?? 'unknown'}.` : 'The operation failed; inspect the details or client response.') : undefined,
             attemptId: str(data.attemptId), details: { operation: event.operation, requestedOperation: operation,
-                command, task, nodeId: data.nodeId, durationMs, exitCode: data.exitCode, timedOut: data.timedOut, success: data.success, stdoutTruncated: data.stdoutTruncated, stderrTruncated: data.stderrTruncated, attemptId: data.attemptId, workspace: workspaceName, workspaceId: event.workspaceId,
+                command, task, nodeId: data.nodeId, sourceNodeId: data.sourceNodeId, targetNodeId: data.targetNodeId, durationMs, exitCode: data.exitCode, timedOut: data.timedOut, success: data.success, stdoutTruncated: data.stdoutTruncated, stderrTruncated: data.stderrTruncated, attemptId: data.attemptId, workspace: workspaceName, workspaceId: event.workspaceId,
                 projectId: event.projectId, storeId: event.storeId, recordId: event.recordId, viewId: event.viewId,
                 client: event.client, outcome: data.outcome ?? status, path, error, timestamp: group[0].occurredAt,
                 ...(event.id !== group[0].id && { evidenceTimestamp: event.occurredAt }),
