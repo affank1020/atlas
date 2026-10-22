@@ -9,7 +9,7 @@ const row = (x: any): AtlasNode => ({ id: x.id, name: x.name, status: x.status, 
 const select = `SELECT n.*, (SELECT count(*) FROM workspaces w JOIN projects p ON p.id=w.project_id
     WHERE w.node_id=n.id AND w.archived_at IS NULL AND p.archived_at IS NULL) AS hosted_workspace_count FROM nodes n`;
 export class PostgresNodeRepository implements NodeRepository {
-    constructor(private readonly pool: Pool) {}
+    constructor(private readonly pool: Pool, private readonly healthPool: Pool = pool) {}
     async registerLocal(name: string, capabilities: NodeCapability[]) {
         // Migration establishes identity. Restarts update presence, never create another machine.
         const result = await this.pool.query(`UPDATE nodes SET name=CASE WHEN name='Local Node' THEN $1 ELSE name END,
@@ -30,6 +30,19 @@ export class PostgresNodeRepository implements NodeRepository {
     }
     async touch(id: string, sessionId: string) { await this.pool.query("UPDATE nodes SET last_seen=now() WHERE id=$1 AND metadata->>'session'=$2", [id, sessionId]); }
     async list() { return (await this.pool.query(`${select} ORDER BY n.created_at,n.id`)).rows.map(row); }
+    /** Health-only directory: never mask active/enrolled Node identities or historical checkout ownership. */
+    async listForMonitoring() {
+        const text = `${select}
+            WHERE NOT (
+                n.local_key='local' AND n.metadata->>'runtime'='local'
+                AND n.status='offline' AND n.credential_state='unenrolled'
+                AND n.credential_hash IS NULL AND n.last_seen IS NULL
+                AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.node_id=n.id)
+            ) ORDER BY n.created_at,n.id`;
+        // Read from a dedicated small pool so a saturated application pool cannot
+        // turn health into another indefinitely queued request.
+        return (await this.healthPool.query({ text, query_timeout: 1_500 })).rows.map(row);
+    }
     async get(id: string) {
         const result = await this.pool.query(`${select} WHERE n.id=$1`, [id]);
         if (!result.rowCount) throw new AtlasError('Node not found.', 'NOT_FOUND');
