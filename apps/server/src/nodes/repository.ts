@@ -5,6 +5,7 @@ export interface NodeRepository {
     getDefault(): Promise<AtlasNode>;
     touch(id: string, sessionId: string): Promise<void>;
     list(): Promise<AtlasNode[]>;
+    listForMonitoring?(): Promise<AtlasNode[]>;
     get(id: string): Promise<AtlasNode>;
     hostedWorkspaces(id: string): Promise<HostedWorkspace[]>;
     offline(id: string, sessionId?: string): Promise<void>;
