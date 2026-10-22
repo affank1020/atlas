@@ -274,7 +274,7 @@ continue to show `approved: false` and `executable: false` on Atlas.
 
 The authenticated native-Node endpoint `POST /node/update-intents/claim`
 uses the existing Node-issued Bearer credential and `x-atlas-node-id`
-header. This is **only** a transactional reservation of an existing
+header. **It is disabled by default** (`ATLAS_NODE_UPDATE_CLAIMS_ENABLED=false`); do not enable it on production until the root-owned executor and reconciliation path are separately reviewed and deployed. An API or MCP request cannot enable it. This is **only** a transactional reservation of an existing
 `requested` intention, not host approval, an instruction to the Linux Node,
 nor a signal that installation has started or succeeded.
 
