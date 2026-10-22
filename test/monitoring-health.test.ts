@@ -30,7 +30,7 @@ test('health uses actual database probe and Node effective connectivity/heartbea
     ];
     const { service, requests } = subject(nodes);
     const value = await service.read({});
-    assert.deepEqual(requests, [{ text: 'SELECT 1', query_timeout: 2000 }]);
+    assert.deepEqual(requests, [{ text: 'SELECT 1', query_timeout: 1500 }]);
     assert.equal(value.server.status, 'healthy');
     assert.equal(value.server.database.status, 'reachable');
     assert.equal(value.overall, 'degraded');
@@ -75,4 +75,22 @@ test('an empty registry is not an outage; missing heartbeat makes online Node un
 test('health input rejects arbitrary probe parameters', async () => {
     const { service } = subject([]);
     await assert.rejects(() => service.read({ sql: 'SELECT * FROM users' }));
+});
+
+test('a Node directory that never settles returns unknown within the independent deadline', async () => {
+    let lateReject!: (reason: Error) => void;
+    const pending = new Promise<AtlasNode[]>((_, reject) => { lateReject = reject; });
+    const health = new MonitoringHealthService(
+        { query: async () => ({ rows: [{ '?column?': 1 }] }) },
+        { list: () => pending }, () => now, () => 100, 15);
+    const started = performance.now();
+    const response = await health.read();
+    assert.ok(performance.now() - started < 1000);
+    assert.equal(response.nodes.available, false);
+    assert.equal(response.nodes.summary.total, 0);
+    assert.equal(response.overall, 'unknown');
+    assert.equal(response.server.database.status, 'reachable');
+    lateReject(new Error('late registry secret'));
+    await Promise.resolve(); // Late failures remain handled and cannot alter the returned response.
+    assert.ok(!JSON.stringify(response).includes('secret'));
 });
