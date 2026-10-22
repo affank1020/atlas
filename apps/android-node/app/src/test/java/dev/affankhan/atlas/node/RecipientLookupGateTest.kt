@@ -17,7 +17,7 @@ class RecipientLookupGateTest {
         assertEquals(null, gate.pendingRequestId)
         assertFalse(gate.finish("hung-request"))
         assertTrue(gate.start("new-request", 11_000))
-        assertFalse(gate.finish("hung-request"), "Late reply must not affect a newer lookup")
+        assertFalse("Late reply must not affect a newer lookup", gate.finish("hung-request"))
         assertEquals("new-request", gate.pendingRequestId)
         assertTrue(gate.finish("new-request"))
     }
