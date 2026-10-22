@@ -80,6 +80,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private val recentIncoming = RecentIncomingShares()
     private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
     private var incomingTimeoutTask: Runnable? = null
+    private var incomingDeadlineElapsedMs = 0L
     var incomingShare by mutableStateOf<IncomingDeviceShare?>(null)
         private set
     var inboxStatus by mutableStateOf("No incoming shares yet.")
@@ -257,6 +258,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                     }
                 }
             }, { incoming, respond ->
+                // Capture receipt time on the socket thread so main-thread delays
+                // cannot extend the 15-second decision window.
+                val receivedAtElapsedMs = SystemClock.elapsedRealtime()
                 handler.post {
                     if (!foreground || generation != connectionGeneration ||
                         connectionStatus != "Online") {
@@ -271,13 +275,17 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         respond(decision)
                         return@post
                     }
-                    val remaining = incoming.expiresAtMs - System.currentTimeMillis()
+                    // The server already checked the delivery expiry. Local
+                    // wall-clock offsets must not shorten/extend this approval.
+                    val deadlineElapsedMs = receivedAtElapsedMs + 15_000L
+                    val remaining = deadlineElapsedMs - SystemClock.elapsedRealtime()
                     if (remaining <= 0L) {
-                        respond(IncomingShareOutcome.DECLINED)
+                        respond(IncomingShareOutcome.EXPIRED)
                         return@post
                     }
                     // Foreground-only, single active dialog and no implicit acceptance.
                     incomingShare = incoming
+                    incomingDeadlineElapsedMs = deadlineElapsedMs
                     pendingIncomingResponse = respond
                     val expires = Runnable {
                         if (incomingShare?.requestId == incoming.requestId) {
@@ -285,7 +293,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         }
                     }
                     incomingTimeoutTask = expires
-                    handler.postDelayed(expires, minOf(remaining, 15_000L))
+                    handler.postDelayed(expires, remaining)
                 }
             })
         } catch (_: Exception) {
@@ -300,7 +308,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun copyIncomingShare(copyText: (String) -> Unit) {
         val share = incomingShare ?: return
         if (!foreground || connectionStatus != "Online" ||
-            System.currentTimeMillis() >= share.expiresAtMs) {
+            SystemClock.elapsedRealtime() >= incomingDeadlineElapsedMs) {
             finishIncomingShare(IncomingShareOutcome.DECLINED)
             return
         }
@@ -327,6 +335,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             IncomingShareOutcome.DECLINED -> "Incoming text declined or expired."
             IncomingShareOutcome.COPY_FAILED -> "Could not copy incoming text."
             IncomingShareOutcome.BUSY, IncomingShareOutcome.REPLAY -> "Incoming text was not accepted."
+            IncomingShareOutcome.EXPIRED -> "Incoming text expired before approval."
         }
         reply(outcome)
     }
@@ -334,6 +343,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private fun clearIncomingShare(decline: Boolean = false) {
         incomingTimeoutTask?.let(handler::removeCallbacks)
         incomingTimeoutTask = null
+        incomingDeadlineElapsedMs = 0L
         val reply = pendingIncomingResponse
         pendingIncomingResponse = null
         incomingShare = null // No inbox disk storage or retained message content.
