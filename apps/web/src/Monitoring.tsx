@@ -63,7 +63,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         </div>
         {loading && <p role="status" className="empty">Loading audit history…</p>}
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
-        {page && <><div className="activity-scroll"><ActivityRows events={page.items} />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
+        {page && <><div className="activity-scroll"><ActivityRows events={page.items} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
