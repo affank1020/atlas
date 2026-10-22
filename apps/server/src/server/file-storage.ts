@@ -22,6 +22,11 @@ export class ObjectNotFound extends Error {
     constructor() { super("Media object was not found."); this.name = "ObjectNotFound"; }
 }
 
+/** A create-only R2 PUT lost the race to an already-committed object. */
+export class ObjectAlreadyExists extends Error {
+    constructor() { super("R2 recovery object already exists."); this.name = "ObjectAlreadyExists"; }
+}
+
 export class LocalObjectStore implements ObjectStore {
     constructor(readonly root: string) {}
     async put(key: string, bytes: Buffer, _mimeType?: string) {
@@ -71,7 +76,8 @@ export class R2ObjectStore implements ObjectStore {
         if (!config.accessKeyId || !config.secretAccessKey) throw new Error("R2 credentials are required.");
     }
 
-    private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams): Promise<Response> {
+    private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams, createOnly = false): Promise<Response> {
+        if (createOnly && method !== "PUT") throw new Error("Create-only storage writes require PUT.");
         const target = encodeURIComponent(this.config.bucket) + (key === null ? "" : "/" + encodeURIComponent(safeKey(key)));
         const requestUrl = new URL(target, this.endpoint);
         // SigV4 requires the actual query bytes to match this canonical encoding.
@@ -83,8 +89,15 @@ export class R2ObjectStore implements ObjectStore {
         const timestamp = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
         const date = timestamp.slice(0, 8);
         const payloadHash = digest(bytes ?? "");
-        const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
-        const headers = `host:${requestUrl.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${timestamp}\n`;
+        // Cloudflare R2 evaluates If-None-Match:* atomically with PutObject.
+        // Include the header in SigV4 so proxies cannot strip the create-only
+        // condition and accidentally turn this into an overwriting PUT.
+        const signedHeaders = createOnly
+            ? "host;if-none-match;x-amz-content-sha256;x-amz-date"
+            : "host;x-amz-content-sha256;x-amz-date";
+        const headers = `host:${requestUrl.host}\n` +
+            (createOnly ? "if-none-match:*\n" : "") +
+            `x-amz-content-sha256:${payloadHash}\nx-amz-date:${timestamp}\n`;
         const canonical = `${method}\n${requestUrl.pathname}\n${canonicalQuery}\n${headers}\n${signedHeaders}\n${payloadHash}`;
         const scope = `${date}/auto/s3/aws4_request`;
         const stringToSign = `AWS4-HMAC-SHA256\n${timestamp}\n${scope}\n${digest(canonical)}`;
@@ -96,15 +109,21 @@ export class R2ObjectStore implements ObjectStore {
             authorization: `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
         };
         if (mimeType) requestHeaders["content-type"] = mimeType;
+        if (createOnly) requestHeaders["if-none-match"] = "*";
         const response = await this.request(requestUrl, {
             method, headers: requestHeaders, ...(bytes ? { body: new Uint8Array(bytes) } : {}),
             signal: AbortSignal.timeout(30_000), redirect: "error",
         });
         if (response.status === 404 && method === "GET") throw new ObjectNotFound();
+        if (response.status === 412 && createOnly) throw new ObjectAlreadyExists();
         if (!response.ok) throw new Error(`R2 object ${method} failed (HTTP ${response.status}).`);
         return response;
     }
     async put(key: string, bytes: Buffer, mimeType: string) { await this.perform("PUT", key, bytes, mimeType); }
+    /** Only creates an absent object; never overwrites backup bytes. */
+    async putIfAbsent(key: string, bytes: Buffer, mimeType: string) {
+        await this.perform("PUT", key, bytes, mimeType, undefined, true);
+    }
     async get(key: string) { return Buffer.from(await (await this.perform("GET", key)).arrayBuffer()); }
     async delete(key: string) { await this.perform("DELETE", key); }
 

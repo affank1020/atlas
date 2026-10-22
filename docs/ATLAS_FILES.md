@@ -340,6 +340,64 @@
 - No scheduled job, automatic deletion, production flag changes or R2
   credential modifications are included.
 
+## Manual, append-only R2 backup seeding (opt-in operator action)
+
+**This tool is not a scheduled backup, retention policy or complete disaster
+recovery solution.** It can create an initial independent copy of selected
+committed Atlas Files object bytes. It does not protect PostgreSQL metadata,
+node upload checkpoints, or other Atlas/Portfolio buckets. Do not enable
+native uploads merely because one seed batch succeeds.
+
+- Provision a **separately administered Cloudflare account** and private R2
+  bucket first, with backup-specific credentials different from primary.
+  Run on a trusted host with normal primary `ATLAS_R2_*` and `DATABASE_URL`
+  settings, plus `ATLAS_R2_RECOVERY_ENDPOINT`,
+  `ATLAS_R2_RECOVERY_BUCKET`,
+  `ATLAS_R2_RECOVERY_ACCESS_KEY_ID` and
+  `ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY`. The source credentials need only
+  object GET permission; backup credentials need GET and PUT to that bucket,
+  **not DELETE**. Store the write-capable backup token outside the normal
+  long-running server environment and use it only for explicit operations.
+  Atlas rejects same-bucket configurations and any reuse of primary access
+  key ID or secret.
+- Build the server (`npm run build:server`) and **preview without R2 calls**
+  using `npm run files:r2:seed-backup`. It reads at most three PostgreSQL
+  metadata rows (two files plus lookahead) and reports candidate count,
+  invalid metadata, and a continuation file UUID. The optional
+  `--max-files=1..5` bounds each batch; `--cursor=<file-uuid>` advances to
+  the next page. Invalid rows appear in the preview; they are not silently
+  skipped or repaired.
+- After reviewing the preview and verifying backup configuration, explicitly
+  seed with
+  `npm run files:r2:seed-backup -- --apply --confirm=CREATE_INDEPENDENT_R2_BACKUP_COPIES`.
+  Optional `--max-files=5` and `--cursor=<file-uuid>` work in apply mode.
+  This is an **intentional, external, billable R2 write** requiring operator
+  confirmation. It never happens from the web UI, MCP, Node software, a
+  timer, Atlas Workers, deployments, or CI.
+- For every selected File, Atlas verifies the entire source object against
+  committed PostgreSQL SHA-256 and size before touching backup storage.
+  Existing recovery objects are read and **must** match the same checksum.
+  Missing backup objects are written using SigV4-signed, atomic
+  `If-None-Match: *` PutObject; the application never performs an unconditional
+  backup PUT. If another writer races, the resulting 412 is treated as a
+  reason to **re-read and verify**, not to overwrite. Successful new copies
+  are independently GET-verified before being counted. A corrupted backup
+  or source raises an error and is never automatically overwritten or deleted.
+- Default work is at most two 25-MiB files; the absolute limit is five.
+  Each file can entail primary GET, backup GET, a conditional backup PUT,
+  and backup verification GET. This costs R2 requests and may transfer
+  hundreds of MiB at the upper limit. A failed batch may have already
+  created earlier copies; repeat the same cursor safely after investigating.
+  Every retry accepts only checksum-verified existing objects. No cleanup,
+  object deletion, bucket creation, database modification, or periodic copying
+  is included.
+- **Backup existence is not a restore guarantee.** Complete a separately
+  reviewed PostgreSQL snapshot and restore into an isolated database, arrange
+  consistent recovery-point retention, then run the *read-only* R2 recovery
+  verifier below. This manual seeding command does not prove continuous
+  backups, atomic database/R2 snapshots, independent account resilience,
+  or a working full-system recovery procedure.
+
 ## Cloudflare R2 recovery verification — read-only operator drill
 
 **This is a recovery *verification* command, not a backup system.** Atlas
