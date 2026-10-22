@@ -223,19 +223,24 @@ test('an intent that expires while claim waits for its Node lock cannot be claim
         await blocker.query('COMMIT');
         await blocker.query('BEGIN');
         await blocker.query('SELECT id FROM nodes WHERE id=$1 FOR UPDATE', [f.nodeId]);
+        // Intercept only this fixture's transaction callback to signal when
+        // BEGIN has completed, before the Node row lock is attempted. This
+        // guarantees the transaction's now() predates expiry without relying
+        // on formatting of the SQL exposed by pg_stat_activity.
+        let signalStarted!: () => void;
+        const started = new Promise<void>(resolve => { signalStarted = resolve; });
+        const ledger = f.ledger as any;
+        const originalTransaction = ledger.transaction.bind(ledger);
+        ledger.transaction = (work: (client: any) => Promise<unknown>) =>
+            originalTransaction(async (client: any) => {
+                signalStarted();
+                return work(client);
+            });
         claim = f.ledger.claim(f.nodeId, intent.id, f.credential, f.version, candidate.sha256);
-        // Prove the claim began BEFORE expiry, but is blocked on the Node lock.
-        let waiting = false;
-        for (let attempt = 0; attempt < 80; attempt++) {
-            const state = await blocker.query(`SELECT EXISTS(
-                SELECT 1 FROM pg_stat_activity
-                WHERE datname=current_database() AND wait_event_type='Lock'
-                  AND query LIKE '%FROM nodes WHERE id=$1 FOR UPDATE%'
-            ) AS blocked`);
-            if (state.rows[0].blocked) { waiting = true; break; }
-            await new Promise(resolve => setTimeout(resolve, 25));
-        }
-        assert.equal(waiting, true, 'claim should be blocked before the intent expires');
+        await started;
+        const before = await blocker.query(`SELECT clock_timestamp() < expires_at AS valid
+            FROM node_update_intents WHERE id=$1`, [intent.id]);
+        assert.equal(before.rows[0].valid, true, 'claim transaction began before expiry');
         let expired = false;
         for (let attempt = 0; attempt < 50; attempt++) {
             const check = await blocker.query(`SELECT clock_timestamp() >= expires_at AS expired
