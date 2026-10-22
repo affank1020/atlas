@@ -53,13 +53,17 @@ timer is both enabled and active. No timer is enabled or host service changed
 merely by merging this code.
 
 An activation writes a root-owned, synced `/opt/atlas-node/.activation-pending`
-journal identifying the previous and attempted release **before** changing the
-`current` pointer. Successful activation clears it after Node reconnection
-and the rollback pointer is committed. If a new version does not reconnect,
-the lifecycle script restores the prior release; the marker remains until
-that release reconnects. If the lifecycle process is killed, the independent
-timer invokes `recover` repeatedly (including shortly after boot), returning
-`current` to the original version and restarting **only** `atlas-node.service`.
+journal identifying the previous and attempted release plus the fixed
+operation (activate/rollback) **before** changing the `current` pointer.
+Successful activation clears it after Node reconnection and the rollback
+pointer is committed. If a new update version does not reconnect, the lifecycle
+script restores the prior release; the marker remains until that release
+reconnects. If the lifecycle process is killed, the independent timer invokes
+`recover` repeatedly (including shortly after boot): it restores the original
+release for an interrupted upgrade, but **completes the requested rollback**
+for an interrupted manual rollback. A failed manual rollback stays pending
+rather than silently reactivating the rejected version. Recovery restarts
+**only** `atlas-node.service`.
 Pending recovery blocks any new activation. Journal contents are validated
 against already installed releases, and recovery never accepts a URL, command
 or path from the Node or Atlas Server.
