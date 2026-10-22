@@ -332,7 +332,8 @@ class ReceiptStore:
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_size <= 0 or
-                    info.st_size > 16384 or info.st_uid != 0 or
+                    info.st_size > 16384 or
+                    (self.approval.owner_uid is not None and info.st_uid != self.approval.owner_uid) or
                     stat.S_IMODE(info.st_mode) & 0o077):
                 raise Refused("Unsafe execution receipt.")
             with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as file:
