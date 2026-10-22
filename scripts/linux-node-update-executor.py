@@ -12,6 +12,7 @@ crash, the durable local record requires human reconciliation.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -351,11 +352,8 @@ class ReceiptStore:
         return value
 
 
-def execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
-            *, approval_module=None, runner=subprocess.run) -> dict:
-    if sys.platform != "linux" or os.geteuid() != 0 or not os.isatty(0):
-        raise Refused("Execute requires an interactive Linux root session.")
-    approval_module = approval_module or load_approval_module()
+def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
+             *, approval_module, runner) -> dict:
     store = approval_module.ApprovalStore(STATE)
     receipts = ReceiptStore(store)
     with store.locked():
@@ -440,6 +438,34 @@ def execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
     except Exception:
         receipts.mark(record, "requires_reconciliation")
         raise
+
+
+def execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
+            *, approval_module=None, runner=subprocess.run) -> dict:
+    if sys.platform != "linux" or os.geteuid() != 0 or not os.isatty(0):
+        raise Refused("Execute requires an interactive Linux root session.")
+    approval_module = approval_module or load_approval_module()
+    # A separate process-lifetime lock prevents two distinct update intents
+    # from installing or activating concurrently. The approval ledger's
+    # short transaction lock remains independent and is never nested with
+    # claim_once(), avoiding a self-deadlock.
+    store = approval_module.ApprovalStore(STATE)
+    with store.locked():
+        pass
+    fd = os.open(STATE / ".executor.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or (stat.S_IMODE(info.st_mode) & 0o077):
+            raise Refused("Unsafe root-only executor lock.")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise Refused("Another host Node update is already in progress.") from None
+        return _execute(intent_id, archive, checksum, bundle,
+                        approval_module=approval_module, runner=runner)
+    finally:
+        os.close(fd)
 
 
 def main():
