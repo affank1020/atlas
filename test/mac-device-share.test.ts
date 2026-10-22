@@ -33,6 +33,22 @@ test('macOS share receiver copies exact text only after explicit approval', asyn
     await assert.rejects(receiver.receive({ ...share, text: 'tampered' }), (e: any) => e.code === 'SHARE_REPLAY');
 });
 
+test('macOS share receiver fails closed and labels clipboard errors without leaking contents', async () => {
+    const payload = item();
+    payload.text = 'secret should never be in an error';
+    let attempts = 0;
+    const failing = new MacShareReceiver(async () => true, async () => {
+        attempts++;
+        throw new Error(payload.text);
+    });
+    await assert.rejects(failing.receive(payload), (error: any) =>
+        error.code === 'SHARE_CLIPBOARD_FAILED' &&
+        error.message === 'Mac could not write the clipboard.');
+    // Failed writes must never be cached as accepted.
+    await assert.rejects(failing.receive(payload), (error: any) => error.code === 'SHARE_CLIPBOARD_FAILED');
+    assert.equal(attempts, 2);
+});
+
 test('macOS share receiver rejects declined, expired, busy and interrupted shares without copying', async () => {
     let copied = false;
     const denied = new MacShareReceiver(async () => false, async () => { copied = true; });
@@ -64,6 +80,12 @@ test('NSPasteboard bridge always requests plain UTF-8 strings (including RTF-lik
         const script = plainTextPasteboardScript(text);
         assert.ok(script.includes('$.NSPasteboardTypeString'));
         assert.ok(script.includes('$.NSUTF8StringEncoding'));
+        // NSPasteboard setString:forType: requires the type to be declared first.
+        const declare = script.indexOf('pasteboard.declareTypesOwner(');
+        const write = script.indexOf('pasteboard.setStringForType(');
+        assert.ok(declare >= 0 && write > declare, 'declare plain-text type before writing');
+        assert.ok(script.includes('$.NSArray.arrayWithObject($.NSPasteboardTypeString)'));
+        assert.ok(!script.includes('pasteboard.clearContents()'), 'declareTypesOwner already clears the clipboard');
         assert.ok(script.includes(Buffer.from(text, 'utf8').toString('base64')));
         assert.ok(!script.includes(text), 'Original text must not be inserted into JXA source');
     }
