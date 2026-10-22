@@ -41,7 +41,7 @@ export class PostgresNodeRepository implements NodeRepository {
             ) ORDER BY n.created_at,n.id`;
         // Read from a dedicated small pool so a saturated application pool cannot
         // turn health into another indefinitely queued request.
-        return (await this.healthPool.query({ text, query_timeout: 1_500 })).rows.map(row);
+        return (await this.healthPool.query(text)).rows.map(row);
     }
     async get(id: string) {
         const result = await this.pool.query(`${select} WHERE n.id=$1`, [id]);
