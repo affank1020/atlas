@@ -71,7 +71,7 @@ export class R2ObjectStore implements ObjectStore {
         if (!config.accessKeyId || !config.secretAccessKey) throw new Error("R2 credentials are required.");
     }
 
-    private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams): Promise<Response> {
+    private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams, createOnly = false): Promise<Response> {
         const target = encodeURIComponent(this.config.bucket) + (key === null ? "" : "/" + encodeURIComponent(safeKey(key)));
         const requestUrl = new URL(target, this.endpoint);
         // SigV4 requires the actual query bytes to match this canonical encoding.
@@ -83,8 +83,8 @@ export class R2ObjectStore implements ObjectStore {
         const timestamp = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
         const date = timestamp.slice(0, 8);
         const payloadHash = digest(bytes ?? "");
-        const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
-        const headers = `host:${requestUrl.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${timestamp}\n`;
+        const signedHeaders = createOnly ? "host;if-none-match;x-amz-content-sha256;x-amz-date" : "host;x-amz-content-sha256;x-amz-date";
+        const headers = `host:${requestUrl.host}\n${createOnly ? "if-none-match:*\n" : ""}x-amz-content-sha256:${payloadHash}\nx-amz-date:${timestamp}\n`;
         const canonical = `${method}\n${requestUrl.pathname}\n${canonicalQuery}\n${headers}\n${signedHeaders}\n${payloadHash}`;
         const scope = `${date}/auto/s3/aws4_request`;
         const stringToSign = `AWS4-HMAC-SHA256\n${timestamp}\n${scope}\n${digest(canonical)}`;
@@ -96,15 +96,28 @@ export class R2ObjectStore implements ObjectStore {
             authorization: `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
         };
         if (mimeType) requestHeaders["content-type"] = mimeType;
+        if (createOnly) requestHeaders["if-none-match"] = "*";
         const response = await this.request(requestUrl, {
             method, headers: requestHeaders, ...(bytes ? { body: new Uint8Array(bytes) } : {}),
             signal: AbortSignal.timeout(30_000), redirect: "error",
         });
         if (response.status === 404 && method === "GET") throw new ObjectNotFound();
+        if (createOnly && method === "PUT" && response.status === 412) {
+            await response.body?.cancel();
+            return response;
+        }
         if (!response.ok) throw new Error(`R2 object ${method} failed (HTTP ${response.status}).`);
         return response;
     }
     async put(key: string, bytes: Buffer, mimeType: string) { await this.perform("PUT", key, bytes, mimeType); }
+    /** Atomically create an absent object. A 412 means another committed object
+     * exists; callers MUST GET and checksum that object before accepting it. */
+    async putIfAbsent(key: string, bytes: Buffer, mimeType: string): Promise<boolean> {
+        if (bytes.length < 1 || bytes.length > 25 * 1024 * 1024)
+            throw new Error("Invalid bounded R2 seed size.");
+        const response = await this.perform("PUT", key, bytes, mimeType, undefined, true);
+        return response.status !== 412;
+    }
     async get(key: string) { return Buffer.from(await (await this.perform("GET", key)).arrayBuffer()); }
     async delete(key: string) { await this.perform("DELETE", key); }
 

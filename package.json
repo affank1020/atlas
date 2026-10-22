@@ -27,6 +27,7 @@
     "db:status": "node scripts/db.mjs status",
     "files:audit": "node apps/server/dist/server/files-audit-cli.js --dry-run",
     "files:r2:verify-recovery": "node apps/server/dist/server/r2-recovery-cli.js --dry-run",
+    "files:r2:seed": "node apps/server/dist/server/r2-backup-seed-cli.js",
     "files:staging:maintenance": "node apps/server/dist/server/node-transfer-maintenance-cli.js",
     "files:node:enqueue": "node apps/node/dist/core/file-queue-cli.js enqueue",
     "files:node:queue-status": "node apps/node/dist/core/file-queue-cli.js status",
