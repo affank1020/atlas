@@ -3,7 +3,8 @@ import { AtlasError } from '../shared/errors.js';
 import type { CoreService } from '../core/service.js';
 import type { ApplicationDefinition } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
-import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
+import type { AtlasData } from '../types.js';
+import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
 type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store' | 'createRecordInState'>;
@@ -11,7 +12,7 @@ type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store'
 /** Project-scoped review history. Import is manually confirmed; publishing is a later capability. */
 export class CodeReviewsService {
     constructor(private readonly catalog: ReviewCatalogue,
-        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'>,
+        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover'>>,
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map()) {}
 
     private async storeIds() {
@@ -36,6 +37,54 @@ export class CodeReviewsService {
                 ids, repository, prNumber, snapshot, false, trustedIds);
         return this.catalog.store.transaction(state =>
             reconcileGitHubReviews(this.catalog, state, ids, repository, prNumber, snapshot, true, trustedIds));
+    }
+
+    /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
+    async discoverPullRequests(repository: string, page: number) {
+        if (!this.history?.discover)
+            throw new AtlasError('GitHub pull request discovery is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.history.discover(repository, page);
+    }
+
+    /** Bounded, deterministic selection. All source requests must finish successfully
+     * before one database transaction begins; a conflict rolls back the entire batch.
+     */
+    async backfillPullRequests(repository: string, prNumbers: number[], apply: boolean) {
+        if (!this.history) throw new AtlasError('GitHub review history import is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repository) ||
+            !Array.isArray(prNumbers) || prNumbers.length < 1 || prNumbers.length > 8 ||
+            prNumbers.some(n => !Number.isSafeInteger(n) || n < 1 || n > 1_000_000) ||
+            new Set(prNumbers).size !== prNumbers.length)
+            throw new AtlasError('Choose between 1 and 8 distinct valid pull request numbers.', 'INVALID_REQUEST');
+        const trusted = this.trustedPublishers.get(repository.toLowerCase());
+        if (!trusted?.size)
+            throw new AtlasError('No trusted Code Reviewer publisher IDs are configured for this repository.', 'CAPABILITY_UNAVAILABLE');
+        const stores = await this.storeIds();
+        // No writes occur until every requested GitHub snapshot has arrived and validated.
+        const sources: { prNumber: number; snapshot: ReviewSource }[] = [];
+        for (const prNumber of prNumbers)
+            sources.push({ prNumber, snapshot: await this.history.read(repository, prNumber) });
+        const reconcile = (state: AtlasData, persisted: boolean) => {
+            // The preview runs the same in-memory mutations against a disposable snapshot.
+            // This detects conflicts *between* selected PRs before apply, but writes
+            // nothing to the database. The live transaction is the same algorithm.
+            const results = sources.map(({ prNumber, snapshot }) => ({
+                ...reconcileGitHubReviews(this.catalog, state, stores, repository, prNumber, snapshot, true, trusted),
+                dryRun: !persisted,
+            }));
+            return {
+                repository, dryRun: !persisted, prNumbers: [...prNumbers], results,
+                totals: {
+                    runsCreated: results.reduce((sum, result) => sum + result.runsCreated, 0),
+                    runsAlreadyPresent: results.reduce((sum, result) => sum + result.runsAlreadyPresent, 0),
+                    findingsCreated: results.reduce((sum, result) => sum + result.findingsCreated, 0),
+                    findingsAlreadyPresent: results.reduce((sum, result) => sum + result.findingsAlreadyPresent, 0),
+                    skippedUntrusted: results.reduce((sum, result) => sum + result.skippedUntrusted, 0),
+                },
+            };
+        };
+        if (!apply) return reconcile(await this.catalog.store.snapshot(), false);
+        return this.catalog.store.transaction(state => reconcile(state, true));
     }
 
     async overview() {
@@ -90,6 +139,24 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     prNumber: z.number().int().min(1).max(1_000_000), apply: z.boolean().default(false) },
                 invoke: ({ repository, prNumber, apply }: { repository: string; prNumber: number; apply: boolean }) =>
                     service.importPullRequest(repository, prNumber, apply),
+            },
+            {
+                name: 'code_reviews_discover_pull_requests',
+                description: 'List a page of recent GitHub PR numbers in a repository for deliberate selection. Read-only; pages can shift as new PRs arrive.',
+                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+                    page: z.number().int().min(1).max(100).default(1) },
+                invoke: ({ repository, page }: { repository: string; page: number }) =>
+                    service.discoverPullRequests(repository, page),
+            },
+            {
+                name: 'code_reviews_backfill_pull_requests',
+                description: 'Preview up to 8 explicitly selected GitHub PRs with apply=false. Set apply=true for atomic, idempotent batch import. Never automatically selects PRs.',
+                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+                    prNumbers: z.array(z.number().int().min(1).max(1_000_000)).min(1).max(8)
+                        .refine(numbers => new Set(numbers).size === numbers.length, 'PR numbers must be distinct'),
+                    apply: z.boolean().default(false) },
+                invoke: ({ repository, prNumbers, apply }: { repository: string; prNumbers: number[]; apply: boolean }) =>
+                    service.backfillPullRequests(repository, prNumbers, apply),
             },
             {
                 name: 'code_reviews_list_findings',

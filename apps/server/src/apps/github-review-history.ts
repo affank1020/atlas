@@ -82,6 +82,41 @@ export class GitHubReviewHistoryReader {
         throw new AtlasError('GitHub review history exceeds the supported 500-item limit.', 'CAPABILITY_UNAVAILABLE');
     }
 
+    /** Authenticated, bounded discovery only. Selection for apply uses explicit PR numbers,
+     * not this moving, newest-first page, so concurrent new PRs cannot change a batch.
+     */
+    async discover(repository: string, page: number) {
+        if (!repoName.test(repository) || !Number.isSafeInteger(page) || page < 1 || page > 100)
+            throw new AtlasError('Invalid GitHub pull request discovery request.', 'INVALID_REQUEST');
+        const token = await this.broker.pullRequestReadToken(repository);
+        const [owner, name] = repository.split('/');
+        const url = `https://api.github.com/repos/${owner}/${name}/pulls?state=all&sort=created&direction=desc&per_page=50&page=${page}`;
+        let response: Response;
+        try {
+            response = await this.http(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000),
+                headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
+                    'X-GitHub-Api-Version': '2022-11-28' } });
+        } catch {
+            throw new AtlasError('GitHub pull request discovery is unavailable.', 'GITHUB_UNAVAILABLE');
+        }
+        if (!response.ok)
+            throw new AtlasError(`GitHub pull request discovery failed (HTTP ${response.status}).`, 'GITHUB_REQUEST_FAILED');
+        const data: unknown = await response.json().catch(() => null);
+        if (!Array.isArray(data) || data.length > 50 || data.some((item: any) =>
+            !item || !safeInt(item.number) || typeof item.title !== 'string' || item.title.length > 500 ||
+            !['open', 'closed'].includes(item.state) || typeof item.draft !== 'boolean'))
+            throw new AtlasError('GitHub pull request discovery returned unsupported data.', 'GITHUB_REQUEST_FAILED');
+        return {
+            repository, page, items: data.map((item: any) => ({
+                number: item.number as number, title: item.title as string, state: item.state as 'open' | 'closed',
+                draft: item.draft as boolean,
+            })),
+            // A full page is only a *possible* continuation, never a completeness claim.
+            nextPage: data.length === 50 && page < 100 ? page + 1 : null,
+            truncatedAtLimit: data.length === 50 && page === 100,
+        };
+    }
+
     async read(repository: string, prNumber: number) {
         if (!repoName.test(repository) || !Number.isSafeInteger(prNumber) || prNumber < 1 || prNumber > 1_000_000)
             throw new AtlasError('Invalid GitHub pull request identity.', 'INVALID_REQUEST');
