@@ -156,11 +156,75 @@ PRs per call bounds synchronous GitHub requests and database work, not the
 overall repository's history. A PR with zero matching Code Reviewer reviews
 is reported as zero new runs, **not** as evidence it was never reviewed.
 
+### Structured native review submission
+
+The `code_reviews_submit_structured` Application operation creates one
+**immutable, server-timestamped review run** and zero to thirty **structured
+findings** directly in the existing Code Reviews PostgreSQL Stores. It does
+not parse Markdown, publish a GitHub review, create a Check, or approve a PR.
+
+Call with a single `submission` object, for example:
+
+```json
+{
+  "submission": {
+    "submissionId": "3c7435fa-956e-4ba1-b759-e9805570a33c",
+    "repository": "affank1020/atlas",
+    "prNumber": 84,
+    "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": "non_blocking",
+    "summary": "One actionable issue; no confirmed merge blockers.",
+    "findings": [{
+      "key": "validate-input",
+      "severity": "sev3",
+      "title": "Validate incoming review input",
+      "description": "A malformed input reaches the handler unchecked.",
+      "filePath": "apps/server/src/apps/code-reviews.ts",
+      "line": 42
+    }]
+  }
+}
+```
+
+The example SHA is illustrative: **use the exact 40-character current GitHub
+PR head SHA**. Each caller must generate a stable UUID submission ID, retain
+it for retries, and supply unique finding keys within that review. Accepted
+verdicts are `changes_requested`, `concerns_to_verify`, `non_blocking`,
+`no_findings` and `inconclusive`. A `no_findings` verdict cannot include
+findings. The server validates all fields strictly, bounds text and findings,
+and produces finding counts itself.
+
+Atlas obtains a repository-scoped `pull_requests:read` GitHub App token and
+verifies the PR is open and the submitted SHA matches GitHub's current head
+**before starting the write transaction**. There remains an unavoidable short
+race between remote verification and committing locally; the recorded
+`githubHeadVerifiedAt` describes a point-in-time check, not a guarantee the
+head never changed afterward. The server issues the review timestamp instead
+of trusting caller-supplied dates.
+
+The ID and a payload SHA-256 fingerprint are stored as receipt metadata. A
+retry with the **same ID and identical normalized payload** returns the
+original run/finding IDs without another GitHub fetch, even if the PR has
+advanced. Reusing that ID for different content fails with a conflict.
+Concurrent submissions with the same ID serialize through the database.
+Different submission IDs can represent independent review rounds, including
+multiple reviews of the same commit. A failure to save any finding rolls back
+the entire run and finding set.
+
+Structured runs use server-assigned `reviewer: atlas-structured-review` and
+`coverage.source: atlas_structured_submission`. They are **not** attributed to
+a verified GitHub publishing account. A successful Atlas submission only means
+the currently authenticated Atlas caller wrote a structured observation;
+actual Code Reviewer session identity or reviewer/author independence cannot
+yet be cryptographically established. Publisher identity verification and
+GitHub review publication are a separate later milestone. Findings are saved
+with state `new`; their lifecycle is not inferred from subsequent GitHub
+commits. Existing historical imports stay unchanged.
+
 ## Planned follow-ups
 
 1. Repository-level source completeness summaries, optional GitHub webhook reconciliation and guided operator backfill UI.
-2. Validated and authorised structured review submission to Atlas, with immutable run
-   receipts, idempotency, SHA freshness checks, and append-only history.
+2. Independent reviewer provenance and authorization hardening for native structured submissions.
 3. Dedicated GitHub App publisher with inline findings, GitHub review submissions, and
    per-commit check runs; secure token scoping and explicit approval semantics.
 4. App review timelines, PR-level latest-state summaries, metrics, and Chatflow integration.

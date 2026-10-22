@@ -117,6 +117,40 @@ export class GitHubReviewHistoryReader {
         };
     }
 
+    /** Verify the current PR head immediately before creating a structured Atlas receipt.
+     * This reads GitHub state, not a locally cached branch or author-supplied SHA.
+     */
+    async currentHead(repository: string, prNumber: number) {
+        if (!repoName.test(repository) || !Number.isSafeInteger(prNumber) || prNumber < 1 || prNumber > 1_000_000)
+            throw new AtlasError('Invalid GitHub pull request identity.', 'INVALID_REQUEST');
+        const bearer = await this.broker.pullRequestReadToken(repository);
+        const [owner, name] = repository.split('/');
+        let response: Response;
+        try {
+            response = await this.http(
+                `https://api.github.com/repos/${owner}/${name}/pulls/${prNumber}`,
+                { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000),
+                    headers: { Authorization: `Bearer ${bearer}`, Accept: 'application/vnd.github+json',
+                        'X-GitHub-Api-Version': '2022-11-28' } },
+            );
+        } catch {
+            throw new AtlasError('GitHub pull request head could not be verified.', 'GITHUB_UNAVAILABLE');
+        }
+        if (!response.ok) throw new AtlasError(
+            `GitHub pull request head verification failed (HTTP ${response.status}).`, 'GITHUB_REQUEST_FAILED');
+        const data: unknown = await response.json().catch(() => null);
+        if (!data || typeof data !== 'object' || Array.isArray(data))
+            throw new AtlasError('GitHub returned an invalid pull request head.', 'GITHUB_REQUEST_FAILED');
+        const pr = data as { number?: unknown; state?: unknown; head?: { sha?: unknown }; base?: { repo?: { full_name?: unknown } } };
+        const headSha = pr.head?.sha;
+        if (pr.number !== prNumber || !sha(headSha) ||
+            typeof pr.base?.repo?.full_name !== 'string' ||
+            pr.base.repo.full_name.toLowerCase() !== repository.toLowerCase() ||
+            !['open', 'closed'].includes(String(pr.state)))
+            throw new AtlasError('GitHub returned an unexpected pull request identity or head.', 'GITHUB_REQUEST_FAILED');
+        return { repository, prNumber, headSha: (headSha as string).toLowerCase(), open: pr.state === 'open' };
+    }
+
     async read(repository: string, prNumber: number) {
         if (!repoName.test(repository) || !Number.isSafeInteger(prNumber) || prNumber < 1 || prNumber > 1_000_000)
             throw new AtlasError('Invalid GitHub pull request identity.', 'INVALID_REQUEST');
