@@ -14,6 +14,13 @@ export type NodeUpdateIntent = {
     status: 'requested' | 'cancelled' | 'expired' | 'claimed';
     createdAt: string; expiresAt: string; resolvedAt: string | null;
     approved: false; executable: false;
+    reportedOutcome?: NodeUpdateOutcomeReport;
+};
+
+export type NodeUpdateOutcomeReport = {
+    intentId: string; nodeId: string;
+    reportedState: 'activated' | 'requires_reconciliation';
+    reportedAt: string; verified: false; clearsClaim: false;
 };
 
 type Row = {
@@ -21,6 +28,8 @@ type Row = {
     target_version: string; target_commit: string; target_source_commit: string;
     target_sha256: string; status: 'requested' | 'cancelled' | 'expired' | 'claimed';
     created_at: Date; expires_at: Date; resolved_at: Date | null;
+    reported_state?: 'activated' | 'requires_reconciliation' | null;
+    reported_at?: Date | null;
 };
 
 const present = (row: Row): NodeUpdateIntent => ({
@@ -33,6 +42,11 @@ const present = (row: Row): NodeUpdateIntent => ({
     expiresAt: new Date(row.expires_at).toISOString(),
     resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
     approved: false, executable: false,
+    ...(row.reported_state && row.reported_at ? { reportedOutcome: {
+        intentId: row.id, nodeId: row.node_id, reportedState: row.reported_state,
+        reportedAt: new Date(row.reported_at).toISOString(), verified: false as const,
+        clearsClaim: false as const,
+    } } : {}),
 });
 
 export class NodeUpdateIntentLedger {
@@ -103,8 +117,12 @@ export class NodeUpdateIntentLedger {
     async list(nodeId: string, limit = 20): Promise<NodeUpdateIntent[]> {
         const node = await this.db.query('SELECT id FROM nodes WHERE id=$1', [nodeId]);
         if (!node.rowCount) throw new AtlasError('Node not found.', 'NOT_FOUND');
-        const records = await this.db.query<Row>(`SELECT * FROM node_update_intents
-            WHERE node_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2`, [nodeId, Math.max(1, Math.min(limit, 50))]);
+        const records = await this.db.query<Row>(`SELECT i.*,
+                r.reported_state,r.reported_at
+            FROM node_update_intents i
+            LEFT JOIN node_update_outcome_reports r ON r.intent_id=i.id
+            WHERE i.node_id=$1 ORDER BY i.created_at DESC,i.id DESC LIMIT $2`,
+            [nodeId, Math.max(1, Math.min(limit, 50))]);
         return records.rows.map(present);
     }
 
@@ -162,6 +180,58 @@ export class NodeUpdateIntentLedger {
                 targetCommit: item.target_commit.trim(), approved: false, executable: false,
             });
             return present(result.rows[0]!);
+        });
+    }
+
+    /**
+     * A Node-credential report is an observation, not an administrator
+     * attestation. Never update the claimed row, unblock a new prepare or
+     * mark a release as installed based on this credential.
+     *
+     * First report wins; byte-for-byte semantic retries are idempotent.
+     */
+    async report(nodeId: string, intentId: string, credential: string,
+        expectedSha256: string, reportedState: 'activated' | 'requires_reconciliation'):
+        Promise<NodeUpdateOutcomeReport> {
+        if (!/^[0-9a-f]{64}$/.test(expectedSha256) ||
+            !['activated', 'requires_reconciliation'].includes(reportedState) ||
+            typeof credential !== 'string' || credential.length < 32)
+            throw new AtlasError('Invalid Node update observation.', 'INVALID_INPUT');
+        const credentialHash = createHash('sha256').update(credential).digest('hex');
+        return this.transaction(async client => {
+            const owner = await client.query(`SELECT id,platform,metadata,credential_hash,
+                credential_state,credential_updated_at FROM nodes WHERE id=$1 FOR UPDATE`, [nodeId]);
+            const node = owner.rows[0];
+            if (!node || node.credential_state !== 'active' || node.credential_hash !== credentialHash)
+                throw new AtlasError('Invalid Node identity or credential.', 'NODE_AUTH_INVALID');
+            if (node.platform !== 'linux' || node.metadata?.runtime !== 'remote')
+                throw new AtlasError('Node is not a remote Linux runtime.', 'CONFLICT');
+            const selected = await client.query<Row>(`SELECT * FROM node_update_intents
+                WHERE id=$1 AND node_id=$2 FOR UPDATE`, [intentId, nodeId]);
+            const item = selected.rows[0];
+            if (!item) throw new AtlasError('Node update request not found.', 'NOT_FOUND');
+            if (item.status !== 'claimed' || item.target_sha256.trim() !== expectedSha256 ||
+                new Date(item.created_at).getTime() < new Date(node.credential_updated_at).getTime())
+                throw new AtlasError('Node update observation does not match a claim under this credential.', 'CONFLICT');
+            // Locking the intent serialises competing reports for one claim.
+            const existing = await client.query<{ reported_state: string; reported_at: Date }>(
+                `SELECT reported_state,reported_at FROM node_update_outcome_reports
+                 WHERE intent_id=$1`, [intentId]);
+            if (existing.rowCount && existing.rows[0]!.reported_state !== reportedState)
+                throw new AtlasError('A different outcome observation was already recorded.', 'CONFLICT');
+            let reportedAt = existing.rows[0]?.reported_at;
+            if (!existing.rowCount) {
+                const inserted = await client.query<{ reported_at: Date }>(`INSERT INTO node_update_outcome_reports
+                    (intent_id,node_id,reported_state) VALUES($1,$2,$3)
+                    RETURNING reported_at`, [intentId,nodeId,reportedState]);
+                reportedAt = inserted.rows[0]!.reported_at;
+                await this.audit(client, 'node.update_outcome_reported', {
+                    nodeId,intentId,reportedState,verified:false,clearsClaim:false,
+                    approved:false,executable:false,
+                });
+            }
+            return { intentId,nodeId,reportedState,reportedAt: new Date(reportedAt!).toISOString(),
+                verified:false,clearsClaim:false };
         });
     }
 
