@@ -214,3 +214,58 @@ outcomes durably, and reject expired, cancelled, stale or replayed requests.
 In particular, a mere pending intention cannot be consumed as authority to
 execute privileged systemd operations. No Node credentials, server deployments,
 workspace files or database migrations are changed by preparation itself.
+
+
+## Host-local Linux approval gate (non-executable)
+
+The separate `scripts/linux-node-update-approval.py` is a Linux-only,
+Python 3 standard-library approval ledger. It is **not** a remote update
+executor and is not callable through an Atlas Node, MCP, the Web UI or the
+Server. Approval does not prove that a release has been signed or downloaded.
+
+From a reviewed checkout, the host administrator may install the helper (this
+does **not** deploy an update or install a systemd unit):
+
+```bash
+sudo install -D -o root -g root -m 0755 scripts/linux-node-update-approval.py /usr/local/libexec/atlas-node-update-approval
+```
+
+Export the exact JSON object returned by `prepare_node_update` into a local
+regular file for the administrator to review. **Do not include Node credentials
+in this file**. The operator can inspect and consider it from an interactive
+root shell:
+
+```bash
+sudo /usr/local/libexec/atlas-node-update-approval approve ./intent.json
+sudo /usr/local/libexec/atlas-node-update-approval status <intent-uuid>
+sudo /usr/local/libexec/atlas-node-update-approval revoke <intent-uuid>
+```
+
+The operator must explicitly type `APPROVE <intent-uuid>` for the precise
+Node/release/digest displayed. The root-only approval ledger is stored at
+`/var/lib/atlas-node-update-approvals` with private permissions, atomic
+writes and an exclusive host lock. Approval is bound to the installed release
+manifest, the host's Node identity, the full source SHA and target SHA-256;
+it expires after **at most five minutes**, never later than the original
+15-minute intent expiry. A matching intent cannot be approved twice. Only
+one unconsumed non-expired grant is allowed per host Node. Revoked, expired
+or claimed grants cannot be reused; the persistent grant records retain
+their transition history.
+
+**Critical trust limitation:** The intent JSON is a local snapshot and is
+not a signed server receipt. It can become cancelled or stale after it is
+exported; the host approval does not verify current server ledger state,
+catalogue immutability, or GitHub build provenance. Therefore it never runs
+`systemctl`, modifies the active release, stages archives, grants `sudo`
+to the Node process, or exposes the internal `claim_once` operation as an
+administrator or network command. The next implementation must validate a
+live outstanding intent against the trusted Server, verify immutable release
+bytes and exact GitHub Sigstore provenance independently, then atomically
+claim this approval before any privileged execution. A claimed approval may
+**never** be retried; interrupted execution is reconciled through the PR #66
+lifecycle journal, not through replay of the grant.
+
+These host approvals are **not** written into the Atlas Server's intent ledger
+and must not be represented as remote approval or execution in the Web UI.
+Until the separate reconciled host executor is built and tested, requests
+continue to show `approved: false` and `executable: false` on Atlas.
