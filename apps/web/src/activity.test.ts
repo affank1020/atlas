@@ -55,3 +55,42 @@ it('shows development outcomes with Node, task and duration without output blobs
     expect(items[0].details).toMatchObject({ nodeId: 'node', task: 'test', exitCode: 1, durationMs: 4200 });
     expect(filterActivity(items, 'dev')).toHaveLength(1);
 });
+
+it('does not hide a correlated failure behind a later successful event', () => {
+    const request = event('request', 'workspace.mutation_requested', { attemptId: 'retry', operation: 'workspace.git_committed' });
+    const failure = event('failure', 'workspace.mutation_failed', { attemptId: 'retry', operation: 'workspace.git_committed', outcome: 'failed', error: 'Push rejected' },
+        { occurredAt: '2026-10-22T08:00:00Z' });
+    const later = event('result', 'workspace.git_committed', { attemptId: 'retry', outcome: 'completed' },
+        { occurredAt: '2026-10-22T08:01:00Z' });
+    const items = presentActivity([later, request, failure]);
+    expect(items).toHaveLength(1);
+    expect(items[0].status).toBe('failed');
+    expect(items[0].description).toBe('Push rejected');
+    expect(items[0].timestamp).toBe('2026-10-22T08:01:00Z');
+    expect(items[0].details).toMatchObject({
+        timestamp: '2026-10-22T08:01:00Z',
+        evidenceTimestamp: '2026-10-22T08:00:00Z',
+    });
+});
+
+
+it('sorts correlated activity by latest member time, not selected failure evidence time', () => {
+    const request = event('r', 'workspace.mutation_requested',
+        { attemptId: 'correlated', operation: 'workspace.git_committed' },
+        { occurredAt: '2026-10-22T08:00:00Z' });
+    const failure = event('f', 'workspace.mutation_failed',
+        { attemptId: 'correlated', operation: 'workspace.git_committed', outcome: 'failed', error: 'Rejected' },
+        { occurredAt: '2026-10-22T08:00:30Z' });
+    const result = event('c', 'workspace.git_committed',
+        { attemptId: 'correlated', outcome: 'completed' },
+        { occurredAt: '2026-10-22T08:02:00Z' });
+    const unrelated = event('other', 'record.updated', {},
+        { workspaceId: undefined, occurredAt: '2026-10-22T08:01:00Z' });
+    const items = presentActivity([failure, unrelated, request, result]);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+        status: 'failed', timestamp: '2026-10-22T08:02:00Z',
+        description: 'Rejected',
+    });
+    expect(items[1].timestamp).toBe('2026-10-22T08:01:00Z');
+});

@@ -64,3 +64,60 @@ test('snapshot Monitoring filters both sharing endpoints without broadening unre
     }
     assert.equal((await audit.monitoring({nodeId:unrelated,category:'node'})).total,0);
 });
+
+
+test('snapshot operation paging retains terminal outcomes across boundaries and searches', async () => {
+    const rows: AuditEvent[] = [
+        { id: 'r1', operation: 'workspace.mutation_requested', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T08:00:00Z',
+            resulting: { attemptId: 'one', operation: 'workspace.dev_invoked', task: 'build' } },
+        { id: 'c1', operation: 'workspace.dev_invoked', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T08:01:00Z',
+            resulting: { attemptId: 'one', outcome: 'completed' } },
+        { id: 'r2', operation: 'workspace.mutation_requested', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T09:00:00Z',
+            resulting: { attemptId: 'two', operation: 'workspace.git_committed', task: 'push' } },
+        { id: 'f2', operation: 'workspace.mutation_failed', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T09:01:00Z',
+            resulting: { attemptId: 'two', operation: 'workspace.git_committed', outcome: 'failed' } },
+    ];
+    const repo = { snapshot: async () => ({ auditEvents: rows }) } as unknown as AtlasRepository;
+    const audit = new AuditService(repo);
+    const first = await audit.monitoring({ projectId: 'p', groupOperations: true, limit: 1 });
+    assert.equal(first.total, 2);
+    assert.deepEqual(first.items.map(e => e.id).sort(), ['f2','r2']);
+    const next = await audit.monitoring({ projectId: 'p', groupOperations: true, limit: 1, offset: 1 });
+    assert.equal(next.total, 2);
+    assert.deepEqual(next.items.map(e => e.id).sort(), ['c1','r1']);
+    const filtered = await audit.monitoring({ projectId: 'p', groupOperations: true, category: 'git', outcome: 'failed', search: 'push' });
+    assert.equal(filtered.total, 1);
+    assert.deepEqual(filtered.items.map(e => e.id).sort(), ['f2','r2']);
+    assert.equal((await audit.monitoring({ groupOperations: true, outcome: 'pending' })).total, 0);
+});
+
+
+test('snapshot grouped operation filter matches validated wrapper names and retains raw wrapper querying', async () => {
+    const event = (id: string, operation: AuditEvent['operation'], requested?: string, outcome?: string): AuditEvent => ({
+        id, operation, projectId: 'p', workspaceId: 'w', client: 'test',
+        occurredAt: '2026-10-22T10:00:00Z',
+        resulting: { attemptId: id, ...(requested && { operation: requested }), ...(outcome && { outcome }) },
+    });
+    const rows: AuditEvent[] = [
+        event('pending', 'workspace.mutation_requested', 'workspace.git_committed'),
+        event('failure', 'workspace.mutation_failed', 'workspace.git_committed', 'failed_or_uncertain'),
+        event('direct', 'workspace.git_status', undefined, 'completed'),
+        event('foreign', 'workspace.mutation_failed', 'view.updated', 'failed'),
+        event('malformed', 'workspace.mutation_failed', 'workspace.git_committed;invalid', 'failed'),
+    ];
+    const repo = { snapshot: async () => ({ auditEvents: rows }) } as unknown as AtlasRepository;
+    const audit = new AuditService(repo);
+    const options = { groupOperations: true, projectId: 'p' };
+    const grouped = await audit.monitoring({ ...options, operation: 'workspace.git_committed' });
+    assert.equal(grouped.total, 2);
+    assert.deepEqual(grouped.items.map(e => e.id).sort(), ['failure', 'pending']);
+    assert.equal((await audit.monitoring({ ...options, operation: 'workspace.git_committed', outcome: 'pending' })).total, 1);
+    assert.equal((await audit.monitoring({ ...options, operation: 'workspace.git_committed', outcome: 'failed' })).total, 1);
+    assert.equal((await audit.monitoring({ ...options, operation: 'workspace.mutation_failed' })).total, 3);
+    assert.equal((await audit.monitoring({ ...options, operation: 'view.updated' })).total, 0);
+    assert.equal((await audit.monitoring({ ...options, operation: 'workspace.git_committed;invalid' })).total, 0);
+});

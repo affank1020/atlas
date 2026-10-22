@@ -124,3 +124,21 @@ test('Switching away from server diagnostics discards late results', async () =>
     expect(screen.getByRole('combobox', { name: 'Log target' })).toHaveValue('node');
     expect(screen.queryByText(/OLD_DIAGNOSTIC_SHOULD_NOT_RENDER/)).not.toBeInTheDocument();
 });
+
+test('activity uses correlated operation paging and counts attempts rather than audit rows', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const request = { id: 'request', occurredAt: '2026-10-22T08:00:00Z',
+        client: 'chatgpt', projectId: 'project', workspaceId: 'workspace',
+        operation: 'workspace.mutation_requested',
+        resulting: { attemptId: 'same-attempt', operation: 'workspace.dev_invoked', task: 'test' } };
+    const result = { id: 'result', occurredAt: '2026-10-22T08:01:00Z',
+        client: 'chatgpt', projectId: 'project', workspaceId: 'workspace',
+        operation: 'workspace.dev_invoked', resulting: { attemptId: 'same-attempt', outcome: 'completed', task: 'test' } };
+    vi.mocked(callTool).mockResolvedValue({ items: [result, request], total: 1, offset: 0, limit: 30 });
+    render(<MonitoringPage />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
+        { offset: 0, limit: 30, groupOperations: true }, expect.any(AbortSignal)));
+    expect(await screen.findByText(/1–1 of 1 operations/)).toBeInTheDocument();
+    expect(screen.getByText('test · running')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+});

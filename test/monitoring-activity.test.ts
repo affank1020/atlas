@@ -103,3 +103,215 @@ test('PostgreSQL Monitoring Node filter includes sender and recipient sharing ev
     }
     assert.equal((await monitoring.page({nodeId:c.nodeId,operation:'node.share.approved'})).total,0);
 });
+
+
+test('operation mode correlates before filtering and paginates completed attempts atomically', async () => {
+    const { catalog, store } = await databaseFixture();
+    const first = await catalog.createProject({ name: 'Correlation one', client: 'setup' });
+    const other = await catalog.createProject({ name: 'Correlation two', client: 'setup' });
+    const nodeId = '00000000-0000-4000-8000-000000001234';
+    async function put(projectId: string, operation: string, attemptId: string, at: string, extra: Record<string, unknown> = {}) {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'correlation-test', $1, $2, $3::jsonb, $4::timestamptz)`,
+            [operation, projectId, JSON.stringify({ attemptId, ...extra }), at]);
+    }
+    await put(first.id, 'workspace.mutation_requested', 'a', '2026-10-22T08:00:00Z',
+        { operation: 'workspace.dev_invoked', task: 'build', nodeId });
+    await put(first.id, 'workspace.dev_invoked', 'a', '2026-10-22T08:01:00Z',
+        { outcome: 'completed', task: 'build' });
+    await put(first.id, 'workspace.mutation_requested', 'b', '2026-10-22T09:00:00Z',
+        { operation: 'workspace.git_committed', task: 'publish', nodeId });
+    await put(first.id, 'workspace.mutation_failed', 'b', '2026-10-22T09:01:00Z',
+        { operation: 'workspace.git_committed', outcome: 'failed_or_uncertain' });
+    await put(first.id, 'workspace.mutation_requested', 'c', '2026-10-22T10:00:00Z',
+        { operation: 'workspace.file_patched', nodeId });
+    // Same attempt ID under a different Project must never be coalesced.
+    await put(other.id, 'workspace.mutation_failed', 'a', '2026-10-22T12:00:00Z',
+        { outcome: 'failed' });
+
+    const audit = new ActivityService(new AuditService(store));
+    const query = { projectId: first.id, client: 'correlation-test', groupOperations: true };
+    const firstPage = await audit.page({ ...query, limit: 1 });
+    assert.equal(firstPage.total, 3);
+    assert.equal(firstPage.items.length, 1);
+    assert.equal(firstPage.items[0].operation, 'workspace.mutation_requested');
+    const secondPage = await audit.page({ ...query, limit: 1, offset: 1 });
+    assert.equal(secondPage.total, 3);
+    assert.deepEqual(secondPage.items.map(e => e.operation).sort(),
+        ['workspace.mutation_failed', 'workspace.mutation_requested']);
+    const thirdPage = await audit.page({ ...query, limit: 1, offset: 2 });
+    assert.equal(thirdPage.total, 3);
+    assert.deepEqual(thirdPage.items.map(e => e.operation).sort(),
+        ['workspace.dev_invoked', 'workspace.mutation_requested']);
+    const completed = await audit.page({ ...query, outcome: 'completed' });
+    assert.equal(completed.total, 1);
+    assert.equal(completed.items.length, 2, 'A completed attempt retains its request');
+    const failed = await audit.page({ ...query, outcome: 'failed', category: 'git' });
+    assert.equal(failed.total, 1);
+    assert.equal(failed.items.length, 2, 'A failed attempt retains its request');
+    const pending = await audit.page({ ...query, outcome: 'pending' });
+    assert.equal(pending.total, 1);
+    assert.equal(pending.items[0].operation, 'workspace.mutation_requested');
+    const searched = await audit.page({ ...query, search: 'publish', outcome: 'failed' });
+    assert.equal(searched.total, 1, 'Search on the request must still include the failure');
+    assert.equal(searched.items.length, 2);
+    const byNode = await audit.page({ ...query, nodeId, outcome: 'completed' });
+    assert.equal(byNode.total, 1, 'Node association on request must also retain the result');
+    assert.equal(byNode.items.length, 2);
+    const byTerminal = await audit.page({ ...query, operation: 'workspace.dev_invoked' });
+    assert.equal(byTerminal.total, 1);
+    assert.equal(byTerminal.items.length, 2, 'Operation matching a terminal event includes the request');
+    const dated = await audit.page({ ...query, from: '2026-10-22T09:00:30Z', to: '2026-10-22T09:05:00Z' });
+    assert.equal(dated.total, 1, 'Time scope uses the operation completion timestamp');
+    const offPage = await audit.page({ ...query, limit: 1, offset: 99 });
+    assert.equal(offPage.total, 3, 'Empty pages keep the filtered total');
+    assert.deepEqual(offPage.items, []);
+    const oldMode = await audit.page({ projectId: first.id, client: 'correlation-test' });
+    assert.equal(oldMode.total, 5, 'Legacy row-based pagination is unchanged');
+});
+
+
+test('grouped operation filter includes pending and failed-only request wrappers without trusting malformed metadata', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Operation filter regression', client: 'setup' });
+    const insert = async (operation: string, attemptId: string, requested: string | undefined, outcome?: string) => {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'operation-filter-test', $1, $2, $3::jsonb, now())`,
+            [operation, project.id, JSON.stringify({ attemptId, ...(requested && { operation: requested }), ...(outcome && { outcome }) })]);
+    };
+    await insert('workspace.mutation_requested', 'pending', 'workspace.git_committed');
+    await insert('workspace.mutation_failed', 'failed-only', 'workspace.git_committed', 'failed_or_uncertain');
+    await insert('workspace.git_committed', 'direct', undefined, 'completed');
+    await insert('workspace.mutation_failed', 'malformed', 'workspace.git_committed;invalid', 'failed');
+    await insert('workspace.mutation_failed', 'foreign', 'view.updated', 'failed');
+
+    const audit = new ActivityService(new AuditService(store));
+    const filter = { groupOperations: true, projectId: project.id, client: 'operation-filter-test' };
+    const requested = await audit.page({ ...filter, operation: 'workspace.git_committed' });
+    assert.equal(requested.total, 3, 'Match stored operations and validated requested operations');
+    assert.deepEqual(requested.items.map(event => event.operation).sort(),
+        ['workspace.git_committed', 'workspace.mutation_failed', 'workspace.mutation_requested']);
+
+    const pending = await audit.page({ ...filter, operation: 'workspace.git_committed', outcome: 'pending' });
+    assert.equal(pending.total, 1, 'Include pending-only requests');
+    assert.equal(pending.items[0]?.operation, 'workspace.mutation_requested');
+    const failed = await audit.page({ ...filter, operation: 'workspace.git_committed', outcome: 'failed' });
+    assert.equal(failed.total, 1, 'Include failed-only wrappers without a successful operation row');
+    assert.equal(failed.items[0]?.operation, 'workspace.mutation_failed');
+    const completed = await audit.page({ ...filter, operation: 'workspace.git_committed', outcome: 'completed' });
+    assert.equal(completed.total, 1, 'Continue matching the native operation event');
+
+    const wrapper = await audit.page({ ...filter, operation: 'workspace.mutation_failed' });
+    assert.equal(wrapper.total, 3, 'Explicit raw wrapper filtering must remain possible');
+    assert.equal((await audit.page({ ...filter, operation: 'view.updated' })).total, 0,
+        'Foreign wrapper metadata must never be reclassified as an operation');
+    assert.equal((await audit.page({ ...filter, operation: 'workspace.git_committed;invalid' })).total, 0,
+        'Malformed requested-operation metadata must not match');
+});
+
+
+test('grouped failed attempt uses latest event time after a contradictory later success', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Correlation timestamp regression', client: 'setup' });
+    const events = [
+        { operation: 'workspace.mutation_requested', at: '2026-10-22T08:00:00Z',
+          data: { attemptId: 'same', operation: 'workspace.git_committed' } },
+        { operation: 'workspace.mutation_failed', at: '2026-10-22T08:01:00Z',
+          data: { attemptId: 'same', operation: 'workspace.git_committed', outcome: 'failed', error: 'Rejected' } },
+        { operation: 'workspace.git_committed', at: '2026-10-22T08:02:00Z',
+          data: { attemptId: 'same', outcome: 'completed' } },
+    ];
+    for (const event of events) {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'timestamp-test', $1, $2, $3::jsonb, $4::timestamptz)`,
+            [event.operation, project.id, JSON.stringify(event.data), event.at]);
+    }
+    const query = { projectId: project.id, client: 'timestamp-test', groupOperations: true };
+    const page = await new ActivityService(new AuditService(store)).page({
+        ...query, outcome: 'failed', operation: 'workspace.git_committed',
+        from: '2026-10-22T08:01:30Z', to: '2026-10-22T08:02:30Z',
+    });
+    assert.equal(page.total, 1, 'Time filters use latest event even when failure is older');
+    assert.equal(page.items.length, 3, 'Request, failure and contradictory result stay correlated');
+    assert.equal(page.items[0]?.occurredAt, '2026-10-22T08:02:00.000Z');
+    assert.equal((await new ActivityService(new AuditService(store)).page({
+        ...query, outcome: 'completed', from: '2026-10-22T08:01:30Z',
+    })).total, 0, 'A later success must not conceal the earlier failure');
+});
+
+
+test('operation query plans keep large audit snapshots out of the materialized history scan', async () => {
+    const { catalog, store } = await databaseFixture();
+    const projectA = await catalog.createProject({ name: 'Monitoring benchmark A', client: 'bench-setup' });
+    const projectB = await catalog.createProject({ name: 'Monitoring benchmark B', client: 'bench-setup' });
+
+    // 10,000 immutable rows / 5,000 correlated operations, each with an 8 KiB
+    // historical snapshot. Synthetic plan regression, not a production latency SLA.
+    await store.pool.query([
+        'INSERT INTO audit_events (id, client, operation, project_id, before_state, after_state, created_at)',
+        "SELECT gen_random_uuid(), 'monitoring-plan-test',",
+        "CASE WHEN n % 2 = 1 THEN 'workspace.mutation_requested' ELSE 'workspace.dev_invoked' END,",
+        'CASE WHEN n <= 6000 THEN $1::uuid ELSE $2::uuid END,',
+        "jsonb_build_object('snapshot', repeat(md5(n::text), 256)),",
+        "jsonb_build_object('attemptId', ((n+1)/2)::text,",
+        "'operation', 'workspace.dev_invoked',",
+        "'outcome', CASE WHEN n % 2 = 0 THEN 'completed' ELSE NULL END),",
+        "'2026-10-22T08:00:00Z'::timestamptz + n * interval '1 second'",
+        'FROM generate_series(1, 10000) AS n',
+    ].join(' '), [projectA.id, projectB.id]);
+    await store.pool.query('ANALYZE audit_events');
+
+    // Capture the exact SQL the application executes instead of a stale approximation.
+    type QueryResponse = { rows: Record<string, unknown>[] };
+    const adapter = store as unknown as { query: (sql: string, values?: unknown[]) => Promise<QueryResponse> };
+    const original = adapter.query;
+    const captured: Array<{ sql: string; values: unknown[] }> = [];
+    adapter.query = (sql, values) => {
+        if (sql.includes('WITH base AS MATERIALIZED')) captured.push({ sql, values: values ?? [] });
+        return original.call(store, sql, values);
+    };
+    try {
+        const audit = new ActivityService(new AuditService(store));
+        const global = await audit.page({ groupOperations: true, limit: 30, client: 'monitoring-plan-test' });
+        const scoped = await audit.page({ groupOperations: true, projectId: projectA.id, limit: 30, client: 'monitoring-plan-test' });
+        assert.equal(global.total, 5000);
+        assert.equal(global.items.length, 60, 'Each operation has a request and a result');
+        assert.equal(scoped.total, 3000);
+        assert.equal(scoped.items.length, 60);
+    } finally {
+        adapter.query = original;
+    }
+    assert.equal(captured.length, 2);
+
+    for (const [i, request] of captured.entries()) {
+        assert.match(request.sql, /WITH base AS MATERIALIZED/);
+        assert.match(request.sql, /SELECT a\.id, a\.created_at/);
+        assert.doesNotMatch(request.sql, /SELECT a\.\*/);
+        assert.match(request.sql, /LEFT JOIN audit_events d ON d\.id=r\.id/,
+            'Wide JSON snapshots must be fetched only after the operation page is chosen');
+        const planResult = await store.pool.query(
+            'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ' + request.sql, request.values,
+        );
+        const plan = planResult.rows[0]['QUERY PLAN'][0] as {
+            Plan: Record<string, unknown>; 'Execution Time': number;
+        };
+        const nodes: Record<string, unknown>[] = [];
+        const walk = (node: Record<string, unknown>) => {
+            nodes.push(node);
+            for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child);
+        };
+        walk(plan.Plan);
+        const baseScans = nodes.filter(node => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'base');
+        assert.ok(baseScans.length >= 1, 'EXPLAIN should show a materialized base CTE');
+        assert.ok(baseScans.every(node => typeof node['Plan Width'] === 'number' && (node['Plan Width'] as number) < 512),
+            'Materialized base rows should consist of narrow scalar fields, not 8-KiB snapshots');
+        const mode = i === 0 ? 'global' : 'project-scoped';
+        console.log('Monitoring operation EXPLAIN profile:', JSON.stringify({
+            mode, historyRows: 10000, matchedOperations: i === 0 ? 5000 : 3000,
+            executionMs: plan['Execution Time'],
+            baseScanEstimatedWidths: baseScans.map(node => node['Plan Width']),
+            sharedHitBlocks: plan.Plan['Shared Hit Blocks'],
+            tempWrittenBlocks: plan.Plan['Temp Written Blocks'],
+        }));
+    }
+});

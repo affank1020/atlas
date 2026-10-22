@@ -7,6 +7,8 @@ export type MonitoringActivityQuery = {
     nodeId?: string; operation?: string; category?: string; client?: string;
     outcome?: 'failed' | 'pending' | 'completed'; search?: string; from?: string; to?: string;
     limit?: number; offset?: number;
+    /** Opt-in: paginate correlated operations, returning all immutable member events for each operation. */
+    groupOperations?: boolean;
 };
 export type MonitoringActivityPage = { items: AuditEvent[]; total: number; limit: number; offset: number };
 export type EntityCounts = { active: number; archived: number; total: number };

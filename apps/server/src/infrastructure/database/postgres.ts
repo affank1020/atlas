@@ -75,6 +75,7 @@ export class PostgresRepository implements AtlasRepository {
     async queryMonitoringActivity(input: MonitoringActivityQuery): Promise<MonitoringActivityPage> {
         const limit = Math.min(Math.max(Number.isInteger(input.limit) ? input.limit! : 30, 1), 100);
         const offset = Math.min(Math.max(Number.isInteger(input.offset) ? input.offset! : 0, 0), 10000);
+        if (input.groupOperations) return this.queryMonitoringOperations(input, limit, offset);
         const values: unknown[] = [];
         const where: string[] = [];
         const param = (value: unknown) => { values.push(value); return '$' + values.length; };
@@ -123,6 +124,131 @@ export class PostgresRepository implements AtlasRepository {
         const limitParam = param(limit), offsetParam = param(offset);
         const result = await this.query('SELECT a.* FROM audit_events a' + condition + ' ORDER BY a.created_at DESC,a.id DESC LIMIT ' + limitParam + ' OFFSET ' + offsetParam, values);
         return { items: result.rows.map(auditFromRow), total: Number(count.rows[0].total), limit, offset };
+    }
+
+    /**
+     * Correlate audit attempt members before filtering and paging. Member rows are
+     * returned unchanged; only their group is counted as a single operation.
+     * A single SQL statement provides a consistent count and page snapshot.
+     */
+    private async queryMonitoringOperations(input: MonitoringActivityQuery, limit: number, offset: number): Promise<MonitoringActivityPage> {
+        const values: unknown[] = [];
+        const param = (value: unknown) => { values.push(value); return '$' + values.length; };
+        // These identify the owner/checkout of the attempt; other filters must
+        // match at group level so they cannot separate the request from its result.
+        const scope: string[] = [];
+        if (input.projectId) scope.push('a.project_id=' + param(uuid(input.projectId)));
+        if (input.workspaceId) scope.push('a.workspace_id=' + param(uuid(input.workspaceId)));
+        if (input.checkoutId) scope.push('a.workspace_id=' + param(uuid(input.checkoutId)));
+        if (input.client) scope.push('lower(a.client)=lower(' + param(input.client) + ')');
+
+        const projections: string[] = [];
+        const aggregates: string[] = [];
+        const matches: string[] = [];
+        const matchAny = (expression: string) => {
+            const field = 'matched_' + projections.length;
+            projections.push('COALESCE(' + expression + ', false) AS ' + field);
+            aggregates.push('bool_or(b.' + field + ') AS ' + field);
+            matches.push('g.' + field);
+        };
+        if (input.storeId) matchAny('a.store_id=' + param(uuid(input.storeId)));
+        if (input.recordId) matchAny('a.record_id=' + param(uuid(input.recordId)));
+        if (input.nodeId) {
+            const id = param(uuid(input.nodeId)?.toLowerCase());
+            matchAny("(a.after_state->>'nodeId'=" + id
+                + " OR a.after_state->>'previousNodeId'=" + id
+                + " OR (a.operation IN ('node.share.approved','node.share.revoked') AND "
+                + "(a.after_state->>'sourceNodeId'=" + id
+                + " OR a.after_state->>'targetNodeId'=" + id + ')))');
+        }
+        if (input.operation) {
+            const requestedOperation = param(input.operation);
+            // Requests and failures carry the actual attempted action as metadata.
+            // Reject malformed/foreign metadata; keep explicit wrapper-name queries.
+            matchAny("(a.operation=" + requestedOperation +
+                " OR (a.operation IN ('workspace.mutation_requested','workspace.mutation_failed')" +
+                " AND (a.after_state->>'operation') ~ '^workspace[.][a-z][a-z0-9_]*$'" +
+                " AND a.after_state->>'operation'=" + requestedOperation + "))");
+        }
+        if (input.category) {
+            const op = `CASE WHEN a.operation IN ('workspace.mutation_requested', 'workspace.mutation_failed')
+                AND (a.after_state->>'operation') ~ '^workspace[.][a-z][a-z0-9_]*$'
+                THEN a.after_state->>'operation' ELSE a.operation END`;
+            const category = `CASE WHEN ${op} LIKE 'view.%' THEN 'view'
+                WHEN ${op} LIKE 'node.%' THEN 'node'
+                WHEN ${op} LIKE 'workspace.git_%' THEN 'git'
+                WHEN ${op} LIKE 'workspace.dev_%' THEN 'dev'
+                WHEN ${op} LIKE 'workspace.unity_%' THEN 'unity'
+                WHEN ${op} LIKE 'workspace.file_%' OR ${op}='workspace.files_searched' THEN 'files'
+                WHEN ${op} LIKE 'workspace.%' THEN 'workspace' ELSE 'core' END`;
+            matchAny('(' + category + ')=' + param(input.category));
+        }
+        if (input.search?.trim()) {
+            const pattern = param('%' + input.search.trim().replace(/[%_]/g, char => '\\' + char) + '%');
+            matchAny("(a.operation ILIKE " + pattern + " OR a.client ILIKE " + pattern
+                + " OR a.after_state->>'error' ILIKE " + pattern
+                + " OR a.after_state->>'task' ILIKE " + pattern + ")");
+        }
+        if (input.from) matches.push('g.latest_at >= ' + param(input.from) + '::timestamptz');
+        if (input.to) matches.push('g.latest_at <= ' + param(input.to) + '::timestamptz');
+        if (input.outcome === 'failed') matches.push('g.failed');
+        if (input.outcome === 'pending') matches.push('NOT g.failed AND NOT g.has_terminal');
+        if (input.outcome === 'completed') matches.push('NOT g.failed AND g.has_terminal');
+
+        const sizeParam = param(limit);
+        const startParam = param(offset);
+        const failed = `(a.operation LIKE '%_failed'
+            OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error')
+            OR a.after_state->>'success'='false')`;
+        const sql = `
+            WITH base AS MATERIALIZED (
+                -- No JSON snapshots or other wide columns flow through the
+                -- materialized history scan. Only scalars needed by grouping,
+                -- operation predicates and representative selection are retained.
+                SELECT a.id, a.created_at,
+                    COALESCE(${failed}, false) AS failed,
+                    (a.operation <> 'workspace.mutation_requested') AS has_terminal,
+                    CASE WHEN COALESCE(${failed}, false) THEN 'failed'
+                         WHEN a.operation='workspace.mutation_requested' THEN 'requested'
+                         ELSE 'result' END AS member_kind,
+                    ${projections.length ? projections.join(', ') + ',' : ''}
+                    CASE WHEN a.operation LIKE 'workspace.%'
+                        AND jsonb_typeof(a.after_state->'attemptId') = 'string'
+                        AND length(a.after_state->>'attemptId') > 0
+                    THEN concat('attempt:', coalesce(a.project_id::text,''), ':',
+                        coalesce(a.workspace_id::text,''), ':', a.after_state->>'attemptId')
+                    ELSE 'event:' || a.id::text END AS group_key
+                FROM audit_events a${scope.length ? ' WHERE ' + scope.join(' AND ') : ''}
+            ), grouped AS (
+                SELECT b.group_key, max(b.created_at) AS latest_at,
+                    bool_or(b.failed) AS failed,
+                    bool_or(b.has_terminal) AS has_terminal
+                    ${aggregates.length ? ', ' + aggregates.join(', ') : ''}
+                FROM base b GROUP BY b.group_key
+            ), matches AS (
+                SELECT g.group_key, g.latest_at FROM grouped g
+                ${matches.length ? ' WHERE ' + matches.join(' AND ') : ''}
+            ), page AS (
+                SELECT * FROM matches ORDER BY latest_at DESC, group_key DESC
+                LIMIT ${sizeParam} OFFSET ${startParam}
+            )
+            , representative AS (
+                SELECT b.id, p.latest_at AS group_latest_at, p.group_key AS page_group_key,
+                    row_number() OVER (
+                        PARTITION BY b.group_key, b.member_kind
+                        ORDER BY b.created_at DESC, b.id DESC
+                    ) AS member_rank
+                FROM page p JOIN base b ON b.group_key=p.group_key
+            )
+            SELECT d.*, totals.total FROM
+                (SELECT count(*)::int AS total FROM matches) totals
+                LEFT JOIN representative r ON r.member_rank=1
+                -- Only selected representative IDs cause full audit row/JSON reads.
+                LEFT JOIN audit_events d ON d.id=r.id
+            ORDER BY r.group_latest_at DESC, r.page_group_key DESC, d.created_at DESC, d.id DESC`;
+        const result = await this.query(sql, values);
+        return { items: result.rows.filter(row => row.id !== null).map(auditFromRow),
+            total: Number(result.rows[0]?.total ?? 0), limit, offset };
     }
     async readAudit(input: AuditRead): Promise<AuditEvent[]> {
         const values: unknown[] = [];

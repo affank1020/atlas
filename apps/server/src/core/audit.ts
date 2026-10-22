@@ -29,6 +29,67 @@ export class AuditService {
             const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
             return event.operation.endsWith('_failed') || ['failed', 'failed_or_uncertain', 'error', 'editor_error'].includes(String(details.outcome ?? '')) || details.success === false;
         };
+
+        if (input.groupOperations) {
+            const key = (event: AuditEvent) => {
+                const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
+                const attempt = typeof details.attemptId === 'string' ? details.attemptId : '';
+                return event.operation.startsWith('workspace.') && attempt
+                    ? `attempt:${event.projectId ?? ''}:${event.workspaceId ?? ''}:${attempt}` : `event:${event.id}`;
+            };
+            const groups = new Map<string, AuditEvent[]>();
+            // Scope the immutable source before grouping, but apply contextual
+            // search/category/outcome filters only to fully correlated operations.
+            for (const event of data.auditEvents) {
+                if (input.projectId && event.projectId !== input.projectId) continue;
+                if (input.workspaceId && event.workspaceId !== input.workspaceId) continue;
+                if (input.checkoutId && event.workspaceId !== input.checkoutId) continue;
+                if (input.client && event.client.toLowerCase() !== input.client.toLowerCase()) continue;
+                const id = key(event);
+                groups.set(id, [...(groups.get(id) ?? []), event]);
+            }
+            const operationName = (event: AuditEvent) => {
+                const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
+                const original = details.operation;
+                return ['workspace.mutation_requested', 'workspace.mutation_failed'].includes(event.operation)
+                    && typeof original === 'string' && /^workspace[.][a-z][a-z0-9_]*$/.test(original)
+                    ? original : event.operation;
+            };
+            const matching = [...groups].filter(([, events]) => {
+                const latest = [...events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id))[0];
+                const any = (predicate: (event: AuditEvent, details: Record<string, unknown>) => boolean) =>
+                    events.some(event => predicate(event, event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {}));
+                const groupFailed = events.some(failed);
+                const outcome = groupFailed ? 'failed' : events.some(event => event.operation !== 'workspace.mutation_requested') ? 'completed' : 'pending';
+                const search = input.search?.trim().toLowerCase();
+                return (!input.outcome || input.outcome === outcome)
+                    && (!input.from || latest.occurredAt >= input.from)
+                    && (!input.to || latest.occurredAt <= input.to)
+                    && (!input.storeId || any(event => event.storeId === input.storeId))
+                    && (!input.recordId || any(event => event.recordId === input.recordId))
+                    && (!input.nodeId || any((event, d) => d.nodeId === input.nodeId || d.previousNodeId === input.nodeId
+                        || (['node.share.approved', 'node.share.revoked'].includes(event.operation)
+                            && ([d.sourceNodeId, d.targetNodeId] as unknown[]).some(value => String(value ?? '').toLowerCase() === input.nodeId!.toLowerCase()))))
+                    && (!input.operation || any(event => event.operation === input.operation || operationName(event) === input.operation))
+                    && (!input.category || any(event => category(operationName(event)) === input.category))
+                    && (!search || any((event, d) => [event.operation, event.client, d.error, d.task]
+                        .some(value => String(value ?? '').toLowerCase().includes(search))));
+            }).sort(([keyA, a], [keyB, b]) =>
+                Math.max(...b.map(e => Date.parse(e.occurredAt))) - Math.max(...a.map(e => Date.parse(e.occurredAt)))
+                || keyB.localeCompare(keyA));
+            const page = matching.slice(offset, offset + limit);
+            return { items: page.flatMap(([, events]) => {
+                const representatives = new Map<string, AuditEvent>();
+                for (const event of [...events].sort((a, b) =>
+                    b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id))) {
+                    const kind = failed(event) ? 'failed' :
+                        event.operation === 'workspace.mutation_requested' ? 'requested' : 'result';
+                    if (!representatives.has(kind)) representatives.set(kind, event);
+                }
+                return [...representatives.values()].sort((a, b) =>
+                    b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
+            }), total: matching.length, offset, limit };
+        }
         const items = data.auditEvents.filter(event => {
             const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
             const pending = event.operation === 'workspace.mutation_requested';
