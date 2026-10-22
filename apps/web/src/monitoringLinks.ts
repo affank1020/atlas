@@ -22,7 +22,10 @@ export function parseMonitoringHash(hash: string): MonitoringRoute {
     for (const key of keys) {
         const value = params.get(key);
         if (!value) continue;
-        if (key === 'live') { if (value === '1' && tab === 'activity') filters.live = '1'; continue; }
+        if (key === 'live') {
+            if (value === '1' && tab === 'activity' && (!filters.offset || Number(filters.offset) === 0)) filters.live = '1';
+            continue;
+        }
         if (key === 'source') { if (value === 'stdout' || value === 'stderr' || value === 'journal') filters.source = value; continue; }
         if (key === 'target') { if (value === 'server' || value === 'node') filters.target = value; continue; }
         if (key === 'lines') { if (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 200) filters.lines = String(Number(value)); continue; }
