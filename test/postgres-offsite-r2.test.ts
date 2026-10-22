@@ -25,8 +25,8 @@ function fixture(t: import("node:test").TestContext) {
     return {dir,archive,ciphertext,sha,manifest};
 }
 
-const primary="https/" + "/11111111111111111111111111111111.r2.cloudflarestorage.com";
-const recovery="https/" + "/22222222222222222222222222222222.r2.cloudflarestorage.com";
+const primary="https://11111111111111111111111111111111.r2.cloudflarestorage.com";
+const recovery="https://22222222222222222222222222222222.r2.cloudflarestorage.com";
 const environment = {
     ATLAS_R2_ENDPOINT:primary,
     ATLAS_R2_RECOVERY_ENDPOINT:recovery,
@@ -102,7 +102,7 @@ test("offsite configuration enforces a different Cloudflare account and credenti
     assert.equal(recoveryConfig(environment).bucket,"atlas-independent-db");
     assert.throws(()=>recoveryConfig({...environment,ATLAS_R2_RECOVERY_ENDPOINT:primary}),/separate Cloudflare account/);
     assert.throws(()=>recoveryConfig({...environment,
-        ATLAS_R2_RECOVERY_ENDPOINT:"https/" + "/11111111111111111111111111111111.eu.r2.cloudflarestorage.com"}),/separate Cloudflare account/);
+        ATLAS_R2_RECOVERY_ENDPOINT:"https://11111111111111111111111111111111.eu.r2.cloudflarestorage.com"}),/separate Cloudflare account/);
     assert.throws(()=>recoveryConfig({...environment,ATLAS_R2_RECOVERY_BUCKET:""}),/bucket/);
     assert.throws(()=>recoveryConfig({...environment,ATLAS_R2_RECOVERY_ACCESS_KEY_ID:"primary-id"}),/reuse/);
     assert.throws(()=>recoveryConfig({...environment,ATLAS_R2_RECOVERY_SECRET_ACCESS_KEY:"primary-secret"}),/reuse/);
