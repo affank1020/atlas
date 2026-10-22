@@ -463,3 +463,81 @@ check recovery and live identity and explicitly reconcile the claimed intent
 before allowing another update. Never manually mutate the claimed row or
 delete execution receipts to bypass the guard. No production deployment,
 configuration enablement or systemd restart occurs through this PR.
+
+
+## Independent host-root evidence foundation (offline only)
+
+Atlas's Node bearer credential is readable by its unprivileged Node process.
+Even a `reportedState: activated` record sent through that credential is
+**not** proof that the root-owned lifecycle actually ran, and can never
+directly clear a `claimed` intent.
+
+The host now has an **offline-only, operator-invoked** evidence signer:
+`scripts/linux-node-root-evidence.py`. The Server has a corresponding
+**pure, offline Ed25519 verifier** in
+`apps/server/src/nodes/root-evidence.ts`. Neither is integrated with
+any HTTP endpoint, MCP operation, database mutation, update command or
+automatic scheduler. In particular **this phase does not enrol keys,
+issue Server challenges, or reconcile a claimed request**.
+
+The signed message uses strict domain separation and binds all fields to
+the same 64-byte Ed25519 signature:
+
+- Exact host Node UUID and update intent UUID.
+- A 32-byte random challenge represented by 64 lowercase hex characters,
+  eventually issued and checked for freshness by the trusted Server.
+- Full active release version `semver+12-character-source-SHA` and the
+  approved archive SHA-256 digest.
+- A positive systemd main PID, cross-checked against the Node's connected
+  status report.
+
+The signer only considers a durable root-owned `activated` execution receipt,
+and refuses to sign if the current release differs from the receipt, a
+lifecycle recovery marker exists, the Node service is not active or the
+connected status PID is inconsistent. It takes the **same process-wide
+executor flock** for the entire operation, and requires a separate interactive
+`ATTEST <intent UUID>` confirmation. It never loads the Node credential or
+sends a network request. The connected status file is supplied by the Node
+process itself, so this check is **not** independent measurement of running
+JavaScript or a substitute for a recovery drill.
+
+The eventual Server must pin each Node's **Ed25519 public key by a trusted
+administrator**, not by the Node credential or the attestation itself.
+It must also issue an unpredictable short-lived challenge, bind that challenge
+to the exact claimed intent, verify the signature with the pre-pinned key and
+atomically consume the challenge before making any reconciliation decision.
+**Those state transitions are explicitly out of scope for this PR.** Without
+independently pinned keys and a fresh Server-issued challenge, an offline
+signature cannot be trusted as live reconciliation evidence.
+
+For future *disposable nonproduction* drills only, provision an independent
+host-root private key using the system OpenSSL binary (never commit the key,
+print its bytes or place it in Node's environment):
+
+```bash
+sudo sh -c 'umask 077; openssl genpkey -algorithm ED25519 -out /etc/atlas-node/update-evidence-ed25519.key'
+sudo chown root:root /etc/atlas-node/update-evidence-ed25519.key
+sudo chmod 0600 /etc/atlas-node/update-evidence-ed25519.key
+
+# Read-only public-key export for out-of-band administrator pinning.
+sudo openssl pkey -in /etc/atlas-node/update-evidence-ed25519.key -pubout
+```
+
+The signing tool is separately installed from reviewed source into
+`/usr/local/libexec/linux-node-root-evidence.py` (root-owned, mode 0755);
+it imports the installed root-owned executor but has no access to its
+privileged execution CLI. When a **future Server challenge endpoint** exists,
+the operator will invoke it with the canonical claimed intent ID and
+one-time challenge, for example:
+
+```bash
+sudo /usr/bin/python3 /usr/local/libexec/linux-node-root-evidence.py \
+  <claimed-intent-uuid> <future-server-issued-64-lowercase-hex-challenge>
+```
+
+**Do not invoke the example against the production VPS today.** There is
+currently no trusted Server challenge, no enrolled public key, no
+reconciliation endpoint and no authorisation to clear existing claimed
+intents. The offline output is evidence-format scaffolding and never a
+completed or verified update in the dashboard. No production services,
+credentials or release pointers are modified by adding these files.
