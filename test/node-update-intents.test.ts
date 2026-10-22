@@ -29,7 +29,8 @@ async function fixture() {
     const row = await db.store.pool.query('SELECT version,credential_updated_at FROM nodes WHERE id=$1', [enrolled.nodeId]);
     const credentialAt = new Date(row.rows[0].credential_updated_at).toISOString();
     const ledger = new NodeUpdateIntentLedger(db.store.pool);
-    return { db, identity, ledger, nodeId: enrolled.nodeId, version: row.rows[0].version as string, credentialAt };
+    return { db, identity, ledger, nodeId: enrolled.nodeId, credential: enrolled.credential,
+        version: row.rows[0].version as string, credentialAt };
 }
 const fails = (code: string) => (error: any) => error.code === code;
 
@@ -114,4 +115,68 @@ test('the ledger rejects untrusted release metadata before creating a request', 
     await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, {
         ...candidate, platform: 'darwin',
     }), fails('INVALID_INPUT'));
+});
+
+test('claimed intent is single-use, immutable and prevents a second prepare', async () => {
+    const f = await fixture();
+    const intent = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    const claimed = await f.ledger.claim(f.nodeId, intent.id, f.credential, f.version, candidate.sha256);
+    assert.equal(claimed.status, 'claimed');
+    assert.ok(claimed.resolvedAt, 'claim must be durable, not an in-memory flag');
+    assert.equal(claimed.approved, false, 'Server claim is not host authorisation');
+    assert.equal(claimed.executable, false, 'Server claim is not host execution');
+    await assert.rejects(f.ledger.claim(f.nodeId, intent.id, f.credential, f.version, candidate.sha256), fails('CONFLICT'));
+    await assert.rejects(f.ledger.cancel(f.nodeId, intent.id), fails('CONFLICT'));
+    await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate), fails('CONFLICT'));
+    const row = (await f.ledger.list(f.nodeId))[0]!;
+    assert.equal(row.status, 'claimed');
+    const event = await f.db.store.pool.query("SELECT after_state FROM audit_events WHERE operation='node.update_intent_claimed' AND after_state->>'intentId'=$1", [intent.id]);
+    assert.equal(event.rowCount, 1);
+    assert.equal(event.rows[0].after_state.executable, false);
+});
+
+test('claims reject wrong credential, identity, digest, build, cancellation and expiry', async () => {
+    const f = await fixture();
+    const other = await fixture();
+    const prepared = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    const call = (credential: string, version=f.version, digest=candidate.sha256, id=prepared.id, node=f.nodeId) =>
+        f.ledger.claim(node, id, credential, version, digest);
+    await assert.rejects(call(other.credential), fails('NODE_AUTH_INVALID'));
+    await assert.rejects(call(other.credential, f.version, candidate.sha256, prepared.id, other.nodeId), fails('NOT_FOUND'));
+    await assert.rejects(call(f.credential, f.version, 'b'.repeat(64)), fails('CONFLICT'));
+    await assert.rejects(call(f.credential, '2.0.1+bbbbbbbbbbbb'), fails('CONFLICT'));
+    const after = (await f.ledger.list(f.nodeId))[0]!;
+    assert.equal(after.status, 'requested', 'refusals never consume a valid intent');
+    await f.ledger.cancel(f.nodeId, prepared.id);
+    await assert.rejects(call(f.credential), fails('CONFLICT'));
+    const prepared2 = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    await f.db.store.pool.query("UPDATE node_update_intents SET created_at=now()-interval '20 minutes', expires_at=now()-interval '5 minutes' WHERE id=$1", [prepared2.id]);
+    await assert.rejects(call(f.credential, f.version, candidate.sha256, prepared2.id), fails('CONFLICT'));
+});
+
+test('claims refuse rotated/revoked credentials, changed Node versions and offline Nodes', async () => {
+    const f = await fixture();
+    const first = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    await f.db.store.pool.query("UPDATE nodes SET status='offline' WHERE id=$1", [f.nodeId]);
+    await assert.rejects(f.ledger.claim(f.nodeId, first.id, f.credential, f.version, candidate.sha256), fails('CONFLICT'));
+    await f.db.store.pool.query("UPDATE nodes SET status='online',version='2.1.0+eeeeeeeeeeee' WHERE id=$1", [f.nodeId]);
+    await assert.rejects(f.ledger.claim(f.nodeId, first.id, f.credential, f.version, candidate.sha256), fails('CONFLICT'));
+    await f.db.store.pool.query("UPDATE nodes SET version=$2,credential_updated_at=now()+interval '1 minute' WHERE id=$1", [f.nodeId,f.version]);
+    await assert.rejects(f.ledger.claim(f.nodeId, first.id, f.credential, f.version, candidate.sha256), fails('CONFLICT'));
+    await f.identity.revoke(f.nodeId);
+    await assert.rejects(f.ledger.claim(f.nodeId, first.id, f.credential, f.version, candidate.sha256), fails('NODE_AUTH_INVALID'));
+});
+
+test('simultaneous claims and cancellation produce at most one terminal decision', async () => {
+    const f = await fixture();
+    const prepared = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    const results = await Promise.allSettled([
+        f.ledger.claim(f.nodeId, prepared.id, f.credential, f.version, candidate.sha256),
+        f.ledger.claim(f.nodeId, prepared.id, f.credential, f.version, candidate.sha256),
+        f.ledger.cancel(f.nodeId, prepared.id),
+    ]);
+    assert.equal(results.filter(x => x.status === 'fulfilled').length, 1);
+    const current = (await f.ledger.list(f.nodeId))[0]!;
+    assert.ok(current.status === 'cancelled' || current.status === 'claimed');
+    assert.equal(results.filter(x => x.status === 'rejected').length, 2);
 });
