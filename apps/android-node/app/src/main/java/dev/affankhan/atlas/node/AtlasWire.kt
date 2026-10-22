@@ -3,6 +3,8 @@ package dev.affankhan.atlas.node
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
+import java.time.Instant
+import java.security.MessageDigest
 import java.util.UUID
 
 /** Separates app-release version, protocol v2 and the HTTPS/WSS transport address. */
@@ -26,7 +28,7 @@ internal fun registrationMessage(node: StoredNode, version: String): String = JS
     .put("type", "register").put("protocol", 2)
     .put("nodeId", node.nodeId).put("name", node.name)
     .put("platform", "android").put("version", version)
-    .put("capabilities", JSONArray().put("device.share.send")).toString()
+    .put("capabilities", JSONArray().put("device.share.send").put("device.share.receive")).toString()
 
 internal fun isRegistrationAcknowledgement(raw: String, nodeId: String): Boolean =
     runCatching {
@@ -35,6 +37,116 @@ internal fun isRegistrationAcknowledgement(raw: String, nodeId: String): Boolean
             message.optString("nodeId") == nodeId &&
             message.optInt("protocol") == 2
     }.getOrDefault(false)
+
+
+/**
+ * Authenticated Server → foreground Android Node delivery. No message content is
+ * ever persisted; the caller must explicitly obtain approval before copying.
+ */
+internal data class IncomingDeviceShare(
+    val requestId: String,
+    val deliveryId: String,
+    val sourceNodeId: String,
+    val text: String,
+    val expiresAtMs: Long,
+)
+
+// The server normally sets expiry to now+45s. A tablet's wall clock can differ
+// from the Server's; allow a bounded offset here. The *actual* 15-second user
+// decision timer uses Android elapsedRealtime(), never this timestamp.
+internal const val INCOMING_MAX_CLOCK_SKEW_MS = 120_000L
+internal const val INCOMING_SERVER_TTL_MS = 45_000L
+
+/** Used only for a fail-closed response to a malformed/expired share without
+ * disconnecting the whole authenticated Node WebSocket.
+ */
+internal fun incomingDeviceShareRequestId(raw: String): String? = runCatching {
+    val json = JSONObject(raw)
+    if (json.optString("type") != "request" || json.optString("kind") != "device_share") return@runCatching null
+    val requestId = json.opt("requestId") as? String ?: return@runCatching null
+    requestId.takeIf(::validNodeId)
+}.getOrNull()
+
+internal fun parseIncomingDeviceShare(raw: String, nowMs: Long = System.currentTimeMillis()): IncomingDeviceShare? =
+    runCatching {
+        val json = JSONObject(raw)
+        if (json.length() != 7 ||
+            json.keys().asSequence().toSet() != setOf(
+                "type", "kind", "requestId", "deliveryId", "sourceNodeId", "text", "expiresAt",
+            ) ||
+            json.optString("type") != "request" || json.optString("kind") != "device_share") {
+            return@runCatching null
+        }
+        val requestId = json.opt("requestId") as? String ?: return@runCatching null
+        val deliveryId = json.opt("deliveryId") as? String ?: return@runCatching null
+        val sourceId = json.opt("sourceNodeId") as? String ?: return@runCatching null
+        val body = json.opt("text") as? String ?: return@runCatching null
+        val expiresAt = json.opt("expiresAt") as? String ?: return@runCatching null
+        if (!validNodeId(requestId) || !validNodeId(deliveryId) ||
+            !validNodeId(sourceId) || body.isEmpty() || body.length > MAX_SHARE_CHARACTERS) {
+            return@runCatching null
+        }
+        val deadline = Instant.parse(expiresAt).toEpochMilli()
+        // Server authorises each send and supplies a 45s deadline. The local
+        // device clock is advisory: tolerate ±2m drift, without allowing an
+        // unbounded timestamp. A separate monotonic timer gates user approval.
+        if (deadline < nowMs - INCOMING_MAX_CLOCK_SKEW_MS ||
+            deadline > nowMs + INCOMING_SERVER_TTL_MS + INCOMING_MAX_CLOCK_SKEW_MS)
+            return@runCatching null
+        IncomingDeviceShare(requestId, deliveryId, sourceId, body, deadline)
+    }.getOrNull()
+
+internal enum class IncomingShareOutcome { ACCEPTED, DECLINED, BUSY, COPY_FAILED, REPLAY, EXPIRED }
+
+/** Volatile five-minute replay guard; holds digests and decisions, never share text. */
+internal class RecentIncomingShares {
+    private data class Receipt(val digest: String, val result: IncomingShareOutcome, val at: Long)
+    private val seen = linkedMapOf<String, Receipt>()
+
+    private fun fingerprint(share: IncomingDeviceShare): String {
+        val hash = MessageDigest.getInstance("SHA-256")
+        hash.update(share.sourceNodeId.lowercase().toByteArray(Charsets.UTF_8))
+        hash.update(0)
+        hash.update(share.text.toByteArray(Charsets.UTF_8))
+        return hash.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun lookup(share: IncomingDeviceShare, nowMs: Long = System.currentTimeMillis()): IncomingShareOutcome? {
+        prune(nowMs)
+        val old = seen[share.deliveryId.lowercase()] ?: return null
+        return if (old.digest == fingerprint(share)) old.result else IncomingShareOutcome.REPLAY
+    }
+
+    fun remember(share: IncomingDeviceShare, result: IncomingShareOutcome, nowMs: Long = System.currentTimeMillis()) {
+        if (result !in setOf(IncomingShareOutcome.ACCEPTED, IncomingShareOutcome.DECLINED)) return
+        prune(nowMs)
+        if (seen.size >= 512) seen.remove(seen.keys.first())
+        seen[share.deliveryId.lowercase()] = Receipt(fingerprint(share), result, nowMs)
+    }
+
+    private fun prune(nowMs: Long) {
+        val iter = seen.entries.iterator()
+        while (iter.hasNext()) if (nowMs - iter.next().value.at >= 300_000L) iter.remove()
+    }
+}
+
+internal fun incomingDeviceShareResponse(requestId: String, outcome: IncomingShareOutcome): String {
+    require(validNodeId(requestId))
+    val result = JSONObject().put("type", "response").put("requestId", requestId)
+    if (outcome == IncomingShareOutcome.BUSY || outcome == IncomingShareOutcome.COPY_FAILED ||
+        outcome == IncomingShareOutcome.REPLAY || outcome == IncomingShareOutcome.EXPIRED) {
+        val code = when (outcome) {
+            IncomingShareOutcome.BUSY -> "SHARE_BUSY"
+            IncomingShareOutcome.REPLAY -> "SHARE_REPLAY"
+            IncomingShareOutcome.EXPIRED -> "SHARE_EXPIRED"
+            else -> "SHARE_CLIPBOARD_FAILED"
+        }
+        return result.put("ok", false).put("error", JSONObject()
+            .put("code", code).put("message", "Receiving Node could not accept this share.")).toString()
+    }
+    return result.put("ok", true).put("result", JSONObject()
+        .put("accepted", outcome == IncomingShareOutcome.ACCEPTED)).toString()
+}
 
 /** Explicit, manually chosen Node target. Never infer sender identity from the client. */
 internal fun validNodeId(value: String): Boolean =

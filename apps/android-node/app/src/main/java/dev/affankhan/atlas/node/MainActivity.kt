@@ -1,6 +1,9 @@
 package dev.affankhan.atlas.node
 
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -37,7 +42,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** No Node pairing or data transmission in this initial app foundation. */
+/** Foreground-only native Atlas Node with explicit send and incoming-copy approval. */
 class MainActivity : ComponentActivity() {
     private val model: CompanionViewModel by viewModels()
 
@@ -70,6 +75,15 @@ class MainActivity : ComponentActivity() {
                 sharePending = model.sharePending,
                 onSend = model::sendCurrentDraft,
                 onLoadDeferredShare = model::loadDeferredShare,
+                incomingShare = model.incomingShare,
+                inboxStatus = model.inboxStatus,
+                onCopyIncoming = {
+                    model.copyIncomingShare { text ->
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Atlas shared text", text))
+                    }
+                },
+                onDeclineIncoming = model::declineIncomingShare,
             )
         }
     }
@@ -125,6 +139,10 @@ internal fun AtlasCompanion(
     sharePending: Boolean,
     onSend: () -> Unit,
     onLoadDeferredShare: () -> Unit,
+    incomingShare: IncomingDeviceShare? = null,
+    inboxStatus: String = "No incoming shares yet.",
+    onCopyIncoming: () -> Unit = {},
+    onDeclineIncoming: () -> Unit = {},
 ) {
     MaterialTheme(colorScheme = atlasScheme) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -165,6 +183,7 @@ internal fun AtlasCompanion(
                             sharePending = sharePending,
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
+                            inboxStatus = inboxStatus,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -193,6 +212,7 @@ internal fun AtlasCompanion(
                             sharePending = sharePending,
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
+                            inboxStatus = inboxStatus,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
@@ -208,6 +228,29 @@ internal fun AtlasCompanion(
                         }
                     }
                 }
+            }
+            if (incomingShare != null) {
+                AlertDialog(
+                    onDismissRequest = onDeclineIncoming,
+                    title = { Text("Atlas incoming text") },
+                    text = {
+                        Text("From Node " + incomingShare.sourceNodeId.take(8) +
+                            "\n\n" + incomingShare.text.take(180)
+                                .replace(Regex("[\\u0000-\\u001f\\u007f]"), " ") +
+                            (if (incomingShare.text.length > 180) "…" else "") +
+                            "\n\nCopying requires your approval. Incoming text is not saved.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = onCopyIncoming, modifier = Modifier.testTag("incoming-copy")) {
+                            Text("Copy")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDeclineIncoming, modifier = Modifier.testTag("incoming-decline")) {
+                            Text("Decline")
+                        }
+                    },
+                )
             }
         }
     }
@@ -237,6 +280,7 @@ private fun CompanionContent(
     sharePending: Boolean,
     onSend: () -> Unit,
     onLoadDeferredShare: () -> Unit,
+    inboxStatus: String = "No incoming shares yet.",
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -253,10 +297,12 @@ private fun CompanionContent(
             Section.SEND -> SendContent(session, node, connection, onEditDraft,
                 shareTarget, recipients, recipientsLoading, recipientsCooldown, recipientsError, onSelectRecipient,
                 onRefreshRecipients, shareStatus, sharePending, onSend, onLoadDeferredShare)
-            Section.INBOX -> InfoCard(
-                "No incoming items",
-                "The receiving inbox will become available after device capability routing is implemented.",
-            )
+            Section.INBOX -> {
+                InfoCard("Incoming text", inboxStatus)
+                Text("Incoming shares require an explicit Copy or Decline decision while the app is open. " +
+                    "Atlas does not store an inbox history or copy text automatically.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
             Section.SETTINGS -> {
                 InfoCard("App version", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
                 InfoCard("Node protocol", "Atlas Node protocol v2 — outbound text sharing")
@@ -375,7 +421,7 @@ private fun DevicePairing(
     if (node != null) {
         InfoCard("Paired Node", node.name + " · " + node.nodeId)
         InfoCard("Connection", connection)
-        InfoCard("Capabilities", "Outbound text sharing. Recipient approval is required.")
+        InfoCard("Capabilities", "Text sending and foreground text receiving. Every incoming share requires approval.")
         return
     }
     InfoCard("Not enrolled", "Create a one-time Node enrolment ticket in Atlas Web, then enter it here.")

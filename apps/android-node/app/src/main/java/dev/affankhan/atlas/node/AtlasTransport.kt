@@ -11,8 +11,8 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Outbound Node protocol transport. Until device capabilities exist, this client
- * registers with [] and deliberately cannot receive or execute Workspace operations.
+ * Foreground-only Node transport for explicit text sharing. Workspace operations
+ * remain unsupported; Android never executes arbitrary server-side commands.
  */
 internal class AtlasTransport {
     private val client = OkHttpClient.Builder()
@@ -51,6 +51,7 @@ internal class AtlasTransport {
         listener: (ConnectionEvent) -> Unit,
         onShareReply: (ShareReply) -> Unit,
         onRecipientsReply: (RecipientsReply) -> Unit,
+        onIncomingShare: (IncomingDeviceShare, (IncomingShareOutcome) -> Unit) -> Unit,
     ): WebSocket {
         val endpoint = parseAtlasEndpoint(node.origin)
         val request = Request.Builder()
@@ -74,6 +75,20 @@ internal class AtlasTransport {
                     }
                     return
                 }
+                val incoming = parseIncomingDeviceShare(text)
+                if (incoming != null) {
+                    onIncomingShare(incoming) { outcome ->
+                        webSocket.send(incomingDeviceShareResponse(incoming.requestId, outcome))
+                    }
+                    return
+                }
+                // A structurally recognisable but expired/out-of-range incoming
+                // share gets an explicit rejection, not a disconnection that
+                // would disrupt all other Node capabilities and deliveries.
+                incomingDeviceShareRequestId(text)?.let { requestId ->
+                    webSocket.send(incomingDeviceShareResponse(requestId, IncomingShareOutcome.EXPIRED))
+                    return
+                }
                 val shareReply = parseShareReply(text)
                 val directoryReply = parseRecipientsReply(text)
                 if (shareReply != null || directoryReply != null) {
@@ -83,7 +98,7 @@ internal class AtlasTransport {
                     directoryReply?.let(onRecipientsReply)
                     return
                 }
-                // Android is sender-only: no incoming Workspace or device commands.
+                // Reject malformed deliveries and all Workspace/unsupported commands.
                 webSocket.close(1008, "Unsupported request")
                 listener(ConnectionEvent.Offline("Unsupported server request."))
             }

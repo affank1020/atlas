@@ -23,6 +23,9 @@ class SharesheetUiTest {
     private var state by mutableStateOf(CompanionSession())
     private var selected by mutableStateOf("")
     private var refreshCooldown by mutableStateOf(false)
+    private var incoming by mutableStateOf<IncomingDeviceShare?>(null)
+    private var copied = false
+    private var declined = false
     private val senderNode = StoredNode("https://atlas.example.com",
         "123e4567-e89b-42d3-a456-426614174000", "a".repeat(43), "Samsung")
     private val mac = ShareRecipient("123e4567-e89b-42d3-a456-426614174002", "MacBook", "darwin", "online", true)
@@ -54,6 +57,9 @@ class SharesheetUiTest {
                 sharePending = false,
                 onSend = {},
                 onLoadDeferredShare = { state = state.loadDeferredShare() },
+                incomingShare = incoming,
+                onCopyIncoming = { copied = true; incoming = null },
+                onDeclineIncoming = { declined = true; incoming = null },
             )
         }
     }
@@ -107,5 +113,26 @@ class SharesheetUiTest {
         compose.onNodeWithTag("tab-settings").performClick()
         compose.onNodeWithTag("tab-send").performClick()
         compose.onNodeWithTag("share-draft").assertTextContains("local draft")
+    }
+
+    @Test fun incomingCopyRequiresExplicitConsentAndDeclineDoesNotCopy() {
+        copied = false
+        declined = false
+        mount(ready = true)
+        val incomingItem = IncomingDeviceShare(
+            "123e4567-e89b-42d3-a456-426614174009",
+            "123e4567-e89b-42d3-a456-426614174010",
+            "123e4567-e89b-42d3-a456-426614174011",
+            "Test text from Mac", System.currentTimeMillis() + 15_000L,
+        )
+        compose.runOnIdle { incoming = incomingItem }
+        compose.onNodeWithTag("incoming-decline").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertFalse(copied)
+            org.junit.Assert.assertTrue(declined)
+            incoming = incomingItem
+        }
+        compose.onNodeWithTag("incoming-copy").assertIsEnabled().performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(copied) }
     }
 }

@@ -1,16 +1,17 @@
-# Atlas Android Node (0.4.0 test build)
+# Atlas Android Node (0.5.0 development build)
 
 Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not** an Android port of the Atlas Web UI.
 
-## Current scope (v0.4.0)
+## Current scope (v0.5.0)
 
 - Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
 - One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated foreground WSS.
 - Android Sharesheet `text/plain` import with memory-only draft. The app sends **only** when the user chooses an approved receiving Node by name and taps **Send**.
-- Advertises `device.share.send` only. Recipient directory is sender-scoped and unauthorised/offline targets are not selectable. Server reauthorises each share.
-- No Workspace capabilities, receiving inbox, file transfer, automatic send, blanket clipboard permission or background service.
+- Advertises `device.share.send` and foreground-only `device.share.receive`. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
+- Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or background receiver.
+- No Workspace capabilities, persistent inbox/history, file transfer, automatic send, blanket clipboard permission or background service.
 
-This is a **test build**, not a production-ready mobile Node. Real Samsung → Mac acceptance and a maintained production signing/release process are outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
+This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, Android inbound physical acceptance, Mac sender, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
 ## Develop / sideload
 
@@ -34,9 +35,10 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 
 1. Typed device capability contracts, authenticated routing and targeted authorization — implemented.
 2. One-time ticket enrolment, encrypted identity and foreground Node registration — implemented.
-3. Opt-in Mac receiver, directional managed approvals and explicit Android text send — implemented, pending physical verification.
+3. Opt-in Mac receiver, directional managed approvals and explicit Android text send — implemented; first real Samsung → Mac copy confirmed.
 4. Approved receiver discovery by name — implemented in Android 0.4.0.
-5. **Next gate:** Samsung → Mac accept/decline, Unicode, offline/reconnect and revocation [E2E checks](../../docs/MOBILE_SHARE_E2E.md). Durable inbox, background delivery and file transfers remain outside this slice.
+5. Foreground Android Copy/Decline receiver — implemented in 0.5.0; requires physical device tests and a new Mac-side sender to complete the reverse path.
+6. **Next gate:** Mac → Android explicit sender and physical acceptance; complete the remaining Samsung → Mac [E2E cases](../../docs/MOBILE_SHARE_E2E.md). Durable inbox, background delivery and file transfers remain outside this slice.
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
@@ -63,13 +65,14 @@ Android now accepts one-use enrolment tickets from Atlas Web, sends a strictly H
 `POST /node/enrol`, encrypts the resulting Node UUID/credential with an Android
 Keystore AES-GCM key, and connects over authenticated WSS using protocol 2.
 The initial pairing milestone registered with **no device/workspace capabilities**.
-Android 0.4.0 now advertises only `device.share.send`, never Workspace access
-or a receiving capability.
+Android 0.4.0 advertised only `device.share.send`. Android 0.5.0 also offers
+`device.share.receive` while its foreground-only Node socket is active;
+neither version offers Workspace access.
 
 The WebSocket is foreground-only, with bounded reconnect/backoff; backgrounding
 the app disconnects it and status reflects that. The user can clear credentials
-locally, but must revoke the Node separately in Atlas Web. Android 0.4.0 can
-send explicit text shares **only** when the Server authorises the directional
+locally, but must revoke the Node separately in Atlas Web. Android can send
+explicit text shares **only** when the Server authorises the directional
 pair and the target is ready to receive.
 
 The Node must be accessed via a publicly trusted HTTPS origin. Local debug
@@ -139,3 +142,24 @@ explicit and re-authorised against current policy by the relay.
 The server rate-limits directory reads per authenticated socket and never
 persists contents or directory responses. Re-enrolment and Node updates still
 require normal trusted APK signing and end-to-end device testing.
+
+## 0.5.0 — Foreground Android text receiver
+
+The Node socket registers `device.share.receive` alongside send while the app is
+open. The server must independently approve the **sender → Android** pair.
+A strict, bounded incoming text request triggers an ephemeral Compose dialog
+with a sender ID preview and **Copy** / **Decline** actions on any app tab.
+No content is written to the clipboard or acknowledged as accepted until
+the Android user explicitly selects Copy and the clipboard API returns.
+Decline, dismissal, expiry (at most 15 seconds), copying errors, backgrounding
+and disconnection fail closed; second concurrent incoming requests are rejected.
+The Inbox tab shows only status, **not stored message content/history**.
+
+The existing signed development APK may be upgraded using `adb install -r`
+when the locally retained `~/.android/debug.keystore` signing identity matches;
+keep the Android Node enrollment and credentials intact. Bumping
+`versionCode` to 5 is required for this installable update. Do not reinstall
+a CI-signed APK over the enrolled device.
+
+A Mac-side explicit sender has **not** yet been implemented, so the reverse
+direction is not end-to-end ready merely because Android advertises receiving.
