@@ -78,3 +78,11 @@ test('opt-in mock transport never calls the network', async () => {
     await expect(callTool('create_project', { name: 'No' })).rejects.toThrow(/unavailable in local mock mode/);
     vi.resetModules();
 });
+
+test('demo Linux Node reads empty update intents without permitting mutation', () => {
+    const node = mockTool<Array<{ id: string; name: string }>>('list_nodes').find(item => item.name === 'Demo Linux VPS');
+    expect(node).toBeDefined();
+    expect(mockTool<unknown[]>('list_node_update_intents', { nodeId: node!.id, limit: 20 })).toEqual([]);
+    expect(() => mockTool('prepare_node_update', { nodeId: node!.id })).toThrow(/unavailable in local mock mode/);
+    expect(() => mockTool('cancel_node_update_intent', { nodeId: node!.id })).toThrow(/unavailable in local mock mode/);
+});
