@@ -10,7 +10,7 @@ Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not**
 - Advertises `device.share.send` only. Recipient directory is sender-scoped and unauthorised/offline targets are not selectable. Server reauthorises each share.
 - No Workspace capabilities, receiving inbox, file transfer, automatic send, blanket clipboard permission or background service.
 
-This is a **test build**, not a production-ready mobile Node. Real Samsung → Mac acceptance and stable signing are outstanding. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
+This is a **test build**, not a production-ready mobile Node. Real Samsung → Mac acceptance and a maintained production signing/release process are outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
 ## Develop / sideload
 
