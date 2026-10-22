@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
 import test from 'node:test';
 import type { Pool } from 'pg';
-import { ObjectNotFound, R2ObjectStore } from '../apps/server/src/server/file-storage.js';
+import { LocalObjectStore, ObjectNotFound, R2ObjectStore } from '../apps/server/src/server/file-storage.js';
 import {
-    parseR2SeedArgs, seedR2Backup, R2_SEED_CONFIRMATION,
+    createR2SeedPrimarySource, parseR2SeedArgs, seedR2Backup, R2_SEED_CONFIRMATION,
     type SeedStore,
 } from '../apps/server/src/server/r2-backup-seeding.js';
 
@@ -234,4 +237,148 @@ test('signed R2 conditional PUT sends If-None-Match as a signed header and respe
     await assert.rejects(client.putIfAbsent('unsafe/key',Buffer.from('test bytes'),'application/octet-stream'),/Invalid Atlas media object key/);
     await assert.rejects(client.putIfAbsent(row.storage_key,Buffer.alloc(0),'application/octet-stream'),/Invalid bounded/);
     assert.equal(requests.length,3,'invalid writes must not reach the network');
+});
+
+const sampleR2Config = {
+    endpoint: 'https://0123456789abcdef.r2.cloudflarestorage.com/',
+    bucket: 'atlas-backup',
+    accessKeyId: 'test-backup-id', secretAccessKey: 'test-backup-secret',
+};
+const xmlError = (code: string) =>
+    new Response('<?xml version="1.0" encoding="UTF-8"?><Error><Code>' +
+        code + '</Code><Message>R2 error</Message></Error>', {
+        status: 404, headers: { 'content-type': 'application/xml' },
+    });
+
+test('404 NoSuchBucket aborts dry-run; only 404 NoSuchKey is confirmed object absence',async()=>{
+    const bytes=Buffer.from('committed primary object'), row=file(bytes);
+    let responseCode='NoSuchBucket';
+    const backup=new R2ObjectStore(sampleR2Config,(async(_,init)=>{
+        assert.equal(init?.method,'GET');
+        return xmlError(responseCode);
+    }) as typeof fetch);
+    const primary=store(new Map([[row.storage_key,bytes]]),[]);
+    await assert.rejects(seedR2Backup({
+        database:database([row]).db,primary,backup,
+    }),/not a confirmed missing key/);
+    responseCode='NoSuchKey';
+    const dry=await seedR2Backup({
+        database:database([row]).db,primary,backup,
+    });
+    assert.equal(dry.status,'ready');
+    assert.equal(dry.planned,1);
+    for (const body of [
+        '', '<Error><Code>NoSuchBucket</Code></Error>',
+        '<Error><Code>AccessDenied</Code></Error>',
+        '<html><Code>NoSuchKey</Code></html>',
+        '<Error><Code>NoSuchKey</Code>',
+    ]) {
+        const malformed = new R2ObjectStore(sampleR2Config,
+            (async()=>new Response(body,{status:404})) as typeof fetch);
+        await assert.rejects(malformed.getBounded(row.storage_key,1024));
+    }
+    const giant = new R2ObjectStore(sampleR2Config,
+        (async()=>new Response('X'.repeat(8193),{status:404})) as typeof fetch);
+    await assert.rejects(giant.getBounded(row.storage_key,1024),/size limit/);
+    const noContentLength = new R2ObjectStore(sampleR2Config,
+        (async()=>new Response(null,{status:404})) as typeof fetch);
+    await assert.rejects(noContentLength.getBounded(row.storage_key,1024),/no error body/);
+});
+
+test('legacy committed File stored only on local disk is seeded using bounded fallback',async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'atlas-r2-seed-legacy-'));
+    try {
+        const bytes=Buffer.from('legacy local file, absent from primary R2');
+        const row=file(bytes);
+        await writeFile(path.join(root,row.storage_key),bytes);
+        const calls:string[]=[];
+        const remote=new R2ObjectStore(sampleR2Config,(async(_,init)=>{
+            calls.push(String(init?.method));
+            return xmlError('NoSuchKey');
+        }) as typeof fetch);
+        const source=createR2SeedPrimarySource(remote,new LocalObjectStore(root));
+        const backupBytes=new Map<string,Buffer>();
+        const writes:string[]=[];
+        const args={database:database([row]).db,primary:source,backup:store(backupBytes,[],writes)};
+        const dry=await seedR2Backup(args);
+        assert.equal(dry.status,'ready');
+        assert.equal(dry.planned,1);
+        assert.deepEqual(writes,[]);
+        const result=await seedR2Backup({...args,apply:true});
+        assert.equal(result.status,'completed');
+        assert.equal(result.createdVerified,1);
+        assert.deepEqual(backupBytes.get(row.storage_key),bytes);
+        assert.deepEqual(writes,[row.storage_key]);
+        assert.deepEqual(calls,['GET','GET']);
+    } finally {
+        await rm(root,{recursive:true,force:true});
+    }
+});
+
+test('local fallback fails closed for oversized bytes, corrupt data and symlink entries',async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'atlas-r2-seed-guards-'));
+    try {
+        const bytes=Buffer.from('trusted'), row=file(bytes);
+        const local=new LocalObjectStore(root);
+        await writeFile(path.join(root,row.storage_key),Buffer.from('tampered'));
+        const source=createR2SeedPrimarySource({
+            getBounded:async()=>{throw new ObjectNotFound();},
+        },local);
+        const backup=store(new Map(),[]);
+        const corrupted=await seedR2Backup({
+            database:database([row]).db,primary:source,backup,
+        });
+        assert.equal(corrupted.status,'failed');
+        assert.equal(corrupted.primaryCorrupt,1);
+
+        await writeFile(path.join(root,row.storage_key),Buffer.alloc(26*1024*1024));
+        await assert.rejects(seedR2Backup({
+            database:database([row]).db,primary:source,backup,
+        }),/bounded regular file/);
+
+        await rm(path.join(root,row.storage_key));
+        const target=path.join(root,'private-outside-allowed-key');
+        await writeFile(target,bytes);
+        await symlink(target,path.join(root,row.storage_key));
+        await assert.rejects(local.getBounded(row.storage_key,25*1024*1024));
+        await rm(path.join(root,row.storage_key));
+
+        await assert.rejects(local.getBounded('invalid/../../secret',1024),/Invalid Atlas media object key/);
+        await assert.rejects(local.getBounded(row.storage_key,0),/Invalid bounded/);
+        await assert.rejects(local.getBounded(row.storage_key,25*1024*1024),ObjectNotFound);
+    } finally {
+        await rm(root,{recursive:true,force:true});
+    }
+});
+
+test('R2 primary bucket errors never cause unsafe fallback to a local copy',async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'atlas-r2-seed-infra-'));
+    try {
+        const bytes=Buffer.from('locally present but remote configuration is broken');
+        const row=file(bytes);
+        await writeFile(path.join(root,row.storage_key),bytes);
+        const remote=new R2ObjectStore(sampleR2Config,
+            (async()=>xmlError('NoSuchBucket')) as typeof fetch);
+        const source=createR2SeedPrimarySource(remote,new LocalObjectStore(root));
+        const writes:string[]=[];
+        await assert.rejects(seedR2Backup({
+            database:database([row]).db,primary:source,backup:store(new Map(),[],writes),
+            apply:true,
+        }),/not a confirmed missing key/);
+        assert.deepEqual(writes,[]);
+    } finally {
+        await rm(root,{recursive:true,force:true});
+    }
+});
+
+test('missing legacy storage root is inconclusive, not silently primaryMissing',async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'atlas-r2-seed-unmounted-'));
+    await rm(root,{recursive:true,force:true});
+    const row=file();
+    const source=createR2SeedPrimarySource({
+        getBounded:async()=>{throw new ObjectNotFound();},
+    },new LocalObjectStore(root));
+    await assert.rejects(seedR2Backup({
+        database:database([row]).db,primary:source,backup:store(new Map(),[]),
+    }),{code:'ENOENT'});
 });
