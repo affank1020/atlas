@@ -37,6 +37,12 @@ describe('Monitoring deep links', () => {
             .toEqual({ tab: 'logs', filters: { nodeId: 'n' } });
         expect(parseMonitoringHash('#/monitoring?tab=overview&live=1').filters).toEqual({});
     });
+    it('does not enable live mode on historical pages', () => {
+        expect(parseMonitoringHash('#/monitoring?tab=activity&offset=30&live=1').filters)
+            .toEqual({ offset: '30' });
+        expect(parseMonitoringHash('#/monitoring?tab=activity&offset=0&live=1').filters)
+            .toEqual({ offset: '0', live: '1' });
+    });
     it('defaults unknown tabs to Overview', () => {
         expect(parseMonitoringHash('#/monitoring?tab=other')).toEqual({ tab: 'overview', filters: {} });
     });
