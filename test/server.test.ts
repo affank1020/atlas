@@ -12,7 +12,7 @@ test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () =
     const fixture = await databaseFixture(); await fixture.store.close(); const http = createAtlasHttpServer({ databaseUrl: fixture.databaseUrl, nodeExecution: 'remote' }); http.listen(0, "127.0.0.1"); await once(http, "listening");
     const address = http.address(); if (!address || typeof address === "string") throw new Error("No address");
     const client = new Client({ name: "test", version: "1" }); await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
-    const names = (await client.listTools()).tools.map((x) => x.name); assert.ok(names.includes("create_record")); assert.ok(names.includes("query_records")); assert.ok(names.includes("ask_atlas")); assert.ok(names.includes("ask_portfolio")); assert.ok(names.includes("sync_portfolio")); assert.ok(names.includes("get_contentful_status")); assert.ok(names.includes("query_monitoring_activity")); assert.ok(names.includes("read_server_diagnostics")); assert.ok(names.includes("search_atlas")); assert.ok(names.includes("request_context")); assert.ok(!names.includes("ingest_conversation"));
+    const names = (await client.listTools()).tools.map((x) => x.name); assert.ok(names.includes("create_record")); assert.ok(names.includes("query_records")); assert.ok(names.includes("ask_atlas")); assert.ok(names.includes("ask_portfolio")); assert.ok(names.includes("sync_portfolio")); assert.ok(names.includes("get_contentful_status")); assert.ok(names.includes("query_monitoring_activity")); assert.ok(names.includes("read_server_diagnostics")); assert.ok(names.includes("get_monitoring_health")); assert.ok(names.includes("search_atlas")); assert.ok(names.includes("request_context")); assert.ok(!names.includes("ingest_conversation"));
     const status = await client.callTool({ name: "get_atlas_status", arguments: {} }); assert.equal((status.structuredContent as any).result.version, "2.0.0"); assert.deepEqual((status.structuredContent as any).result.subsystems.fabric,{status:"active",visibility:"public"});
     const activityHttp = await fetch(`http://127.0.0.1:${address.port}/api/tools/query_monitoring_activity`, {
         method: "POST", headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" },
@@ -24,6 +24,27 @@ test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () =
     assert.ok(Array.isArray(activityPage.items));
     const mcpActivity = await client.callTool({ name: "query_monitoring_activity", arguments: { groupOperations: true, limit: 1 } });
     assert.equal(typeof (mcpActivity.structuredContent as any).result.total, 'number');
+    const healthHttp = await fetch(`http://127.0.0.1:${address.port}/api/tools/get_monitoring_health`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-atlas-client': 'Atlas Web' },
+        body: '{}',
+    });
+    assert.equal(healthHttp.status, 200);
+    const health = await healthHttp.json() as any;
+    assert.equal(health.server.database.status, 'reachable');
+    assert.equal(health.server.status, 'healthy');
+    assert.ok(['healthy', 'unknown', 'degraded'].includes(health.overall));
+    assert.equal(health.nodes.available, true);
+    assert.ok(!JSON.stringify(health).includes('credentialUpdatedAt'));
+    const healthMcp = await client.callTool({ name: 'get_monitoring_health', arguments: {} });
+    assert.equal((healthMcp.structuredContent as any).result.server.database.status, 'reachable');
+    const invalidHealth = await fetch(`http://127.0.0.1:${address.port}/api/tools/get_monitoring_health`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client: 'forged' }),
+    });
+    assert.equal(invalidHealth.status, 400);
+    const crossOriginHealth = await fetch(`http://127.0.0.1:${address.port}/api/tools/get_monitoring_health`, {
+        method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.example' }, body: '{}',
+    });
+    assert.equal(crossOriginHealth.status, 403);
     const diagnosticsHttp = await fetch(`http://127.0.0.1:${address.port}/api/tools/read_server_diagnostics`, {
         method: "POST", headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" }, body: JSON.stringify({ limit: 10 }),
     });
