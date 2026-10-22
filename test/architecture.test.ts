@@ -103,7 +103,8 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
     try {
         await server.connect(a); await client.connect(b);
         const { tools } = await client.listTools();
-        const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node'];
+        const v2 = ['create_node_enrolment', 'update_node', 'rotate_node_credential', 'revoke_node', 'assign_workspace_node',
+            'list_node_share_approvals', 'update_node_share_approval'];
         const additivePortfolio = ['patch_portfolio_entry', 'preview_portfolio_entry', 'set_portfolio_media'];
         const gitWrites = ['workspace_git_create_branch', 'workspace_git_switch_branch', 'workspace_git_stage', 'workspace_git_commit', 'workspace_git_push_branch', 'workspace_git_open_pull_request'];
         // Checkout-aware tools now expose an additive checkoutId selector.
@@ -157,7 +158,7 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         assert.deepEqual(storageUsage.inputSchema.properties?.refresh, { type: 'boolean' });
         assert.deepEqual(tools.filter(tool => additivePortfolio.includes(tool.name)).map(tool => tool.name), additivePortfolio);
         assert.deepEqual(tools.filter(tool => ['list_applications', 'list_all_applications', 'get_application'].includes(tool.name)).map(tool => tool.name), ['list_applications', 'list_all_applications', 'get_application']);
-        assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name), v2);
+        assert.deepEqual(tools.filter(tool => v2.includes(tool.name)).map(tool => tool.name).sort(), [...v2].sort());
         assert.deepEqual(tools.filter(tool => gitWrites.includes(tool.name)).map(tool => tool.name), gitWrites);
         assert.deepEqual(tools.filter(tool => ['list_nodes', 'get_node', 'read_node_logs', 'workspace_list_dev_tasks', 'workspace_run_dev_task'].includes(tool.name)).map(tool => tool.name), ['workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_nodes', 'get_node', 'read_node_logs']);
     } finally { await client.close(); await server.close(); }

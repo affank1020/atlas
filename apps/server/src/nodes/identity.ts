@@ -58,6 +58,9 @@ export class NodeIdentity {
             const result = await db.query("UPDATE nodes SET credential_hash=NULL,credential_state='revoked',credential_updated_at=now(),updated_at=now() WHERE id=$1 RETURNING id", [id]);
             if (!result.rowCount) throw new AtlasError('Node not found.', 'NOT_FOUND');
             await db.query('UPDATE node_enrolments SET used_at=now() WHERE node_id=$1 AND used_at IS NULL', [id]);
+            // Revocation also removes persistent incoming/outgoing share approvals.
+            // Avoid silently re-enabling grants if this identity is later re-enrolled.
+            await db.query('DELETE FROM node_share_approvals WHERE source_node_id=$1 OR target_node_id=$1', [id]);
             await this.audit(db, 'node.credential_revoked', { nodeId: id });
         });
         this.disconnect(id);
@@ -82,5 +85,15 @@ export class NodeIdentity {
             return { workspaceId: input.workspaceId, nodeId: input.nodeId };
         });
     }
-    async activity(id: string) { return (await this.pool.query("SELECT operation,created_at AS \"createdAt\",after_state AS details FROM audit_events WHERE after_state->>'nodeId'=$1 OR after_state->>'previousNodeId'=$1 ORDER BY created_at DESC LIMIT 20", [id])).rows; }
+    async activity(id: string) {
+        return (await this.pool.query(`
+            SELECT operation,created_at AS "createdAt",after_state AS details
+            FROM audit_events
+            WHERE after_state->>'nodeId'=$1
+               OR after_state->>'previousNodeId'=$1
+               OR (operation IN ('node.share.approved','node.share.revoked')
+                   AND (after_state->>'sourceNodeId'=$1 OR after_state->>'targetNodeId'=$1))
+            ORDER BY created_at DESC LIMIT 20
+        `, [id])).rows;
+    }
 }

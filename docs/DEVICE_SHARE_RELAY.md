@@ -4,13 +4,14 @@ Atlas Node protocol v2 can now carry small user-selected text between authentica
 Node WebSockets, **but the relay is disabled by default**. This is only a
 transport layer, not a user-ready clipboard or file sharing feature.
 
-## Admin approval (temporary configuration)
+## Admin approval
 
-Use `ATLAS_DEVICE_SHARE_PAIRS=sourceNodeUUID:targetNodeUUID` to explicitly
-permit a *directional* source to receiver pair. Multiple pairs are comma separated.
-No wildcard or blanket permission; an unset setting permits no shares.
-The Server must restart to apply changed pair policy. A managed permission UI
-will replace this operator setting in a later PR.
+Use **Atlas Web → Nodes → select sending Node → Device sharing** to grant
+or revoke one receiver at a time. Approvals are durable, directional, audited
+and enforced per submission; managed changes take effect without a restart.
+The default remains deny-all. Legacy `ATLAS_DEVICE_SHARE_PAIRS` grants remain
+supported but are shown read-only in the UI, and require editing the server
+environment followed by restart to remove. See [Node sharing permissions](./NODE_SHARE_PERMISSIONS.md).
 
 The sending Node must advertise `device.share.send` and have a currently
 authenticated session; target must be currently connected and advertise
@@ -35,9 +36,9 @@ delivery; there is **no automatic clipboard access**.
 
 - **Replay state is volatile**: server restarts lose dedupe history. Before
   enabling sensitive or unattended transfer, persist delivery IDs or require
-  receiver-side durable deduplication, along with a user-managed pair policy.
+  receiver-side durable deduplication.
 - No offline queue, no resume, no permanent inbox, no file streaming.
-- Current Mac and Android runtimes advertise no share capabilities by default,
-  so even configuring a pair cannot deliver content without a separately
-  reviewed recipient approval UI and sender code.
+- Android 0.3.0 offers a foreground-only explicit Send action; its target Node
+  UUID is currently entered manually. Mac `device.share.receive` remains
+  opt-in and requires approval in the active GUI session.
 - Tests use authenticated simulated Node WebSockets and do not require Samsung.

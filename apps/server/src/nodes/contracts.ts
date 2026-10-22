@@ -1,6 +1,10 @@
 import { z } from 'zod';
 export const nodeSchemas = {
     list_nodes: z.object({}).strict(),
+    list_node_share_approvals: z.object({}).strict(),
+    update_node_share_approval: z.object({
+        sourceNodeId: z.string().uuid(), targetNodeId: z.string().uuid(), enabled: z.boolean(),
+    }).strict(),
     list_node_releases: z.object({ refresh: z.boolean().optional() }).strict(),
     plan_node_update: z.object({ nodeId: z.string().uuid(), refresh: z.boolean().optional() }).strict(),
     prepare_node_update: z.object({

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
+import { NodeSharePermissions } from './NodeSharePermissions';
 import { NodeSoftwareSummary } from './NodeSoftware';
 import './workspaces.css';
 export type AtlasNode = {
@@ -239,5 +240,6 @@ export function Nodes() {
         </div>
         {selected && <NodeDetails key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
             detailError={detailError} loading={detailLoading} />}
+        {selected && <NodeSharePermissions key={'sharing-' + selected.id} source={selected} nodes={nodes} />}
     </div>;
 }

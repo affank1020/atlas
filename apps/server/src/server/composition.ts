@@ -1,5 +1,6 @@
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { NodeIdentity } from '../nodes/identity.js';
+import { NodeShareApprovals } from '../nodes/share-approvals.js';
 import { NodeService } from '../nodes/service.js';
 import { NodeUpdateIntentLedger } from '../nodes/update-intents.js';
 import { NodeRouter } from '../nodes/router.js';
@@ -43,14 +44,15 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const identity = new NodeIdentity(repository.pool);
     const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
-    const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity, new NodeUpdateIntentLedger(repository.pool));
-    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs);
+    const shareApprovals = new NodeShareApprovals(repository.pool, config.deviceShares.approvedPairs);
+    const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files]);
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football)]);
-    const services = { config, catalog, storageUsage, nodes, identity, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, catalog, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

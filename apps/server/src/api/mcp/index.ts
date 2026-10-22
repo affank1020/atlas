@@ -21,7 +21,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
     const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => server.registerTool(name,
       { description, inputSchema, ...(oauthScope ? { securitySchemes: [{ type: 'oauth2' as const, scopes: [oauthScope] }] } : {}) },
-      async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
+      async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp')); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
 
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
     // Register the active generalist evaluation flow first, without bypassing the
@@ -47,6 +47,8 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
 
     const nodeDescriptions: Record<NodeToolName, string> = {
         list_nodes: 'List persistent Nodes with live status, capabilities, credential state and Workspace counts.',
+        list_node_share_approvals: 'List approved directional text-sharing pairs; environment grants are read-only.',
+        update_node_share_approval: 'Approve or revoke directional Node text sharing, requiring active credentials on approval.',
         list_node_releases: 'Discover verified, published macOS and Linux Node releases; no deployment is performed.',
         plan_node_update: 'Read-only compatibility and provenance preflight for one Linux Node. NEVER installs, restarts or authorises a Node update.',
         prepare_node_update: 'Record an expiring, NON-EXECUTABLE Linux Node update request after a fresh immutable-release preflight. Does not approve, install or restart any Node.',
