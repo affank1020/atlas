@@ -291,5 +291,5 @@ test('logical Workspace Activity deep links send server-side logical scope witho
         { logicalWorkspaceId, offset: 0, limit: 30, groupOperations: true, safeDetails: true },
         expect.any(AbortSignal)));
     expect(screen.getByRole('textbox', { name: 'Logical Workspace ID' })).toHaveValue(logicalWorkspaceId);
-    expect(screen.getByText('0 operations')).toBeInTheDocument();
+    expect(await screen.findByText(/0 operations · Filtered on the server/)).toBeInTheDocument();
 });
