@@ -91,7 +91,15 @@ def hold_lifecycle_lock(path: Path = LIFECYCLE_LOCK, *, owner_uid: int = 0):
     parent = path.parent
     while True:
         info = parent.lstat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner_uid or stat.S_IMODE(info.st_mode) & 0o022:
+        # Ubuntu's standard /run/lock is root-owned but mode 01777.
+        # The sticky bit protects root-owned lock entries from replacement;
+        # the lock file itself must still be root-owned and not writable
+        # by unprivileged processes. Never extend this to arbitrary /tmp.
+        sticky_system_lock = (parent == Path("/run/lock") and
+                              path == LIFECYCLE_LOCK and
+                              bool(info.st_mode & stat.S_ISVTX))
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != owner_uid or
+                (stat.S_IMODE(info.st_mode) & 0o022 and not sticky_system_lock)):
             raise Refused("Lifecycle lock parent is not root controlled.")
         if parent == parent.parent:
             break
