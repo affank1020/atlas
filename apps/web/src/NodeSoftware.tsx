@@ -27,6 +27,9 @@ export type NodeUpdateIntent = {
     status: 'requested' | 'cancelled' | 'expired' | 'claimed';
     createdAt: string; expiresAt: string;
     approved: false; executable: false;
+    reportedOutcome?: { intentId: string; nodeId: string;
+        reportedState: 'activated' | 'requires_reconciliation';
+        reportedAt: string; verified: false; clearsClaim: false };
 };
 
 export type LinuxNodeUpdatePlan = {
@@ -153,7 +156,9 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         // reported version or connection snapshot. Reconcile while a request
         // is pending; otherwise the operator sees a stale Cancel button.
         // Background polls leave the current status visible while fetching.
-        if (node.platform !== 'linux' || intentStatus !== 'requested') return;
+        if (node.platform !== 'linux' ||
+            (intentStatus !== 'requested' &&
+                !(intentStatus === 'claimed' && !storedIntent?.reportedOutcome))) return;
         let inFlight = false;
         const interval = window.setInterval(() => {
             if (inFlight || intentMutationBusy.current) return;
@@ -161,7 +166,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             void refreshIntents(node.id, true).finally(() => { inFlight = false; });
         }, 5_000);
         return () => window.clearInterval(interval);
-    }, [node.id, nodeSnapshot, intentStatus]);
+    }, [node.id, nodeSnapshot, intentStatus, Boolean(storedIntent?.reportedOutcome)]);
 
     useEffect(() => {
         if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
@@ -282,6 +287,12 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
                     {' '}{intentStatus === 'claimed'
                         ? 'Reserved by the Node identity. This is not a host approval or proof of installation; reconciliation is required before preparing another update.'
                         : 'Not approved. No installation or restart will occur.'}</p>
+                {intentStatus === 'claimed' && storedIntent.reportedOutcome && <p>
+                    Host-reported outcome: {storedIntent.reportedOutcome.reportedState === 'activated'
+                        ? 'activation reported' : 'requires reconciliation'}.
+                    {' '}<strong>Unverified Node-credential report.</strong> It does not prove host execution,
+                    release health or administrator approval, and does not clear the update lock.
+                </p>}
                 {intentStatus === 'requested' &&
                     <button type="button" className="ghost" disabled={currentIntent?.busy === true || currentIntent?.loading === true} onClick={cancelIntent}>
                         Cancel update request
