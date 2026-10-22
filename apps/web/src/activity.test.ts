@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clientName, filterActivity, presentActivity } from './activity';
+import { clientName, filterActivity, presentActivity, safeMonitoringEvent } from './activity';
 import type { AuditEvent } from './types';
 export const event = (id: string, operation: string, resulting: unknown = {}, extra: Partial<AuditEvent> = {}): AuditEvent => ({ id, operation, resulting, occurredAt: '2026-10-06T19:52:37Z', client: 'chatgpt', projectId: 'project', workspaceId: 'workspace', ...extra });
 describe('activity presentation', () => {
@@ -93,4 +93,22 @@ it('sorts correlated activity by latest member time, not selected failure eviden
         description: 'Rejected',
     });
     expect(items[1].timestamp).toBe('2026-10-22T08:01:00Z');
+});
+
+
+describe('safe Monitoring projection for mixed Web/Server versions', () => {
+    it('drops nested or arbitrary audit payloads without affecting the original event', () => {
+        const original = event('a', 'workspace.mutation_failed', {
+            attemptId: 'run-1', operation: 'workspace.git_status',
+            nodeId: '33333333-3333-4333-8333-333333333333',
+            outcome: 'failed', error: 'SECRET_ERROR',
+            nested: { credential: 'SECRET_NESTED' }, path: '/private/SECRET_PATH',
+        }, { previous: { token: 'SECRET_PREVIOUS' } });
+        const safe = safeMonitoringEvent(original);
+        expect(safe.resulting).toEqual({ attemptId: 'run-1', operation: 'workspace.git_status',
+            nodeId: '33333333-3333-4333-8333-333333333333', outcome: 'failed' });
+        expect(safe.previous).toBeUndefined();
+        expect(JSON.stringify(safe)).not.toContain('SECRET_');
+        expect(original.previous).toEqual({ token: 'SECRET_PREVIOUS' });
+    });
 });
