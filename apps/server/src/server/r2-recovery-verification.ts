@@ -44,6 +44,18 @@ export function loadRecoveryR2Config(env: NodeJS.ProcessEnv, primary: R2StorageC
     if (new URL(primary.endpoint).origin === new URL(backup.endpoint).origin &&
         primary.bucket === backup.bucket)
         throw new Error('Recovery bucket must differ from the primary bucket.');
+    // An account-level incident must not take out both primary and recovery.
+    // Compare Cloudflare account IDs rather than just endpoint origins: R2
+    // jurisdiction variants have distinct hostnames under the same account.
+    const accountId = (endpoint: string): string | null => {
+        let hostname: string;
+        try { hostname = new URL(endpoint).hostname; } catch { return null; }
+        return /^([a-f0-9]{16,64})\.(?:(?:eu|us|fedramp)\.)?r2\.cloudflarestorage\.com$/.exec(hostname)?.[1] ?? null;
+    };
+    const sourceAccount = accountId(primary.endpoint);
+    const backupAccount = accountId(backup.endpoint);
+    if (!sourceAccount || !backupAccount || sourceAccount === backupAccount)
+        throw new Error('Recovery R2 must use a separately identified Cloudflare account.');
     // A different bucket alone is not a separate recovery credential.
     // Refuse even partial credential reuse; a compromised or revoked source
     // credential must not also authorize a supposed recovery copy.
