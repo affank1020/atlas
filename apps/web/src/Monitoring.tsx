@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { callTool } from './api';
+import { callTool, IS_MOCK_MODE } from './api';
 import type { AuditEvent } from './types';
 import { ActivityRows } from './ActivityFeed';
 import { MonitoringOverview } from './Workspace';
@@ -241,7 +241,7 @@ function MonitoringHealthPanel() {
         {busy && !snapshot && <p role="status">Checking Server and Node health…</p>}
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
-            <p><span className={`badge ${badge(snapshot.overall)}`}>{snapshot.overall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · On-demand snapshot, not continuous monitoring</p>
+            <p><span className={`badge ${badge(snapshot.overall)}`}>{snapshot.overall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
             <div className="workspace-row"><span className="row-copy"><strong>Atlas Server · database</strong>
                 <small>{snapshot.server.database.status === 'reachable'
                     ? `Database query succeeded · ${snapshot.server.database.latencyMs ?? '—'} ms · Server uptime ${Math.floor(snapshot.server.uptimeSeconds / 60)} min`
