@@ -53,3 +53,55 @@ on the Mac GUI session; the test is skipped on normal Linux CI.
 **Physical Samsung → Mac acceptance:** follow [Mobile Share E2E](./MOBILE_SHARE_E2E.md)
 for the reviewed APK, opt-in configuration, explicit pairing, decline/revocation
 checks and safe rollback. This physical verification has not yet been recorded.
+
+## Mac → Android 0.5.0: explicit local clipboard sender (development)
+
+This is a **separate direction** from Android → Mac, and remains a physical
+acceptance candidate until verified on the Samsung. The Server still requires
+an **independent** Mac → Android managed sharing approval; granting Android →
+Mac does not imply the reverse permission.
+
+1. Install Android **0.5.0** from reviewed sources using the same local,
+   persistent debug signer as your enrolled 0.4.0 APK. Verify the APK signing
+   certificate before `adb install -r`; never use the CI-signed APK on an
+   enrolled tablet. Keep the tablet app in the foreground and confirm it
+   advertises `device.share.receive` in Atlas Web.
+2. In the Mac's private `apps/node/.env.node`, set
+   `ATLAS_NODE_SHARE_SEND_ENABLED=true`. Preserve Node UUID and credential.
+   Restart only the Mac Node with `./atlasctl restart`. Verify the Mac
+   advertises `device.share.send` alongside its existing capabilities.
+3. In Atlas Web → Nodes, select the **Mac sending Node** → Device sharing →
+   approve the Android receiving Node. This is a one-way Mac → Android grant.
+4. Copy harmless text or a link on Mac, then run `./atlasctl share` in an
+   **interactive Terminal** on that same Mac user session. It reads the
+   clipboard only on that explicit invocation (nothing is passed in CLI
+   arguments), lists **ready, approved** targets from the Server, and
+   requires choosing a number, then approving a **native macOS Send / Cancel**
+   dialog before submitting. The Node enforces this decision independently
+   even if a local process talks to the private socket directly.
+5. Keep the tablet app open. It should show a short-lived native dialog with
+   Copy / Decline. **Copy** writes the full plain text to Android's clipboard
+   and acknowledges; decline or 15s timeout must not alter the clipboard.
+   A disconnect, timeout or unknown result is unconfirmed: do not
+   automatically retry without checking the receiving device.
+6. Test Unicode, newlines, declined shares, backgrounded tablet, stale
+   directory approval and live revocation. Remove temporary managed grants
+   when done; set `ATLAS_NODE_SHARE_SEND_ENABLED=false` and restart the
+   Mac Node if sender access is no longer desired.
+
+Implementation details:
+- A 0600 UNIX socket under the user's 0700
+  `~/Library/Application Support/Atlas` directory forwards only a bounded
+  `recipients` or `send` request to the **existing, already authenticated**
+  Mac Node process. The Node itself requires macOS GUI confirmation before
+  sending, not merely CLI confirmation. No second Node registration or
+  credential handoff occurs.
+- The Node creates unique request and delivery IDs, correlates replies,
+  bounds timeouts/in-flight requests, and clears outstanding requests on
+  disconnection. The Server rechecks target capability and directional grant
+  for each send.
+- The command does **not** accept message contents in argv, save a draft,
+  log the clipboard, automatically send, or keep an offline queue.
+- The Android receiving dialog remains foreground-only and transient; no
+  persistent inbox, file transfer, or bidirectional clipboard sync is implied.
+

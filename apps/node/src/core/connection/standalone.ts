@@ -1,9 +1,12 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { AtlasError } from '@atlas/protocol/errors';
 import { MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION, nodeRequestSchema, registeredSchema, validateNodeOperation } from '@atlas/protocol/node-protocol';
 import { requiredCapability } from '@atlas/protocol/runtime';
-import { deviceShareDeliverySchema, deviceShareReceiptSchema } from '@atlas/protocol/device-protocol';
+import { deviceShareDeliverySchema, deviceShareReceiptSchema,
+    deviceShareRecipientsResultSchema, deviceShareTextSchema } from '@atlas/protocol/device-protocol';
+import { z } from 'zod';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 
 export interface StandaloneNodeConfig {
@@ -22,6 +25,10 @@ export class StandaloneNode extends EventEmitter {
     private running = false;
     private registered = false;
     private readonly inFlight = new Set<Promise<void>>();
+    private readonly outbound = new Map<string, {
+        resolve: (value: unknown) => void; reject: (reason: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+    }>();
     constructor(readonly config: StandaloneNodeConfig, readonly runtime: NodeRuntime & { close?: () => void }) { super(); }
     start() { if (this.running) return; this.running = true; this.connect(); }
     private connect() {
@@ -61,6 +68,25 @@ export class StandaloneNode extends EventEmitter {
                 clearTimeout(this.registrationTimer);
                 this.registered = true; this.reconnectAttempt = 0; this.errorReported = false; this.emit('online'); return;
             }
+            // Responses to local outbound requests share this same authenticated
+            // socket with incoming requests. Unsolicited/late replies are ignored.
+            if (message && typeof message === 'object' && 'type' in message &&
+                message.type === 'response') {
+                const reply = message as { requestId?: unknown; ok?: unknown; result?: unknown; error?: unknown };
+                if (typeof reply.requestId !== 'string') return;
+                const waiting = this.outbound.get(reply.requestId);
+                if (!waiting || socket !== this.socket) return;
+                this.outbound.delete(reply.requestId);
+                clearTimeout(waiting.timer);
+                if (reply.ok === true) waiting.resolve(reply.result);
+                else {
+                    const error = reply.error as { code?: unknown } | undefined;
+                    const code = typeof error?.code === 'string' && /^[A-Z_]{1,80}$/.test(error.code)
+                        ? error.code : 'SHARE_UNAVAILABLE';
+                    waiting.reject(new AtlasError('Atlas did not confirm the share request.', code));
+                }
+                return;
+            }
             const share = deviceShareDeliverySchema.safeParse(message);
             if (share.success) {
                 if (this.inFlight.size >= 32) { this.reply(socket, share.data.requestId, false, { code: 'NODE_BUSY', message: 'Node execution limit reached.' }); return; }
@@ -85,6 +111,7 @@ export class StandaloneNode extends EventEmitter {
             clearTimeout(this.registrationTimer);
             clearHeartbeat();
             if (this.socket !== socket) return;
+            this.rejectOutbound('NODE_DISCONNECTED');
             this.socket = undefined;
             const wasOnline = this.registered; this.registered = false;
             if (wasOnline) this.emit('offline');
@@ -142,6 +169,67 @@ export class StandaloneNode extends EventEmitter {
         if (socket.readyState !== WebSocket.OPEN) return;
         socket.send(JSON.stringify(ok ? { type: 'response', requestId, ok: true, result: payload } : { type: 'response', requestId, ok: false, error: payload }));
     }
+    /**
+     * Uses the already-registered Node identity and current WebSocket. No
+     * duplicate registration or direct credential handoff to the local CLI.
+     * The Server independently verifies directional approvals for every send.
+     */
+    private requestOutbound(kind: 'directory' | 'share', body: Record<string, unknown>): Promise<unknown> {
+        const socket = this.socket;
+        if (!this.running || !this.registered || !socket || socket.readyState !== WebSocket.OPEN ||
+            !this.runtime.getCapabilities().includes('device.share.send'))
+            return Promise.reject(new AtlasError('Mac Node sharing is offline or disabled.', 'SHARE_UNAVAILABLE'));
+        if (this.outbound.size >= 2)
+            return Promise.reject(new AtlasError('Another share operation is active.', 'SHARE_BUSY'));
+        const requestId = randomUUID();
+        const timeoutMs = kind === 'directory' ? 10_000 : 55_000;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.outbound.delete(requestId);
+                reject(new AtlasError('Share was not confirmed; do not automatically retry.', 'NODE_TIMEOUT'));
+            }, timeoutMs);
+            this.outbound.set(requestId, { resolve, reject, timer });
+            try {
+                socket.send(JSON.stringify({ ...body, requestId }), error => {
+                    if (!error) return;
+                    const pending = this.outbound.get(requestId);
+                    if (!pending) return;
+                    this.outbound.delete(requestId);
+                    clearTimeout(timer);
+                    reject(new AtlasError('Share could not be submitted.', 'NODE_DISCONNECTED'));
+                });
+            } catch {
+                this.outbound.delete(requestId);
+                clearTimeout(timer);
+                reject(new AtlasError('Share could not be submitted.', 'NODE_DISCONNECTED'));
+            }
+        });
+    }
+
+    async shareRecipients() {
+        const result = await this.requestOutbound('directory', { type: 'device.share.recipients' });
+        return deviceShareRecipientsResultSchema.parse(result).recipients;
+    }
+
+    async sendDeviceShare(targetNodeId: string, text: string): Promise<{ accepted: boolean }> {
+        const id = z.string().uuid().parse(targetNodeId);
+        const payload = deviceShareTextSchema.parse(text);
+        if (payload.trim().length === 0)
+            throw new AtlasError('Share text cannot be blank.', 'SHARE_INVALID');
+        const result = await this.requestOutbound('share', {
+            type: 'device.share.submit', deliveryId: randomUUID(), targetNodeId: id, text: payload,
+        });
+        return deviceShareReceiptSchema.parse(result);
+    }
+
+    private rejectOutbound(code: string) {
+        for (const [id, pending] of this.outbound) {
+            this.outbound.delete(id);
+            clearTimeout(pending.timer);
+            pending.reject(new AtlasError('Share result is unconfirmed after a disconnect.', code));
+        }
+    }
+
     private scheduleReconnect() {
         const delay = Math.min((this.config.reconnectMinMs ?? 250) * 2 ** Math.min(this.reconnectAttempt++, 8), this.config.reconnectMaxMs ?? 15_000);
         this.reconnectTimer = setTimeout(() => this.connect(), delay);
@@ -150,6 +238,7 @@ export class StandaloneNode extends EventEmitter {
         this.running = false;
         clearTimeout(this.reconnectTimer); clearTimeout(this.registrationTimer); clearInterval(this.heartbeatTimer); this.heartbeatTimer = undefined;
         this.runtime.close?.();
+        this.rejectOutbound('NODE_DISCONNECTED');
         const socket = this.socket;
         if (socket?.readyState === WebSocket.OPEN) socket.close(1000, 'Node shutdown');
         if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate();

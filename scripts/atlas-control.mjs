@@ -7,6 +7,7 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { shareFromMacClipboard } from "./atlas-mac-share.mjs";
 
 const testRoot = process.env.ATLAS_CONTROL_TEST_ROOT ? resolve(process.env.ATLAS_CONTROL_TEST_ROOT) : undefined;
 const atlasDir = testRoot ? join(testRoot, "repo") : resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -814,6 +815,7 @@ Usage:
   ./atlasctl up                Start only the MacBook Node for the hosted Server
   ./atlasctl down              Stop only the managed MacBook Node
   ./atlasctl restart           Restart only the managed MacBook Node
+  ./atlasctl share             Send clipboard text to an approved device (macOS opt-in)
   ./atlasctl dev up [--ask]    Start the legacy local development stack + MCP tunnel
   ./atlasctl dev down [--all]  Stop local dev services without stopping a hosted Node
   ./atlasctl dev restart       Restart the local development stack
@@ -968,6 +970,18 @@ switch (command) {
   case "down": if (!failDevFlag()) await down(false, true); break;
   case "restart":
     if (!failDevFlag() && !await restartHostedNode()) process.exitCode = 1;
+    break;
+  case "share":
+    if (argument) {
+      console.error("Usage: ./atlasctl share (no text or tokens in command arguments)");
+      process.exitCode = 2;
+      break;
+    }
+    try { await shareFromMacClipboard(); }
+    catch (error) {
+      console.error("Atlas share: " + (error instanceof Error ? error.message : "Operation failed."));
+      process.exitCode = 1;
+    }
     break;
   case "dev":
     switch (argument || "status") {

@@ -22,9 +22,12 @@ export class LocalNodeRuntime implements NodeRuntime {
     readonly adapters: Map<string, WorkspaceAdapter>;
     private readonly platform: NodeJS.Platform;
     private readonly shareReceiver?: MacShareReceiver;
+    private readonly shareSenderEnabled: boolean;
     constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>,
-        platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver) {
+        platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver,
+        shareSenderEnabled = false) {
         this.platform = platform;
+        this.shareSenderEnabled = platform === 'darwin' && shareSenderEnabled;
         this.shareReceiver = platform === 'darwin' ? shareReceiver : undefined;
         this.files = new WorkspaceFiles(roots);
         // The Linux Node is intentionally not a Unity/football host. A Linux
@@ -37,7 +40,8 @@ export class LocalNodeRuntime implements NodeRuntime {
         if (this.platform === 'linux') return [...shared, 'node.logs'];
         return [...shared, "workspace.dev", "football.training", "node.logs",
             ...(this.adapters.has("unity") ? ["unity" as const] : []),
-            ...(this.shareReceiver ? ["device.share.receive" as const] : [])];
+            ...(this.shareReceiver ? ["device.share.receive" as const] : []),
+            ...(this.shareSenderEnabled ? ["device.share.send" as const] : [])];
     }
     bind(rootPath: string) { return this.files.bind(rootPath); }
     async receiveDeviceShare(input: { deliveryId: string; sourceNodeId: string; text: string; expiresAt: string }) {

@@ -10,6 +10,7 @@ import { UnityAdapter, UnityCliConnection } from '../../capabilities/unity/unity
 import { StandaloneNode } from '../../core/connection/standalone.js';
 import { WorkspaceFiles } from '../../capabilities/workspace-files/files.js';
 import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
+import { startMacShareControlServer } from '../../capabilities/device-share/mac-sender-control.js';
 import { NodeOfflineFileQueue } from '../../core/file-queue.js';
 
 loadEnv({ path: process.env.ATLAS_NODE_ENV_FILE || '.env.node', quiet: true });
@@ -34,7 +35,8 @@ if (process.env.ATLAS_NODE_UNITY_ENABLED === '1') {
 // Opt-in, GUI-only capability; never enable this on a Linux/headless Node.
 const shareReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_SHARE_RECEIVE_ENABLED === 'true'
     ? new MacShareReceiver() : undefined;
-const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver);
+const shareSenderEnabled = process.platform === 'darwin' && process.env.ATLAS_NODE_SHARE_SEND_ENABLED === 'true';
+const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver, shareSenderEnabled);
 const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
 const offlineQueue = process.env.ATLAS_NODE_FILE_QUEUE_ENABLED === '1'
     ? new NodeOfflineFileQueue({nodeId:id,credential:token,serverUrl:serverUrl.toString()})
@@ -101,6 +103,14 @@ node.on('connectionError', (message: string) => {
 publishStatus();
 setInterval(publishStatus, 10_000).unref();
 node.start();
+// The Mac sender never opens a second Node connection or reads its credential.
+// A private local socket connects the explicit atlasctl share action to this
+// already-authenticated Node. Failure must not take down Workspace hosting.
+const shareControl = shareSenderEnabled
+    ? await startMacShareControlServer(node).catch(() => {
+        console.error('Atlas Mac sharing control is unavailable; check private local socket permissions.');
+        return undefined;
+    }) : undefined;
 let stopping = false;
 const stop = async () => {
     if (stopping) return;
@@ -113,6 +123,7 @@ const stop = async () => {
         try { await offlineQueue.stop(); }
         catch { console.error('Atlas Node failed to stop its offline queue cleanly; inspect the local lock.'); }
     }
+    await shareControl?.close().catch(() => undefined);
     await node.stop();
     process.exitCode = 0;
 };
