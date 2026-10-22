@@ -164,6 +164,7 @@ it('prepares a non-executable, expiring Linux intent only after explicit confirm
         });
         expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
         expect(screen.getByText(/Not approved. No installation or restart will occur/)).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled());
         fireEvent.click(screen.getByRole('button', { name: 'Cancel update request' }));
         expect(callTool).toHaveBeenCalledWith('cancel_node_update_intent', { nodeId: node.id, intentId: request.id });
         expect(await screen.findByText('Update request: cancelled')).toBeInTheDocument();
@@ -234,7 +235,7 @@ it('expires pending requests while the Software card is open, without a manual r
         status: 'requested' as const, targetVersion: release.version, targetCommit: release.commit,
         installedVersion: node.version, approved: false as const, executable: false as const,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 180).toISOString(),
+        expiresAt: new Date(Date.now() + 450).toISOString(),
     };
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'list_node_releases') return { state: 'ready', releases: [release], checkedAt: '' };
@@ -285,6 +286,6 @@ it('reconciles persisted intent after uncertain prepare result, even if eligibil
         saved = intent; // simulated server commit followed by lost response
         await act(async () => { rejectPrepare(new Error('Connection interrupted')); await pending.catch(() => undefined); });
         expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled();
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled());
     } finally { confirm.mockRestore(); }
 });
