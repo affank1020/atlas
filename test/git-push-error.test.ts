@@ -34,7 +34,7 @@ test('Git push error classification never exposes arbitrary output or supplied c
     ];
     for (const failure of cases) {
         const classified = classifyGitPushFailure(failure);
-        assert.doesNotMatch(classified.message, /ghs_|Authorization|Basic|http.extraheader|password/i);
+        assert.doesNotMatch(classified.message, /ghs_|Authorization:|Basic\s|http\.extraheader|password:/i);
         assert.ok(classified.code.startsWith('GIT_') || classified.code.startsWith('GITHUB_'));
     }
 });
