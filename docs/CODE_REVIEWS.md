@@ -55,7 +55,9 @@ No GitHub token is returned to the caller.
 ### Trusted publisher configuration
 
 Before using preview **or** apply, configure `ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON`
-on the Atlas Server. It is a JSON object mapping the **exact GitHub repository**
+in `infra/production.env` and restart/recreate the Atlas Server container using
+the production Compose stack. This setting is passed only to the Server.
+Do not set it on Atlas Nodes or in the web bundle. It is a JSON object mapping the **exact GitHub repository**
 to one or more **immutable GitHub numeric user IDs** that actually publish the
 Code Reviewer skill's reviews. For example, for the existing Atlas reviews
 published through the GitHub account with numeric ID `58519561`:
