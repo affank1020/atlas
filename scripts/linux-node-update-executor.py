@@ -394,6 +394,15 @@ def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
         copy_snapshot(bundle, bundle_copy, MAX_BUNDLE)
         fsync_dir(stage_dir)
         verify_snapshot(archive_copy, checksum_copy, bundle_copy, grant, runner)
+        # Do not consume either one-use approval when an existing lifecycle
+        # is unresolved or the independent recovery timer cannot run.
+        for action, unit in (
+            ("is-enabled", "atlas-node-lifecycle-recover.timer"),
+            ("is-active", "atlas-node-lifecycle-recover.timer"),
+            ("is-active", "atlas-node.service"),
+        ):
+            runner(["/usr/bin/systemctl", action, "--quiet", unit],
+                   check=True, env=SAFE_ENV)
 
         print("Node: " + node_id + "\nInstalled: " + installed +
               "\nTarget: " + target_name + "\nDigest: " + grant["targetSha256"])
