@@ -75,7 +75,7 @@ previous() {
 }
 # A root-owned, persistent marker is written and synced BEFORE touching current.
 # A separate systemd timer runs 'recover' after a killed or interrupted updater.
-# This journal contains release directory names only, never secrets or commands.
+# The journal contains release directory names and a fixed action, never secrets or commands.
 PENDING_FILE="$ROOT/.activation-pending"
 valid_name() {
   [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?-[a-f0-9]{12}$ ]]
@@ -84,7 +84,7 @@ write_pending() {
   local temp
   [[ ! -e "$PENDING_FILE" && ! -L "$PENDING_FILE" ]] || return 1
   temp="$(mktemp "$ROOT/.activation-pending.XXXXXXXX")" || return 1
-  if ! printf '%s\n%s\n' "${1##*/}" "${2##*/}" > "$temp" ||
+  if ! printf '%s\n%s\n%s\n' "${1##*/}" "${2##*/}" "$3" > "$temp" ||
      ! chmod 0600 -- "$temp" ||
      ! mv -Tf -- "$temp" "$PENDING_FILE" ||
      ! sync -f "$ROOT"; then
@@ -101,8 +101,9 @@ read_pending() {
     (( (8#$mode & 8#077) == 0 )) || return 1
   fi
   mapfile -t pending < "$PENDING_FILE" || return 1
-  [[ "${#pending[@]}" -eq 2 ]] && valid_name "${pending[0]}" &&
-    valid_name "${pending[1]}" && [[ "${pending[0]}" != "${pending[1]}" ]]
+  [[ "${#pending[@]}" -eq 3 ]] && valid_name "${pending[0]}" &&
+    valid_name "${pending[1]}" && [[ "${pending[0]}" != "${pending[1]}" ]] &&
+    [[ "${pending[2]}" == activate || "${pending[2]}" == rollback ]]
 }
 clear_pending() {
   rm -- "$PENDING_FILE" && sync -f "$ROOT"
@@ -180,17 +181,21 @@ if [[ "$action" == recover ]]; then
   observed="$(current)" || die "Invalid current release; manual intervention required."
   [[ "$observed" == "$original" || "$observed" == "$attempted" ]] ||
     die "Current release differs from pending activation; refusing recovery."
-  if [[ "$observed" == "$attempted" ]]; then
-    echo "Recovering interrupted activation: restoring ${pending[0]}."
-    atomic_link "$original" current || die "Could not restore previous release."
+  # An interrupted upgrade must revert to the original version; an
+  # interrupted explicit rollback must FINISH the rollback instead of
+  # reintroducing the version the operator chose to roll back.
+  desired="$original"
+  if [[ "${pending[2]}" == rollback ]]; then desired="$attempted"; fi
+  if [[ "$observed" != "$desired" ]]; then
+    echo "Recovering interrupted ${pending[2]}: switching to ${desired##*/}."
+    atomic_link "$desired" current || die "Could not restore desired release."
   fi
-  # A healthy PID may still be running the attempted version (for example
-  # after a failed restart with the original symlink already restored).
-  # Always restart to prove the original release is the one running.
+  # A healthy PID may still be executing a different version. Always
+  # restart to prove the desired release is actually running.
   systemctl restart "$SERVICE" && wait_healthy ||
-    die "Previous release is not connected; recovery will retry."
+    die "Desired release is not connected; recovery will retry."
   clear_pending || die "Could not clear pending activation marker."
-  echo "Recovery completed; original Node connection confirmed."
+  echo "Recovery completed; desired Node connection confirmed."
   exit 0
 fi
 
@@ -216,7 +221,7 @@ systemctl is-active --quiet "$SERVICE" || die "Service is not active; manual rec
 # Do not silently install dependencies or mutate the versioned target.
 (cd "$target" && npm ls --omit=dev --depth=0 >/dev/null) || die "Target dependency tree is incomplete."
 echo "Switching $SERVICE: ${old##*/} -> ${target##*/}"
-write_pending "$old" "$target" || die "Could not write durable pending activation; no release changed."
+write_pending "$old" "$target" "$action" || die "Could not write durable pending activation; no release changed."
 atomic_link "$target" current || die "Could not switch current release."
 if systemctl restart "$SERVICE" && wait_healthy; then
   atomic_link "$old" previous || die "Node connected, but recording rollback release failed."
