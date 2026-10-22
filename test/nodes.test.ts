@@ -10,6 +10,7 @@ import { WorkspaceService } from '../apps/server/src/workspaces/application.js';
 import { NodeService } from '../apps/server/src/nodes/service.js';
 import { NodeRouter } from '../apps/server/src/nodes/router.js';
 import { requiredCapability, type NodeRuntime, type NodeOperation } from '../apps/server/src/nodes/runtime.js';
+import { AtlasError } from '../apps/server/src/shared/errors.js';
 import type { NodeCapability } from '../apps/server/src/nodes/model.js';
 after(cleanupDatabases);
 const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs', 'unity'];
@@ -122,6 +123,70 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
     await assert.rejects(service.call('workspace_read_file', { ...scope, path: 'a' }), (e: any) => e.code === 'NODE_UNAVAILABLE');
     assert.equal(invoked.length, count);
     await nodes.close();
+});
+
+test('Git push failures persist allowlisted codes without accepting untrusted audit codes', async () => {
+    const { store, catalog } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Git push audit' });
+    let nodeFailure = new AtlasError('Remote branch changed.', 'GIT_PUSH_NON_FAST_FORWARD');
+    let brokerFailure: AtlasError | undefined;
+    const local = runtime();
+    local.execute = async () => { throw nodeFailure; };
+    const nodes = new NodeService(new PostgresNodeRepository(store.pool), local, 'Push Audit Node');
+    const github = {
+        gitPublishToken: async () => {
+            if (brokerFailure) throw brokerFailure;
+            return 'ghs_testOnlyBrokeredToken123456789';
+        },
+    };
+    const service = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
+        new NodeRouter(nodes), github as any);
+    const workspace: any = await service.call('create_workspace', {
+        projectId: project.id, name: 'Push audit', rootPath: '/opaque/push-audit',
+    });
+    const scope = { projectId: project.id, workspaceId: workspace.id };
+    const push = { ...scope, repository: 'affank1020/atlas',
+        branch: 'atlas/audit-test', expectedHead: 'a'.repeat(40) };
+    const failureMetadata = async () => (await catalog.auditHistory({ workspaceId: workspace.id }))
+        .filter(event => event.operation === 'workspace.mutation_failed')
+        .map(event => event.resulting as Record<string, any>);
+
+    try {
+        await assert.rejects(service.call('workspace_git_push_branch', push),
+            (error: any) => error.code === 'GIT_PUSH_NON_FAST_FORWARD');
+        let failures = await failureMetadata();
+        assert.equal(failures.length, 1);
+        assert.equal(failures[0]?.errorCode, 'GIT_PUSH_NON_FAST_FORWARD');
+        assert.equal(failures[0]?.error, 'Remote branch changed.');
+
+        // Token-broker errors arise before runtime dispatch but use the same audit path.
+        brokerFailure = new AtlasError('Workflow permission unavailable.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+        await assert.rejects(service.call('workspace_git_push_branch', push),
+            (error: any) => error.code === 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+        failures = await failureMetadata();
+        assert.ok(failures.some(event => event.errorCode === 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED'));
+
+        // Even an AtlasError code from an untrusted source must never be stored.
+        brokerFailure = undefined;
+        nodeFailure = new AtlasError('A safe message.', 'GIT_PUSH_ghs_untrustedCredential');
+        await assert.rejects(service.call('workspace_git_push_branch', push),
+            (error: any) => error.code === 'GIT_PUSH_ghs_untrustedCredential');
+        failures = await failureMetadata();
+        assert.ok(failures.some(event => event.error === 'A safe message.' &&
+            !Object.hasOwn(event, 'errorCode')));
+        assert.doesNotMatch(JSON.stringify(failures), /ghs_untrustedCredential/);
+
+        // Non-push mutations must not gain a new audit code field.
+        nodeFailure = new AtlasError('A file operation failed.', 'GIT_PUSH_NON_FAST_FORWARD');
+        await assert.rejects(service.call('workspace_create_file', {
+            ...scope, path: 'file.txt', text: 'test',
+        }), (error: any) => error.code === 'GIT_PUSH_NON_FAST_FORWARD');
+        failures = await failureMetadata();
+        assert.ok(failures.some(event => event.error === 'A file operation failed.' &&
+            !Object.hasOwn(event, 'errorCode')));
+    } finally {
+        await nodes.close();
+    }
 });
 
 test('LocalNodeRuntime advertises implemented capabilities without claiming a connected Editor', () => {

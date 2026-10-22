@@ -202,13 +202,32 @@ export class WorkspaceService {
             await db.commit(); return result;
         } catch (error) {
             await db?.rollback().catch(() => undefined);
-            await (db ?? this.repository).audit(workspace, 'workspace.mutation_failed', x.client, { ...metadata, outcome: 'failed_or_uncertain', error: auditError(error) }).catch(() => undefined);
+            await (db ?? this.repository).audit(workspace, 'workspace.mutation_failed', x.client, {
+                ...metadata, outcome: 'failed_or_uncertain', error: auditError(error),
+                ...(name === 'workspace_git_push_branch' ? auditGitPushErrorCode(error) : {}),
+            }).catch(() => undefined);
             if (applied) throw new AtlasError('The mutation completed but audit finalization failed. Inspect the file/Editor and audit intent before retrying.', 'OUTCOME_UNCERTAIN');
             throw error;
         } finally { db?.release(); }
 
     }
 }
+// Persist only stable, known failure codes. Remote errors and plugin inputs are
+// untrusted; arbitrary error.code strings must never enter the audit stream.
+const gitPushAuditCodes = new Set([
+    'GITHUB_WORKFLOWS_PERMISSION_REQUIRED', 'GITHUB_REQUEST_FAILED', 'GITHUB_UNAVAILABLE',
+    'GIT_PUSH_NON_FAST_FORWARD', 'GIT_PUSH_PROTECTED', 'GIT_PUSH_AUTH_FAILED',
+    'GIT_PUSH_NETWORK_FAILED', 'GIT_PUSH_TIMEOUT', 'GIT_PUSH_NODE_UNAVAILABLE',
+    'GIT_PUSH_FAILED', 'GIT_REMOTE_INVALID', 'GIT_REMOTE_MISMATCH',
+    'WORKSPACE_DENIED', 'CAPABILITY_UNAVAILABLE', 'CONFLICT',
+    'NODE_OFFLINE', 'NODE_UNAVAILABLE', 'NODE_EXECUTION_ERROR',
+]);
+function auditGitPushErrorCode(error: unknown): { errorCode?: string } {
+    return error instanceof AtlasError && gitPushAuditCodes.has(error.code)
+        ? { errorCode: error.code }
+        : {};
+}
+
 // Bounded diagnostic only; never serialize arbitrary adapter error payloads.
 function auditError(error: unknown): string {
     if (error instanceof AtlasError) return error.message.slice(0, 500);
