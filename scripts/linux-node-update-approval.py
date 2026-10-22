@@ -115,6 +115,10 @@ def read_host_node_id(env_path: Path = NODE_ENV) -> str:
     # non-secret ID; never print/emit the content or the credential.
     if env_path.is_symlink() or not env_path.is_file():
         raise Refused("Host Node config is missing or symlinked.")
+    if env_path == NODE_ENV:
+        info = env_path.stat()
+        if info.st_uid != 0 or (stat.S_IMODE(info.st_mode) & 0o022):
+            raise Refused("Host Node config is not securely owned.")
     values = []
     for line in env_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
