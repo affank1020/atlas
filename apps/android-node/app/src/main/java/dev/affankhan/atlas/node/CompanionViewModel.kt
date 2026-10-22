@@ -220,6 +220,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             "SHARE_TARGET_UNAVAILABLE" -> "Receiving Node is offline or not ready."
                             "SHARE_RATE_LIMIT", "SHARE_BUSY" -> "Too many shares; try again later."
                             "NODE_TIMEOUT" -> "Recipient did not confirm the share in time."
+                            "SHARE_CLIPBOARD_FAILED" -> "Mac accepted the share but could not write to its clipboard."
                             else -> "Share was not accepted by Atlas."
                         }
                         reply.accepted == true -> "Recipient accepted and copied the text."
