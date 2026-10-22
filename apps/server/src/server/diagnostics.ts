@@ -12,7 +12,7 @@ const readSchema = z.object({ limit: z.number().int().min(1).max(100).default(30
 const label: Record<ServerDiagnosticCode, { level: 'info' | 'warning'; message: string }> = {
     server_initialised: { level: 'info', message: 'Server runtime initialised' },
     tool_request_failed: { level: 'warning', message: 'Application operation failed (inspect Activity for scoped details)' },
-    background_task_failed: { level: 'warning', message: 'Background startup operation failed' },
+    background_task_failed: { level: 'warning', message: 'Background operation failed' },
 };
 
 export class ServerDiagnostics {
