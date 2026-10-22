@@ -44,7 +44,14 @@ export function presentActivity(events: AuditEvent[], names: Record<string, stri
     }
     return [...groups].map(([id, group]): ActivityPresentation => {
         group.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
-        const event = group.find(e => e.operation !== 'workspace.mutation_requested') ?? group[0];
+        // Failure evidence wins even if a later row reports success for the same attempt.
+        const isFailure = (e: AuditEvent) => {
+            const details = object(e.resulting);
+            return e.operation.endsWith('_failed') ||
+                ['failed','failed_or_uncertain','error','editor_error'].includes(str(details.outcome) ?? '') ||
+                details.success === false;
+        };
+        const event = group.find(isFailure) ?? group.find(e => e.operation !== 'workspace.mutation_requested') ?? group[0];
         const data = { ...[...group].reverse().reduce<Record<string, unknown>>((merged, e) => ({ ...merged, ...object(e.resulting) }), {}), ...object(event.resulting) };
         const workspace = event.operation.startsWith('workspace.');
         const operation = workspace && ['workspace.mutation_requested', 'workspace.mutation_failed'].includes(event.operation)
