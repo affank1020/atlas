@@ -1,0 +1,116 @@
+import { createServer, createConnection, type Socket } from 'node:net';
+import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { nodeStatusPath } from '../../core/node-installation.js';
+import type { StandaloneNode } from '../../core/connection/standalone.js';
+
+/** Mac-only, per-user local IPC. This never exposes the Node credential. */
+export function macShareSocketPath(): string {
+    return join(dirname(nodeStatusPath('darwin')), 'node-share.sock');
+}
+
+const MAX_LOCAL_REQUEST = 80 * 1024; // UTF-8 JSON up to 16,384 UTF-16 characters.
+type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare'>;
+
+function checkDirectory(parent: string) {
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(parent);
+    if (!stat.isDirectory() || stat.isSymbolicLink() ||
+        stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)
+        throw new Error('Atlas local sharing directory must be private (0700) and owned by this user.');
+}
+
+async function cleanStaleSocket(path: string) {
+    let stat: ReturnType<typeof lstatSync>;
+    try { stat = lstatSync(path); }
+    catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+    }
+    if (!stat.isSocket() || stat.uid !== process.getuid?.())
+        throw new Error('Refusing to replace an unexpected Atlas sharing socket.');
+    // Only unlink a genuinely stale, same-user socket. Never steal a live Node.
+    const active = await new Promise<boolean>((resolve, reject) => {
+        const probe = createConnection(path);
+        probe.once('connect', () => { probe.destroy(); resolve(true); });
+        probe.once('error', (error: NodeJS.ErrnoException) => {
+            if (error.code === 'ECONNREFUSED') resolve(false);
+            else reject(error);
+        });
+    });
+    if (active) throw new Error('Another Atlas sharing listener is already active.');
+    const latest = lstatSync(path);
+    if (latest.ino !== stat.ino || latest.dev !== stat.dev || !latest.isSocket())
+        throw new Error('Atlas sharing socket changed while checking for stale listeners.');
+    unlinkSync(path);
+}
+
+export async function startMacShareControlServer(node: ShareControl, path = macShareSocketPath()) {
+    if (process.platform !== 'darwin' && path === macShareSocketPath())
+        throw new Error('Mac sharing is supported only in a macOS login session.');
+    checkDirectory(dirname(path));
+    await cleanStaleSocket(path);
+    const connections = new Set<Socket>();
+    const server = createServer(socket => {
+        connections.add(socket);
+        socket.setTimeout(60_000);
+        socket.once('close', () => connections.delete(socket));
+        socket.once('timeout', () => socket.destroy());
+        let buffer = Buffer.alloc(0);
+        let handled = false;
+        socket.on('data', chunk => {
+            if (handled) return;
+            buffer = Buffer.concat([buffer, chunk]);
+            if (buffer.length > MAX_LOCAL_REQUEST) { socket.destroy(); return; }
+            const end = buffer.indexOf(10);
+            if (end < 0) return;
+            handled = true;
+            const input = buffer.subarray(0, end).toString('utf8');
+            // Never log/persist incoming plaintext or include it in errors.
+            void (async () => {
+                try {
+                    const req: unknown = JSON.parse(input);
+                    if (!req || typeof req !== 'object') throw Error('Invalid request');
+                    const data = req as Record<string, unknown>;
+                    let result: unknown;
+                    if (data.action === 'recipients' && Object.keys(data).length === 1) {
+                        result = { recipients: await node.shareRecipients() };
+                    } else if (data.action === 'send' && Object.keys(data).length === 3 &&
+                        typeof data.targetNodeId === 'string' && typeof data.text === 'string') {
+                        result = await node.sendDeviceShare(data.targetNodeId, data.text);
+                    } else throw Error('Invalid request');
+                    socket.end(JSON.stringify({ ok: true, result }) + '\n');
+                } catch (error) {
+                    const code = error && typeof error === 'object' && 'code' in error &&
+                        typeof error.code === 'string' && /^[A-Z_]{1,80}$/.test(error.code)
+                        ? error.code : 'SHARE_UNAVAILABLE';
+                    socket.end(JSON.stringify({ ok: false, code }) + '\n');
+                }
+            })();
+        });
+    });
+    try {
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(path, () => { server.off('error', reject); resolve(); });
+        });
+        chmodSync(path, 0o600);
+        const info = lstatSync(path);
+        return {
+            async close() {
+                for (const client of connections) client.destroy();
+                await new Promise<void>(resolve => server.close(() => resolve()));
+                try {
+                    const actual = lstatSync(path);
+                    if (actual.isSocket() && actual.dev === info.dev && actual.ino === info.ino)
+                        unlinkSync(path);
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                }
+            },
+        };
+    } catch (error) {
+        server.close();
+        throw error;
+    }
+}
