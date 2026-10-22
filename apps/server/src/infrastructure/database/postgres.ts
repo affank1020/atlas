@@ -213,11 +213,21 @@ export class PostgresRepository implements AtlasRepository {
                 SELECT * FROM matches ORDER BY latest_at DESC, group_key DESC
                 LIMIT ${sizeParam} OFFSET ${startParam}
             )
+            , representative AS (
+                SELECT a.*, p.latest_at AS group_latest_at, p.group_key AS page_group_key,
+                    row_number() OVER (
+                        PARTITION BY a.group_key,
+                            CASE WHEN COALESCE(${failed}, false) THEN 'failed'
+                                 WHEN a.operation='workspace.mutation_requested' THEN 'requested'
+                                 ELSE 'result' END
+                        ORDER BY a.created_at DESC, a.id DESC
+                    ) AS member_rank
+                FROM page p JOIN base a ON a.group_key=p.group_key
+            )
             SELECT a.*, totals.total FROM
                 (SELECT count(*)::int AS total FROM matches) totals
-                LEFT JOIN page p ON true
-                LEFT JOIN base a ON a.group_key = p.group_key
-            ORDER BY p.latest_at DESC, p.group_key DESC, a.created_at DESC, a.id DESC`;
+                LEFT JOIN representative a ON a.member_rank=1
+            ORDER BY a.group_latest_at DESC, a.page_group_key DESC, a.created_at DESC, a.id DESC`;
         const result = await this.query(sql, values);
         return { items: result.rows.filter(row => row.id !== null).map(auditFromRow),
             total: Number(result.rows[0]?.total ?? 0), limit, offset };
