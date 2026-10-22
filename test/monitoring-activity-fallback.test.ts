@@ -64,3 +64,33 @@ test('snapshot Monitoring filters both sharing endpoints without broadening unre
     }
     assert.equal((await audit.monitoring({nodeId:unrelated,category:'node'})).total,0);
 });
+
+
+test('snapshot operation paging retains terminal outcomes across boundaries and searches', async () => {
+    const rows: AuditEvent[] = [
+        { id: 'r1', operation: 'workspace.mutation_requested', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T08:00:00Z',
+            resulting: { attemptId: 'one', operation: 'workspace.dev_invoked', task: 'build' } },
+        { id: 'c1', operation: 'workspace.dev_invoked', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T08:01:00Z',
+            resulting: { attemptId: 'one', outcome: 'completed' } },
+        { id: 'r2', operation: 'workspace.mutation_requested', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T09:00:00Z',
+            resulting: { attemptId: 'two', operation: 'workspace.git_committed', task: 'push' } },
+        { id: 'f2', operation: 'workspace.mutation_failed', projectId: 'p', workspaceId: 'w',
+            client: 'test', occurredAt: '2026-10-22T09:01:00Z',
+            resulting: { attemptId: 'two', operation: 'workspace.git_committed', outcome: 'failed' } },
+    ];
+    const repo = { snapshot: async () => ({ auditEvents: rows }) } as unknown as AtlasRepository;
+    const audit = new AuditService(repo);
+    const first = await audit.monitoring({ projectId: 'p', groupOperations: true, limit: 1 });
+    assert.equal(first.total, 2);
+    assert.deepEqual(first.items.map(e => e.id).sort(), ['f2','r2']);
+    const next = await audit.monitoring({ projectId: 'p', groupOperations: true, limit: 1, offset: 1 });
+    assert.equal(next.total, 2);
+    assert.deepEqual(next.items.map(e => e.id).sort(), ['c1','r1']);
+    const filtered = await audit.monitoring({ projectId: 'p', groupOperations: true, category: 'git', outcome: 'failed', search: 'push' });
+    assert.equal(filtered.total, 1);
+    assert.deepEqual(filtered.items.map(e => e.id).sort(), ['f2','r2']);
+    assert.equal((await audit.monitoring({ groupOperations: true, outcome: 'pending' })).total, 0);
+});
