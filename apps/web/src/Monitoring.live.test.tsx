@@ -111,6 +111,71 @@ test('paging into history automatically disables live mode and its timers', asyn
     expect(callTool).toHaveBeenCalledTimes(observed);
 });
 
+
+test('stopping live mode retains settled Activity and does not start a replacement read', async () => {
+    vi.useFakeTimers();
+    location.hash = '#/monitoring?tab=activity&live=1';
+    vi.mocked(callTool).mockResolvedValue(activity('retained') as never);
+    render(<MonitoringPage />);
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Record created').closest('[data-activity-id]'))
+        .toHaveAttribute('data-activity-id', 'retained');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop live updates' }));
+    fireEvent(window, new Event('hashchange'));
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Loading audit history…')).not.toBeInTheDocument();
+    expect(screen.getByText('Record created').closest('[data-activity-id]'))
+        .toHaveAttribute('data-activity-id', 'retained');
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(callTool).toHaveBeenCalledTimes(1);
+});
+
+test('quick Start/Stop toggles reuse the previous cooldown and never fire extra requests', async () => {
+    vi.useFakeTimers();
+    location.hash = '#/monitoring?tab=activity';
+    vi.mocked(callTool).mockResolvedValue(activity('first') as never);
+    render(<MonitoringPage />);
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Start live updates' }));
+    fireEvent(window, new Event('hashchange'));
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop live updates' }));
+    fireEvent(window, new Event('hashchange'));
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Start live updates' }));
+    fireEvent(window, new Event('hashchange'));
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(28_999); });
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(callTool).toHaveBeenCalledTimes(2);
+});
+
+test('switching live mode while a request is pending neither aborts nor duplicates that read', async () => {
+    location.hash = '#/monitoring?tab=activity&live=1';
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise<unknown>(accept => { resolve = accept; });
+    vi.mocked(callTool).mockImplementation(() => pending as never);
+    render(<MonitoringPage />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
+    const activeSignal = vi.mocked(callTool).mock.calls[0]![2]!;
+    fireEvent.click(screen.getByRole('button', { name: 'Stop live updates' }));
+    fireEvent(window, new Event('hashchange'));
+    await act(async () => { await Promise.resolve(); });
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(activeSignal.aborted).toBe(false);
+    await act(async () => { resolve(activity('settled')); });
+    expect(screen.getByText('Record created').closest('[data-activity-id]'))
+        .toHaveAttribute('data-activity-id', 'settled');
+    expect(callTool).toHaveBeenCalledTimes(1);
+});
+
 test('late live response from an abandoned scope cannot replace the current Activity feed', async () => {
     location.hash = '#/monitoring?tab=activity&live=1&client=first';
     let finishOld!: (page: unknown) => void;
