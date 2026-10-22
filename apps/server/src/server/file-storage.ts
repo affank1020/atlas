@@ -148,7 +148,7 @@ export class R2ObjectStore implements ObjectStore {
             // an unbounded allocation or a false-negative key lookup.
             const maxErrorBytes = 8192;
             const length = response.headers.get("content-length");
-            if (length !== null && (!/^\\d+$/.test(length) || Number(length) > maxErrorBytes)) {
+            if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxErrorBytes)) {
                 await response.body?.cancel();
                 throw new Error("R2 GET 404 response cannot be classified.");
             }
