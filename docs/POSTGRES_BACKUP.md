@@ -45,7 +45,7 @@ its output directly through `age --recipient`. No raw database dump file is
 created by this command. With `pipefail`, failure of either subprocess
 aborts the snapshot; private partial output is removed.
 
-Successful output consists of immutable create-only hardlinked paths:
+Successful output consists of atomically create-only hardlinked paths:
 `*.dump.age` ciphertext, mode 0600, and `*.dump.age.json` manifest with
 timestamp, database name, size and ciphertext SHA-256. It sets
 `verifiedRestore: false` deliberately: snapshot/encryption success is **not**
