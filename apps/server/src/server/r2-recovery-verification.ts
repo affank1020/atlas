@@ -11,6 +11,8 @@ const CURSOR_UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 export const R2_RECOVERY_DEFAULT_FILES = 3;
 export const R2_RECOVERY_MAX_FILES = 10;
 export const R2_RECOVERY_MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const R2_RECOVERY_DEFAULT_CATALOG_RECORDS = 100;
+export const R2_RECOVERY_MAX_CATALOG_RECORDS = 200;
 
 export type RecoveryObjectStore = { getBounded(key: string, maxBytes: number): Promise<Buffer> };
 type FileRow = { id: string; storage_key: string; checksum: string; byte_size: number | string };
@@ -89,6 +91,110 @@ async function check(store: RecoveryObjectStore, row: FileRow): Promise<{ state:
     return { state: 'valid', read: contents.length };
 }
 
+/** Shared read-only verifier for already-selected immutable metadata rows.
+ * Never asks object stores to PUT or DELETE. A missing primary copy still
+ * counts as a source failure even if the recovery copy is intact. */
+async function verifySelectedRows(rows: FileRow[], primaryStore: RecoveryObjectStore,
+    recoveryStore: RecoveryObjectStore): Promise<{
+    verifiedPrimary: number; verifiedBackup: number; verifiedBoth: number;
+    primaryMissing: number; backupMissing: number; primaryCorrupt: number;
+    backupCorrupt: number; invalidMetadata: number; bytesRead: number; failureFileIds: string[];
+}> {
+    const counters = {
+        verifiedPrimary: 0, verifiedBackup: 0, verifiedBoth: 0,
+        primaryMissing: 0, backupMissing: 0, primaryCorrupt: 0,
+        backupCorrupt: 0, invalidMetadata: 0, bytesRead: 0, failureFileIds: [] as string[],
+    };
+    for (const row of rows) {
+        if (!validated(row)) {
+            counters.invalidMetadata++;
+            if (counters.failureFileIds.length < 10) counters.failureFileIds.push(row.id);
+            continue;
+        }
+        const primary = await check(primaryStore, row);
+        const backup = await check(recoveryStore, row);
+        counters.bytesRead += primary.read + backup.read;
+        if (primary.state === 'valid') counters.verifiedPrimary++;
+        else if (primary.state === 'missing') counters.primaryMissing++;
+        else counters.primaryCorrupt++;
+        if (backup.state === 'valid') counters.verifiedBackup++;
+        else if (backup.state === 'missing') counters.backupMissing++;
+        else counters.backupCorrupt++;
+        if (primary.state === 'valid' && backup.state === 'valid') counters.verifiedBoth++;
+        else if (counters.failureFileIds.length < 10) counters.failureFileIds.push(row.id);
+    }
+    return counters;
+}
+
+function hasRecoveryIssues(counters: {
+    primaryMissing: number; backupMissing: number; primaryCorrupt: number;
+    backupCorrupt: number; invalidMetadata: number;
+}): boolean {
+    return counters.primaryMissing + counters.backupMissing +
+        counters.primaryCorrupt + counters.backupCorrupt + counters.invalidMetadata > 0;
+}
+
+export type RecoveryCatalogVerification = {
+    mode: 'read-only'; status: 'passed' | 'failed' | 'partial' | 'empty';
+    catalogScope: 'single-statement-metadata-snapshot';
+    snapshotObservedAt: string;
+    maxRecords: number; checked: number; truncated: boolean;
+    verifiedPrimary: number; verifiedBackup: number; verifiedBoth: number;
+    primaryMissing: number; backupMissing: number; primaryCorrupt: number;
+    backupCorrupt: number; invalidMetadata: number; bytesRead: number;
+    noWrites: true; failureFileIds: string[];
+};
+
+export function parseRecoveryCatalogArgs(args: string[]): { maxRecords: number } {
+    const option = args.filter(x => x.startsWith('--max-records='));
+    if (args.filter(x => x === '--dry-run').length !== 1 ||
+        option.length > 1 || args.length !== 1 + option.length)
+        throw new Error('Usage: --dry-run [--max-records=1..200]');
+    const maxRecords = option.length ?
+        Number(option[0]!.slice('--max-records='.length)) : R2_RECOVERY_DEFAULT_CATALOG_RECORDS;
+    if (!Number.isInteger(maxRecords) || maxRecords < 1 ||
+        maxRecords > R2_RECOVERY_MAX_CATALOG_RECORDS)
+        throw new Error('Catalog verification record limit must be 1..200.');
+    return { maxRecords };
+}
+
+/** Full-catalog verification for a single PostgreSQL statement snapshot.
+ * A single, bounded SELECT captures committed File metadata before any remote
+ * reads. This prevents pagination drift under concurrent inserts/removals and
+ * avoids keeping a DB transaction open through slow R2 reads. Objects added
+ * after the SELECT are explicitly outside this report's scope.
+ *
+ * A cap hit is *partial*, never proof of a complete catalog. This checks
+ * both primary and recovery object bytes but does not restore PostgreSQL,
+ * validate an offsite DB snapshot or prove a coordinated Files/DB cutover. */
+export async function verifyR2RecoveryCatalog(input: {
+    database: Pick<Pool, 'query'>; primary: RecoveryObjectStore; backup: RecoveryObjectStore;
+    maxRecords?: number;
+}): Promise<RecoveryCatalogVerification> {
+    const maxRecords = input.maxRecords ?? R2_RECOVERY_DEFAULT_CATALOG_RECORDS;
+    if (!Number.isInteger(maxRecords) || maxRecords < 1 ||
+        maxRecords > R2_RECOVERY_MAX_CATALOG_RECORDS)
+        throw new Error('Catalog verification record limit must be 1..200.');
+    const query = await input.database.query<FileRow>(
+        'SELECT id,storage_key,checksum,byte_size FROM atlas_files ORDER BY id ASC LIMIT $1',
+        [maxRecords + 1],
+    );
+    if (query.rows.length > maxRecords + 1)
+        throw new Error('R2 catalog query exceeded the requested bound.');
+    // This is an observation timestamp, not a PostgreSQL transaction LSN.
+    const snapshotObservedAt = new Date().toISOString();
+    const truncated = query.rows.length > maxRecords;
+    const selected = query.rows.slice(0, maxRecords);
+    const counters = await verifySelectedRows(selected, input.primary, input.backup);
+    return {
+        mode: 'read-only',
+        status: hasRecoveryIssues(counters) ? 'failed' :
+            selected.length === 0 ? 'empty' : truncated ? 'partial' : 'passed',
+        catalogScope: 'single-statement-metadata-snapshot', snapshotObservedAt,
+        maxRecords, checked: selected.length, truncated, ...counters, noWrites: true,
+    };
+}
+
 /** Operator-only, bounded, byte-verified restore simulation. SELECT + S3 GET
  * only. A sampled run is never proof that unsampled files or DB snapshots are
  * recoverable. No data is ever written to source or recovery storage. */
@@ -112,36 +218,14 @@ export async function verifyR2Recovery(input: {
     if (query.rows.length > maxFiles+1) throw new Error('Recovery metadata query exceeded its bound.');
     const rows = query.rows.slice(0,maxFiles);
     const remaining = query.rows.length > maxFiles;
+    const counters = await verifySelectedRows(rows, input.primary, input.backup);
+    const entireCatalogChecked = input.cursor === undefined && !remaining;
     const result: RecoveryVerification = {
-        mode: 'read-only',status: 'partial',checked: 0, verifiedPrimary: 0,
-        verifiedBackup: 0,verifiedBoth: 0,primaryMissing: 0,backupMissing: 0,
-        primaryCorrupt: 0,backupCorrupt: 0,invalidMetadata: 0,bytesRead: 0,
-        maxFiles,remaining,entireCatalogChecked: input.cursor === undefined && !remaining,
-        noWrites: true,failureFileIds: [],
+        mode: 'read-only', status: hasRecoveryIssues(counters) ? 'failed' :
+            rows.length === 0 && entireCatalogChecked ? 'empty' :
+            entireCatalogChecked ? 'passed' : 'partial',
+        checked: rows.length, ...counters, maxFiles, remaining, entireCatalogChecked, noWrites: true,
     };
-    for (const row of rows) {
-        result.checked++;
-        if (!validated(row)) {
-            result.invalidMetadata++;
-            if (result.failureFileIds.length < 10) result.failureFileIds.push(row.id);
-            continue;
-        }
-        const primary = await check(input.primary,row);
-        const backup = await check(input.backup,row);
-        result.bytesRead += primary.read + backup.read;
-        if (primary.state === 'valid') result.verifiedPrimary++;
-        else if (primary.state === 'missing') result.primaryMissing++;
-        else result.primaryCorrupt++;
-        if (backup.state === 'valid') result.verifiedBackup++;
-        else if (backup.state === 'missing') result.backupMissing++;
-        else result.backupCorrupt++;
-        if (primary.state === 'valid' && backup.state === 'valid') result.verifiedBoth++;
-        else if (result.failureFileIds.length < 10) result.failureFileIds.push(row.id);
-    }
-    if (rows.length && remaining) result.nextCursor = rows[rows.length-1]!.id;
-    const issues = result.primaryMissing + result.backupMissing + result.primaryCorrupt +
-        result.backupCorrupt + result.invalidMetadata;
-    result.status = issues ? 'failed' : result.checked === 0 && result.entireCatalogChecked ? 'empty' :
-        result.entireCatalogChecked ? 'passed' : 'partial';
+    if (rows.length && remaining) result.nextCursor = rows[rows.length - 1]!.id;
     return result;
 }
