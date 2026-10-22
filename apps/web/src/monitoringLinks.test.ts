@@ -6,6 +6,13 @@ describe('Monitoring deep links', () => {
         const filters = { projectId: 'p', workspaceId: 'w', checkoutId: 'c', nodeId: 'n', storeId: 's', search: 'failed git' };
         expect(parseMonitoringHash(monitoringHash('activity', filters))).toEqual({ tab: 'activity', filters });
     });
+    it('round-trips logical Workspace scopes independently of checkout scopes', () => {
+        const filters = { logicalWorkspaceId: 'logical-id', checkoutId: 'checkout-id' };
+        expect(parseMonitoringHash(monitoringHash('activity', filters)))
+            .toEqual({ tab: 'activity', filters });
+        expect(monitoringHash('activity', { logicalWorkspaceId: 'logical-id' }))
+            .toBe('#/monitoring?tab=activity&logicalWorkspaceId=logical-id');
+    });
     it('opens old Activity bookmarks within Monitoring', () => {
         expect(parseMonitoringHash('#/activity').tab).toBe('activity');
         expect(parseMonitoringHash('#/activity?projectId=old').filters.projectId).toBe('old');
