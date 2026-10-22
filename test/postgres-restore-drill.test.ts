@@ -130,7 +130,10 @@ test('successful drill uses ephemeral networkless container and reports SHA', t 
   assert.match(log,/pg_restore/);
   assert.match(log,/psql/);
   assert.match(log,/rm -f atlas-pg-drill-/);
-  assert.doesNotMatch(log,/(^| )(-p|--publish|-v|--volume|--network host)( |$)/m);
+  // Only inspect docker run options: psql itself uses -v ON_ERROR_STOP=1.
+  const dockerRun=log.split('\n').find(line => line.includes(' run --detach '));
+  assert.ok(dockerRun);
+  assert.doesNotMatch(dockerRun,/(^| )(-p|--publish|-v|--volume|--network host)( |$)/);
 });
 
 test('failed decrypt, failed restore and empty restored catalog never report success and clean container', t => {
