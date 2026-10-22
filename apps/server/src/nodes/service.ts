@@ -3,6 +3,7 @@ import { nodeSchemas, type NodeToolName } from './contracts.js';
 import type { AtlasNode } from './model.js';
 import type { NodeRepository } from './repository.js';
 import { NodeIdentity } from './identity.js';
+import type { NodeShareApprovals, ShareAuditClient } from './share-approvals.js';
 import { listNodeReleases } from './releases.js';
 import { buildNodeUpdatePlan } from './update-plan.js';
 import type { NodeRuntime } from './runtime.js';
@@ -13,7 +14,7 @@ export class NodeService {
     private readonly lastSeen = new Map<string, string>();
     private registration?: Promise<string>;
     private closing = false;
-    constructor(readonly repository: NodeRepository, private readonly local?: NodeRuntime, private readonly localName = 'Local Node', readonly identity?: NodeIdentity) {}
+    constructor(readonly repository: NodeRepository, private readonly local?: NodeRuntime, private readonly localName = 'Local Node', readonly identity?: NodeIdentity, private readonly shareApprovals?: NodeShareApprovals) {}
     get hasLocalRuntime() { return !!this.local; }
     registerLocalNode(): Promise<string> {
         if (!this.local) return Promise.reject(new AtlasError('No in-process Node is configured.', 'NODE_UNAVAILABLE'));
@@ -45,11 +46,13 @@ export class NodeService {
     }
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
-    async call(name: NodeToolName, input: unknown) {
+    async call(name: NodeToolName, input: unknown, caller: ShareAuditClient = 'atlas-server') {
         const parsed = nodeSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x = parsed.data as any;
         if (name === 'list_nodes') return this.list();
+        if (name === 'list_node_share_approvals') return this.requireShareApprovals().list();
+        if (name === 'update_node_share_approval') return this.requireShareApprovals().update(x, caller);
         if (name === 'list_node_releases') return listNodeReleases(x.refresh === true);
         if (name === 'plan_node_update') {
             const node = await this.get(x.nodeId);
@@ -83,6 +86,10 @@ export class NodeService {
 
         const node = await this.get((parsed.data as { nodeId: string }).nodeId);
         return { ...node, workspaces: await this.repository.hostedWorkspaces(node.id), activity: this.identity ? await this.identity.activity(node.id) : [] };
+    }
+    private requireShareApprovals() {
+        if (!this.shareApprovals) throw new AtlasError('Share permission management is unavailable.', 'SHARE_UNAVAILABLE');
+        return this.shareApprovals;
     }
     private requireIdentity() { if (!this.identity) throw new AtlasError('Node identity service unavailable.', 'NODE_UNAVAILABLE'); return this.identity; }
     async close() {

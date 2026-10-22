@@ -83,8 +83,11 @@ export class PostgresRepository implements AtlasRepository {
             if (value) where.push(column + '=' + param(uuid(String(value))));
         }
         if (input.nodeId) {
-            const id = param(uuid(input.nodeId));
-            where.push("(a.after_state->>'nodeId'=" + id + " OR a.after_state->>'previousNodeId'=" + id + ")");
+            const id = param(uuid(input.nodeId)?.toLowerCase());
+            where.push("(a.after_state->>'nodeId'=" + id +
+                " OR a.after_state->>'previousNodeId'=" + id +
+                " OR (a.operation IN ('node.share.approved','node.share.revoked') AND " +
+                "(a.after_state->>'sourceNodeId'=" + id + " OR a.after_state->>'targetNodeId'=" + id + ")))");
         }
         if (input.client) where.push('lower(a.client)=lower(' + param(input.client) + ')');
         if (input.operation) where.push('a.operation=' + param(input.operation));

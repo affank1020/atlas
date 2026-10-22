@@ -3,6 +3,8 @@ import test, { after } from 'node:test';
 import { ActivityService } from '../apps/server/src/activity/service.js';
 import { AuditService } from '../apps/server/src/core/audit.js';
 import { cleanupDatabases, databaseFixture } from './database.js';
+import { NodeIdentity } from '../apps/server/src/nodes/identity.js';
+import { NodeShareApprovals } from '../apps/server/src/nodes/share-approvals.js';
 after(cleanupDatabases);
 
 test('Monitoring filters and paginates over full PostgreSQL audit history', async () => {
@@ -72,4 +74,32 @@ test('Monitoring filters and paginates over full PostgreSQL audit history', asyn
 
     const legacy = await catalog.auditHistory({ projectId: first.id, limit: 200 });
     assert.equal(legacy.length, 2, 'Legacy MCP history stays unchanged');
+});
+
+test('PostgreSQL Monitoring Node filter includes sender and recipient sharing events but no unrelated Node rows', async () => {
+    const f = await databaseFixture();
+    const identity = new NodeIdentity(f.store.pool);
+    const a = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Sender',platform:'android'});
+    const b = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Receiver',platform:'darwin'});
+    const c = await identity.enrol({token:(await identity.ticket()).enrolmentToken,name:'Other',platform:'linux'});
+    const sharing = new NodeShareApprovals(f.store.pool);
+    await sharing.update({sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:true});
+    await sharing.update({sourceNodeId:a.nodeId,targetNodeId:b.nodeId,enabled:false});
+    await f.store.pool.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at)
+        VALUES(gen_random_uuid(),'test','node.updated',$1::jsonb,now())`,
+        [JSON.stringify({sourceNodeId:a.nodeId,targetNodeId:b.nodeId})]);
+    const monitoring = new ActivityService(new AuditService(f.store));
+    for (const nodeId of [a.nodeId,b.nodeId]) {
+        const filtered = await monitoring.page({nodeId,category:'node'});
+        const events = filtered.items.filter(item => item.operation.startsWith('node.share.'));
+        assert.equal(filtered.total,3,'Each Node also retains its own legitimate enrolment event');
+        assert.equal(events.length,2,'Both sharing events are visible for either endpoint');
+        assert.deepEqual(events.map(e => e.operation).sort(),['node.share.approved','node.share.revoked']);
+        assert.equal(filtered.items.filter(e => e.operation === 'node.enrolled').length,1);
+        assert.equal(filtered.items.filter(e => e.operation === 'node.updated').length,0,
+            'Unrelated operations cannot match their sourceNodeId/targetNodeId metadata');
+        const grants = await monitoring.page({nodeId,operation:'node.share.approved'});
+        assert.equal(grants.total,1);
+    }
+    assert.equal((await monitoring.page({nodeId:c.nodeId,operation:'node.share.approved'})).total,0);
 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { AtlasError } from '../../shared/errors.js';
 import type { NodeService } from '../../nodes/service.js';
 import type { RemoteNodeRuntime } from './remote-runtime.js';
+import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import type { DeviceShareSubmission } from '@atlas/protocol/device-protocol';
 
 /** Only the relay itself may classify a failure as certainly not dispatched.
@@ -20,6 +21,7 @@ export class DeviceShareRelay {
     constructor(
         private readonly nodes: NodeService,
         private readonly approvedPairs: ReadonlySet<string>,
+        private readonly managedApprovals?: NodeShareApprovals,
     ) {}
 
     async forward(input: {
@@ -35,8 +37,7 @@ export class DeviceShareRelay {
         const targetNodeId = submission.targetNodeId.toLowerCase();
         const deliveryId = submission.deliveryId.toLowerCase();
         const { text } = submission;
-        if (!this.approvedPairs.has(sourceKey + ':' + targetNodeId) ||
-            sourceKey === targetNodeId)
+        if (sourceKey === targetNodeId)
             throw new AtlasError('Sharing to that device is not authorised.', 'SHARE_DENIED');
         if (!sourceRuntime || this.nodes.runtimes.get(sourceId) !== sourceRuntime ||
             !sourceRuntime.getCapabilities().includes('device.share.send'))
@@ -64,6 +65,9 @@ export class DeviceShareRelay {
         try {
             // Still re-check live credential *after* admission, before any delivery.
             await this.nodes.identity!.authenticate(sourceId, credential);
+            if (!this.approvedPairs.has(sourceKey + ':' + targetNodeId) &&
+                !(await this.managedApprovals?.allowed(sourceKey, targetNodeId)))
+                throw new AtlasError('Sharing to that device is not authorised.', 'SHARE_DENIED');
             if (this.nodes.runtimes.get(sourceId) !== sourceRuntime)
                 throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
             return await this.route(sourceId, sourceKey, targetNodeId, deliveryId, text, sourceRuntime);

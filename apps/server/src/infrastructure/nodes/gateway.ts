@@ -7,6 +7,7 @@ import type { NodeService } from '../../nodes/service.js';
 import { RemoteNodeRuntime } from './remote-runtime.js';
 import { deviceShareSubmissionSchema } from '@atlas/protocol/device-protocol';
 import { DeviceShareRelay } from './share-relay.js';
+import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
@@ -21,8 +22,8 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set()) {
-        this.shares = new DeviceShareRelay(nodes, approvedPairs);
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals) {
+        this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
     }
     private track(task: Promise<unknown>) {
         this.pendingLifecycle.add(task);
