@@ -29,6 +29,20 @@ describe('Monitoring deep links', () => {
         expect(parseMonitoringHash('#/monitoring?tab=logs&target=container-root'))
             .toEqual({ tab: 'logs', filters: {} });
     });
+    it('only enables Activity live mode for explicit live=1 and keeps URL state shareable', () => {
+        expect(parseMonitoringHash(monitoringHash('activity', { projectId: 'scope', live: '1' })))
+            .toEqual({ tab: 'activity', filters: { projectId: 'scope', live: '1' } });
+        expect(parseMonitoringHash('#/monitoring?tab=activity&live=true').filters).toEqual({});
+        expect(parseMonitoringHash('#/monitoring?tab=logs&live=1&nodeId=n'))
+            .toEqual({ tab: 'logs', filters: { nodeId: 'n' } });
+        expect(parseMonitoringHash('#/monitoring?tab=overview&live=1').filters).toEqual({});
+    });
+    it('does not enable live mode on historical pages', () => {
+        expect(parseMonitoringHash('#/monitoring?tab=activity&offset=30&live=1').filters)
+            .toEqual({ offset: '30' });
+        expect(parseMonitoringHash('#/monitoring?tab=activity&offset=0&live=1').filters)
+            .toEqual({ offset: '0', live: '1' });
+    });
     it('defaults unknown tabs to Overview', () => {
         expect(parseMonitoringHash('#/monitoring?tab=other')).toEqual({ tab: 'overview', filters: {} });
     });

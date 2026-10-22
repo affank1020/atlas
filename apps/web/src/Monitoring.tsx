@@ -8,6 +8,7 @@ import './activity.css';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
 const LIMIT = 30;
+const ACTIVITY_LIVE_POLL_MS = 30_000;
 export function localDateTimeValue(instant?: string) {
     if (!instant) return '';
     const date = new Date(instant);
@@ -21,8 +22,18 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
     const [refresh, setRefresh] = useState(0);
+    const [lastUpdated, setLastUpdated] = useState<string>();
+    const live = filters.live === '1';
     const [search, setSearch] = useState(filters.search ?? '');
     const [draft, setDraft] = useState<MonitoringFilters>(filters);
+    const liveRef = useRef(live);
+    liveRef.current = live;
+    // The reader survives a live-mode toggle; only scope/manual refresh owns
+    // network cancellation and clearing the previously displayed page.
+    const activeReader = useRef<{
+        read: () => void; inFlight: boolean; lastSettledAt?: number;
+    } | null>(null);
+    const schedulePoll = useRef<() => void>(() => {});
     useEffect(() => setSearch(filters.search ?? ''), [filters.search]);
     useEffect(() => setDraft(filters), [JSON.stringify(filters)]);
     const offset = Math.max(0, Math.min(10000, Number(filters.offset) || 0));
@@ -30,25 +41,88 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         const next = { ...filters, [key]: value || undefined, offset: undefined };
         location.hash = monitoringHash('activity', next);
     };
+    const scopeInput = Object.fromEntries(Object.entries(filters)
+        .filter(([key, value]) => key !== 'offset' && key !== 'live' && value));
+    const scopeKey = JSON.stringify(scopeInput);
     useEffect(() => {
         const controller = new AbortController();
-        setLoading(true); setError(''); setPage(undefined);
-        const input = Object.fromEntries(Object.entries(filters).filter(([key, value]) => key !== 'offset' && value));
-        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
-            .then(value => { if (!controller.signal.aborted) setPage(value); })
-            .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
-            .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-        return () => controller.abort();
-    }, [JSON.stringify(filters), offset, refresh]);
+        const reader = { read: () => {}, inFlight: false, lastSettledAt: undefined as number | undefined };
+        activeReader.current = reader;
+        setPage(undefined); setError(''); setLastUpdated(undefined);
+        // Scope changes and manual Refresh are the only reasons to clear data.
+        const input = JSON.parse(scopeKey) as Record<string, unknown>;
+        reader.read = () => {
+            if (controller.signal.aborted || reader.inFlight ||
+                (liveRef.current && document.visibilityState === 'hidden')) return;
+            reader.inFlight = true;
+            setLoading(true); setError('');
+            void callTool<ActivityPage>('query_monitoring_activity',
+                { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
+                .then(value => {
+                    if (!controller.signal.aborted) { setPage(value); setLastUpdated(new Date().toLocaleTimeString()); }
+                })
+                .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
+                .finally(() => {
+                    reader.inFlight = false;
+                    if (controller.signal.aborted) return;
+                    reader.lastSettledAt = Date.now();
+                    setLoading(false);
+                    schedulePoll.current();
+                });
+        };
+        if (!liveRef.current || document.visibilityState !== 'hidden') reader.read();
+        else setLoading(false);
+        return () => {
+            controller.abort();
+            if (activeReader.current === reader) activeReader.current = null;
+        };
+    }, [scopeKey, offset, refresh]);
+
+    useEffect(() => {
+        // Starting or stopping live mode never clears the settled page, aborts
+        // an existing manual read, or starts an unsolicited replacement query.
+        if (!live) {
+            schedulePoll.current = () => {};
+            return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const schedule = () => {
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+            if (document.visibilityState === 'hidden') return;
+            const reader = activeReader.current;
+            if (!reader || reader.inFlight) return;
+            const remaining = reader.lastSettledAt === undefined ? 0
+                : Math.max(0, ACTIVITY_LIVE_POLL_MS - (Date.now() - reader.lastSettledAt));
+            if (remaining === 0) reader.read();
+            else timer = setTimeout(() => activeReader.current?.read(), remaining);
+        };
+        schedulePoll.current = schedule;
+        document.addEventListener('visibilitychange', schedule);
+        schedule();
+        return () => {
+            if (timer) clearTimeout(timer);
+            document.removeEventListener('visibilitychange', schedule);
+            if (schedulePoll.current === schedule) schedulePoll.current = () => {};
+        };
+    }, [live, scopeKey, offset, refresh]);
     const operationCount = page ? new Set(page.items.map(event => {
         const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
         const attempt = typeof details.attemptId === 'string' ? details.attemptId : '';
         return event.operation.startsWith('workspace.') && attempt
             ? `attempt:${event.projectId ?? ''}:${event.workspaceId ?? ''}:${attempt}` : event.id;
     })).size : 0;
-    const changePage = (next: number) => { location.hash = monitoringHash('activity', { ...filters, offset: String(next) }); };
+    const changePage = (next: number) => { location.hash = monitoringHash('activity', {
+        ...filters, offset: String(next), live: next > 0 ? undefined : filters.live,
+    }); };
     return <section className="panel activity-panel" aria-label="Monitoring activity">
-        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions"><button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button></div></div>
+        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions">
+            <button type="button" className="ghost" aria-pressed={live}
+                onClick={() => location.hash = monitoringHash('activity', {
+                    ...filters, live: live ? undefined : '1', offset: undefined,
+                })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
+            <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
+        </div></div>
         <div className="activity-filters monitoring-filters">
             {([
                 ['projectId', 'Project ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
@@ -65,6 +139,9 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
         {page && <><div className="activity-scroll"><ActivityRows events={page.items} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
+        <p className="activity-footnote" role="status">{live
+            ? 'Live updates on · at most one read every 30 seconds after completion · paused in hidden tabs'
+            : 'Live updates off · manual refresh only'}{lastUpdated ? ` · Last updated ${lastUpdated}` : ''}</p>
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
 }
