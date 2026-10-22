@@ -17,15 +17,58 @@ class AtlasWireTest {
         }
     }
 
-    @Test fun registrationAdvertisesOnlyOutboundShareCapability() {
+    @Test fun registrationAdvertisesOnlyTextSharingCapabilities() {
         val stored = StoredNode("https://atlas.example.com",
             "123e4567-e89b-42d3-a456-426614174000", "a".repeat(43), "Samsung")
         val json = org.json.JSONObject(registrationMessage(stored, "0.1.0"))
         assertEquals("register", json.getString("type"))
         assertEquals(2, json.getInt("protocol"))
-        assertEquals(1, json.getJSONArray("capabilities").length())
+        assertEquals(2, json.getJSONArray("capabilities").length())
         assertEquals("device.share.send", json.getJSONArray("capabilities").getString(0))
+        assertEquals("device.share.receive", json.getJSONArray("capabilities").getString(1))
         assertEquals("android", json.getString("platform"))
+    }
+
+
+    @Test fun incomingShareMustBeBoundedAuthenticatedEnvelopeAndFutureExpiry() {
+        val requestId = "123e4567-e89b-42d3-a456-426614174001"
+        val deliveryId = "123e4567-e89b-42d3-a456-426614174002"
+        val source = "123e4567-e89b-42d3-a456-426614174003"
+        val now = 1_800_000_000_000L
+        fun raw(body: String = "Hello 🎉", expiry: Long = now + 45_000): String =
+            org.json.JSONObject().put("type", "request").put("kind", "device_share")
+                .put("requestId", requestId).put("deliveryId", deliveryId)
+                .put("sourceNodeId", source).put("text", body)
+                .put("expiresAt", java.time.Instant.ofEpochMilli(expiry).toString()).toString()
+        assertEquals("Hello 🎉", parseIncomingDeviceShare(raw(), now)?.text)
+        assertEquals(requestId, parseIncomingDeviceShare(raw(), now)?.requestId)
+        assertEquals(null, parseIncomingDeviceShare(raw(), now + 46_000))
+        assertEquals(null, parseIncomingDeviceShare(raw(expiry = now + 61_000), now))
+        assertEquals(null, parseIncomingDeviceShare(raw(body = ""), now))
+        assertEquals(null, parseIncomingDeviceShare(raw(body = "x".repeat(MAX_SHARE_CHARACTERS + 1)), now))
+        assertEquals(null, parseIncomingDeviceShare(raw().replace("device_share", "workspace"), now))
+        assertEquals(null, parseIncomingDeviceShare(raw().dropLast(1) + ""","unexpected":true}""", now))
+        assertEquals(null, parseIncomingDeviceShare(raw().replace(source, "bad"), now))
+    }
+
+    @Test fun incomingShareReceiptsAreStrictlyCorrelatedAndDoNotContainText() {
+        val requestId = "123e4567-e89b-42d3-a456-426614174001"
+        for (outcome in IncomingShareOutcome.entries) {
+            val response = org.json.JSONObject(incomingDeviceShareResponse(requestId, outcome))
+            assertEquals(requestId, response.getString("requestId"))
+            assertEquals("response", response.getString("type"))
+            assertFalse(response.toString().contains("secret"))
+            when (outcome) {
+                IncomingShareOutcome.ACCEPTED -> assertTrue(response.getJSONObject("result").getBoolean("accepted"))
+                IncomingShareOutcome.DECLINED -> assertFalse(response.getJSONObject("result").getBoolean("accepted"))
+                IncomingShareOutcome.BUSY -> assertEquals("SHARE_BUSY", response.getJSONObject("error").getString("code"))
+                IncomingShareOutcome.COPY_FAILED ->
+                    assertEquals("SHARE_CLIPBOARD_FAILED", response.getJSONObject("error").getString("code"))
+            }
+        }
+        assertTrue(runCatching {
+            incomingDeviceShareResponse("bad", IncomingShareOutcome.ACCEPTED)
+        }.isFailure)
     }
 
     @Test fun submitsBoundedTextWithoutClientSpecifiedSource() {
