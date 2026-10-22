@@ -49,11 +49,13 @@ else
   [[ -d "$(dirname "$out_dir")" ]] || die 'output parent directory missing'
 fi
 
-# Read only the effective server DB name, never its URL or password.
-# This guards against accidentally backing up the old empty 'atlas' database.
+# Restrict this operator command to the documented local Compose postgres.
+# Fail closed on external hosts, custom ports, URL overrides or other DB users.
+# Inspect inside the *running* Server so stale local env cannot select a
+# different database. Never print the URL or any credentials.
 db="$(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml \
-  exec -T server node -e 'const raw=process.env.DATABASE_URL; if(!raw) process.exit(2); const db=decodeURIComponent(new URL(raw).pathname.slice(1)); if(!/^[A-Za-z0-9_]+$/.test(db)) process.exit(3); process.stdout.write(db);' 2>/dev/null)" ||
-  die 'cannot read the active Server database name'
+  exec -T server node -e 'try { const raw=process.env.DATABASE_URL; if(!raw) process.exit(2); const u=new URL(raw); if(!["postgres:","postgresql:"].includes(u.protocol) || u.hostname!=="postgres" || (u.port!=="" && u.port!=="5432") || u.username!=="atlas" || u.search || u.hash) process.exit(3); const db=decodeURIComponent(u.pathname.slice(1)); if(!/^[A-Za-z0-9_]+$/.test(db)) process.exit(4); process.stdout.write(db); } catch { process.exit(5); }' 2>/dev/null)" ||
+  die 'active Server DATABASE_URL is invalid or does not target the local postgres:5432 service as atlas'
 [[ "$db" =~ ^[A-Za-z0-9_]+$ ]] || die 'invalid active database name'
 if [[ "$mode" == dry-run ]]; then
   printf 'DRY RUN: active_database=%s; encrypted_destination=%s; recipient_configured=true; no dump created\n' "$db" "$out_dir"
@@ -64,17 +66,48 @@ fi
 [[ "$(stat -c %a "$out_dir")" == 700 ]] || die 'backup directory permissions changed'
 tmp="$(mktemp "$out_dir/.atlas-pg-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX")"
 tmp_meta=''
+# Capture stderr privately until exit. Never echo raw stderr: PostgreSQL/age
+# errors can contain connection strings, SQL text, paths or other secrets.
+pg_diagnostics="$(mktemp "$out_dir/.atlas-pg-stderr-XXXXXXXX")"
+age_diagnostics="$(mktemp "$out_dir/.atlas-age-stderr-XXXXXXXX")"
 cleanup() {
-  rm -f -- "$tmp"
+  rm -f -- "$tmp" "$pg_diagnostics" "$age_diagnostics"
   if [[ -n "$tmp_meta" ]]; then rm -f -- "$tmp_meta"; fi
 }
 trap cleanup EXIT
-# pg_dump uses one consistent PostgreSQL MVCC snapshot. Encrypt its stdout
-# in a pipeline, with pipefail ensuring either subprocess failure aborts.
-if ! docker compose --env-file infra/production.env -f infra/docker-compose.production.yml \
+# Show only fixed, whitelisted diagnostic categories, never operator-
+# supplied content. Any other stderr is reported as 'other'.
+report_pg_diagnostics() {
+  [[ -s "$pg_diagnostics" ]] || return 0
+  local kind=diagnostic
+  if grep -Eqi '(^|[[:space:]])warning:' "$pg_diagnostics"; then kind=warning; fi
+  local category=other
+  if grep -Eqi 'permission denied|must be owner|insufficient privilege' "$pg_diagnostics"; then
+    category=permissions
+  elif grep -Eqi 'lock timeout|lock not available|could not obtain lock' "$pg_diagnostics"; then
+    category=lock-contention
+  elif grep -Eqi 'connection refused|could not connect|connection failure|connection to server failed|no such file or directory' "$pg_diagnostics"; then
+    category=connection
+  elif grep -Eqi 'authentication failed|password authentication failed' "$pg_diagnostics"; then
+    category=authentication
+  fi
+  printf 'pg_dump %s reported (category: %s; raw diagnostic suppressed).\n' "$kind" "$category" >&2
+}
+# pg_dump uses a single consistent PostgreSQL MVCC snapshot; pipefail treats
+# errors from either process as failure and never publishes partial output.
+if docker compose --env-file infra/production.env -f infra/docker-compose.production.yml \
   exec -T postgres pg_dump -U atlas -d "$db" --format=custom --compress=6 \
-    --no-owner --no-acl --lock-wait-timeout=5000 2>/dev/null |
-    age --recipient "$recipient" > "$tmp" 2>/dev/null; then
+    --no-owner --no-acl --lock-wait-timeout=5000 2>"$pg_diagnostics" |
+    age --recipient "$recipient" > "$tmp" 2>"$age_diagnostics"; then
+  report_pg_diagnostics
+  if [[ -s "$age_diagnostics" ]]; then
+    printf 'age emitted diagnostic output (content suppressed); review backup before trusting it.\n' >&2
+  fi
+else
+  report_pg_diagnostics
+  if [[ -s "$age_diagnostics" ]]; then
+    printf 'age failed or reported diagnostics (content suppressed).\n' >&2
+  fi
   die 'pg_dump or encryption failed; partial encrypted output removed'
 fi
 bytes="$(stat -c %s "$tmp")"
