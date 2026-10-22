@@ -142,7 +142,7 @@ export class WorkspaceService {
                         return removeRuntime!.execute(current, nodeOperation, { ...nodeInput, expectedBranch });
                     }
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
-                    ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) }
+                    ? { ...nodeInput, githubToken: await this.github.gitPublishToken(x.repository) }
                     : name === 'workspace_git_clone_repository'
                         ? { ...nodeInput, githubToken: await this.github.repositoryReadToken(x.repository) }
                         : nodeInput);

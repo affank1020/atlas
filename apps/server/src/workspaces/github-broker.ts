@@ -7,7 +7,7 @@ const MAX_INSTALLATIONS = 100;
 const MAX_REPO_PAGES = 10;
 
 type Transport = typeof fetch;
-type TokenResponse = { token?: string; repositories?: { full_name: string }[] };
+type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string } };
 type Installation = { id: number; account?: { login?: string; type?: string } };
 type InstalledRepository = { full_name?: string; private?: boolean; default_branch?: string; archived?: boolean };
 type RepositoryPage = { repositories?: InstalledRepository[]; total_count?: number };
@@ -64,26 +64,40 @@ export class GitHubBroker {
         return result as Installation[];
     }
 
-    private async tokenForInstallation(installationId: number, repository?: string, readonly = false) {
-        const body = repository
-            ? { repositories: [repository.split('/')[1]], permissions: readonly ? { contents: 'read' } : { contents: 'write', pull_requests: 'write' } }
-            : { permissions: { contents: 'read' } };
-        const result = await this.request(`/app/installations/${installationId}/access_tokens`, 'POST', this.jwt(), body) as TokenResponse;
+    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'pr' | 'push' = 'read') {
+        const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
+            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : { contents: 'read' };
+        const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
+        let result: TokenResponse;
+        try {
+            result = await this.request(`/app/installations/${installationId}/access_tokens`, 'POST', this.jwt(), body) as TokenResponse;
+        } catch (error) {
+            // GitHub may reject a requested permission until the App's permission
+            // change has been approved by the installation owner. Never echo its body.
+            if (purpose === 'push' && error instanceof AtlasError && error.code === 'GITHUB_REQUEST_FAILED' &&
+                /\(HTTP (?:403|422)\)/.test(error.message))
+                throw new AtlasError('GitHub could not issue a workflow-write token. Check Workflows: read and write permission and approve the GitHub App installation update.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+            throw error;
+        }
         if (!result.token) throw new AtlasError('GitHub App did not issue a token.', 'GITHUB_REQUEST_FAILED');
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
+        // Never publish with a token unless GitHub explicitly confirms the requested scope.
+        if (purpose === 'push' && result.permissions?.workflows !== 'write')
+            throw new AtlasError('GitHub installation token lacks workflow-write permission. Approve the GitHub App permission update.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
         return result.token;
     }
 
-    async installationToken(repository: string) { return this.scopedToken(repository, false); }
-    async repositoryReadToken(repository: string) { return this.scopedToken(repository, true); }
-    private async scopedToken(repository: string, readonly: boolean) {
+    async installationToken(repository: string) { return this.scopedToken(repository, 'pr'); }
+    async gitPublishToken(repository: string) { return this.scopedToken(repository, 'push'); }
+    async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
+    private async scopedToken(repository: string, purpose: 'read' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();
         const installation = installations.find(item => item.account!.login!.toLowerCase() === owner);
         if (!installation) throw new AtlasError('GitHub App is not installed on this repository owner.', 'WORKSPACE_DENIED');
-        return this.tokenForInstallation(installation.id, repository, readonly);
+        return this.tokenForInstallation(installation.id, repository, purpose);
     }
 
     async listRepositories() {

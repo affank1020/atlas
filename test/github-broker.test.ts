@@ -42,6 +42,41 @@ test('broker dynamically locates installation and issues token scoped to one rep
     assert.equal(calls, 2);
 });
 
+test('Git pushes use a separate repository-scoped token with workflow-write, without PR permissions', async () => {
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        assert.equal(String(url), 'https://api.github.com/app/installations/456789/access_tokens');
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+            repositories: ['portfolio-site'], permissions: { contents: 'write', workflows: 'write' },
+        });
+        return response(201, { ...tokenBody, permissions: { contents: 'write', workflows: 'write' } });
+    }) as typeof fetch);
+    assert.equal(await broker.gitPublishToken(repo), tokenBody.token);
+});
+
+test('Git publishing fails clearly if workflow-write has not been approved or granted', async () => {
+    for (const status of [403, 422]) {
+        const broker = new GitHubBroker(env, (async url =>
+            String(url).includes('/app/installations?') ? response(200, installations) :
+                response(status, { message: 'secret upsteam detail ghs_shall-not-leak' })) as typeof fetch);
+        await assert.rejects(broker.gitPublishToken(repo), (error: any) => {
+            assert.equal(error.code, 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+            assert.doesNotMatch(error.message, /ghs_shall-not-leak|secret upsteam/);
+            return true;
+        });
+    }
+    const missing = new GitHubBroker(env, (async url =>
+        String(url).includes('/app/installations?') ? response(200, installations) :
+            response(201, { ...tokenBody, permissions: { contents: 'write' } })) as typeof fetch);
+    await assert.rejects(missing.gitPublishToken(repo), (error: any) =>
+        error.code === 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+    const wrongRepository = new GitHubBroker(env, (async url =>
+        String(url).includes('/app/installations?') ? response(200, installations) :
+            response(201, { ...tokenBody, repositories: [{ full_name: 'affank1020/other' }],
+                permissions: { workflows: 'write' } })) as typeof fetch);
+    await assert.rejects(wrongRepository.gitPublishToken(repo), (error: any) => error.code === 'WORKSPACE_DENIED');
+});
+
 test('repository discovery enumerates installed account repositories and returns safe metadata', async () => {
     const broker = new GitHubBroker(env, (async (url, init) => {
         if (String(url).includes('/app/installations?')) return response(200, installations);

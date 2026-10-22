@@ -79,7 +79,8 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
     const router = new NodeRouter(nodes);
     const github = {
         approve: () => undefined,
-        installationToken: async () => 'ghs_testOnlyBrokeredToken123456789',
+        installationToken: async () => { throw new Error('PR token must not be used for Git push'); },
+        gitPublishToken: async () => 'ghs_testOnlyBrokeredToken123456789',
     };
     const service = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool), router, github as any);
     const project = await catalog.createProject({ name: 'Routed' });
