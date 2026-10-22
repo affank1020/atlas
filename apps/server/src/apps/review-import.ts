@@ -28,7 +28,7 @@ function verdict(body: string) {
 }
 
 function parseInline(comment: GitHubInlineComment) {
-    const match = /^\s*(?:[🟠🟡🔴🟢]\s*)?\*{0,2}Sev([1-4])\s*[·:\-–]\s*([^\n*]{1,180})/i.exec(comment.body.slice(0, 600));
+    const match = /^\s*(?:[🟠🟡🔴🟢]\s*)?\*{0,2}Sev([1-4])\s*[·:\-–]\s*([^\n*]{1,180})/iu.exec(comment.body.slice(0, 600));
     if (!match) return undefined;
     const title = match[2]!.trim();
     if (!title) return undefined;
