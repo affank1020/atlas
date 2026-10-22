@@ -122,7 +122,7 @@ export async function startMacShareControlServer(
                             !data.text.trim() || data.text.length > 16_384)
                             throw Error('Invalid request');
                         if (!await approve(data.targetNodeId, data.text) || socket.destroyed) {
-                            result = { accepted: false };
+                            result = { cancelled: true };
                         } else {
                             result = await node.sendDeviceShare(data.targetNodeId, data.text);
                         }
