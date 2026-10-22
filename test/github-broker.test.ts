@@ -215,3 +215,17 @@ test('repository cloning uses read-only GitHub App tokens and never accepts clie
         ...clone, githubToken: tokenBody.token,
     }).success, false);
 });
+
+test('GitHub review imports request only scoped pull-request read, rejecting missing permissions', async () => {
+    let allowed = true;
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+            repositories: ['portfolio-site'], permissions: { pull_requests: 'read' },
+        });
+        return response(201, { ...tokenBody, permissions: allowed ? { pull_requests: 'read' } : { contents: 'read' } });
+    }) as typeof fetch);
+    assert.equal(await broker.pullRequestReadToken(repo), tokenBody.token);
+    allowed = false;
+    await assert.rejects(broker.pullRequestReadToken(repo), /lacks pull-request read permission/);
+});

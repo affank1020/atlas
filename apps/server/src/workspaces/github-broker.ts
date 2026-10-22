@@ -7,7 +7,7 @@ const MAX_INSTALLATIONS = 100;
 const MAX_REPO_PAGES = 10;
 
 type Transport = typeof fetch;
-type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string } };
+type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string; pull_requests?: string } };
 type Installation = { id: number; account?: { login?: string; type?: string } };
 type InstalledRepository = { full_name?: string; private?: boolean; default_branch?: string; archived?: boolean };
 type RepositoryPage = { repositories?: InstalledRepository[]; total_count?: number };
@@ -64,9 +64,9 @@ export class GitHubBroker {
         return result as Installation[];
     }
 
-    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'pr' | 'push' = 'read') {
+    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'reviews' | 'pr' | 'push' = 'read') {
         const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
-            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : { contents: 'read' };
+            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : purpose === 'reviews' ? { pull_requests: 'read' } : { contents: 'read' };
         const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
         // HTTP 403 and 422 also cover throttling and validation failures. Do
         // not infer missing permission from status alone or echo GitHub bodies.
@@ -76,6 +76,8 @@ export class GitHubBroker {
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
         // Never publish with a token unless GitHub explicitly confirms the requested scope.
+        if (purpose === 'reviews' && !['read', 'write'].includes(result.permissions?.pull_requests ?? ''))
+            throw new AtlasError('GitHub installation token lacks pull-request read permission.', 'GITHUB_REQUEST_FAILED');
         if (purpose === 'push' && result.permissions?.workflows !== 'write')
             throw new AtlasError('GitHub installation token lacks workflow-write permission. Approve the GitHub App permission update.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
         return result.token;
@@ -84,7 +86,8 @@ export class GitHubBroker {
     async installationToken(repository: string) { return this.scopedToken(repository, 'pr'); }
     async gitPublishToken(repository: string) { return this.scopedToken(repository, 'push'); }
     async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
-    private async scopedToken(repository: string, purpose: 'read' | 'pr' | 'push') {
+    async pullRequestReadToken(repository: string) { return this.scopedToken(repository, 'reviews'); }
+    private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();

@@ -22,3 +22,16 @@ test('Phase 4.3 server Docker Compose passes only broker settings to Server', ()
     assert.match(example, /ATLAS_GITHUB_APP_PRIVATE_KEY_PEM=\n/);
     assert.match(example, /ATLAS_GITHUB_WORKSPACE_REPOSITORIES=\n/);
 });
+
+test('Code Reviews trusted publisher configuration is forwarded only to the production Server', () => {
+    const compose = readFileSync('infra/docker-compose.production.yml', 'utf8');
+    const server = compose.split('  server:\n')[1]?.split('  ingress:\n')[0];
+    assert.ok(server, 'Server service must exist');
+    assert.match(server!, /^      ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON: \$\{ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON:-\}$/m);
+    const outside = compose.split('  server:\n')[0] + (compose.split('  ingress:\n')[1] ?? '');
+    assert.doesNotMatch(outside, /^      ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON:/m,
+        'Trust configuration must be forwarded only to the server, not Postgres, ingress or Nodes');
+    const envExample = readFileSync('infra/production.env.example', 'utf8');
+    assert.match(envExample, /^ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON=$/m,
+        'Production env template should document an explicit empty default');
+});

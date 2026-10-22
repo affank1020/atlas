@@ -29,6 +29,8 @@ import { ApplicationRegistry } from '../apps/registry.js';
 import { portfolioApplication } from '../apps/portfolio-definition.js';
 import { FootballTrainingService, footballTrainingApplication } from '../apps/football-training.js';
 import { CodeReviewsService, codeReviewsApplication } from '../apps/code-reviews.js';
+import { GitHubReviewHistoryReader } from '../apps/github-review-history.js';
+import { GitHubBroker } from '../workspaces/github-broker.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
 import type { NodeRuntime } from '../nodes/runtime.js';
@@ -64,7 +66,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await healthPool.end(); } finally { await repository.close(); } } } }, fabric.repository, portfolio, media, files],
         message => { diagnostics.record('background_task_failed'); console.error(message); });
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
-    const codeReviews = new CodeReviewsService(catalog);
+    const codeReviews = new CodeReviewsService(catalog, new GitHubReviewHistoryReader(new GitHubBroker()), config.codeReviews.trustedPublishers);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
     const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };

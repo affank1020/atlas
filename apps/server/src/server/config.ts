@@ -52,6 +52,30 @@ export function loadDeviceShareConfig(env: NodeJS.ProcessEnv = process.env) {
     return { approvedPairs };
 }
 
+
+/** Explicit repository-to-immutable-GitHub-user-ID trust map; fail closed if absent.
+ * A login or free-text review heading is never sufficient proof of publisher origin.
+ */
+export function loadReviewPublisherTrust(env: NodeJS.ProcessEnv = process.env): ReadonlyMap<string, ReadonlySet<number>> {
+    const raw = env.ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON?.trim();
+    const trusted = new Map<string, ReadonlySet<number>>();
+    if (!raw) return trusted;
+    let value: unknown;
+    try { value = JSON.parse(raw); } catch { throw new Error('Invalid ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON.'); }
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+        Object.keys(value).length > 100)
+        throw new Error('Invalid ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON.');
+    for (const [repository, ids] of Object.entries(value)) {
+        const key = repository.toLowerCase();
+        if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(key) ||
+            trusted.has(key) || !Array.isArray(ids) || ids.length < 1 || ids.length > 20 ||
+            ids.some(id => !Number.isSafeInteger(id) || id < 1))
+            throw new Error('Invalid ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON repository or publisher IDs.');
+        trusted.set(key, new Set(ids as number[]));
+    }
+    return trusted;
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -90,6 +114,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         deviceShares: loadDeviceShareConfig(env),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
+        codeReviews: { trustedPublishers: loadReviewPublisherTrust(env) },
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }
