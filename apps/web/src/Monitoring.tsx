@@ -26,6 +26,14 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     const live = filters.live === '1';
     const [search, setSearch] = useState(filters.search ?? '');
     const [draft, setDraft] = useState<MonitoringFilters>(filters);
+    const liveRef = useRef(live);
+    liveRef.current = live;
+    // The reader survives a live-mode toggle; only scope/manual refresh owns
+    // network cancellation and clearing the previously displayed page.
+    const activeReader = useRef<{
+        read: () => void; inFlight: boolean; lastSettledAt?: number;
+    } | null>(null);
+    const schedulePoll = useRef<() => void>(() => {});
     useEffect(() => setSearch(filters.search ?? ''), [filters.search]);
     useEffect(() => setDraft(filters), [JSON.stringify(filters)]);
     const offset = Math.max(0, Math.min(10000, Number(filters.offset) || 0));
@@ -33,18 +41,20 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         const next = { ...filters, [key]: value || undefined, offset: undefined };
         location.hash = monitoringHash('activity', next);
     };
+    const scopeInput = Object.fromEntries(Object.entries(filters)
+        .filter(([key, value]) => key !== 'offset' && key !== 'live' && value));
+    const scopeKey = JSON.stringify(scopeInput);
     useEffect(() => {
         const controller = new AbortController();
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        let inFlight = false;
-        let lastSettledAt: number | undefined;
+        const reader = { read: () => {}, inFlight: false, lastSettledAt: undefined as number | undefined };
+        activeReader.current = reader;
         setPage(undefined); setError(''); setLastUpdated(undefined);
-        // URL state controls the UI only; never forward it to the audit API.
-        const input = Object.fromEntries(Object.entries(filters)
-            .filter(([key, value]) => key !== 'offset' && key !== 'live' && value));
-        const read = () => {
-            if (controller.signal.aborted || inFlight || (live && document.visibilityState === 'hidden')) return;
-            inFlight = true;
+        // Scope changes and manual Refresh are the only reasons to clear data.
+        const input = JSON.parse(scopeKey) as Record<string, unknown>;
+        reader.read = () => {
+            if (controller.signal.aborted || reader.inFlight ||
+                (liveRef.current && document.visibilityState === 'hidden')) return;
+            reader.inFlight = true;
             setLoading(true); setError('');
             void callTool<ActivityPage>('query_monitoring_activity',
                 { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
@@ -53,36 +63,49 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
                 })
                 .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
                 .finally(() => {
-                    inFlight = false;
+                    reader.inFlight = false;
                     if (controller.signal.aborted) return;
-                    lastSettledAt = Date.now();
+                    reader.lastSettledAt = Date.now();
                     setLoading(false);
-                    // Schedule *after completion*: slow requests never overlap.
-                    if (live && document.visibilityState !== 'hidden')
-                        timer = setTimeout(read, ACTIVITY_LIVE_POLL_MS);
+                    schedulePoll.current();
                 });
         };
-        const onVisibilityChange = () => {
-            if (!live) return;
-            // No background polling. Visibility changes must not bypass the
-            // 30-second cooldown (e.g. rapid tab switching by an operator).
-            if (timer) clearTimeout(timer);
-            timer = undefined;
-            if (document.visibilityState !== 'visible' || inFlight) return;
-            const remaining = lastSettledAt === undefined ? 0
-                : Math.max(0, ACTIVITY_LIVE_POLL_MS - (Date.now() - lastSettledAt));
-            if (remaining === 0) read();
-            else timer = setTimeout(read, remaining);
-        };
-        if (live) document.addEventListener('visibilitychange', onVisibilityChange);
-        if (!live || document.visibilityState !== 'hidden') read();
+        if (!liveRef.current || document.visibilityState !== 'hidden') reader.read();
         else setLoading(false);
         return () => {
             controller.abort();
-            if (timer) clearTimeout(timer);
-            document.removeEventListener('visibilitychange', onVisibilityChange);
+            if (activeReader.current === reader) activeReader.current = null;
         };
-    }, [JSON.stringify(filters), offset, refresh]);
+    }, [scopeKey, offset, refresh]);
+
+    useEffect(() => {
+        // Starting or stopping live mode never clears the settled page, aborts
+        // an existing manual read, or starts an unsolicited replacement query.
+        if (!live) {
+            schedulePoll.current = () => {};
+            return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const schedule = () => {
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+            if (document.visibilityState === 'hidden') return;
+            const reader = activeReader.current;
+            if (!reader || reader.inFlight) return;
+            const remaining = reader.lastSettledAt === undefined ? 0
+                : Math.max(0, ACTIVITY_LIVE_POLL_MS - (Date.now() - reader.lastSettledAt));
+            if (remaining === 0) reader.read();
+            else timer = setTimeout(() => activeReader.current?.read(), remaining);
+        };
+        schedulePoll.current = schedule;
+        document.addEventListener('visibilitychange', schedule);
+        schedule();
+        return () => {
+            if (timer) clearTimeout(timer);
+            document.removeEventListener('visibilitychange', schedule);
+            if (schedulePoll.current === schedule) schedulePoll.current = () => {};
+        };
+    }, [live, scopeKey, offset, refresh]);
     const operationCount = page ? new Set(page.items.map(event => {
         const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
         const attempt = typeof details.attemptId === 'string' ? details.attemptId : '';
