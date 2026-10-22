@@ -135,15 +135,32 @@ npm run files:r2:verify-catalog -- --max-records=200
 This is a **read-only** command: one PostgreSQL `SELECT` captures up to
 `maxRecords+1` committed Files metadata rows from a single SQL statement
 snapshot. Only the first `maxRecords` rows (default **100**, maximum **200**)
-are checked sequentially using bounded R2 GETs against both the primary and
-recovery buckets. No DB transaction is held during remote network requests.
+are checked sequentially against the **effective Atlas Files read source**
+(primary R2, or **only after confirmed NoSuchKey**, the bounded legacy local
+Files root) and the independent recovery R2 bucket. This matches the seeder's
+read precedence for pre-R2 Files that still exist solely on local disk.
+The operator host must have the correct `ATLAS_MEDIA_DIR` available and
+must be able to read any legacy objects; a missing/unmounted root causes an
+inconclusive failure instead of silently accepting absent Files. R2 access,
+network, authorization, NoSuchBucket and malformed 404 errors **never**
+authorize local fallback. No DB transaction is held during remote requests.
 No seed/PUT/DELETE, plaintext download to disk, server route or scheduler is
 introduced. Note that a run may download up to 25 MiB per object **from each
-bucket**, so R2 request/transfer costs and operator runtime apply.
+bucket** for Files that are in primary R2. Local legacy reads replace
+primary-R2 GET payloads when its key is confirmed missing, so R2 costs
+and operator runtime vary by catalog composition.
 
 A report may be `passed` **only** if all captured rows fit under the limit,
 the catalog is nonempty, and every row passed checksum/metadata validation for
-**both** copies. `partial` means the cap was reached; `failed` means at
+**the effective live source and independent recovery copy**. The report's
+`primarySource: "effective-atlas-files"` denotes that precedence, while
+`verifiedPrimaryViaLegacyLocal` counts only checksum-verified local-only
+source objects. **A pass with this count above zero does not mean those
+objects have been migrated to primary R2**; it confirms the live local
+fallback and independent backup are both recoverable. Preserve the legacy
+local volume until migration/recovery strategy is complete.
+
+`partial` means the cap was reached; `failed` means at
 least one invalid, missing or corrupt object; `empty` is not a pass. Only
 `passed` exits 0; any other result exits 2, and an unexpected DB/R2 error
 exits 1 without leaking endpoints/credentials. At most ten opaque File IDs
