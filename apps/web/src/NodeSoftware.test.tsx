@@ -338,3 +338,38 @@ it('shows a claimed Node update as reserved rather than approved or installed', 
     expect(screen.queryByRole('button', { name: /Prepare update request/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Cancel update request/ })).not.toBeInTheDocument();
 });
+
+it('automatically refreshes a requested intent after the native Node claims it', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host',
+        platform: 'linux', status: 'online' as const, credentialState: 'active',
+        credentialUpdatedAt: '2026-10-21T10:00:00.000Z',
+        version: '1.9.9', capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    const requested: NodeUpdateIntent = {
+        id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+        installedVersion: node.version, targetVersion: release.version,
+        targetCommit: release.commit, status: 'requested',
+        expiresAt: new Date(Date.now() + 12 * 60_000).toISOString(),
+        createdAt: new Date().toISOString(), approved: false, executable: false,
+    };
+    let serverState: NodeUpdateIntent = requested;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_releases') return { state: 'ready', checkedAt: '', releases: [release] };
+        if (name === 'list_node_update_intents') return [serverState];
+        if (name === 'cancel_node_update_intent') throw new Error('A stale cancel must never be sent.');
+        throw new Error('Unexpected tool ' + name);
+    });
+    render(<NodeSoftwareSummary node={node} />);
+    expect(await screen.findByText('Update request: requested')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel update request' })).toBeEnabled();
+
+    // The Node claims the record without any corresponding Node snapshot change.
+    serverState = { ...requested, status: 'claimed' };
+    expect(await screen.findByText('Update request: claimed', {}, { timeout: 8_000 })).toBeInTheDocument();
+    expect(screen.getByText(/not a host approval or proof of installation/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel update request' })).not.toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'list_node_update_intents').length)
+        .toBeGreaterThanOrEqual(2);
+    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'cancel_node_update_intent')).toBe(false);
+});
