@@ -373,3 +373,44 @@ it('automatically refreshes a requested intent after the native Node claims it',
         .toBeGreaterThanOrEqual(2);
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'cancel_node_update_intent')).toBe(false);
 }, 12_000);
+
+it('shows reported host outcome as unverified and keeps the claimed update fence', async () => {
+    const node = {
+        id: '11111111-1111-4111-8111-111111111111', name: 'Linux host',
+        platform: 'linux', version: '2.0.0+aaaaaaaaaaaa', status: 'online' as const,
+        credentialState: 'active', credentialUpdatedAt: '2026-10-21T10:00:00Z',
+        capabilities: [], lastSeen: null, hostedWorkspaceCount: 0,
+    };
+    const requested: NodeUpdateIntent = {
+        id: '22222222-2222-4222-8222-222222222222', nodeId: node.id,
+        targetVersion: release.version, targetCommit: release.commit,
+        installedVersion: node.version, status: 'claimed', approved: false,
+        executable: false, createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now()-2000).toISOString(),
+    };
+    let observation: NodeUpdateIntent = requested;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_node_update_intents') return [observation];
+        if (name === 'list_node_releases') return { state:'ready', checkedAt:'', releases:[release] };
+        if (name === 'plan_node_update') return {
+            nodeId:node.id, status:'candidate',reason:'Candidate available',
+            candidate:release,canInstall:false,canActivate:false,provenanceVerified:false,
+        };
+        throw new Error('Unexpected tool ' + name);
+    });
+    render(<NodeSoftwareSummary node={node} />);
+    expect(await screen.findByText('Update request: claimed')).toBeInTheDocument();
+    observation = { ...requested, reportedOutcome: {
+        intentId:requested.id,nodeId:node.id,reportedState:'activated',
+        reportedAt:new Date().toISOString(),verified:false,clearsClaim:false,
+    }};
+    expect(await screen.findByText(/Unverified Node-credential report/,{},{
+        timeout:8_000,
+    })).toBeInTheDocument();
+    expect(screen.getByText(/does not clear the update lock/)).toBeInTheDocument();
+    expect(screen.getByText('Not recorded')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Check Linux update eligibility'}));
+    expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Prepare update request/})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Cancel update request/})).not.toBeInTheDocument();
+}, 12_000);

@@ -264,3 +264,57 @@ test('an intent that expires while claim waits for its Node lock cannot be claim
         if (claim) await claim.catch(() => undefined);
     }
 });
+
+test('unverified outcome reports are immutable, idempotent and never clear the claimed fence', async () => {
+    const f = await fixture();
+    const intent = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    await assert.rejects(f.ledger.report(f.nodeId, intent.id, f.credential,
+        candidate.sha256, 'activated'), fails('CONFLICT'));
+    await f.ledger.claim(f.nodeId, intent.id, f.credential, f.version, candidate.sha256);
+    const report = await f.ledger.report(f.nodeId, intent.id, f.credential,
+        candidate.sha256, 'activated');
+    assert.deepEqual({ ...report, reportedAt: 'redacted' }, {
+        intentId: intent.id, nodeId: f.nodeId, reportedState: 'activated',
+        reportedAt: 'redacted', verified: false, clearsClaim: false,
+    });
+    const repeated = await f.ledger.report(f.nodeId, intent.id, f.credential,
+        candidate.sha256, 'activated');
+    assert.deepEqual(repeated, report);
+    await assert.rejects(f.ledger.report(f.nodeId, intent.id, f.credential,
+        candidate.sha256, 'requires_reconciliation'), fails('CONFLICT'));
+    const saved = (await f.ledger.list(f.nodeId))[0]!;
+    assert.equal(saved.status, 'claimed');
+    assert.equal(saved.reportedOutcome?.reportedState, 'activated');
+    assert.equal(saved.reportedOutcome?.verified, false);
+    assert.equal(saved.reportedOutcome?.clearsClaim, false);
+    assert.deepEqual(saved.reportedOutcome, report);
+    await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate), fails('CONFLICT'));
+    await assert.rejects(f.ledger.cancel(f.nodeId, intent.id), fails('CONFLICT'));
+    const events = await f.db.store.pool.query(`SELECT * FROM audit_events
+        WHERE operation='node.update_outcome_reported' AND after_state->>'intentId'=$1`, [intent.id]);
+    assert.equal(events.rowCount, 1, 'idempotent retry cannot create duplicate audit records');
+    assert.equal(events.rows[0].after_state.verified, false);
+    const row = await f.db.store.pool.query('SELECT status FROM node_update_intents WHERE id=$1', [intent.id]);
+    assert.equal(row.rows[0].status, 'claimed');
+});
+
+test('outcome reports reject another Node, wrong SHA, revoked or rotated credentials', async () => {
+    const f = await fixture();
+    const token = await f.identity.ticket();
+    const other = await f.identity.enrol({
+        token: token.enrolmentToken, name: 'Another Linux Node',
+        platform: 'linux', version: f.version,
+    });
+    const intent = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    await f.ledger.claim(f.nodeId, intent.id, f.credential, f.version, candidate.sha256);
+    const submit = (nodeId=f.nodeId, credential=f.credential, sha=candidate.sha256) =>
+        f.ledger.report(nodeId, intent.id, credential, sha, 'requires_reconciliation');
+    await assert.rejects(submit(other.nodeId, other.credential), fails('NOT_FOUND'));
+    await assert.rejects(submit(f.nodeId, other.credential), fails('NODE_AUTH_INVALID'));
+    await assert.rejects(submit(f.nodeId, f.credential, 'f'.repeat(64)), fails('CONFLICT'));
+    await f.db.store.pool.query("UPDATE nodes SET credential_updated_at=now()+interval '1 minute' WHERE id=$1", [f.nodeId]);
+    await assert.rejects(submit(), fails('CONFLICT'));
+    await f.identity.revoke(f.nodeId);
+    await assert.rejects(submit(), fails('NODE_AUTH_INVALID'));
+    assert.equal((await f.ledger.list(f.nodeId))[0]?.reportedOutcome, undefined);
+});

@@ -197,6 +197,67 @@ def claim_server(url: str, node_id: str, token: str, grant: dict) -> dict:
         raise Refused("Server claim failed or response uncertain; do not retry.") from None
 
 
+def report_server(url: str, node_id: str, token: str, receipt: dict) -> dict:
+    """Publish a NON-AUTHORITATIVE observation. Never claim success or unlock."""
+    reported = receipt["stage"]
+    if reported not in ("activated", "requires_reconciliation"):
+        raise Refused("Only terminal local execution receipts can be reported.")
+    body = json.dumps({"intentId": receipt["intentId"],
+                       "targetSha256": receipt["targetSha256"],
+                       "reportedState": reported}, separators=(",", ":")).encode()
+    request = urllib.request.Request(url, data=body, method="POST", headers={
+        "Authorization": "Bearer " + token, "x-atlas-node-id": node_id,
+        "Content-Type": "application/json", "Accept": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect)
+    try:
+        with opener.open(request, timeout=10) as reply:
+            if reply.status != 200 or int(reply.headers.get("Content-Length", "0")) > MAX_SMALL_FILE:
+                raise Refused("Server did not accept the outcome observation.")
+            raw = reply.read(MAX_SMALL_FILE + 1)
+        if len(raw) > MAX_SMALL_FILE:
+            raise Refused("Server outcome observation exceeds size limit.")
+        value = json.loads(raw)
+        record = value.get("report") if isinstance(value, dict) else None
+        if not isinstance(record, dict) or any(record.get(k) != v for k, v in {
+                "intentId": receipt["intentId"], "nodeId": node_id,
+                "reportedState": reported, "verified": False, "clearsClaim": False,
+        }.items()) or not isinstance(record.get("reportedAt"), str):
+            raise Refused("Server outcome acknowledgment is inconsistent.")
+        return record
+    except (urllib.error.URLError, TimeoutError, ValueError, UnicodeError):
+        raise Refused("Outcome report acknowledgment uncertain; retry ONLY reporting, never execution.") from None
+
+
+def report_outcome(intent_id: str, *, approval_module=None) -> dict:
+    if sys.platform != "linux" or os.geteuid() != 0 or not os.isatty(0):
+        raise Refused("Reporting requires an interactive Linux root session.")
+    approval_module = approval_module or load_approval_module()
+    store = approval_module.ApprovalStore(STATE)
+    with store.locked():
+        receipt = ReceiptStore(store).read(intent_id)
+        if not receipt or receipt.get("stage") not in ("activated", "requires_reconciliation"):
+            raise Refused("Only a durable terminal host receipt can be reported.")
+        configuration = read_node_config(NODE_ENV)
+        node_id = approval_module.read_host_node_id()
+        if configuration["ATLAS_NODE_ID"] != node_id or receipt.get("nodeId") != node_id:
+            raise Refused("Execution receipt does not belong to this host Node.")
+        if not HEX64.fullmatch(str(receipt.get("targetSha256", ""))):
+            raise Refused("Invalid signed release digest in execution receipt.")
+        if receipt["stage"] == "activated":
+            expected = receipt.get("targetVersion", "") + "+" + receipt.get("targetCommit", "")
+            if approval_module.read_installed_version() != expected:
+                raise Refused("Host no longer runs the release named in the activated receipt.")
+            if (RELEASE_ROOT / ".activation-pending").exists() or (
+                    RELEASE_ROOT / ".activation-pending").is_symlink():
+                raise Refused("Host lifecycle recovery is still pending.")
+        endpoint = claim_url(configuration["ATLAS_SERVER_URL"]).removesuffix("/claim") + "/report"
+        state = receipt["stage"]
+    if input("Type 'REPORT " + intent_id + "' to submit UNVERIFIED " + state +
+             " observation: ") != "REPORT " + intent_id:
+        raise Refused("Host operator declined observation reporting.")
+    return report_server(endpoint, node_id, configuration["ATLAS_NODE_CREDENTIAL"], receipt)
+
+
 def digest_file(path: Path, max_bytes: int) -> str:
     digest = hashlib.sha256()
     size = 0
@@ -554,6 +615,8 @@ def main():
     install.add_argument("attestations", type=Path)
     status = commands.add_parser("status", help="inspect local execution receipt")
     status.add_argument("intent_id")
+    report = commands.add_parser("report", help="publish a non-authoritative terminal outcome")
+    report.add_argument("intent_id")
     args = parser.parse_args()
     if sys.platform != "linux" or os.geteuid() != 0:
         raise Refused("Linux root is required.")
@@ -561,6 +624,8 @@ def main():
     if args.action == "execute":
         print(json.dumps(execute(identifier, args.archive, args.checksum, args.attestations),
                          sort_keys=True))
+    elif args.action == "report":
+        print(json.dumps(report_outcome(identifier), sort_keys=True))
     else:
         approval = load_approval_module()
         print(json.dumps(ReceiptStore(approval.ApprovalStore(STATE)).read(identifier),

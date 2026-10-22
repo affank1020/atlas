@@ -3,6 +3,7 @@ import { serveFilesRequest } from './files.js';
 import { serveNodeFileUpload } from './node-files.js';
 import { serveNodeResumableRequest } from './node-resumable.js';
 import { serveNodeUpdateClaim } from './node-update-claim.js';
+import { serveNodeUpdateReport } from './node-update-report.js';
 import { nodeSchemas } from '../../nodes/contracts.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -31,6 +32,7 @@ export function createHttpTransport(services: ServerServices) {
             const allowedOrigins = config.workspace.origins;
             if (!allowedOrigins.includes(request.headers.origin)) { response.writeHead(403,{"content-type":"application/json"}); response.end(JSON.stringify({error:"ORIGIN_DENIED",message:"Origin is not approved for workspace access."})); return; }
         }
+        if (await serveNodeUpdateReport(request, response, services)) return;
         if (await serveNodeUpdateClaim(request, response, services)) return;
         if (await serveNodeResumableRequest(request, response, services)) return;
         if (await serveNodeFileUpload(request, response, services)) return;
