@@ -23,12 +23,13 @@ function fixture(t: import("node:test").TestContext) {
     "#!/usr/bin/env bash",
     'printf "%s\\n" "$*" >> "$MOCK_TRACE"',
     'if [[ "$*" == *"exec -T server node -e"* ]]; then',
-    '  printf "%s" "$FAKE_DATABASE"',
-    "  exit 0",
+    '  DATABASE_URL="$FAKE_DATABASE_URL" node -e "${@: -1}"',
+    "  exit $?",
     "fi",
     'if [[ "$*" == *"exec -T postgres pg_dump"* ]]; then',
     '  printf "PGDMPmock-consistent-snapshot"',
-    '  if [[ "$FAKE_DUMP_FAIL" == 1 ]]; then exit 7; fi',
+    '  if [[ -n "$FAKE_DUMP_WARNING" ]]; then printf "pg_dump: warning: %s\\n" "$FAKE_DUMP_WARNING" >&2; fi',
+    '  if [[ "$FAKE_DUMP_FAIL" == 1 ]]; then printf "pg_dump: error: connection to server failed: %s\\n" "$SENTINEL_SECRET" >&2; exit 7; fi',
     "  exit 0",
     "fi",
     "exit 8",
@@ -49,7 +50,8 @@ function fixture(t: import("node:test").TestContext) {
   const run = (args: string[], overrides: Record<string, string> = {}) => spawnSync("bash", [script, ...args], {
     cwd: deploy, encoding: "utf8",
     env: { ...process.env, HOME: root, PATH: bin + ":" + process.env.PATH,
-      MOCK_TRACE: trace, FAKE_DATABASE:"atlas_import", FAKE_DUMP_FAIL:"0", FAKE_AGE_FAIL:"0",
+      MOCK_TRACE: trace, FAKE_DATABASE_URL:"postgresql://atlas:testing-only@postgres:5432/atlas_import",
+      FAKE_DUMP_FAIL:"0", FAKE_AGE_FAIL:"0", FAKE_DUMP_WARNING:"", SENTINEL_SECRET:"secret-password-never-log",
       ATLAS_PG_BACKUP_RECIPIENT: "age1testpublicrecipient", ...overrides },
   });
   return { root, output, trace, run };
@@ -119,9 +121,40 @@ test("refuses unsafe and symlinked destination", t => {
   assert.deepEqual(readdirSync(target), []);
 });
 
-test("refuses malformed active DB names before dump", t => {
+test("refuses mismatched host, port, user, URL query and malformed database", t => {
   const f = fixture(t);
-  const r = f.run(["--apply", "--confirm=BACKUP_POSTGRES", "--out-dir=" + f.output], { FAKE_DATABASE: "atlas\nunsafe" });
+  const urls = [
+    "postgresql://atlas:testing-only@standby:5432/atlas_import",
+    "postgresql://atlas:testing-only@postgres:5433/atlas_import",
+    "postgresql://other:testing-only@postgres:5432/atlas_import",
+    "postgresql://atlas:testing-only@postgres:5432/atlas_import?host=standby",
+    "postgresql://atlas:testing-only@postgres:5432/atlas%0Aunsafe",
+  ];
+  for (const FAKE_DATABASE_URL of urls) {
+    const r = f.run(["--apply", "--confirm=BACKUP_POSTGRES", "--out-dir=" + f.output], { FAKE_DATABASE_URL });
+    assert.notEqual(r.status, 0, FAKE_DATABASE_URL);
+    assert.doesNotMatch(r.stderr + r.stdout, /testing-only|standby:5432/);
+    assert.doesNotMatch(readFileSync(f.trace, "utf8"), /pg_dump/);
+    assert.equal(existsSync(f.output), false);
+  }
+});
+
+test("successful pg_dump warnings receive safe category summaries, not raw diagnostics", t => {
+  const f = fixture(t);
+  const r = f.run(["--apply", "--confirm=BACKUP_POSTGRES", "--out-dir=" + f.output],
+    { FAKE_DUMP_WARNING: "permission denied for table confidential_secret_name" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /pg_dump warning reported \(category: permissions/);
+  assert.doesNotMatch(r.stderr, /confidential_secret_name|secret-password-never-log/);
+  assert.equal(readdirSync(f.output).length, 2);
+});
+
+test("failed pg_dump preserves safe failure category without leaking credentials", t => {
+  const f = fixture(t);
+  const r = f.run(["--apply", "--confirm=BACKUP_POSTGRES", "--out-dir=" + f.output],
+    { FAKE_DUMP_FAIL: "1" });
   assert.notEqual(r.status, 0);
-  assert.doesNotMatch(readFileSync(f.trace, "utf8"), /pg_dump/);
+  assert.match(r.stderr, /pg_dump diagnostic reported \(category: connection/);
+  assert.doesNotMatch(r.stderr, /secret-password-never-log|testing-only/);
+  assert.deepEqual(readdirSync(f.output), []);
 });
