@@ -7,6 +7,6 @@ export class ActivityService {
     recent(input: Parameters<AuditService['history']>[0]) { return this.audit.history(input); }
     async page(input: MonitoringActivityQuery) {
         const page = await this.audit.monitoring(input);
-        return input.safeDetails ? { ...page, items: page.items.map(projectMonitoringEvent) } : page;
+        return input.safeDetails === true ? { ...page, items: page.items.map(projectMonitoringEvent) } : page;
     }
 }
