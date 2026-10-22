@@ -8,6 +8,8 @@ This is the **physical device release gate**, not an automated proof of success.
 - **Required before enrolling a real Samsung device:** build and install the Android APK **locally, under the same OS user, with a persistent development signing key**. Gradle's standard debug build uses `~/.android/debug.keystore`; keep this same keystore for every test-device upgrade. Do not use a CI APK for enrolment. See the build instructions below.
 - [Android Node Actions](https://github.com/affank1020/atlas/actions/workflows/android-node.yml) publishes `atlas-android-node-debug` as a **CI validation artifact only**. CI runners use ephemeral signing identities: their APKs are **not suitable for enrolling a real device or testing upgrades**.
 - Before uninstalling or replacing an enrolled app with an incompatible signature, **revoke its Android Node identity in Atlas Web first**. Uninstalling deletes local encrypted credentials. Never commit, upload, or send `debug.keystore` or one-use enrolment tickets to CI, GitHub issues, or PRs.
+- Confirm normal Atlas Mac Node operations still work. Make a note of the Mac clipboard contents if needed: successful acceptance **replaces them**.
+- Obtain operator approval before changing the Mac Node's environment, granting a sharing pair, or installing/enrolling the Android app. Keep a plan to remove the temporary approvals afterwards.
 
 ## Build and verify the consistently signed test APK
 
@@ -34,9 +36,6 @@ shasum -a 256 app/build/outputs/apk/debug/app-debug.apk
 Verify that `~/.android/debug.keystore` is retained **privately on the development Mac**. The first local build may generate it; record the signer fingerprint from `apksigner` and confirm it stays identical for subsequent builds. Gradle debug signing is appropriate for this controlled acceptance test, **not** for a public release. Do not publish the keystore or treat this as production signing.
 
 Before any repeat install or update, compare the APK's certificate SHA-256 fingerprint with the previous installed test build's recorded fingerprint. **If it differs, do not uninstall or force installation**: revoke the old Node in Atlas Web, then deliberately reinstall and re-enrol with a new one-use ticket. If `adb install -r` fails due to signature mismatch, apply this same revoke-first procedure; never delete an enrolled identity merely to bypass an install error.
-- Confirm normal Atlas Mac Node operations still work. Make a note of the Mac clipboard contents if needed: successful acceptance **replaces them**.
-- Obtain operator approval before changing the Mac Node's environment, granting a sharing pair, or installing/enrolling the Android app. Keep a plan to remove the temporary approvals afterwards.
-
 ## Enable a single test receiver (Mac)
 
 1. Update the installed Mac Node if necessary; perform the test in its logged-in desktop session, not a headless service session.
