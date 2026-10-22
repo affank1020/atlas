@@ -28,8 +28,13 @@ async function readBounded(request: IncomingMessage): Promise<unknown> {
 }
 
 export async function serveNodeUpdateClaim(request: IncomingMessage, response: ServerResponse,
-    services: Pick<ServerServices, 'identity' | 'nodes'>): Promise<boolean> {
+    services: Pick<ServerServices, 'identity' | 'nodes' | 'config'>): Promise<boolean> {
     if (request.url !== PATH) return false;
+    // A request must never reserve an update until the root-only host
+    // executor and independent approval process have been reviewed/deployed.
+    if (!services.config.nodeUpdateClaims.enabled) {
+        send(response, 404, { error: 'NOT_FOUND' }); return true;
+    }
     if (request.method !== 'POST') {
         response.setHeader('allow', 'POST');
         send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
