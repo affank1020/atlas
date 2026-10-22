@@ -14,12 +14,18 @@ export const R2_RECOVERY_MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const R2_RECOVERY_DEFAULT_CATALOG_RECORDS = 100;
 export const R2_RECOVERY_MAX_CATALOG_RECORDS = 200;
 
-export type RecoveryObjectStore = { getBounded(key: string, maxBytes: number): Promise<Buffer> };
+export type RecoveryObjectStore = {
+    getBounded(key: string, maxBytes: number): Promise<Buffer>;
+    /** Optional origin annotation for the effective live Files source. */
+    getBoundedWithSource?(key: string, maxBytes: number):
+        Promise<{ bytes: Buffer; source: 'primary-r2' | 'legacy-local' }>;
+};
 type FileRow = { id: string; storage_key: string; checksum: string; byte_size: number | string };
 export type RecoveryVerification = {
     mode: 'read-only';
     status: 'passed' | 'failed' | 'partial' | 'empty';
     checked: number; verifiedPrimary: number; verifiedBackup: number; verifiedBoth: number;
+    verifiedPrimaryViaLegacyLocal: number;
     primaryMissing: number; backupMissing: number; primaryCorrupt: number; backupCorrupt: number;
     invalidMetadata: number; bytesRead: number; maxFiles: number; remaining: boolean;
     entireCatalogChecked: boolean; noWrites: true; nextCursor?: string; failureFileIds: string[];
@@ -88,10 +94,19 @@ function validated(row: FileRow): boolean {
         row.storage_key === 'files-' + row.id.replaceAll('-', '') + '-' + row.checksum;
 }
 type ObjectCheck = 'valid' | 'missing' | 'corrupt';
-async function check(store: RecoveryObjectStore, row: FileRow): Promise<{ state: ObjectCheck; read: number }> {
+async function check(store: RecoveryObjectStore, row: FileRow):
+    Promise<{ state: ObjectCheck; read: number; source?: 'primary-r2' | 'legacy-local' }> {
     let contents: Buffer;
-    try { contents = await store.getBounded(row.storage_key, R2_RECOVERY_MAX_FILE_BYTES); }
-    catch (error) {
+    let source: 'primary-r2' | 'legacy-local' | undefined;
+    try {
+        if (store.getBoundedWithSource) {
+            const result = await store.getBoundedWithSource(row.storage_key, R2_RECOVERY_MAX_FILE_BYTES);
+            contents = result.bytes;
+            source = result.source;
+        } else {
+            contents = await store.getBounded(row.storage_key, R2_RECOVERY_MAX_FILE_BYTES);
+        }
+    } catch (error) {
         if (error instanceof ObjectNotFound) return { state: 'missing', read: 0 };
         // Network/auth/rate limit/oversized or partial response: inconclusive,
         // NOT equivalent to a confirmed missing or corrupted backup.
@@ -100,7 +115,7 @@ async function check(store: RecoveryObjectStore, row: FileRow): Promise<{ state:
     if (contents.length !== Number(row.byte_size) ||
         createHash('sha256').update(contents).digest('hex') !== row.checksum)
         return { state: 'corrupt', read: contents.length };
-    return { state: 'valid', read: contents.length };
+    return { state: 'valid', read: contents.length, ...(source ? { source } : {}) };
 }
 
 /** Shared read-only verifier for already-selected immutable metadata rows.
@@ -109,11 +124,13 @@ async function check(store: RecoveryObjectStore, row: FileRow): Promise<{ state:
 async function verifySelectedRows(rows: FileRow[], primaryStore: RecoveryObjectStore,
     recoveryStore: RecoveryObjectStore): Promise<{
     verifiedPrimary: number; verifiedBackup: number; verifiedBoth: number;
+    verifiedPrimaryViaLegacyLocal: number;
     primaryMissing: number; backupMissing: number; primaryCorrupt: number;
     backupCorrupt: number; invalidMetadata: number; bytesRead: number; failureFileIds: string[];
 }> {
     const counters = {
         verifiedPrimary: 0, verifiedBackup: 0, verifiedBoth: 0,
+        verifiedPrimaryViaLegacyLocal: 0,
         primaryMissing: 0, backupMissing: 0, primaryCorrupt: 0,
         backupCorrupt: 0, invalidMetadata: 0, bytesRead: 0, failureFileIds: [] as string[],
     };
@@ -126,8 +143,10 @@ async function verifySelectedRows(rows: FileRow[], primaryStore: RecoveryObjectS
         const primary = await check(primaryStore, row);
         const backup = await check(recoveryStore, row);
         counters.bytesRead += primary.read + backup.read;
-        if (primary.state === 'valid') counters.verifiedPrimary++;
-        else if (primary.state === 'missing') counters.primaryMissing++;
+        if (primary.state === 'valid') {
+            counters.verifiedPrimary++;
+            if (primary.source === 'legacy-local') counters.verifiedPrimaryViaLegacyLocal++;
+        } else if (primary.state === 'missing') counters.primaryMissing++;
         else counters.primaryCorrupt++;
         if (backup.state === 'valid') counters.verifiedBackup++;
         else if (backup.state === 'missing') counters.backupMissing++;
@@ -148,10 +167,13 @@ function hasRecoveryIssues(counters: {
 
 export type RecoveryCatalogVerification = {
     mode: 'read-only'; status: 'passed' | 'failed' | 'partial' | 'empty';
+    /** Live Files read order: primary R2, then bounded legacy local on confirmed NoSuchKey. */
+    primarySource: 'effective-atlas-files';
     catalogScope: 'single-statement-metadata-snapshot';
     snapshotObservedAt: string;
     maxRecords: number; checked: number; truncated: boolean;
     verifiedPrimary: number; verifiedBackup: number; verifiedBoth: number;
+    verifiedPrimaryViaLegacyLocal: number;
     primaryMissing: number; backupMissing: number; primaryCorrupt: number;
     backupCorrupt: number; invalidMetadata: number; bytesRead: number;
     noWrites: true; failureFileIds: string[];
@@ -202,7 +224,8 @@ export async function verifyR2RecoveryCatalog(input: {
         mode: 'read-only',
         status: hasRecoveryIssues(counters) ? 'failed' :
             selected.length === 0 ? 'empty' : truncated ? 'partial' : 'passed',
-        catalogScope: 'single-statement-metadata-snapshot', snapshotObservedAt,
+        catalogScope: 'single-statement-metadata-snapshot',
+        primarySource: 'effective-atlas-files', snapshotObservedAt,
         maxRecords, checked: selected.length, truncated, ...counters, noWrites: true,
     };
 }
