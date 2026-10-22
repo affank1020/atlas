@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import org.junit.Rule
 import org.junit.Test
@@ -76,11 +77,11 @@ class SharesheetUiTest {
 
     @Test fun pickerShowsApprovedNamesDisablesOfflineAndRequiresSelection() {
         mount(ready = true)
-        compose.runOnIdle { state = state.editDraft("Send after selecting a recipient") }
+        compose.runOnIdle { state = state.navigate(Section.SEND).editDraft("Send after selecting a recipient") }
         compose.onNodeWithTag("share-submit").assertIsNotEnabled()
         compose.onNodeWithTag("recipient-" + offline.nodeId).assertIsNotEnabled()
-        compose.onNodeWithTag("recipient-" + mac.nodeId).assertIsEnabled().performClick()
-        compose.onNodeWithTag("share-submit").assertIsEnabled()
+        compose.onNodeWithTag("recipient-" + mac.nodeId).performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
     }
 
     @Test fun leavingSendAndReturningRetainsDraft() {
