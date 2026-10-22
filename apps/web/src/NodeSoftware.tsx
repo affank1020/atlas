@@ -113,11 +113,12 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         void callTool<NodeUpdateIntent[]>('list_node_update_intents', { nodeId, limit: 20 })
             .then(items => {
                 if (intentReadGeneration.current !== generation) return;
-                const active = items.find(item => item.status === 'requested' &&
+                const scoped = items.filter(item => item.nodeId === nodeId);
+                const active = scoped.find(item => item.status === 'requested' &&
                     Number.isFinite(Date.parse(item.expiresAt)) && Date.parse(item.expiresAt) > Date.now());
                 setClock(Date.now());
                 setIntention(current => current?.nodeId === nodeId ? {
-                    ...current, result: active ?? items[0], loading: false, error: undefined,
+                    ...current, result: active ?? scoped[0], loading: false, error: undefined,
                 } : current);
             }).catch(cause => {
                 if (intentReadGeneration.current !== generation) return;
