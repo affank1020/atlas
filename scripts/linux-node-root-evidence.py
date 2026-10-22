@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import importlib.machinery
 import importlib.util
 import json
@@ -133,16 +134,15 @@ def openssl_sign(data: bytes, key: Path, runner=subprocess.run) -> bytes:
     return raw
 
 
-def attest(intent_id: str, challenge: str, *, executor=None,
-           key: Path = HOST_KEY, signer=openssl_sign, runner=subprocess.run) -> dict:
+def _attest(intent_id: str, challenge: str, *, executor,
+            key: Path, signer, runner) -> dict:
     if not UUID.fullmatch(intent_id) or not SHA.fullmatch(challenge):
         raise Refused("Canonical intent UUID and 64-character nonce are required.")
-    executor = executor or import_executor()
     approval = executor.load_approval_module()
     store = approval.ApprovalStore(executor.STATE)
-    # Take the same host-exclusive execution lock so a second executor cannot
-    # mutate the host concurrently with snapshot collection. Do not trust any
-    # command arguments for release identity; use root-owned receipt and host.
+    # The wrapper holds the host's process-wide executor lock. The approval
+    # ledger lock here protects the root-owned receipt against local writers.
+    # Do not trust command arguments for release identity.
     with store.locked():
         receipt = executor.ReceiptStore(store).read(intent_id)
         if not receipt or receipt.get("stage") != "activated":
@@ -178,6 +178,34 @@ def attest(intent_id: str, challenge: str, *, executor=None,
         fields["observedPid"] = live_pid(runner=runner)
         return {**fields, "signature": base64.b64encode(
             signer(signed_bytes(fields), key)).decode("ascii")}
+
+
+def attest(intent_id: str, challenge: str, *, executor=None,
+           key: Path = HOST_KEY, signer=openssl_sign, runner=subprocess.run) -> dict:
+    if sys.platform != "linux" or os.geteuid() != 0 or not os.isatty(0):
+        raise Refused("Interactive Linux root terminal required.")
+    executor = executor or import_executor()
+    approval = executor.load_approval_module()
+    store = approval.ApprovalStore(executor.STATE)
+    # Same process-wide executor lock first, then the short approval ledger
+    # lock inside _attest. This preserves lock order and excludes concurrent
+    # root-managed executions from changing the source while signing.
+    with store.locked():
+        pass
+    fd = os.open(executor.STATE / ".executor.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077:
+            raise Refused("Unsafe process-wide executor lock.")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refused("Another root-managed update is in progress.") from None
+        return _attest(intent_id, challenge, executor=executor,
+                       key=key, signer=signer, runner=runner)
+    finally:
+        os.close(fd)
 
 
 def main():
