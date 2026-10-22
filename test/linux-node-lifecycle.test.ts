@@ -48,7 +48,7 @@ function fixture() {
         '      sleep 0.1',
         '    fi',
         '    target="$(readlink "$ATLAS_LIFECYCLE_ROOT/current")"',
-        '    if [[ "$ATLAS_TEST_FAIL_TARGET" == "$target" ]]; then',
+        '    if [[ "$ATLAS_TEST_FAIL_TARGET" == "$target" || "${ATLAS_TEST_FAIL_ALL:-0}" == "1" ]]; then',
         '      printf \'{"pid":4242,"state":"reconnecting"}\' > "$ATLAS_LIFECYCLE_STATUS_FILE"',
         '    else',
         '      printf \'{"pid":4242,"state":"connected"}\' > "$ATLAS_LIFECYCLE_STATUS_FILE"',
@@ -140,12 +140,16 @@ test('malformed interrupted activation journal cannot redirect or trigger a reco
     assert.notEqual(f.run(['activate', f.newer.name]).status, 0);
 });
 
-test('failed health restoration keeps journal until the old Node reconnects', { skip: !available }, t => {
+test('unhealthy rollback remains pending until independent recovery observes a connection', { skip: !available }, t => {
     const f = fixture();
     t.after(() => rmSync(f.root, { recursive: true, force: true }));
-    const failed = f.run(['activate', f.newer.name], { ATLAS_TEST_FAIL_TARGET: f.newer.folder });
+    const failed = f.run(['activate', f.newer.name], { ATLAS_TEST_FAIL_ALL: '1' });
     assert.notEqual(failed.status, 0);
     assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
-    assert.equal(existsSync(join(f.root, '.activation-pending')), false,
-        'healthy rollback must clear the pending journal');
+    assert.equal(existsSync(join(f.root, '.activation-pending')), true,
+        'unhealthy rollback must keep the pending journal');
+    const recovered = f.run(['recover']);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
 });
