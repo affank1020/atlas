@@ -19,6 +19,7 @@ import { WorkspaceService } from '../workspaces/application.js';
 import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
 import { ServerDiagnostics } from './diagnostics.js';
+import { MonitoringHealthService } from './monitoring-health.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
 import { NodeFileIngestService } from './node-file-ingest.js';
@@ -48,6 +49,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
     const shareApprovals = new NodeShareApprovals(repository.pool, config.deviceShares.approvedPairs);
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
+    const health = new MonitoringHealthService(repository.pool, nodes);
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
@@ -56,7 +58,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football)]);
     diagnostics.record('server_initialised');
-    const services = { config, catalog, diagnostics, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;
