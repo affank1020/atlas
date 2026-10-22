@@ -17,12 +17,12 @@ export type GitHubReview = {
 };
 export type GitHubInlineComment = {
     id: number;
-    pull_request_review_id: number;
+    pull_request_review_id: number | null;
     body: string;
     html_url: string;
     path: string;
-    line: number | null;
-    original_line: number | null;
+    line?: number | null;
+    original_line?: number | null;
 };
 
 const safeInt = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
@@ -40,11 +40,11 @@ function isReview(value: any): value is GitHubReview {
         (value.user === null || (typeof value.user?.login === 'string' && value.user.login.length < 150));
 }
 function isInline(value: any): value is GitHubInlineComment {
-    return value && safeInt(value.id) && safeInt(value.pull_request_review_id) &&
+    return value && safeInt(value.id) && (value.pull_request_review_id == null || safeInt(value.pull_request_review_id)) &&
         textValue(value.body) && typeof value.html_url === 'string' && value.html_url.length < 500 &&
         typeof value.path === 'string' && value.path.length < 4096 &&
-        (value.line === null || safeInt(value.line)) &&
-        (value.original_line === null || safeInt(value.original_line));
+        (value.line == null || safeInt(value.line)) &&
+        (value.original_line == null || safeInt(value.original_line));
 }
 
 export class GitHubReviewHistoryReader {

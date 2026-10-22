@@ -13,19 +13,22 @@ type Candidate = {
     run: RecordData;
     comments: { sourceId: string; finding: Omit<RecordData, 'reviewRunId'> }[];
 };
-const reviewerHeader = /^##\s*(?:🔎\s*)?Code Reviewer\b/im;
+const reviewerHeader = /^##\s*(?:🔎\s*)?Code Reviewer\b/i;
 
 function verdict(body: string) {
-    const heading = body.slice(0, 1_500);
-    if (/\bChanges requested\b/i.test(heading)) return 'changes_requested';
-    if (/\bNon.blocking findings\b/i.test(heading)) return 'non_blocking';
-    if (/\b(?:No actionable findings|Clean review)\b/i.test(heading)) return 'no_findings';
-    if (/\bConcerns to verify\b/i.test(heading)) return 'concerns_to_verify';
+    // Read the review's summary banner, not later quoted/previous findings.
+    const summary = body.slice(0, 1_200).split(/\r?\n/)
+        .find(line => /^>\s*\*\*(?:Changes requested|Non.blocking findings|Clean review|No actionable findings|Concerns to verify|Inconclusive)\b/i.test(line));
+    if (!summary) return 'inconclusive';
+    if (/Changes requested/i.test(summary)) return 'changes_requested';
+    if (/Non.blocking findings/i.test(summary)) return 'non_blocking';
+    if (/Clean review|No actionable findings/i.test(summary)) return 'no_findings';
+    if (/Concerns to verify/i.test(summary)) return 'concerns_to_verify';
     return 'inconclusive';
 }
 
 function parseInline(comment: GitHubInlineComment) {
-    const match = /\bSev([1-4])\s*[·:\-–]\s*([^\n*]{1,180})/i.exec(comment.body.slice(0, 600));
+    const match = /^\s*(?:[🟠🟡🔴🟢]\s*)?\*{0,2}Sev([1-4])\s*[·:\-–]\s*([^\n*]{1,180})/i.exec(comment.body.slice(0, 600));
     if (!match) return undefined;
     const title = match[2]!.trim();
     if (!title) return undefined;
@@ -61,6 +64,7 @@ export function prepareGitHubReviews(repository: string, prNumber: number, snaps
     }
     const commentsByReview = new Map<number, GitHubInlineComment[]>();
     for (const comment of snapshot.comments) {
+        if (comment.pull_request_review_id === null) continue;
         const group = commentsByReview.get(comment.pull_request_review_id) ?? [];
         group.push(comment);
         commentsByReview.set(comment.pull_request_review_id, group);
@@ -135,10 +139,9 @@ export function reconcileGitHubReviews(
         throw new AtlasError('Code Reviews project or Stores are unavailable.', 'CAPABILITY_UNAVAILABLE');
 
     const prepared = prepareGitHubReviews(repository, prNumber, snapshot);
-    const runs = new Map<string, { id: string; data: RecordData }>();
-    const findings = new Map<string, { id: string; data: RecordData }>();
+    const runs = new Map<string, { id: string; data: RecordData; archivedAt?: string }>();
+    const findings = new Map<string, { id: string; data: RecordData; archivedAt?: string }>();
     for (const record of state.records) {
-        if (record.archivedAt) continue;
         if (record.storeId === stores.runs && typeof record.data.githubReviewId === 'string') {
             if (runs.has(record.data.githubReviewId))
                 throw new AtlasError('Duplicate imported GitHub review IDs were detected.', 'CONFLICT');
@@ -160,6 +163,7 @@ export function reconcileGitHubReviews(
     for (const candidate of prepared.candidates) {
         let run = runs.get(candidate.sourceId);
         if (run) {
+            if (run.archivedAt) throw new AtlasError('Archived review history cannot be recreated by import.', 'CONFLICT');
             if (String(run.data.repository).toLowerCase() !== repository.toLowerCase() ||
                 run.data.prNumber !== prNumber || run.data.headSha !== candidate.run.headSha)
                 throw new AtlasError('Existing GitHub review identity conflicts with its source.', 'CONFLICT');
@@ -175,6 +179,7 @@ export function reconcileGitHubReviews(
         for (const comment of candidate.comments) {
             const existing = findings.get(comment.sourceId);
             if (existing) {
+                if (existing.archivedAt) throw new AtlasError('Archived review findings cannot be recreated by import.', 'CONFLICT');
                 if (existing.data.reviewRunId !== run.id || existing.data.findingKey !== comment.finding.findingKey)
                     throw new AtlasError('Existing GitHub comment identity conflicts with its review.', 'CONFLICT');
                 result.findingsAlreadyPresent++;

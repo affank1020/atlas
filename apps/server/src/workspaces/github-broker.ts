@@ -7,7 +7,7 @@ const MAX_INSTALLATIONS = 100;
 const MAX_REPO_PAGES = 10;
 
 type Transport = typeof fetch;
-type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string } };
+type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string; pull_requests?: string } };
 type Installation = { id: number; account?: { login?: string; type?: string } };
 type InstalledRepository = { full_name?: string; private?: boolean; default_branch?: string; archived?: boolean };
 type RepositoryPage = { repositories?: InstalledRepository[]; total_count?: number };
@@ -76,6 +76,8 @@ export class GitHubBroker {
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
         // Never publish with a token unless GitHub explicitly confirms the requested scope.
+        if (purpose === 'reviews' && !['read', 'write'].includes(result.permissions?.pull_requests ?? ''))
+            throw new AtlasError('GitHub installation token lacks pull-request read permission.', 'GITHUB_REQUEST_FAILED');
         if (purpose === 'push' && result.permissions?.workflows !== 'write')
             throw new AtlasError('GitHub installation token lacks workflow-write permission. Approve the GitHub App permission update.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
         return result.token;

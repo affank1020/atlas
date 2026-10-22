@@ -72,8 +72,9 @@ text but **not** transformed into structured finding records. Accordingly
 `findingObservations` is not the total number of historical findings, and
 the resulting records are not proof of complete review history.
 
-The import is **bounded to 500 GitHub reviews and 500 inline comments per PR**;
-a larger or malformed response stops without persisting a partial import.
+Pagination is bounded to five 100-item pages for each source. A fifth **full**
+page (500 or more reviews/comments), or a malformed response, stops without
+persisting a potentially partial import.
 The importer never republishes reviews, submits approvals, or infers that a
 historical issue has been resolved. Importing later comments for an already
 seen review is supported; existing snapshots are append-only.

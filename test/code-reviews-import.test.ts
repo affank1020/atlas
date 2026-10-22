@@ -11,7 +11,7 @@ after(cleanupDatabases);
 const repository = 'affank1020/atlas';
 const head = 'a'.repeat(40);
 const sampleReview = {
-    id: 5613675655, body: '## 🔎 Code Reviewer · PR #69\n\n**Non-blocking findings** — 1 Sev3',
+    id: 5613675655, body: '## 🔎 Code Reviewer · PR #69\n\n> [!NOTE]\n> **Non-blocking findings** — 1 Sev3',
     commit_id: head, submitted_at: '2026-10-22T12:20:00Z',
     state: 'COMMENTED', html_url: 'https://github.com/affank1020/atlas/pull/69#pullrequestreview-1',
     user: { login: 'affank1020' },
@@ -52,7 +52,7 @@ async function fixture() {
 
 test('historical markdown imports only recognizable Code Reviewer submissions and explicit inline severities', () => {
     const prepared = prepareGitHubReviews(repository, 69, { reviews: [
-        { ...sampleReview, id: 1, body: 'Looks good' },
+        { ...sampleReview, id: 1, body: 'Looks good\n\n## 🔎 Code Reviewer · PR #69' },
         { ...sampleReview, id: 2, body: null, submitted_at: null },
         sampleReview,
     ], comments: [sampleComment, { ...sampleComment, id: 5,
@@ -65,6 +65,14 @@ test('historical markdown imports only recognizable Code Reviewer submissions an
     assert.equal(first.comments[0]?.finding.severity, 'sev3');
     assert.equal(first.comments[0]?.finding.state, 'unverified');
     assert.equal((first.run.coverage as any).summaryFindingsNotParsed, true);
+});
+
+test('summary banner verdict avoids interpreting old findings as the latest verdict', () => {
+    const prepared = prepareGitHubReviews(repository, 69, {
+        reviews: [{ ...sampleReview, id: 100, body: '## 🔎 Code Reviewer · PR #69\n\n> [!NOTE]\n> **Clean review** — no actionable issues.\n\n### Previous changes requested now resolved' }],
+        comments: [],
+    });
+    assert.equal(prepared.candidates[0]?.run.verdict, 'no_findings');
 });
 
 test('explicit preview is read-only; applied imports are atomic and idempotent', async () => {
@@ -135,4 +143,52 @@ test('GitHub reader validates repository and fetches bounded paginated reviews w
     assert.equal(result.comments.length,1);
     assert.equal(calls.length,2);
     assert.ok(calls.every(url => url.startsWith('https://api.github.com/repos/affank1020/atlas/pulls/69/')));
+});
+
+test('missing severity headings are not promoted into historical findings', () => {
+    const prepared = prepareGitHubReviews(repository, 69, {
+        reviews: [sampleReview],
+        comments: [{ ...sampleComment, id: sampleComment.id + 10,
+            body: 'Scenario: another reviewer mentioned Sev3 · Some title in passing.' }],
+    });
+    assert.equal(prepared.candidates[0]?.comments.length, 0);
+    assert.equal(prepared.commentsWithoutSeverity, 1);
+});
+
+test('existing archived reviews are never silently resurrected by a rerun', async () => {
+    const { catalog, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, { read: async () => source });
+    await service.importPullRequest(repository, 69, true);
+    const records = await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id });
+    await catalog.archiveRecord(CODE_REVIEWS_PROJECT_ID, runs.id, records.items[0]!.id);
+    await assert.rejects(service.importPullRequest(repository, 69, true), /Archived review history/);
+    assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 0);
+});
+
+test('reader refuses truncated GitHub pagination without fetching further resources', async () => {
+    let requests = 0;
+    const reader = new GitHubReviewHistoryReader(
+        { pullRequestReadToken: async () => 'read-token' },
+        (async () => {
+            requests++;
+            return new Response(JSON.stringify(Array.from({length:100}, (_, i) =>
+                ({ ...sampleReview, id: i + 1 + requests * 100 }))), { status: 200 });
+        }) as typeof fetch,
+    );
+    await assert.rejects(reader.read(repository, 69), /exceeds the supported 500-item limit/);
+    assert.equal(requests, 5);
+});
+
+test('an archived review for another PR does not block independent imports', async () => {
+    const { catalog, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, { read: async () => source });
+    await service.importPullRequest(repository, 69, true);
+    const first = await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id });
+    await catalog.archiveRecord(CODE_REVIEWS_PROJECT_ID, runs.id, first.items[0]!.id);
+    const next = new CodeReviewsService(catalog, { read: async () => ({ reviews: [
+        { ...sampleReview, id: sampleReview.id + 1, body: '## 🔎 Code Reviewer · PR #70\n\n> **Clean review**' },
+    ], comments: [] }) });
+    const result = await next.importPullRequest(repository, 70, true);
+    assert.equal(result.runsCreated, 1);
+    assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 1);
 });
