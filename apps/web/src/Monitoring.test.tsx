@@ -137,7 +137,7 @@ test('activity uses correlated operation paging and counts attempts rather than 
     vi.mocked(callTool).mockResolvedValue({ items: [result, request], total: 1, offset: 0, limit: 30 });
     render(<MonitoringPage />);
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
-        { offset: 0, limit: 30, groupOperations: true }, expect.any(AbortSignal)));
+        { offset: 0, limit: 30, groupOperations: true, safeDetails: true }, expect.any(AbortSignal)));
     expect(await screen.findByText(/1–1 of 1 operations/)).toBeInTheDocument();
     expect(screen.getByText('test · running')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
