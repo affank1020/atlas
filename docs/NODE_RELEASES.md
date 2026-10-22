@@ -494,8 +494,10 @@ the same 64-byte Ed25519 signature:
 The signer only considers a durable root-owned `activated` execution receipt,
 and refuses to sign if the current release differs from the receipt, a
 lifecycle recovery marker exists, the Node service is not active or the
-connected status PID is inconsistent. It takes the **same process-wide
-executor flock** for the entire operation, and requires a separate interactive
+connected status PID is inconsistent. It takes **both the process-wide
+executor flock and the lifecycle's existing manual activation/rollback flock**
+in that order, preventing cooperating manual lifecycle commands from
+changing the release during signing. It requires a separate interactive
 `ATTEST <intent UUID>` confirmation. It never loads the Node credential or
 sends a network request. The connected status file is supplied by the Node
 process itself, so this check is **not** independent measurement of running
