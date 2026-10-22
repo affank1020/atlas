@@ -45,14 +45,47 @@ The Application provides three read-only MCP operations:
 - `code_reviews_list_runs` — bounded, sorted, paginated review history.
 - `code_reviews_list_findings` — bounded findings for a validated Review Run ID.
 
-It does **not** publish reviews, submit approvals, reconcile existing GitHub review threads,
-run AI analysis, or claim historical completeness. Existing Code Reviewer GitHub publication
-continues unchanged until there is an independently reviewed replacement.
+### Manual GitHub history import
+
+The new `code_reviews_import_pull_request` MCP operation imports **one PR at a time**.
+It authenticates through the existing Atlas GitHub App using a repository-scoped
+`pull_requests:read` token; the App must be installed on the repository.
+No GitHub token is returned to the caller.
+
+1. Preview: `{ "repository": "affank1020/atlas", "prNumber": 69 }`.
+   An omitted `apply` defaults to `false`. The response counts prospective
+   review runs and inline findings without writing any records.
+2. Apply: `{ "repository": "affank1020/atlas", "prNumber": 69, "apply": true }`.
+   This persists review runs and explicit severity-labelled inline findings
+   in **one Atlas transaction**. Repeating the call adds only missing source IDs.
+3. Check `code_reviews_overview` and `code_reviews_list_runs` to view imported
+   history. Inspect `coverage` for original review text and source metadata.
+
+For historical markdown, only native GitHub reviews whose body begins with a
+**Code Reviewer** heading are recognized. Review heads, authors, timestamps and
+GitHub source IDs are retained. Inline review comments with an explicit
+Sev1–Sev4 label are imported as findings with **unverified** lifecycle state.
+The finding key identifies the source GitHub comment; it does not imply two
+comments describe the same root cause. Reviewer Markdown body findings without
+a corresponding labelled inline comment are retained in the original review
+text but **not** transformed into structured finding records. Accordingly
+`findingObservations` is not the total number of historical findings, and
+the resulting records are not proof of complete review history.
+
+The import is **bounded to 500 GitHub reviews and 500 inline comments per PR**;
+a larger or malformed response stops without persisting a partial import.
+The importer never republishes reviews, submits approvals, or infers that a
+historical issue has been resolved. Importing later comments for an already
+seen review is supported; existing snapshots are append-only.
+
+It does **not** publish reviews, submit approvals, run AI analysis,
+automatically scan repositories, or claim historical completeness.
+Existing Code Reviewer GitHub publication continues unchanged
+until there is an independently reviewed replacement.
 
 ## Planned follow-ups
 
-1. GitHub history importer and idempotent reconciliation, including clear provenance for
-   recovered data and unknown finding lifecycle states.
+1. Repository-level batch backfill, source completeness summaries and optional GitHub webhook reconciliation.
 2. Validated and authorised structured review submission to Atlas, with immutable run
    receipts, idempotency, SHA freshness checks, and append-only history.
 3. Dedicated GitHub App publisher with inline findings, GitHub review submissions, and

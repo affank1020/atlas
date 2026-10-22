@@ -64,9 +64,9 @@ export class GitHubBroker {
         return result as Installation[];
     }
 
-    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'pr' | 'push' = 'read') {
+    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'reviews' | 'pr' | 'push' = 'read') {
         const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
-            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : { contents: 'read' };
+            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : purpose === 'reviews' ? { pull_requests: 'read' } : { contents: 'read' };
         const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
         // HTTP 403 and 422 also cover throttling and validation failures. Do
         // not infer missing permission from status alone or echo GitHub bodies.
@@ -84,7 +84,8 @@ export class GitHubBroker {
     async installationToken(repository: string) { return this.scopedToken(repository, 'pr'); }
     async gitPublishToken(repository: string) { return this.scopedToken(repository, 'push'); }
     async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
-    private async scopedToken(repository: string, purpose: 'read' | 'pr' | 'push') {
+    async pullRequestReadToken(repository: string) { return this.scopedToken(repository, 'reviews'); }
+    private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();
