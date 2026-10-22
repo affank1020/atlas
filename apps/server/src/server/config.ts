@@ -85,6 +85,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
             issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
         nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
+        // Fail closed until the separately reviewed host executor is installed.
+        nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
         deviceShares: loadDeviceShareConfig(env),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
