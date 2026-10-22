@@ -114,7 +114,7 @@ test('killed activator leaves a durable journal; host recovery restores and rest
     const killed = f.run(['activate', f.newer.name], { ATLAS_TEST_KILL_ACTIVATOR: '1' });
     assert.notEqual(killed.status, 0, 'a killed activation cannot report success');
     assert.equal(readlinkSync(join(f.root, 'current')), f.newer.folder);
-    assert.equal(readFileSync(join(f.root, '.activation-pending'), 'utf8'), f.old.name + '\n' + f.newer.name + '\n');
+    assert.equal(readFileSync(join(f.root, '.activation-pending'), 'utf8'), f.old.name + '\n' + f.newer.name + '\nactivate\n');
     assert.match(f.run(['status']).stdout, /Recovery: pending/);
     const blocked = f.run(['rollback']);
     assert.notEqual(blocked.status, 0);
@@ -151,5 +151,23 @@ test('unhealthy rollback remains pending until independent recovery observes a c
     const recovered = f.run(['recover']);
     assert.equal(recovered.status, 0, recovered.stderr);
     assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+});
+
+test('interrupted manual rollback finishes rollback, never restores the rejected version', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const installed = f.run(['activate', f.newer.name]);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.newer.folder);
+    const killed = f.run(['rollback'], { ATLAS_TEST_KILL_ACTIVATOR: '1' });
+    assert.notEqual(killed.status, 0);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(readFileSync(join(f.root, '.activation-pending'), 'utf8'),
+        f.newer.name + '\n' + f.old.name + '\nrollback\n');
+    const recovered = f.run(['recover']);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder,
+        'recovery must never undo an explicitly requested rollback');
     assert.equal(existsSync(join(f.root, '.activation-pending')), false);
 });
