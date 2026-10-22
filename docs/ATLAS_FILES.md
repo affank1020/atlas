@@ -411,6 +411,16 @@ recovery point are required for full disaster recovery.
   environment and independent account, recording restore time and checksums.
   Do not enable production native uploads based solely on a partial report.
 
+## Manual R2 recovery backup seeding — append-only operator command
+
+After provisioning a genuinely separate recovery bucket, see
+[the manual R2 backup seeding runbook](R2_BACKUP_SEEDING.md).
+`npm run files:r2:seed` is dry-run-first. Actual uploads require
+`--apply --confirm=SEED_R2_RECOVERY`, and are **create-only** using
+R2's atomic conditional PUT. Existing objects are independently
+checksum-verified and never overwritten, including corrupt copies.
+This is not scheduled backup or a PostgreSQL disaster-recovery drill.
+
 ## Limitations and further work
 
 - Archive and restore update PostgreSQL metadata only. They **do not delete bytes** from
