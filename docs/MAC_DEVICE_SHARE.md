@@ -76,7 +76,9 @@ Mac does not imply the reverse permission.
    **interactive Terminal** on that same Mac user session. It reads the
    clipboard only on that explicit invocation (nothing is passed in CLI
    arguments), lists **ready, approved** targets from the Server, and
-   requires choosing a number and typing `yes` before submitting.
+   requires choosing a number, then approving a **native macOS Send / Cancel**
+   dialog before submitting. The Node enforces this decision independently
+   even if a local process talks to the private socket directly.
 5. Keep the tablet app open. It should show a short-lived native dialog with
    Copy / Decline. **Copy** writes the full plain text to Android's clipboard
    and acknowledges; decline or 15s timeout must not alter the clipboard.
@@ -91,7 +93,9 @@ Implementation details:
 - A 0600 UNIX socket under the user's 0700
   `~/Library/Application Support/Atlas` directory forwards only a bounded
   `recipients` or `send` request to the **existing, already authenticated**
-  Mac Node process. No second Node registration or credential handoff occurs.
+  Mac Node process. The Node itself requires macOS GUI confirmation before
+  sending, not merely CLI confirmation. No second Node registration or
+  credential handoff occurs.
 - The Node creates unique request and delivery IDs, correlates replies,
   bounds timeouts/in-flight requests, and clears outstanding requests on
   disconnection. The Server rechecks target capability and directional grant
