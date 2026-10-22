@@ -60,7 +60,10 @@ export async function startMacShareControlServer(node: ShareControl, path = macS
         let handled = false;
         socket.on('data', chunk => {
             if (handled) return;
-            buffer = Buffer.concat([buffer, chunk]);
+            // Node's Socket data events are typed as Buffer|string; buffer
+            // construction must handle either representation safely.
+            const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+            buffer = Buffer.concat([buffer, bytes]);
             if (buffer.length > MAX_LOCAL_REQUEST) { socket.destroy(); return; }
             const end = buffer.indexOf(10);
             if (end < 0) return;
