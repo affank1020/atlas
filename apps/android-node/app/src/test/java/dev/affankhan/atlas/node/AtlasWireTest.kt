@@ -51,6 +51,23 @@ class AtlasWireTest {
         assertEquals(null, parseIncomingDeviceShare(raw().replace(source, "bad"), now))
     }
 
+
+    @Test fun recentIncomingCacheDeduplicatesByIdAndRejectsAlteredContent() {
+        val id = "123e4567-e89b-42d3-a456-426614174001"
+        val deliveryId = "123e4567-e89b-42d3-a456-426614174002"
+        val source = "123e4567-e89b-42d3-a456-426614174003"
+        val share = IncomingDeviceShare(id, deliveryId, source, "sensitive ✨", 9_999_999L)
+        val cache = RecentIncomingShares()
+        assertEquals(null, cache.lookup(share, 100L))
+        cache.remember(share, IncomingShareOutcome.ACCEPTED, 100L)
+        assertEquals(IncomingShareOutcome.ACCEPTED, cache.lookup(share, 101L))
+        assertEquals(IncomingShareOutcome.REPLAY, cache.lookup(share.copy(text = "tampered"), 101L))
+        assertEquals(IncomingShareOutcome.REPLAY, cache.lookup(share.copy(sourceNodeId = id), 101L))
+        assertEquals(null, cache.lookup(share, 300_100L))
+        cache.remember(share, IncomingShareOutcome.COPY_FAILED, 300_100L)
+        assertEquals(null, cache.lookup(share, 300_101L))
+    }
+
     @Test fun incomingShareReceiptsAreStrictlyCorrelatedAndDoNotContainText() {
         val requestId = "123e4567-e89b-42d3-a456-426614174001"
         for (outcome in IncomingShareOutcome.entries) {
@@ -64,6 +81,8 @@ class AtlasWireTest {
                 IncomingShareOutcome.BUSY -> assertEquals("SHARE_BUSY", response.getJSONObject("error").getString("code"))
                 IncomingShareOutcome.COPY_FAILED ->
                     assertEquals("SHARE_CLIPBOARD_FAILED", response.getJSONObject("error").getString("code"))
+                IncomingShareOutcome.REPLAY ->
+                    assertEquals("SHARE_REPLAY", response.getJSONObject("error").getString("code"))
             }
         }
         assertTrue(runCatching {
