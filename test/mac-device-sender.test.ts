@@ -93,6 +93,7 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
     const path = join(dir, 'node-share.sock');
     const target = randomUUID();
     let delivered = 0;
+    let approvalGranted = true;
     const listener = await startMacShareControlServer({
         shareRecipients: async () => [{
             nodeId: target, name: 'Samsung', platform: 'android',
@@ -103,13 +104,17 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
             assert.equal(id, target); assert.equal(text, 'secret message');
             return { accepted: true };
         },
-    } as any, path, async () => true);
+    } as any, path, async () => approvalGranted);
     try {
         assert.equal((await stat(path)).mode & 0o077, 0);
         assert.equal((await ipc(path, { action: 'recipients' })).result.recipients[0].name, 'Samsung');
         assert.deepEqual(await ipc(path, { action: 'send', targetNodeId: target, text: 'secret message' }),
             { ok: true, result: { accepted: true } });
         assert.equal(delivered, 1);
+        approvalGranted = false;
+        assert.deepEqual(await ipc(path, { action: 'send', targetNodeId: target, text: 'secret message' }),
+            { ok: true, result: { cancelled: true } });
+        assert.equal(delivered, 1, 'a local client must not bypass the native approval');
         assert.equal((await ipc(path, { action: 'send', targetNodeId: target, text: 'secret', extra: 'x' })).ok, false);
         assert.equal(delivered, 1);
         assert.ok(!(await ipc(path, { action: 'send', targetNodeId: target, text: 123 })).ok);
