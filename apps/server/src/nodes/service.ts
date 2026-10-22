@@ -6,6 +6,7 @@ import { NodeIdentity } from './identity.js';
 import type { NodeShareApprovals, ShareAuditClient } from './share-approvals.js';
 import { listNodeReleases } from './releases.js';
 import { buildNodeUpdatePlan } from './update-plan.js';
+import { NodeUpdateIntentLedger } from './update-intents.js';
 import type { NodeRuntime } from './runtime.js';
 
 /** Durable registry plus ephemeral runtime attachments. No transport implementation lives here. */
@@ -14,7 +15,7 @@ export class NodeService {
     private readonly lastSeen = new Map<string, string>();
     private registration?: Promise<string>;
     private closing = false;
-    constructor(readonly repository: NodeRepository, private readonly local?: NodeRuntime, private readonly localName = 'Local Node', readonly identity?: NodeIdentity, private readonly shareApprovals?: NodeShareApprovals) {}
+    constructor(readonly repository: NodeRepository, private readonly local?: NodeRuntime, private readonly localName = 'Local Node', readonly identity?: NodeIdentity, private readonly shareApprovals?: NodeShareApprovals, readonly updateIntents?: NodeUpdateIntentLedger) {}
     get hasLocalRuntime() { return !!this.local; }
     registerLocalNode(): Promise<string> {
         if (!this.local) return Promise.reject(new AtlasError('No in-process Node is configured.', 'NODE_UNAVAILABLE'));
@@ -64,6 +65,28 @@ export class NodeService {
                 ? { state: 'unavailable' as const, releases: [] }
                 : await listNodeReleases(x.refresh === true);
             return buildNodeUpdatePlan(node, catalogue);
+        }
+        if (name === 'list_node_update_intents') {
+            if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
+            return this.updateIntents.list(x.nodeId, x.limit);
+        }
+        if (name === 'cancel_node_update_intent') {
+            if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
+            return this.updateIntents.cancel(x.nodeId, x.intentId);
+        }
+        if (name === 'prepare_node_update') {
+            if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
+            const node = await this.get(x.nodeId);
+            if (node.platform !== 'linux' || node.metadata.runtime !== 'remote' ||
+                node.status !== 'online' || node.credentialState !== 'active')
+                throw new AtlasError('Node is not eligible for Linux update preparation.', 'NODE_UNAVAILABLE');
+            if (node.version !== x.expectedVersion || node.credentialUpdatedAt !== x.expectedCredentialUpdatedAt)
+                throw new AtlasError('Node state changed; refresh eligibility.', 'CONFLICT');
+            const catalogue = await listNodeReleases(true);
+            const plan = buildNodeUpdatePlan(node, catalogue);
+            if (plan.status !== 'candidate' || !plan.candidate || plan.candidate.commit !== x.targetCommit)
+                throw new AtlasError('Selected release is no longer an eligible update candidate.', 'CONFLICT');
+            return this.updateIntents.prepare(node.id, x.expectedVersion, x.expectedCredentialUpdatedAt, plan.candidate);
         }
         if (name === 'read_node_logs') {
             const node = await this.get(x.nodeId);

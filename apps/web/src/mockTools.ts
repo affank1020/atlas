@@ -137,6 +137,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'list_nodes': result = nodes; break;
         case 'list_node_share_approvals': result = []; break;
         case 'list_node_releases': result = { state: 'ready', releases: [], checkedAt: stamp, source: 'github-releases' }; break;
+        case 'list_node_update_intents': result = []; break; // Demo only: no persisted requests or executable update control.
         case 'get_node':
             result = { ...nodes.find(node => node.id === nodeId), workspaces: workspaces.filter(w => w.nodeId === nodeId),
                 activity: activity.filter(a => workspaces.some(w => w.nodeId === nodeId && w.id === a.workspaceId)).map(a => ({ operation: a.operation, createdAt: a.occurredAt })) }; break;

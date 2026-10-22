@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict';
+import { after, test } from 'node:test';
+import { databaseFixture, cleanupDatabases } from './database.js';
+import { NodeIdentity } from '../apps/server/src/nodes/identity.js';
+import { NodeUpdateIntentLedger } from '../apps/server/src/nodes/update-intents.js';
+import type { NodeRelease } from '../apps/server/src/nodes/releases.js';
+
+after(cleanupDatabases);
+
+const sourceCommit = 'b'.repeat(40);
+const candidate: NodeRelease = {
+    component: 'desktop-node', platform: 'linux', architecture: 'any',
+    channel: 'stable', version: '2.0.1', commit: sourceCommit.slice(0, 12),
+    sourceCommit, sourceOrder: 19, protocol: 2, minimumNodeJs: 20,
+    publishedAt: '2026-10-21T12:00:00Z', notes: '',
+    downloadUrl: 'https://github.com/affank1020/atlas/releases/download/node-v2.0.1-' + sourceCommit.slice(0, 12) + '/atlas-node.tar.gz',
+    checksumUrl: '', releaseUrl: '', sha256: 'a'.repeat(64),
+    provenance: 'unverified',
+};
+
+async function fixture() {
+    const db = await databaseFixture();
+    const identity = new NodeIdentity(db.store.pool);
+    const token = await identity.ticket();
+    const enrolled = await identity.enrol({
+        token: token.enrolmentToken, name: 'Linux Node', platform: 'linux', version: '2.0.0+aaaaaaaaaaaa',
+    });
+    await db.store.pool.query(`UPDATE nodes SET status='online' WHERE id=$1`, [enrolled.nodeId]);
+    const row = await db.store.pool.query('SELECT version,credential_updated_at FROM nodes WHERE id=$1', [enrolled.nodeId]);
+    const credentialAt = new Date(row.rows[0].credential_updated_at).toISOString();
+    const ledger = new NodeUpdateIntentLedger(db.store.pool);
+    return { db, identity, ledger, nodeId: enrolled.nodeId, version: row.rows[0].version as string, credentialAt };
+}
+const fails = (code: string) => (error: any) => error.code === code;
+
+test('prepare creates one durable, audited, non-executable Node intent and permits cancel', async () => {
+    const f = await fixture();
+    const initial = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    assert.equal(initial.status, 'requested');
+    assert.equal(initial.approved, false);
+    assert.equal(initial.executable, false);
+    assert.equal(initial.targetSourceCommit, sourceCommit);
+    assert.equal(initial.targetSha256, candidate.sha256);
+    assert.ok(Date.parse(initial.expiresAt) - Date.parse(initial.createdAt) <= 15 * 60 * 1000);
+    assert.equal((await f.ledger.list(f.nodeId))[0]?.id, initial.id);
+
+    const duplicate = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate)
+        .then(() => null, (error: any) => error);
+    assert.equal(duplicate.code, 'CONFLICT');
+    const cancelled = await f.ledger.cancel(f.nodeId, initial.id);
+    assert.equal(cancelled.status, 'cancelled');
+    assert.equal(cancelled.resolvedAt !== null, true);
+    await assert.rejects(f.ledger.cancel(f.nodeId, initial.id), fails('CONFLICT'));
+    const next = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    assert.notEqual(next.id, initial.id);
+
+    const audit = await f.db.store.pool.query(`SELECT operation,after_state FROM audit_events
+        WHERE operation LIKE 'node.update_intent_%' ORDER BY created_at,id`);
+    assert.equal(audit.rowCount, 3);
+    assert.deepEqual(new Set(audit.rows.map(x => x.operation)),
+        new Set(['node.update_intent_prepared','node.update_intent_cancelled']));
+    assert.ok(audit.rows.every(x => x.after_state.approved === false && x.after_state.executable === false));
+});
+
+test('parallel prepare requests serialize and never create two active requests', async () => {
+    const f = await fixture();
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () =>
+        f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate)));
+    assert.equal(results.filter(x => x.status === 'fulfilled').length, 1);
+    assert.equal(results.filter(x => x.status === 'rejected').length, 2);
+    const active = await f.db.store.pool.query(`SELECT count(*)::int AS total FROM node_update_intents
+        WHERE node_id=$1 AND status='requested'`, [f.nodeId]);
+    assert.equal(active.rows[0].total, 1);
+});
+
+test('expiration is visible and expired intents do not block new prepared requests', async () => {
+    const f = await fixture();
+    const first = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    await f.db.store.pool.query(`UPDATE node_update_intents
+        SET created_at=now()-interval '20 minutes',expires_at=now()-interval '5 minutes'
+        WHERE id=$1`, [first.id]);
+    assert.equal((await f.ledger.list(f.nodeId))[0]?.status, 'expired');
+    await assert.rejects(f.ledger.cancel(f.nodeId, first.id), fails('CONFLICT'));
+    const next = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    assert.notEqual(next.id, first.id);
+    const rows = await f.db.store.pool.query('SELECT status FROM node_update_intents WHERE id=$1', [first.id]);
+    assert.equal(rows.rows[0].status, 'expired');
+});
+
+test('rotation, revocation, stale version or wrong platform prevent request creation', async () => {
+    const f = await fixture();
+    await assert.rejects(f.ledger.prepare(f.nodeId, '2.0.1+wrongversion', f.credentialAt, candidate), fails('CONFLICT'));
+    await f.db.store.pool.query(`UPDATE nodes SET version='2.0.1+different',credential_updated_at=now()+interval '2 seconds'
+        WHERE id=$1`, [f.nodeId]);
+    await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate), fails('CONFLICT'));
+    await f.identity.revoke(f.nodeId);
+    await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate), fails('CONFLICT'));
+    const node = await f.db.store.pool.query('SELECT id FROM node_update_intents WHERE node_id=$1', [f.nodeId]);
+    assert.equal(node.rowCount, 0);
+});
+
+test('cancel is scoped to the Node and rejected for a mismatched ID', async () => {
+    const a = await fixture(), b = await fixture();
+    const intent = await a.ledger.prepare(a.nodeId, a.version, a.credentialAt, candidate);
+    await assert.rejects(a.ledger.cancel(b.nodeId, intent.id), fails('NOT_FOUND'));
+    assert.equal((await a.ledger.list(a.nodeId))[0]?.status, 'requested');
+});
+
+test('the ledger rejects untrusted release metadata before creating a request', async () => {
+    const f = await fixture();
+    await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, {
+        ...candidate, sourceCommit: 'c'.repeat(40),
+    }), fails('INVALID_INPUT'));
+    await assert.rejects(f.ledger.prepare(f.nodeId, f.version, f.credentialAt, {
+        ...candidate, platform: 'darwin',
+    }), fails('INVALID_INPUT'));
+});
