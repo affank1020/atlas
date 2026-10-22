@@ -38,7 +38,9 @@ delivery; there is **no automatic clipboard access**.
   enabling sensitive or unattended transfer, persist delivery IDs or require
   receiver-side durable deduplication.
 - No offline queue, no resume, no permanent inbox, no file streaming.
-- Android 0.3.0 offers a foreground-only explicit Send action; its target Node
-  UUID is currently entered manually. Mac `device.share.receive` remains
-  opt-in and requires approval in the active GUI session.
+- Android 0.4.0 offers a foreground-only explicit Send action and a
+  sender-scoped directory of approved recipient **names**. Offline/non-ready
+  recipients are disabled. Mac `device.share.receive` remains opt-in and
+  requires approval in the active GUI session.
 - Tests use authenticated simulated Node WebSockets and do not require Samsung.
+  Passing CI is not a substitute for [physical Samsung → Mac acceptance](./MOBILE_SHARE_E2E.md).
