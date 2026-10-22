@@ -5,8 +5,35 @@ This is the **physical device release gate**, not an automated proof of success.
 ## Before changing anything
 
 - Verify Atlas Server has the merged recipient-directory gateway and managed pair approvals (PRs #55 and #62). Verify the Mac runs a Node build containing the opt-in share receiver; deployed version labels alone are insufficient.
-- Use only an Android APK built from the reviewed Atlas source. [Android Node Actions](https://github.com/affank1020/atlas/actions/workflows/android-node.yml) publishes `atlas-android-node-debug` after successful tests. Inspect the run's commit, download the artifact ZIP, and extract `app-debug.apk`.
-- **Do not treat CI debug APKs as upgradeable releases.** Their signing keys are ephemeral; the next CI APK may require uninstalling this one, which destroys the Android-local identity. Prefer a locally and consistently signed development build if repeating the test. Before uninstalling an enrolled app, revoke its Node from Atlas Web. Do not publish or copy an enrolment ticket into a bug report.
+- **Required before enrolling a real Samsung device:** build and install the Android APK **locally, under the same OS user, with a persistent development signing key**. Gradle's standard debug build uses `~/.android/debug.keystore`; keep this same keystore for every test-device upgrade. Do not use a CI APK for enrolment. See the build instructions below.
+- [Android Node Actions](https://github.com/affank1020/atlas/actions/workflows/android-node.yml) publishes `atlas-android-node-debug` as a **CI validation artifact only**. CI runners use ephemeral signing identities: their APKs are **not suitable for enrolling a real device or testing upgrades**.
+- Before uninstalling or replacing an enrolled app with an incompatible signature, **revoke its Android Node identity in Atlas Web first**. Uninstalling deletes local encrypted credentials. Never commit, upload, or send `debug.keystore` or one-use enrolment tickets to CI, GitHub issues, or PRs.
+
+## Build and verify the consistently signed test APK
+
+Use a separate clean checkout of reviewed Atlas source containing Android 0.4.0 (merged PR #62), not an uncommitted feature worktree. The commands below run on the development **Mac** with JDK 17, Android SDK 35/build-tools 35.0.0, platform-tools and Gradle 8.11.1 installed; `gradle` must be that installed version. They do **not** deploy Atlas or change the Mac Node configuration.
+
+```sh
+git clone https://github.com/affank1020/atlas.git atlas-mobile-acceptance
+cd atlas-mobile-acceptance
+git status --short                # must be empty
+git rev-parse HEAD               # record the exact source commit
+cd apps/android-node
+gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
+
+# Verify APK signing and record the signer SHA-256 fingerprint and file checksum.
+# Use the same host user / ~/.android/debug.keystore on every rebuild.
+SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
+"$SDK/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
+shasum -a 256 app/build/outputs/apk/debug/app-debug.apk
+
+# After connecting the Samsung with USB debugging approved:
+"$SDK/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Verify that `~/.android/debug.keystore` is retained **privately on the development Mac**. The first local build may generate it; record the signer fingerprint from `apksigner` and confirm it stays identical for subsequent builds. Gradle debug signing is appropriate for this controlled acceptance test, **not** for a public release. Do not publish the keystore or treat this as production signing.
+
+Before any repeat install or update, compare the APK's certificate SHA-256 fingerprint with the previous installed test build's recorded fingerprint. **If it differs, do not uninstall or force installation**: revoke the old Node in Atlas Web, then deliberately reinstall and re-enrol with a new one-use ticket. If `adb install -r` fails due to signature mismatch, apply this same revoke-first procedure; never delete an enrolled identity merely to bypass an install error.
 - Confirm normal Atlas Mac Node operations still work. Make a note of the Mac clipboard contents if needed: successful acceptance **replaces them**.
 - Obtain operator approval before changing the Mac Node's environment, granting a sharing pair, or installing/enrolling the Android app. Keep a plan to remove the temporary approvals afterwards.
 
@@ -19,7 +46,7 @@ This is the **physical device release gate**, not an automated proof of success.
 
 ## Enrol Samsung and approve one direction
 
-1. Install the Android app, open **Settings**, and use the app's normal one-use enrolment flow against the publicly trusted Atlas HTTPS endpoint. Enter the one-use ticket from Atlas Web. The app stores its credential with Android Keystore; never copy a desktop Node token to the phone.
+1. Verify the **locally built and consistently signed** APK above is installed (not the CI artifact), open **Settings**, and use the app's normal one-use enrolment flow against the publicly trusted Atlas HTTPS endpoint. Enter the one-use ticket from Atlas Web. The app stores its credential with Android Keystore; never copy a desktop Node token to the phone.
 2. Keep the app in the foreground. In **Atlas Web → Nodes**, verify the Android Node appears online with `device.share.send` and **without** Workspace capabilities or `device.share.receive`. If not, stop and investigate.
 3. Select the **Android sending Node** in Atlas Web, open **Device sharing**, and approve the **Mac receiving Node**. This is directional: Android → Mac. Do not add the reverse pair or wildcard permissions. Prefer the managed UI; legacy `ATLAS_DEVICE_SHARE_PAIRS` environment grants need a Server restart to remove.
 4. On Android, open **Send** and use **Refresh devices** if necessary. The approved Mac should appear by name, selectable only while connected with receiving enabled. An unapproved Node must never appear.
