@@ -25,7 +25,10 @@ revoke the Atlas-managed approval, then remove the environment pair and
 restart the Server. An environment-only pair cannot be revoked through the UI.
 With no grants anywhere, sharing is denied by default.
 
-The Android sender currently requires a **manual target UUID**. A separate
-scoped, Node-credential-authenticated recipient directory will consume these
-managed approvals and permit choosing targets by name. Until then, copy the
-target Node ID from Atlas Web. Android only sends after explicit confirmation.
+Android 0.4.0 uses a scoped, Node-credential-authenticated recipient directory
+to display only the sending Node's approved receivers **by name**. Offline or
+not-ready approved devices cannot be selected, and revoking a grant prevents
+new sends even if the client has stale directory data. The directory does not
+expose the whole Node registry or grant Workspace access. Android still sends
+only after an explicit button press. For physical acceptance and rollback, see
+[Mobile Share E2E](./MOBILE_SHARE_E2E.md).
