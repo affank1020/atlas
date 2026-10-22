@@ -127,7 +127,7 @@ test('invalid metadata, absent backup and corrupt content fail without arbitrary
 });
 
 test('bounded scan refuses overdeliver and any unclassified remote errors', async () => {
-    const fixtures=Array.from({length:3},(_,i)=>file(i+1));
+    const fixtures=Array.from({length:4},(_,i)=>file(i+1));
     const rows=fixtures.map(x=>x.row);
     const map=new Map(fixtures.map(x=>[x.row.storage_key,x.bytes]));
     await assert.rejects(verifyR2RecoveryCatalog({
