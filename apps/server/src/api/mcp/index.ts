@@ -107,6 +107,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     tool("get_recent_activity", "Read recent Atlas activity, including workspace inspections and mutations, optionally scoped to a project, workspace, store or record.", auditInput);
     tool("query_monitoring_activity", "Read immutable Atlas audit activity with server-side filters. Opt in to correlation-aware operation pagination; a grouped page returns bounded representative request/result/failure audit events.", {
         projectId: z.string().uuid().optional(), workspaceId: z.string().uuid().optional(), checkoutId: z.string().uuid().optional(),
+        logicalWorkspaceId: z.string().uuid().optional(),
         storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), nodeId: z.string().uuid().optional(),
         operation: z.string().max(120).optional(), category: z.enum(['core','view','node','workspace','files','git','dev','unity']).optional(),
         client: z.string().max(200).optional(), outcome: z.enum(['completed','pending','failed']).optional(),
