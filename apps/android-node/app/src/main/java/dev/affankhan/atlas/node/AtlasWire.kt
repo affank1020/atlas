@@ -51,6 +51,22 @@ internal data class IncomingDeviceShare(
     val expiresAtMs: Long,
 )
 
+// The server normally sets expiry to now+45s. A tablet's wall clock can differ
+// from the Server's; allow a bounded offset here. The *actual* 15-second user
+// decision timer uses Android elapsedRealtime(), never this timestamp.
+internal const val INCOMING_MAX_CLOCK_SKEW_MS = 120_000L
+internal const val INCOMING_SERVER_TTL_MS = 45_000L
+
+/** Used only for a fail-closed response to a malformed/expired share without
+ * disconnecting the whole authenticated Node WebSocket.
+ */
+internal fun incomingDeviceShareRequestId(raw: String): String? = runCatching {
+    val json = JSONObject(raw)
+    if (json.optString("type") != "request" || json.optString("kind") != "device_share") return@runCatching null
+    val requestId = json.opt("requestId") as? String ?: return@runCatching null
+    requestId.takeIf(::validNodeId)
+}.getOrNull()
+
 internal fun parseIncomingDeviceShare(raw: String, nowMs: Long = System.currentTimeMillis()): IncomingDeviceShare? =
     runCatching {
         val json = JSONObject(raw)
@@ -71,12 +87,16 @@ internal fun parseIncomingDeviceShare(raw: String, nowMs: Long = System.currentT
             return@runCatching null
         }
         val deadline = Instant.parse(expiresAt).toEpochMilli()
-        // Limit any server-side expiry to one minute of local UI exposure.
-        if (deadline <= nowMs || deadline > nowMs + 60_000L) return@runCatching null
+        // Server authorises each send and supplies a 45s deadline. The local
+        // device clock is advisory: tolerate ±2m drift, without allowing an
+        // unbounded timestamp. A separate monotonic timer gates user approval.
+        if (deadline < nowMs - INCOMING_MAX_CLOCK_SKEW_MS ||
+            deadline > nowMs + INCOMING_SERVER_TTL_MS + INCOMING_MAX_CLOCK_SKEW_MS)
+            return@runCatching null
         IncomingDeviceShare(requestId, deliveryId, sourceId, body, deadline)
     }.getOrNull()
 
-internal enum class IncomingShareOutcome { ACCEPTED, DECLINED, BUSY, COPY_FAILED, REPLAY }
+internal enum class IncomingShareOutcome { ACCEPTED, DECLINED, BUSY, COPY_FAILED, REPLAY, EXPIRED }
 
 /** Volatile five-minute replay guard; holds digests and decisions, never share text. */
 internal class RecentIncomingShares {
@@ -114,10 +134,11 @@ internal fun incomingDeviceShareResponse(requestId: String, outcome: IncomingSha
     require(validNodeId(requestId))
     val result = JSONObject().put("type", "response").put("requestId", requestId)
     if (outcome == IncomingShareOutcome.BUSY || outcome == IncomingShareOutcome.COPY_FAILED ||
-        outcome == IncomingShareOutcome.REPLAY) {
+        outcome == IncomingShareOutcome.REPLAY || outcome == IncomingShareOutcome.EXPIRED) {
         val code = when (outcome) {
             IncomingShareOutcome.BUSY -> "SHARE_BUSY"
             IncomingShareOutcome.REPLAY -> "SHARE_REPLAY"
+            IncomingShareOutcome.EXPIRED -> "SHARE_EXPIRED"
             else -> "SHARE_CLIPBOARD_FAILED"
         }
         return result.put("ok", false).put("error", JSONObject()
