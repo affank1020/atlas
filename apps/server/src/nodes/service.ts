@@ -46,6 +46,7 @@ export class NodeService {
         };
     }
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
+    async listForMonitoring() { if (this.local) await this.registerLocalNode(); return (await (this.repository.listForMonitoring?.() ?? this.repository.list())).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
     /** Minimal sender-scoped directory; never return unrelated registry details. */
     async shareRecipients(sourceId: string) {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { callTool } from './api';
+import { callTool, IS_MOCK_MODE } from './api';
 import type { AuditEvent } from './types';
 import { ActivityRows } from './ActivityFeed';
 import { MonitoringOverview } from './Workspace';
@@ -205,13 +205,73 @@ function LogsPanel({ filters }: { filters: MonitoringFilters }) {
         {target === 'server' ? <ServerDiagnosticsPanel filters={filters} /> : <NodeLogsPanel filters={filters} />}
     </>;
 }
+type HealthNode = {
+    id: string; name: string; platform: string; state: 'healthy' | 'stale' | 'offline' | 'unavailable' | 'revoked' | 'unknown';
+    lastSeen: string | null; ageSeconds: number | null; version: string | null;
+};
+type HealthSnapshot = {
+    checkedAt: string; overall: 'healthy' | 'degraded' | 'unknown';
+    server: { status: 'healthy' | 'degraded'; uptimeSeconds: number; startedAt: string;
+        database: { status: 'reachable' | 'unavailable'; latencyMs?: number } };
+    nodes: { available: boolean; summary: { total: number; healthy: number; stale: number;
+        offline: number; unavailable: number; revoked: number; unknown: number }; items: HealthNode[] };
+};
+function MonitoringHealthPanel() {
+    const [snapshot, setSnapshot] = useState<HealthSnapshot>();
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string>();
+    const [refresh, setRefresh] = useState(0);
+    useEffect(() => {
+        const controller = new AbortController();
+        setBusy(true);
+        setError(undefined);
+        void callTool<HealthSnapshot>('get_monitoring_health', {}, controller.signal)
+            .then(value => { if (!controller.signal.aborted) setSnapshot(value); })
+            .catch(reason => { if (!controller.signal.aborted) {
+                setSnapshot(undefined); setError(reason instanceof Error ? reason.message : 'Health check unavailable.');
+            } })
+            .finally(() => { if (!controller.signal.aborted) setBusy(false); });
+        return () => controller.abort();
+    }, [refresh]);
+    const badge = (status: string) => status === 'healthy' || status === 'reachable' ? 'success' : 'muted';
+    return <section className="workspace-section" aria-label="Live operational health">
+        <div className="section-heading"><h2>Live operational health</h2>
+            <button className="ghost" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Checking…' : 'Refresh health'}</button>
+        </div>
+        {busy && !snapshot && <p role="status">Checking Server and Node health…</p>}
+        {error && <p role="alert">Health snapshot unavailable: {error}</p>}
+        {snapshot && <>
+            <p><span className={`badge ${badge(snapshot.overall)}`}>{snapshot.overall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
+            <div className="workspace-row"><span className="row-copy"><strong>Atlas Server · database</strong>
+                <small>{snapshot.server.database.status === 'reachable'
+                    ? `Database query succeeded · ${snapshot.server.database.latencyMs ?? '—'} ms · Server uptime ${Math.floor(snapshot.server.uptimeSeconds / 60)} min`
+                    : 'Database health query failed; Server process is responding'}</small></span>
+                <span className={`badge ${badge(snapshot.server.status)}`}>{snapshot.server.database.status}</span>
+            </div>
+            {!snapshot.nodes.available && <p role="status">Node registry could not be checked. Node health is unknown.</p>}
+            {snapshot.nodes.available && <>
+                <p>{snapshot.nodes.summary.healthy} healthy · {snapshot.nodes.summary.total} registered Nodes
+                    {snapshot.nodes.summary.stale + snapshot.nodes.summary.offline + snapshot.nodes.summary.unavailable + snapshot.nodes.summary.revoked > 0
+                        ? ' · Some Nodes need attention' : ''}</p>
+                {snapshot.nodes.items.map(node =>
+                    <a key={node.id} className="workspace-row" href="#/nodes"><span className="row-copy">
+                        <strong>{node.name}</strong><small>{node.platform || 'Unknown platform'} · {node.lastSeen
+                            ? `Last heartbeat ${new Date(node.lastSeen).toLocaleString()} · ${node.ageSeconds ?? '—'} s ago`
+                            : 'No heartbeat timestamp available'}</small></span>
+                        <span className={`badge ${badge(node.state)}`}>{node.state}</span></a>)}
+                {snapshot.nodes.items.length === 0 && <p>No Nodes registered. <a href="#/nodes">Connect a Node →</a></p>}
+            </>}
+        </>}
+    </section>;
+}
+
 export function MonitoringPage() {
     const [route, setRoute] = useState<MonitoringRoute>(() => parseMonitoringHash(location.hash));
     useEffect(() => { const update = () => setRoute(parseMonitoringHash(location.hash)); addEventListener('hashchange', update); return () => removeEventListener('hashchange', update); }, []);
     const tabs: { key: MonitoringTab; title: string }[] = [{key:'overview',title:'Overview'},{key:'activity',title:'Activity'},{key:'logs',title:'Logs'}];
     return <div className="monitoring-page">
         <nav className="tabs project-nav" aria-label="Monitoring sections">{tabs.map(tab => <a key={tab.key} href={monitoringHash(tab.key, tab.key === route.tab ? route.filters : {})} aria-current={route.tab === tab.key ? 'page' : undefined} className={route.tab === tab.key ? 'active' : ''}>{tab.title}</a>)}</nav>
-        {route.tab === 'overview' && <MonitoringOverview />}
+        {route.tab === 'overview' && <><MonitoringOverview /><MonitoringHealthPanel /></>}
         {route.tab === 'activity' && <><header className="page-head"><div><p className="eyebrow">Atlas Monitoring</p><h1>Activity</h1><p>Search and investigate structured operations across Atlas.</p></div></header><ActivityPanel filters={route.filters} /></>}
         {route.tab === 'logs' && <><header className="page-head"><div><p className="eyebrow">Atlas Monitoring</p><h1>Logs</h1><p>Inspect approved Node tails and bounded Atlas Server diagnostics.</p></div></header><LogsPanel filters={route.filters} /></>}
     </div>;

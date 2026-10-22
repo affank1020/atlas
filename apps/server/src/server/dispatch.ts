@@ -17,11 +17,13 @@ import { globalSearchInput, searchEverywhere } from './global-search.js';
 import type { ApplicationRegistry } from '../apps/registry.js';
 import type { StorageUsageService } from './storage-usage.js';
 import type { ServerDiagnostics } from './diagnostics.js';
+import type { MonitoringHealthService } from './monitoring-health.js';
 export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
     storageUsage?: Pick<StorageUsageService, 'get'>;
     diagnostics?: Pick<ServerDiagnostics, 'read' | 'record'>;
+    health?: Pick<MonitoringHealthService, 'read'>;
     views: ViewService;
     workspaces: Pick<WorkspaceService, "call">;
     retrieval: RetrievalService;
@@ -44,6 +46,10 @@ export function createDispatcher(services: ApplicationServices) {
             return services.nodes.call(name as NodeToolName, input, caller);
         }
         switch (name) {
+            case 'get_monitoring_health': {
+                if (!services.health) throw new AtlasError('Health snapshot unavailable.', 'CAPABILITY_UNAVAILABLE');
+                return services.health.read(input);
+            }
             case 'read_server_diagnostics': {
                 if (!services.diagnostics) throw new AtlasError('Server diagnostics unavailable.', 'CAPABILITY_UNAVAILABLE');
                 return services.diagnostics.read(input);
