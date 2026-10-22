@@ -317,3 +317,85 @@ existing Node upload endpoints. Browser `Origin` headers are denied,
 there is no CORS allowance, credentials are never logged, and the
 request is limited to a small exact JSON schema. No scheduler or
 remote command is activated by enabling the route.
+
+
+## Root-only Linux update executor (manual, gated rollout)
+
+`scripts/linux-node-update-executor.py` is a **host-local, interactive
+operator command**, not an Atlas Node capability or an automatic update agent.
+It never accepts download URLs, shell commands, alternate Server hosts, an
+arbitrary lifecycle binary, or Node commands via MCP. No Node service can
+invoke it: only root in an interactive host terminal can execute an update.
+
+**Do not deploy or enable this executor on the production VPS merely because
+the PR is merged.** First review and test the complete chain on a disposable
+Linux Node with independently configured credentials, a recovery watchdog and
+a root-owned immutable release layout. The production Node, PostgreSQL,
+Atlas Server and macOS Node must stay untouched during this rollout.
+
+After independent code review, on a controlled test host, install the scripts
+from the same reviewed checkout into root-owned `/usr/local/libexec`:
+
+```bash
+sudo install -D -o root -g root -m 0755 scripts/linux-node-update-approval.py /usr/local/libexec/atlas-node-update-approval
+sudo install -D -o root -g root -m 0755 scripts/linux-node-update-executor.py /usr/local/libexec/atlas-node-update-executor
+sudo install -D -o root -g root -m 0755 scripts/linux-node-trusted-stage.sh /usr/local/libexec/linux-node-trusted-stage.sh
+sudo install -D -o root -g root -m 0755 scripts/linux-node-release.sh /usr/local/libexec/linux-node-release.sh
+sudo install -D -o root -g root -m 0755 scripts/linux-node-lifecycle.sh /usr/local/libexec/atlas-node-lifecycle.sh
+```
+
+The `atlas-node-lifecycle-recover.timer` must already be enabled and running
+and the host must have GitHub CLI 2.102.0 or later, Node.js 20+, npm, and
+enough resources for release staging. The Server must have its **separate**
+`ATLAS_NODE_UPDATE_CLAIMS_ENABLED=true` setting deliberately enabled by the
+administrator **only after the nonproduction execution/recovery drill**.
+Do not place the Node credential in a CLI argument or an operator-generated
+JSON payload: the executor reads `ATLAS_NODE_ID`, `ATLAS_NODE_CREDENTIAL`
+and `ATLAS_SERVER_URL` directly from root-owned
+`/etc/atlas-node/node.env`, and derives the fixed HTTPS claim endpoint from
+the Node's configured WSS address (loopback HTTP only for local development).
+Redirects, inherited HTTP proxies and arbitrary URLs are refused.
+
+The operator first prepares the existing Atlas update intent and separately
+approves its snapshot with the host-root
+`atlas-node-update-approval approve ./intent.json` procedure above. Next,
+download the exact published archive, checksum and GitHub build attestation
+bundle **as a normal user**; check that their release/commit and digest match
+the displayed approval. Root then copies all three into private immutable
+input snapshots and repeats checksum, release manifest and GitHub Sigstore
+provenance verification **before** claiming the request from Atlas Server.
+
+Only after reviewing the exact digest and typing `EXECUTE <intent UUID>` does
+the host issue the once-only Server claim and consume the separately
+root-approved grant. It then runs trusted staging and the root-owned lifecycle
+script. No process invokes `sudo` on the Node's behalf. Nothing is scheduled
+automatically:
+
+```bash
+sudo /usr/local/libexec/atlas-node-update-executor execute <intent-uuid> \
+  ./atlas-node-v2.0.1-<12-hex>.tar.gz \
+  ./atlas-node-v2.0.1-<12-hex>.tar.gz.sha256 \
+  ./attestations.jsonl
+
+sudo /usr/local/libexec/atlas-node-update-executor status <intent-uuid>
+```
+
+**Reconciliation is intentionally conservative.** Before the Server POST,
+the executor writes a durable private `claiming` receipt beneath
+`/var/lib/atlas-node-update-approvals/execution`. On uncertain network
+responses, cancellation, interrupted installation or lifecycle failure, it
+records `requires_reconciliation` and **never retries either claim or
+activation**. A lost acknowledgement, power failure or operator interruption
+may leave an intermediate receipt: inspect the host release pointers, root
+execution receipt, recovery journal and Server's claimed intent manually.
+Only the existing independent watchdog is permitted to recover a pending
+lifecycle activation. The executor never clears the Server's claimed state,
+and even a local `activated` receipt does **not** declare the Server update
+completed. Durable Server-side success/failure reconciliation and UI reporting
+are a *separate* future change. Do not reset the claim database row or
+delete private receipts to bypass these guards.
+
+This command is **separate from** the legacy, explicitly SSH-initiated
+`./atlasctl vps node-upgrade` workflow. That older manual command must not
+be represented as a server-approved update; it does not consume an intent or
+the root-local host approval.
