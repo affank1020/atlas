@@ -194,6 +194,11 @@ if [[ "$action" == recover ]]; then
   # restart to prove the desired release is actually running.
   systemctl restart "$SERVICE" && wait_healthy ||
     die "Desired release is not connected; recovery will retry."
+  if [[ "${pending[2]}" == rollback ]]; then
+    # Complete the same previous-pointer update as a normal explicit rollback.
+    atomic_link "$original" previous ||
+      die "Rollback connected, but previous release pointer was not committed."
+  fi
   clear_pending || die "Could not clear pending activation marker."
   echo "Recovery completed; desired Node connection confirmed."
   exit 0
