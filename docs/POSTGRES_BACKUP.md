@@ -36,14 +36,29 @@ from `$HOME/atlas-private-backups`. The tool rejects symlinked or
 improperly permissioned destination directories, unsafe database names and
 missing explicit confirmation.
 
-The script interrogates the running Server container for the database **name**
-in its effective `DATABASE_URL` without displaying credentials. This prevents
-silently dumping the old empty `atlas` bootstrap database when the live
-database is `atlas_import`. It then runs PostgreSQL 16 `pg_dump` in custom
-format, with MVCC transactionally consistent snapshot semantics, and streams
-its output directly through `age --recipient`. No raw database dump file is
-created by this command. With `pipefail`, failure of either subprocess
-aborts the snapshot; private partial output is removed.
+The script examines the running Server container's effective
+`DATABASE_URL` **before** invoking the local Compose `postgres` container.
+For this deliberately limited local-Compose implementation, the URL must
+use PostgreSQL protocol, host exactly `postgres`, port `5432` (or no
+explicit port), username exactly `atlas`, an alphanumeric/underscore
+database name, and **no query-string routing overrides or fragment**.
+A missing or mismatched endpoint fails closed. Nothing prints the complete
+URL or credentials. This prevents both backing up the retired empty
+`atlas` database and falsely labelling a stale local database as an
+offsite/alternate production instance. For an external database or different
+Compose service, do not bypass the guard: add a reviewed backup transport
+that actually reaches that database.
+
+It then runs PostgreSQL 16 `pg_dump` in custom format, with MVCC
+transactionally consistent snapshot semantics, and streams its output
+directly through `age --recipient`. No raw database dump file is created
+by this command. With `pipefail`, failure of either subprocess aborts the
+snapshot; private partial output is removed. Private, mode-0600 temporary
+stderr captures are removed on exit; any warnings or failures produce
+**whitelisted diagnostic categories only** (e.g. permission, lock
+contention or connection). Raw diagnostic text is never printed because
+it may include passwords, SQL fragments, paths or other secrets.
+Warnings are visible but do not alone establish the dump is restorable.
 
 Successful output consists of atomically create-only hardlinked paths:
 `*.dump.age` ciphertext, mode 0600, and `*.dump.age.json` manifest with
