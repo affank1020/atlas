@@ -43,9 +43,7 @@ printf 'atlas-public-recipient-check' | age --recipient "$recipient" >/dev/null 
 if [[ -e "$out_dir" ]]; then
   [[ -d "$out_dir" && -O "$out_dir" ]] || die 'backup directory must be operator-owned'
   [[ "$(stat -c %a "$out_dir")" == 700 ]] || die 'backup directory must have mode 0700'
-elif [[ "$mode" == apply ]]; then
-  mkdir -m 700 -- "$out_dir" || die 'cannot create private backup directory'
-else
+elif [[ "$mode" == dry-run ]]; then
   [[ -d "$(dirname "$out_dir")" ]] || die 'output parent directory missing'
 fi
 
@@ -62,6 +60,12 @@ if [[ "$mode" == dry-run ]]; then
   exit 0
 fi
 
+# No filesystem mutations until the active Server endpoint is confirmed.
+# Recheck the target after mkdir, including ownership and permissions.
+if [[ ! -e "$out_dir" ]]; then
+  [[ ! -L "$out_dir" ]] || die 'backup directory must not be a symlink'
+  mkdir -m 700 -- "$out_dir" || die 'cannot create private backup directory'
+fi
 [[ ! -L "$out_dir" && -d "$out_dir" && -O "$out_dir" ]] || die 'unsafe backup directory'
 [[ "$(stat -c %a "$out_dir")" == 700 ]] || die 'backup directory permissions changed'
 tmp="$(mktemp "$out_dir/.atlas-pg-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX")"
