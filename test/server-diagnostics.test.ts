@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ServerDiagnostics } from '../apps/server/src/server/diagnostics.js';
 import { createDispatcher } from '../apps/server/src/server/dispatch.js';
+import { ServerLifecycle } from '../apps/server/src/server/lifecycle.js';
 
 test('server diagnostics retain only fixed allowlisted operational events', () => {
     let ticks = 0;
@@ -18,6 +19,18 @@ test('server diagnostics retain only fixed allowlisted operational events', () =
     assert.doesNotMatch(JSON.stringify(result), /password=|credential=|Authorization:/i);
     assert.throws(() => diagnostics.read({ limit: 101 }), /too_big|100|maximum/i);
     assert.throws(() => diagnostics.read({ limit: 5, path: '/var/run/docker.sock' }), /unrecognized|unknown|strict/i);
+});
+
+test('runtime webhook failures use a generic background operation label', async () => {
+    const diagnostics = new ServerDiagnostics();
+    const lifecycle = new ServerLifecycle([], () => diagnostics.record('background_task_failed'));
+    lifecycle.run('Contentful webhook sync', async () => { throw new Error('credential=secret'); });
+    await lifecycle.close();
+    const response = diagnostics.read();
+    assert.deepEqual(response.events.map(event => ({
+        code: event.code, level: event.level, message: event.message,
+    })), [{ code: 'background_task_failed', level: 'warning', message: 'Background operation failed' }]);
+    assert.doesNotMatch(JSON.stringify(response), /startup|Contentful|webhook|credential=secret/i);
 });
 
 test('server diagnostic ring is bounded, signals truncation and excludes prior process history', () => {
