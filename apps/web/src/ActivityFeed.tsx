@@ -1,17 +1,25 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AuditEvent } from './types';
-import { clientName, filterActivity, presentActivity, readable } from './activity';
+import { clientName, filterActivity, presentActivity, readable, safeMonitoringEvent } from './activity';
+import { monitoringHash } from './monitoringLinks';
 import './activity.css';
 
 type WorkspaceName = { id: string; name: string };
-export function ActivityRows({ events, names = {} }: { events: AuditEvent[]; names?: Record<string, string> }) {
-    return <>{presentActivity(events, names).map(item => <ActivityRow key={item.id} item={item} />)}</>;
+export function ActivityRows({ events, names = {}, safeDetails = false }: { events: AuditEvent[]; names?: Record<string, string>; safeDetails?: boolean }) {
+    return <>{presentActivity(safeDetails ? events.map(safeMonitoringEvent) : events, names).map(item => <ActivityRow key={item.id} item={item} />)}</>;
 }
 function ActivityRow({ item }: { item: ReturnType<typeof presentActivity>[number] }) {
     return <details className={`activity-item activity-${item.status}`} data-activity-id={item.id}>
         <summary><div className="activity-action"><small>{clientName(item.client)} · {readable(item.category)}{item.workspaceName && ` · ${item.workspaceName}`}</small><strong>{item.title}</strong>{item.description && <span className="activity-error">{item.description}</span>}</div><div className="activity-state"><span>{readable(item.status)}</span><small>{readable(item.kind)}</small><time dateTime={item.timestamp} title={item.timestamp}>{new Date(item.timestamp).toLocaleString()}</time></div></summary>
-        <div className="activity-details"><dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl></div>
+        <div className="activity-details">
+            <nav className="actions" aria-label="Related activity">
+                {item.projectId && <a href={monitoringHash('activity', { projectId: item.projectId })}>Project activity</a>}
+                {item.workspaceId && <a href={monitoringHash('activity', { checkoutId: item.workspaceId })}>Checkout activity</a>}
+                {typeof item.details.nodeId === 'string' && <a href={monitoringHash('activity', { nodeId: item.details.nodeId })}>Node activity</a>}
+            </nav>
+            <dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl>
+        </div>
     </details>;
 }
 
