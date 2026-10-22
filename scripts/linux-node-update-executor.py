@@ -470,6 +470,18 @@ def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
         if approval_module.read_installed_version() != grant["targetVersion"] + "+" + grant["targetCommit"]:
             raise Refused("Lifecycle returned without the intended active release.")
         record = receipts.mark(record, "activated")
+        # Only a confirmed activation allows release input cleanup. On any
+        # uncertain outcome preserve the signed snapshot for investigation.
+        try:
+            for item in (archive_copy, checksum_copy, bundle_copy):
+                item.unlink()
+            stage_dir.rmdir()
+            fsync_dir(store.base)
+        except OSError:
+            # An already activated Node must not be misreported as failed
+            # because optional private scratch cleanup could not finish.
+            print("Atlas Node executor: private input cleanup incomplete; "
+                  "inspect root-owned staging.", file=sys.stderr)
         return record
     except Exception:
         receipts.mark(record, "requires_reconciliation")
