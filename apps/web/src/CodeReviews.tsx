@@ -36,8 +36,9 @@ const pageSize = 30;
 
 export function CodeReviews() {
     const [offset, setOffset] = useState(0);
-    const summary = useApplicationRead<Overview>('code_reviews_overview');
-    const runs = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_runs', { limit: pageSize, offset });
+    // Revalidate on each application entry: import and Store writes may happen in other clients.
+    const summary = useApplicationRead<Overview>('code_reviews_overview', {}, true);
+    const runs = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_runs', { limit: pageSize, offset }, true);
     const entries = (runs.data?.items ?? []).map(parsedRun).filter((item): item is NonNullable<typeof item> => !!item);
     const loadError = summary.error?.message || runs.error?.message;
     return <section className="code-reviews catalogue-page" aria-label="Code Reviews">

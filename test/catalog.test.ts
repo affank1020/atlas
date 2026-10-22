@@ -76,3 +76,31 @@ test("failed bulk writes neither partial records nor audit events", async()=>{
     await assert.rejects(()=>catalog.bulkRecords({projectId:project.id,storeId:store.id,operations:[{action:"create",data:{company:"Good"}},{action:"create",data:{company:"Bad",score:"invalid"}}],client:"rollback-test"}));
     assert.equal((await catalog.queryRecords({projectId:project.id,storeId:store.id})).total,0); assert.equal((await catalog.auditHistory({storeId:store.id})).length,before);
 });
+
+
+test("datetime sorting uses instants across mixed timezone offsets and fractional seconds, including pagination", async () => {
+    const { catalog } = await fixture();
+    const project = await catalog.createProject({ name: "Chronological Review Runs" });
+    const store = await catalog.createStore({ projectId: project.id, name: "Run history", fields: [
+        { name: "label", type: "string", required: true },
+        { name: "reviewedAt", type: "datetime", required: true },
+    ] });
+    const values = [
+        { label: "first", reviewedAt: "2026-10-22T12:00:00Z" },
+        { label: "second", reviewedAt: "2026-10-22T12:00:00.100Z" },
+        { label: "third", reviewedAt: "2026-10-22T13:00:00.050+01:00" },
+        { label: "fourth", reviewedAt: "2026-10-22T12:00:01Z" },
+    ];
+    for (const item of values)
+        await catalog.createRecord({ projectId: project.id, storeId: store.id, data: item });
+    const first = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2 });
+    const second = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2, offset: 2 });
+    assert.equal(first.total, 4);
+    assert.deepEqual([...first.items, ...second.items].map(row => row.data.label),
+        ["fourth", "second", "third", "first"]);
+    const asc = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "asc" }], limit: 4 });
+    assert.deepEqual(asc.items.map(row => row.data.label), ["first", "third", "second", "fourth"]);
+});
