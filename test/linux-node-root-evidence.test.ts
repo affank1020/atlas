@@ -128,3 +128,38 @@ print("root host PID consistency checks passed")
 `);
     assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
 });
+
+test('host signer lifecycle flock excludes competing manual activations during evidence collection',
+    { skip: !available }, () => {
+    const result = pythonScript(String.raw`
+import importlib.util,os,pathlib,stat,sys,tempfile
+from unittest import mock
+spec=importlib.util.spec_from_file_location("signer",sys.argv[1])
+s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
+with tempfile.TemporaryDirectory() as td:
+    lock=pathlib.Path(td)/"lifecycle.lock"
+    real_lstat=pathlib.Path.lstat
+    def fake_secure_parents(path):
+        info=real_lstat(path)
+        if path != lock:
+            # Model a root-controlled directory chain without requiring the
+            # CI runner to write to the real /run/lock production folder.
+            class Parent:
+                st_mode=stat.S_IFDIR | 0o700
+                st_uid=os.getuid()
+            return Parent()
+        return info
+    with mock.patch.object(pathlib.Path,"lstat",fake_secure_parents):
+        with s.hold_lifecycle_lock(lock,owner_uid=os.getuid()):
+            try:
+                with s.hold_lifecycle_lock(lock,owner_uid=os.getuid()):
+                    pass
+            except s.Refused as exc:
+                assert "Another manual lifecycle" in str(exc)
+            else:raise AssertionError("manual lifecycle acquired locked release tree")
+        with s.hold_lifecycle_lock(lock,owner_uid=os.getuid()):
+            pass
+print("manual lifecycle and root attestation share exclusive flock")
+`);
+    assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
+});
