@@ -72,3 +72,25 @@ it('does not hide a correlated failure behind a later successful event', () => {
         evidenceTimestamp: '2026-10-22T08:00:00Z',
     });
 });
+
+
+it('sorts correlated activity by latest member time, not selected failure evidence time', () => {
+    const request = event('r', 'workspace.mutation_requested',
+        { attemptId: 'correlated', operation: 'workspace.git_committed' },
+        { occurredAt: '2026-10-22T08:00:00Z' });
+    const failure = event('f', 'workspace.mutation_failed',
+        { attemptId: 'correlated', operation: 'workspace.git_committed', outcome: 'failed', error: 'Rejected' },
+        { occurredAt: '2026-10-22T08:00:30Z' });
+    const result = event('c', 'workspace.git_committed',
+        { attemptId: 'correlated', outcome: 'completed' },
+        { occurredAt: '2026-10-22T08:02:00Z' });
+    const unrelated = event('other', 'record.updated', {},
+        { workspaceId: undefined, occurredAt: '2026-10-22T08:01:00Z' });
+    const items = presentActivity([failure, unrelated, request, result]);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+        status: 'failed', timestamp: '2026-10-22T08:02:00Z',
+        description: 'Rejected',
+    });
+    expect(items[1].timestamp).toBe('2026-10-22T08:01:00Z');
+});
