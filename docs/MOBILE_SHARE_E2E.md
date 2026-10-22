@@ -1,6 +1,8 @@
-# Android 0.4.0 → macOS text-share acceptance (manual, opt-in)
+# Android 0.4.0 / 0.5.0 → macOS text-share acceptance (manual, opt-in)
 
-This is the **physical device release gate**, not an automated proof of success. Run on a Samsung Android device and a Mac with an active, logged-in GUI session. The Android app sends **text only**, in the foreground, over its authenticated Node v2 WebSocket. There is no offline delivery, automatic clipboard sync, or file transfer.
+This is the **physical device release gate for the Samsung → Mac direction**, not an automated proof of success. Run on a Samsung Android device and a Mac with an active, logged-in GUI session. Both Android 0.4.0 and 0.5.0 send text only in the foreground over their authenticated Node v2 WebSocket. There is no offline delivery, automatic clipboard sync, or file transfer.
+
+**Version-dependent capability check:** Android 0.4.0 advertises `device.share.send` only; Android 0.5.0 also advertises foreground-only `device.share.receive` for a separate incoming feature. Both must have **no Workspace capabilities**. This Samsung → Mac checklist does not test reverse delivery, and does not require any Mac → Android sharing approval. Android 0.5.0's receiver is **not** evidence that Mac → Samsung is operational; that requires a Mac sender and a separate physical acceptance test.
 
 ## Before changing anything
 
@@ -13,7 +15,7 @@ This is the **physical device release gate**, not an automated proof of success.
 
 ## Build and verify the consistently signed test APK
 
-Use a separate clean checkout of reviewed Atlas source containing Android 0.4.0 (merged PR #62), not an uncommitted feature worktree. The commands below run on the development **Mac** with JDK 17, Android SDK 35/build-tools 35.0.0, platform-tools and Gradle 8.11.1 installed; `gradle` must be that installed version. They do **not** deploy Atlas or change the Mac Node configuration.
+Use a separate clean checkout of reviewed Atlas source containing the chosen Android 0.4.0 or 0.5.0 test build, not an uncommitted feature worktree. The commands below run on the development **Mac** with JDK 17, Android SDK 35/build-tools 35.0.0, platform-tools and Gradle 8.11.1 installed; `gradle` must be that installed version. They do **not** deploy Atlas or change the Mac Node configuration.
 
 ```sh
 git clone https://github.com/affank1020/atlas.git atlas-mobile-acceptance
@@ -47,7 +49,7 @@ Before any repeat install or update, compare the APK's certificate SHA-256 finge
 ## Enrol Samsung and approve one direction
 
 1. Verify the **locally built and consistently signed** APK above is installed (not the CI artifact), open **Settings**, and use the app's normal one-use enrolment flow against the publicly trusted Atlas HTTPS endpoint. Enter the one-use ticket from Atlas Web. The app stores its credential with Android Keystore; never copy a desktop Node token to the phone.
-2. Keep the app in the foreground. In **Atlas Web → Nodes**, verify the Android Node appears online with `device.share.send` and **without** Workspace capabilities or `device.share.receive`. If not, stop and investigate.
+2. Keep the app in the foreground. In **Atlas Web → Nodes**, verify the Android Node appears online with `device.share.send` and **without any Workspace capability**. On **Android 0.4.0**, `device.share.receive` must be absent; on **Android 0.5.0**, `device.share.receive` must also be present. If the capabilities don't match the installed version, stop and investigate.
 3. Select the **Android sending Node** in Atlas Web, open **Device sharing**, and approve the **Mac receiving Node**. This is directional: Android → Mac. Do not add the reverse pair or wildcard permissions. Prefer the managed UI; legacy `ATLAS_DEVICE_SHARE_PAIRS` environment grants need a Server restart to remove.
 4. On Android, open **Send** and use **Refresh devices** if necessary. The approved Mac should appear by name, selectable only while connected with receiving enabled. An unapproved Node must never appear.
 5. If the Mac is missing, check sender identity, direction of the pair, Mac readiness and the live Server gateway version. Do **not** work around a missing recipient with the Atlas admin API.
@@ -84,7 +86,7 @@ Use harmless test text, not passwords or private documents. After every step, re
 4. Return Android to the foreground and wait for an authenticated reconnect and recipient refresh. **Do not press Send again.** Observe that Android does not automatically issue a replacement request, cause a **second** Mac approval prompt, or report the interrupted request as accepted. The original Mac prompt's decline/timeout is not a new delivery.
 5. **Pass only if** exactly the original Mac prompt occurred, Android never shows a false accepted receipt, and no new send happens on reconnect. If the Android status is not observable after returning, record the missing evidence rather than assuming success. Treat any automatically reappearing approval as a failure. The ordinary no-pending reconnect/presence check remains case G1.
 
-**Mandatory boundary check:** Android remains `device.share.send` only. Do not infer Android-to-Android, Mac-to-Android inbox, image/file, queued or background support from a passing text test.
+**Mandatory boundary check:** Android 0.4.0 is send-only. Android 0.5.0 can also present a transient incoming Copy/Decline dialog while foregrounded, but **Mac → Android is not tested by this runbook**. Do not infer Android-to-Android, Mac-to-Android completed delivery, persistent inbox, image/file, queued or background support from a passing Samsung → Mac text test.
 
 ## Finish and roll back
 
