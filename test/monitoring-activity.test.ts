@@ -315,3 +315,64 @@ test('operation query plans keep large audit snapshots out of the materialized h
         }));
     }
 });
+
+test('logical Workspace Monitoring unifies physical checkouts across Nodes without broadening unrelated audit rows', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Logical Monitoring', client: 'setup' });
+    const otherProject = await catalog.createProject({ name: 'Unrelated Monitoring', client: 'setup' });
+    const group = '11111111-1111-4111-8111-111111111111';
+    const foreignGroup = '22222222-2222-4222-8222-222222222222';
+    const first = '33333333-3333-4333-8333-333333333333';
+    const second = '44444444-4444-4444-8444-444444444444';
+    const unrelated = '55555555-5555-4555-8555-555555555555';
+    const host = '66666666-6666-4666-8666-666666666666';
+    const local = await store.pool.query("SELECT id FROM nodes WHERE local_key='local'");
+    const localId = local.rows[0].id as string;
+    await store.pool.query("INSERT INTO nodes(id,name,status) VALUES($1,'Monitoring test remote','offline')", [host]);
+    await store.pool.query("INSERT INTO logical_workspaces(id,name) VALUES($1,'Shared Repository'),($2,'Unrelated Repository')",
+        [group, foreignGroup]);
+    for (const [id, nodeId, logicalId, root, archived] of [
+        [first, localId, group, '/tmp/monitoring-a', false],
+        [second, host, group, '/tmp/monitoring-b', true],
+        [unrelated, host, foreignGroup, '/tmp/monitoring-c', false],
+    ] as const) {
+        await store.pool.query(`INSERT INTO workspaces
+            (id,node_id,logical_workspace_id,project_id,name,root_path,kind,status,archived_at)
+            VALUES($1,$2,$3,$4,$5,$6,'generic',$7,$8)`,
+        [id, nodeId, logicalId, project.id, root, root, archived ? 'archived' : 'active',
+            archived ? new Date('2026-10-21T10:00:00Z') : null]);
+    }
+    const addEvent = async (checkoutId: string, projectId: string, attempt: string, operation: string) => {
+        await store.pool.query(`INSERT INTO audit_events
+            (id,client,operation,project_id,workspace_id,after_state,created_at)
+            VALUES(gen_random_uuid(),'logical-monitor-test',$1,$2,$3,$4::jsonb,now())`,
+            [operation, projectId, checkoutId,
+                JSON.stringify({ attemptId: attempt, task: 'test', error: 'CONFIDENTIAL_ERROR' })]);
+    };
+    await addEvent(first, project.id, 'first', 'workspace.mutation_requested');
+    await addEvent(first, project.id, 'first', 'workspace.dev_invoked');
+    await addEvent(second, project.id, 'second', 'workspace.dev_invoked');
+    await addEvent(unrelated, project.id, 'other', 'workspace.dev_invoked');
+    await addEvent(first, otherProject.id, 'outside-project', 'workspace.dev_invoked');
+    const monitoring = new ActivityService(new AuditService(store));
+    const shared = { logicalWorkspaceId: group, client: 'logical-monitor-test' };
+
+    const rows = await monitoring.page(shared);
+    assert.equal(rows.total, 4, 'Ordinary row pagination includes all events from registered member checkouts');
+    assert.ok(rows.items.every(item => [first, second].includes(item.workspaceId!)));
+    const grouped = await monitoring.page({ ...shared, groupOperations: true, safeDetails: true });
+    assert.equal(grouped.total, 3, 'One checkout attempt counts once, across physical members and project scopes');
+    assert.deepEqual(new Set(grouped.items.map(item => item.workspaceId)), new Set([first, second]));
+    assert.ok(grouped.items.every(item => !JSON.stringify(item).includes('CONFIDENTIAL_ERROR')),
+        'The logical filter must not bypass the safe Monitoring projection');
+    const scoped = await monitoring.page({ ...shared, projectId: project.id, groupOperations: true });
+    assert.equal(scoped.total, 2, 'Explicit Project filters are intersected, never replaced');
+    assert.equal((await monitoring.page({ ...shared, checkoutId: second, groupOperations: true })).total, 1,
+        'Explicit checkout scope intersects logical membership');
+    assert.equal((await monitoring.page({ ...shared, checkoutId: unrelated, groupOperations: true })).total, 0,
+        'A foreign checkout cannot escape the logical scope');
+    assert.equal((await monitoring.page({ logicalWorkspaceId: foreignGroup, client: 'logical-monitor-test' })).total, 1);
+    assert.equal((await monitoring.page({
+        logicalWorkspaceId: '77777777-7777-4777-8777-777777777777', client: 'logical-monitor-test',
+    })).total, 0, 'Unknown logical IDs return no rows');
+});
