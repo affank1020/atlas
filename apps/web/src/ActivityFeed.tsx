@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AuditEvent } from './types';
-import { clientName, filterActivity, presentActivity, readable } from './activity';
+import { clientName, filterActivity, presentActivity, readable, safeMonitoringEvent } from './activity';
 import { monitoringHash } from './monitoringLinks';
 import './activity.css';
 
 type WorkspaceName = { id: string; name: string };
-export function ActivityRows({ events, names = {} }: { events: AuditEvent[]; names?: Record<string, string> }) {
-    return <>{presentActivity(events, names).map(item => <ActivityRow key={item.id} item={item} />)}</>;
+export function ActivityRows({ events, names = {}, safeDetails = false }: { events: AuditEvent[]; names?: Record<string, string>; safeDetails?: boolean }) {
+    return <>{presentActivity(safeDetails ? events.map(safeMonitoringEvent) : events, names).map(item => <ActivityRow key={item.id} item={item} />)}</>;
 }
 function ActivityRow({ item }: { item: ReturnType<typeof presentActivity>[number] }) {
     return <details className={`activity-item activity-${item.status}`} data-activity-id={item.id}>
