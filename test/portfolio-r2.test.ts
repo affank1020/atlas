@@ -44,7 +44,9 @@ test("R2 reads legacy local objects on 404 but sends new writes to R2", async ()
     const root = await mkdtemp(path.join(os.tmpdir(), "atlas-r2-"));
     let puts = 0;
     const remote = new R2MediaObjectStore(config, (async (_url, init) => {
-        if (init!.method === "GET") return new Response("", { status: 404 });
+        if (init!.method === "GET") return new Response(
+            '<Error><Code>NoSuchKey</Code><Message>Missing object</Message></Error>',
+            { status: 404, headers: { "content-type": "application/xml" } });
         puts++;
         return new Response("", { status: 200 });
     }) as typeof fetch);
