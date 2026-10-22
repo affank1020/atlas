@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { MonitoringPage, localDateTimeValue } from './Monitoring';
 import { callTool } from './api';
 
-vi.mock('./api', () => ({ callTool: vi.fn() }));
+vi.mock('./api', () => ({ callTool: vi.fn(), IS_MOCK_MODE: false }));
 vi.mock('./Workspace', () => ({ MonitoringOverview: () => null }));
 const nodes = [
     { id: 'node-A', name: 'Node A', status: 'online', capabilities: ['node.logs'] },
