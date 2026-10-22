@@ -238,3 +238,80 @@ test('grouped failed attempt uses latest event time after a contradictory later 
         ...query, outcome: 'completed', from: '2026-10-22T08:01:30Z',
     })).total, 0, 'A later success must not conceal the earlier failure');
 });
+
+
+test('operation query plans keep large audit snapshots out of the materialized history scan', async () => {
+    const { catalog, store } = await databaseFixture();
+    const projectA = await catalog.createProject({ name: 'Monitoring benchmark A', client: 'bench-setup' });
+    const projectB = await catalog.createProject({ name: 'Monitoring benchmark B', client: 'bench-setup' });
+
+    // 10,000 immutable rows / 5,000 correlated operations, each with an 8 KiB
+    // historical snapshot. Synthetic plan regression, not a production latency SLA.
+    await store.pool.query([
+        'INSERT INTO audit_events (id, client, operation, project_id, before_state, after_state, created_at)',
+        "SELECT gen_random_uuid(), 'monitoring-plan-test',",
+        "CASE WHEN n % 2 = 1 THEN 'workspace.mutation_requested' ELSE 'workspace.dev_invoked' END,",
+        'CASE WHEN n <= 6000 THEN $1::uuid ELSE $2::uuid END,',
+        "jsonb_build_object('snapshot', repeat(md5(n::text), 256)),",
+        "jsonb_build_object('attemptId', ((n+1)/2)::text,",
+        "'operation', 'workspace.dev_invoked',",
+        "'outcome', CASE WHEN n % 2 = 0 THEN 'completed' ELSE NULL END),",
+        "'2026-10-22T08:00:00Z'::timestamptz + n * interval '1 second'",
+        'FROM generate_series(1, 10000) AS n',
+    ].join(' '), [projectA.id, projectB.id]);
+    await store.pool.query('ANALYZE audit_events');
+
+    // Capture the exact SQL the application executes instead of a stale approximation.
+    type QueryResponse = { rows: Record<string, unknown>[] };
+    const adapter = store as unknown as { query: (sql: string, values?: unknown[]) => Promise<QueryResponse> };
+    const original = adapter.query;
+    const captured: Array<{ sql: string; values: unknown[] }> = [];
+    adapter.query = (sql, values) => {
+        if (sql.includes('WITH base AS MATERIALIZED')) captured.push({ sql, values: values ?? [] });
+        return original.call(store, sql, values);
+    };
+    try {
+        const audit = new ActivityService(new AuditService(store));
+        const global = await audit.page({ groupOperations: true, limit: 30, client: 'monitoring-plan-test' });
+        const scoped = await audit.page({ groupOperations: true, projectId: projectA.id, limit: 30, client: 'monitoring-plan-test' });
+        assert.equal(global.total, 5000);
+        assert.equal(global.items.length, 60, 'Each operation has a request and a result');
+        assert.equal(scoped.total, 3000);
+        assert.equal(scoped.items.length, 60);
+    } finally {
+        adapter.query = original;
+    }
+    assert.equal(captured.length, 2);
+
+    for (const [i, request] of captured.entries()) {
+        assert.match(request.sql, /WITH base AS MATERIALIZED/);
+        assert.match(request.sql, /SELECT a\.id, a\.created_at/);
+        assert.doesNotMatch(request.sql, /SELECT a\.\*/);
+        assert.match(request.sql, /LEFT JOIN audit_events d ON d\.id=r\.id/,
+            'Wide JSON snapshots must be fetched only after the operation page is chosen');
+        const planResult = await store.pool.query(
+            'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ' + request.sql, request.values,
+        );
+        const plan = planResult.rows[0]['QUERY PLAN'][0] as {
+            Plan: Record<string, unknown>; 'Execution Time': number;
+        };
+        const nodes: Record<string, unknown>[] = [];
+        const walk = (node: Record<string, unknown>) => {
+            nodes.push(node);
+            for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child);
+        };
+        walk(plan.Plan);
+        const baseScans = nodes.filter(node => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'base');
+        assert.ok(baseScans.length >= 1, 'EXPLAIN should show a materialized base CTE');
+        assert.ok(baseScans.every(node => typeof node['Plan Width'] === 'number' && (node['Plan Width'] as number) < 512),
+            'Materialized base rows should consist of narrow scalar fields, not 8-KiB snapshots');
+        const mode = i === 0 ? 'global' : 'project-scoped';
+        console.log('Monitoring operation EXPLAIN profile:', JSON.stringify({
+            mode, historyRows: 10000, matchedOperations: i === 0 ? 5000 : 3000,
+            executionMs: plan['Execution Time'],
+            baseScanEstimatedWidths: baseScans.map(node => node['Plan Width']),
+            sharedHitBlocks: plan.Plan['Shared Hit Blocks'],
+            tempWrittenBlocks: plan.Plan['Temp Written Blocks'],
+        }));
+    }
+});
