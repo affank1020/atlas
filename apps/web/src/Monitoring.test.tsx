@@ -191,3 +191,33 @@ test('overview distinguishes unavailable Node registry from zero healthy Nodes',
     expect(await screen.findByText(/Node registry could not be checked/)).toBeInTheDocument();
     expect(screen.queryByText(/No Nodes registered/)).not.toBeInTheDocument();
 });
+
+test('Monitoring activity requests safe projection and links only known scoped IDs', async () => {
+    location.hash = '#/monitoring?tab=activity&projectId=22222222-2222-4222-8222-222222222222';
+    vi.mocked(callTool).mockResolvedValue({
+        offset: 0, total: 1, limit: 30,
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            client: 'Atlas Web', operation: 'workspace.mutation_failed',
+            occurredAt: '2026-10-22T12:00:00Z',
+            projectId: '22222222-2222-4222-8222-222222222222',
+            workspaceId: '33333333-3333-4333-8333-333333333333',
+            resulting: { attemptId: 'operation-1', operation: 'workspace.file_patched',
+                outcome: 'failed', nodeId: '44444444-4444-4444-8444-444444444444' },
+        }],
+    } as never);
+    render(<MonitoringPage />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
+        expect.objectContaining({ groupOperations: true, safeDetails: true }), expect.any(AbortSignal)));
+    const row = await screen.findByText('The operation failed; inspect the details or client response.');
+    expect(row).toBeInTheDocument();
+    const summary = row.closest('summary');
+    expect(summary).not.toBeNull();
+    fireEvent.click(summary!);
+    expect(screen.getByRole('link', { name: 'Project activity' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&projectId=22222222-2222-4222-8222-222222222222');
+    expect(screen.getByRole('link', { name: 'Workspace activity' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&workspaceId=33333333-3333-4333-8333-333333333333');
+    expect(screen.getByRole('link', { name: 'Node activity' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&nodeId=44444444-4444-4444-8444-444444444444');
+});
