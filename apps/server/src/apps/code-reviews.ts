@@ -10,7 +10,9 @@ type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store'
 
 /** Project-scoped review history. Import is manually confirmed; publishing is a later capability. */
 export class CodeReviewsService {
-    constructor(private readonly catalog: ReviewCatalogue, private readonly history?: Pick<GitHubReviewHistoryReader, 'read'>) {}
+    constructor(private readonly catalog: ReviewCatalogue,
+        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'>,
+        private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map()) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -24,13 +26,16 @@ export class CodeReviewsService {
     /** Read-only preview by default. Apply persists atomically and is safe to repeat. */
     async importPullRequest(repository: string, prNumber: number, apply: boolean) {
         if (!this.history) throw new AtlasError('GitHub review history import is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        const trustedIds = this.trustedPublishers.get(repository.toLowerCase());
+        if (!trustedIds?.size)
+            throw new AtlasError('No trusted Code Reviewer publisher IDs are configured for this repository.', 'CAPABILITY_UNAVAILABLE');
         const ids = await this.storeIds();
         const snapshot = await this.history.read(repository, prNumber);
         if (!apply)
             return reconcileGitHubReviews(this.catalog, await this.catalog.store.snapshot(),
-                ids, repository, prNumber, snapshot, false);
+                ids, repository, prNumber, snapshot, false, trustedIds);
         return this.catalog.store.transaction(state =>
-            reconcileGitHubReviews(this.catalog, state, ids, repository, prNumber, snapshot, true));
+            reconcileGitHubReviews(this.catalog, state, ids, repository, prNumber, snapshot, true, trustedIds));
     }
 
     async overview() {

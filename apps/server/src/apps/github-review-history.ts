@@ -13,7 +13,7 @@ export type GitHubReview = {
     submitted_at: string | null;
     state: string;
     html_url: string;
-    user: { login: string } | null;
+    user: { login: string; id?: number } | null;
 };
 export type GitHubInlineComment = {
     id: number;
@@ -37,7 +37,8 @@ function isReview(value: any): value is GitHubReview {
         (value.commit_id === null || sha(value.commit_id)) &&
         (value.submitted_at === null || sourceDate(value.submitted_at)) && textValue(value.state) &&
         typeof value.html_url === 'string' && value.html_url.length < 500 &&
-        (value.user === null || (typeof value.user?.login === 'string' && value.user.login.length < 150));
+        (value.user === null || (typeof value.user?.login === 'string' && value.user.login.length < 150 &&
+            (value.user.id === undefined || safeInt(value.user.id))));
 }
 function isInline(value: any): value is GitHubInlineComment {
     return value && safeInt(value.id) && (value.pull_request_review_id == null || safeInt(value.pull_request_review_id)) &&

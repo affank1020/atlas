@@ -52,6 +52,34 @@ It authenticates through the existing Atlas GitHub App using a repository-scoped
 `pull_requests:read` token; the App must be installed on the repository.
 No GitHub token is returned to the caller.
 
+### Trusted publisher configuration
+
+Before using preview **or** apply, configure `ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON`
+on the Atlas Server. It is a JSON object mapping the **exact GitHub repository**
+to one or more **immutable GitHub numeric user IDs** that actually publish the
+Code Reviewer skill's reviews. For example, for the existing Atlas reviews
+published through the GitHub account with numeric ID `58519561`:
+
+```env
+ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON='{"affank1020/atlas":[58519561]}'
+```
+
+Verify the ID through an authenticated GitHub user/review lookup before
+approving the configuration. Add another repository explicitly when needed.
+Repository keys are case-insensitive, but only full owner/repository mappings
+are accepted. A missing, empty, or malformed trust map **fails closed**;
+import requests for repositories without approved publishers fail before
+fetching GitHub data, including dry runs. The user cannot supply a publisher
+ID through the import MCP operation.
+
+GitHub's review `user.id` must match an approved publisher ID for that
+repository **and** the review must have the Code Reviewer heading.
+Untrusted or deleted actors are excluded from saved runs and findings
+and counted as `skippedUntrusted`. `coverage.sourceActorId` records the
+verified identity used for classification. This is an account-level
+provenance gate, **not proof** that each review was actually authored by
+the Code Reviewer skill if its publishing account also submits other reviews.
+
 1. Preview: `{ "repository": "affank1020/atlas", "prNumber": 69 }`.
    An omitted `apply` defaults to `false`. The response counts prospective
    review runs and inline findings without writing any records.
@@ -61,8 +89,8 @@ No GitHub token is returned to the caller.
 3. Check `code_reviews_overview` and `code_reviews_list_runs` to view imported
    history. Inspect `coverage` for original review text and source metadata.
 
-For historical markdown, only native GitHub reviews whose body begins with a
-**Code Reviewer** heading are recognized. Review heads, authors, timestamps and
+For historical markdown, only native GitHub reviews from a configured trusted
+publisher **and** whose body begins with a **Code Reviewer** heading are recognized. Review heads, authors, timestamps and
 GitHub source IDs are retained. Inline review comments with an explicit
 Sev1–Sev4 label are imported as findings with **unverified** lifecycle state.
 The finding key identifies the source GitHub comment; it does not imply two

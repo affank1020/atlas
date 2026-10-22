@@ -55,7 +55,8 @@ function parseInline(comment: GitHubInlineComment) {
     };
 }
 
-export function prepareGitHubReviews(repository: string, prNumber: number, snapshot: ReviewSource) {
+export function prepareGitHubReviews(repository: string, prNumber: number, snapshot: ReviewSource,
+    trustedPublisherIds: ReadonlySet<number>) {
     const candidates: Candidate[] = [];
     const allCommentIds = new Set<number>();
     for (const comment of snapshot.comments) {
@@ -72,6 +73,7 @@ export function prepareGitHubReviews(repository: string, prNumber: number, snaps
     const seen = new Set<number>();
     let skippedUnrecognized = 0;
     let skippedIncomplete = 0;
+    let skippedUntrusted = 0;
     let commentsWithoutSeverity = 0;
     for (const review of snapshot.reviews) {
         if (seen.has(review.id)) throw new AtlasError('GitHub returned duplicate review IDs.', 'GITHUB_REQUEST_FAILED');
@@ -79,6 +81,9 @@ export function prepareGitHubReviews(repository: string, prNumber: number, snaps
         if (typeof review.body !== 'string' || !reviewerHeader.test(review.body)) { skippedUnrecognized++; continue; }
         if (!review.commit_id || !/^[a-f0-9]{40}$/i.test(review.commit_id) || !review.submitted_at || !review.user ||
             Number.isNaN(Date.parse(review.submitted_at))) { skippedIncomplete++; continue; }
+        // A Markdown heading is not an origin proof. GitHub's immutable actor ID
+        // must be explicitly trusted for the source repository.
+        if (!review.user.id || !trustedPublisherIds.has(review.user.id)) { skippedUntrusted++; continue; }
         const comments = (commentsByReview.get(review.id) ?? []).flatMap(comment => {
             const parsed = parseInline(comment);
             if (!parsed) commentsWithoutSeverity++;
@@ -100,6 +105,8 @@ export function prepareGitHubReviews(repository: string, prNumber: number, snaps
                     format: 'historical_markdown',
                     originalReviewBody: review.body,
                     githubReviewState: review.state,
+                    sourceActorId: review.user.id,
+                    publisherTrust: 'github_actor_id_allowlist',
                     findingCapture: 'severity_labeled_inline_comments_only',
                     // Review summary sections may mention additional findings not posted inline.
                     summaryFindingsNotParsed: true,
@@ -109,13 +116,13 @@ export function prepareGitHubReviews(repository: string, prNumber: number, snaps
             comments,
         });
     }
-    return { candidates, skippedUnrecognized, skippedIncomplete, commentsWithoutSeverity };
+    return { candidates, skippedUnrecognized, skippedIncomplete, skippedUntrusted, commentsWithoutSeverity };
 }
 
 type RecordInState = Pick<CoreService, 'createRecordInState'>;
 type Totals = {
     repository: string; prNumber: number; dryRun: boolean; sourceReviews: number; recognizedReviews: number;
-    skippedUnrecognized: number; skippedIncomplete: number; commentsWithoutSeverity: number;
+    skippedUnrecognized: number; skippedIncomplete: number; skippedUntrusted: number; commentsWithoutSeverity: number;
     runsCreated: number; runsAlreadyPresent: number; findingsCreated: number; findingsAlreadyPresent: number;
 };
 
@@ -130,6 +137,7 @@ export function reconcileGitHubReviews(
     prNumber: number,
     snapshot: ReviewSource,
     write: boolean,
+    trustedPublisherIds: ReadonlySet<number>,
 ): Totals {
     const runStore = state.stores.find(s => s.id === stores.runs && s.projectId === CODE_REVIEWS_PROJECT_ID && !s.archivedAt);
     const findingStore = state.stores.find(s => s.id === stores.findings && s.projectId === CODE_REVIEWS_PROJECT_ID && !s.archivedAt);
@@ -138,7 +146,7 @@ export function reconcileGitHubReviews(
         !findingStore || findingStore.name !== REVIEW_FINDINGS_STORE)
         throw new AtlasError('Code Reviews project or Stores are unavailable.', 'CAPABILITY_UNAVAILABLE');
 
-    const prepared = prepareGitHubReviews(repository, prNumber, snapshot);
+    const prepared = prepareGitHubReviews(repository, prNumber, snapshot, trustedPublisherIds);
     const runs = new Map<string, { id: string; data: RecordData; archivedAt?: string }>();
     const findings = new Map<string, { id: string; data: RecordData; archivedAt?: string }>();
     for (const record of state.records) {
@@ -157,6 +165,7 @@ export function reconcileGitHubReviews(
         repository, prNumber, dryRun: !write, sourceReviews: snapshot.reviews.length,
         recognizedReviews: prepared.candidates.length,
         skippedUnrecognized: prepared.skippedUnrecognized, skippedIncomplete: prepared.skippedIncomplete,
+        skippedUntrusted: prepared.skippedUntrusted,
         commentsWithoutSeverity: prepared.commentsWithoutSeverity,
         runsCreated: 0, runsAlreadyPresent: 0, findingsCreated: 0, findingsAlreadyPresent: 0,
     };
