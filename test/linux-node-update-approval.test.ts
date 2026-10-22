@@ -175,3 +175,119 @@ print("concurrent claim rejected exactly once")
     const result = runPython(py);
     assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
 });
+
+test('approval ledger fsyncs new parent directory entries before acknowledging a grant', { skip: !available }, () => {
+    const py = String.raw`
+import datetime as dt, importlib.util, os, pathlib, sys, tempfile, uuid
+from unittest import mock
+spec = importlib.util.spec_from_file_location("host_approval", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+now = dt.datetime.now(dt.timezone.utc)
+node = str(uuid.uuid4())
+intent_id = str(uuid.uuid4())
+source = "a"*40
+installed = "2.0.0+" + "c"*12
+intent = dict(id=intent_id, nodeId=node, installedVersion=installed,
+    targetVersion="2.0.1", targetCommit=source[:12], targetSourceCommit=source,
+    targetSha256="b"*64, status="requested", approved=False, executable=False,
+    createdAt=m.iso(now), expiresAt=m.iso(now+dt.timedelta(minutes=10)), resolvedAt=None)
+with tempfile.TemporaryDirectory() as temporary:
+    parent = pathlib.Path(temporary)
+    root = parent/"approvals"
+    store = m.ApprovalStore(root, owner_uid=None)
+    original = os.fsync
+    seen = []
+    def observed_sync(fd):
+        seen.append(os.readlink("/proc/self/fd/" + str(fd)))
+        return original(fd)
+    with mock.patch.object(m.os, "fsync", side_effect=observed_sync):
+        result = store.approve(intent, node, installed, now)
+    assert result["status"] == "approved"
+    assert str(parent) in seen and str(root) in seen and str(root/"records") in seen, seen
+    assert seen.index(str(parent)) < seen.index(str(root)) < seen.index(str(root/"records")), seen
+    assert store.status(intent_id)["status"] == "approved"
+    # If the parent-directory persistence barrier fails, no approval is acknowledged.
+    another = m.ApprovalStore(parent/"fresh", owner_uid=None)
+    def parent_fails(fd):
+        if os.readlink("/proc/self/fd/"+str(fd)) == str(parent):
+            raise OSError("injected directory fsync failure")
+        return original(fd)
+    try:
+        with mock.patch.object(m.os, "fsync", side_effect=parent_fails):
+            another.approve({**intent, "id": str(uuid.uuid4())}, node, installed, now)
+    except OSError as exc:
+        assert "injected" in str(exc)
+    else:
+        raise AssertionError("approval acknowledged without syncing parent directory")
+    assert not (parent/"fresh"/"records").exists()
+print("durable directory creation and fail-closed barrier verified")
+`;
+    const result = runPython(py);
+    assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
+});
+
+test('approval records handle forced short writes and refuse zero-progress publication', { skip: !available }, () => {
+    const py = String.raw`
+import datetime as dt, importlib.util, os, pathlib, sys, tempfile, uuid
+from unittest import mock
+spec = importlib.util.spec_from_file_location("host_approval", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+now = dt.datetime.now(dt.timezone.utc)
+node = str(uuid.uuid4())
+source = "a"*40
+installed = "2.0.0+" + "c"*12
+def intent(ident):
+    return dict(id=ident, nodeId=node, installedVersion=installed,
+        targetVersion="2.0.1", targetCommit=source[:12], targetSourceCommit=source,
+        targetSha256="b"*64, status="requested", approved=False, executable=False,
+        createdAt=m.iso(now), expiresAt=m.iso(now+dt.timedelta(minutes=10)), resolvedAt=None)
+with tempfile.TemporaryDirectory() as temporary:
+    store = m.ApprovalStore(pathlib.Path(temporary)/"approvals", owner_uid=None)
+    first_id = str(uuid.uuid4())
+    real_write = os.write
+    calls = []
+    def short_write(fd, data):
+        calls.append(len(data))
+        return real_write(fd, data[:max(1, len(data)//4)])
+    with mock.patch.object(m.os, "write", side_effect=short_write):
+        assert store.approve(intent(first_id), node, installed, now)["status"] == "approved"
+    assert len(calls) > 1, calls
+    assert store.status(first_id, now)["status"] == "approved"
+    # Verify short writes are also handled when publishing an atomic update.
+    with mock.patch.object(m.os, "write", side_effect=short_write):
+        assert store.claim_once(first_id, node, "b"*64, installed, now)["status"] == "claimed"
+    assert store.status(first_id, now)["status"] == "claimed"
+    # Zero-progress on a new record must never publish partial JSON.
+    second_id = str(uuid.uuid4())
+    with mock.patch.object(m.os, "write", return_value=0):
+        try:
+            store.approve(intent(second_id), node, installed, now)
+        except m.Refused as exc:
+            assert "no progress" in str(exc)
+        else:
+            raise AssertionError("zero-progress write was acknowledged")
+    assert not store._path(second_id).exists()
+    assert store.status(first_id, now)["status"] == "claimed"
+    # Also refuse after an initial partial write followed by zero progress.
+    third_id = str(uuid.uuid4())
+    remaining = [True]
+    def stops_after_short_write(fd, data):
+        if remaining:
+            remaining.pop()
+            return real_write(fd, data[:1])
+        return 0
+    with mock.patch.object(m.os, "write", side_effect=stops_after_short_write):
+        try:
+            store.approve(intent(third_id), node, installed, now)
+        except m.Refused:
+            pass
+        else:
+            raise AssertionError("partially written record was published")
+    assert not store._path(third_id).exists()
+print("short write and zero-progress refusal verified")
+`;
+    const result = runPython(py);
+    assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
+});
