@@ -97,3 +97,26 @@ test('editing a Record preserves unchanged datetime precision and converts chang
         view.unmount(); view.unsubscribeMutations();
     }
 });
+
+test('editing another field on a persisted timezone-less datetime preserves its raw legacy value', async () => {
+    const legacy = '2026-10-22T12:00';
+    const originalRecord: AtlasRecord = {
+        ...sample, data: { reviewedAt: legacy, title: 'Legacy record' },
+    };
+    const view = setup([originalRecord]);
+    try {
+        expect(await screen.findByText('Legacy record')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+        const dateInput = screen.getByLabelText(/reviewedAt/) as HTMLInputElement;
+        expect(dateInput.value).toBe(legacy);
+        fireEvent.change(screen.getByLabelText('title'), { target: { value: 'Updated title' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
+        await waitFor(() => {
+            const save = view.requests.find(request => request.tool === 'update_record');
+            expect(save?.input.replace).toBe(true);
+            expect(save?.input.data).toMatchObject({ reviewedAt: legacy, title: 'Updated title' });
+        });
+    } finally {
+        view.unmount(); view.unsubscribeMutations();
+    }
+});
