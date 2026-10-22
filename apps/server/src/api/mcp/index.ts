@@ -113,6 +113,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         search: z.string().max(200).optional(), from: z.string().datetime().optional(), to: z.string().datetime().optional(),
         limit: z.number().int().min(1).max(100).default(30), offset: z.number().int().min(0).max(10000).default(0),
         groupOperations: z.boolean().optional(),
+        safeDetails: z.boolean().optional(),
     });
     tool("search_atlas", "Search active Atlas records using lexical, semantic, or hybrid retrieval.", fabricSearchSchema.shape);
     tool("search_everything", "Search active Atlas projects, applications, views, stores, record contents, nodes and workspaces. Read-only, with links and partial-coverage diagnostics.", globalSearchInput.shape);
