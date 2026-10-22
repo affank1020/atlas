@@ -76,6 +76,16 @@ plaintext archive or touching production. Passing this drill proves only that
 one database snapshot restored; it does not verify offsite copy custody, R2
 objects or coordinated application recovery.
 
+## Publish encrypted backups to independent R2
+
+After obtaining an encrypted archive and sidecar, the operator can use the
+[manual append-only R2 publisher](POSTGRES_OFFSITE_R2.md) from a trusted host
+to place both artifacts in a **different Cloudflare account**. It validates
+the local ciphertext and manifest before every publication, uses conditional
+create-only PUT, and independently reads back the remote ciphertext and
+metadata. This is distinct from the Atlas Files R2 seeding tool and does not
+perform restores or create automatic backups.
+
 ## Recovery and retention work still required
 
 1. **Off-site copy:** Transfer both the ciphertext and manifest, with
