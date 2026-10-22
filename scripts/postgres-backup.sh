@@ -35,6 +35,10 @@ command -v sha256sum >/dev/null || die 'sha256sum is missing'
 recipient="$(printenv ATLAS_PG_BACKUP_RECIPIENT || true)"
 [[ "$recipient" == age1* && "$recipient" != *[[:space:]]* ]] ||
   die 'ATLAS_PG_BACKUP_RECIPIENT must be an age X25519 public recipient; keep the identity offline'
+# Validate the recipient with the real age parser before claiming dry-run ready.
+# The probe encrypts a fixed harmless string to /dev/null and never accesses DB data.
+printf 'atlas-public-recipient-check' | age --recipient "$recipient" >/dev/null 2>/dev/null ||
+  die 'age rejected the configured public recipient'
 [[ ! -L "$out_dir" ]] || die 'backup directory must not be a symlink'
 if [[ -e "$out_dir" ]]; then
   [[ -d "$out_dir" && -O "$out_dir" ]] || die 'backup directory must be operator-owned'
