@@ -3,6 +3,7 @@ package dev.affankhan.atlas.node
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
+import java.time.Instant
 import java.util.UUID
 
 /** Separates app-release version, protocol v2 and the HTTPS/WSS transport address. */
@@ -26,7 +27,7 @@ internal fun registrationMessage(node: StoredNode, version: String): String = JS
     .put("type", "register").put("protocol", 2)
     .put("nodeId", node.nodeId).put("name", node.name)
     .put("platform", "android").put("version", version)
-    .put("capabilities", JSONArray().put("device.share.send")).toString()
+    .put("capabilities", JSONArray().put("device.share.send").put("device.share.receive")).toString()
 
 internal fun isRegistrationAcknowledgement(raw: String, nodeId: String): Boolean =
     runCatching {
@@ -35,6 +36,58 @@ internal fun isRegistrationAcknowledgement(raw: String, nodeId: String): Boolean
             message.optString("nodeId") == nodeId &&
             message.optInt("protocol") == 2
     }.getOrDefault(false)
+
+
+/**
+ * Authenticated Server → foreground Android Node delivery. No message content is
+ * ever persisted; the caller must explicitly obtain approval before copying.
+ */
+internal data class IncomingDeviceShare(
+    val requestId: String,
+    val deliveryId: String,
+    val sourceNodeId: String,
+    val text: String,
+    val expiresAtMs: Long,
+)
+
+internal fun parseIncomingDeviceShare(raw: String, nowMs: Long = System.currentTimeMillis()): IncomingDeviceShare? =
+    runCatching {
+        val json = JSONObject(raw)
+        if (json.length() != 7 ||
+            json.keys().asSequence().toSet() != setOf(
+                "type", "kind", "requestId", "deliveryId", "sourceNodeId", "text", "expiresAt",
+            ) ||
+            json.optString("type") != "request" || json.optString("kind") != "device_share") {
+            return@runCatching null
+        }
+        val requestId = json.opt("requestId") as? String ?: return@runCatching null
+        val deliveryId = json.opt("deliveryId") as? String ?: return@runCatching null
+        val sourceId = json.opt("sourceNodeId") as? String ?: return@runCatching null
+        val body = json.opt("text") as? String ?: return@runCatching null
+        val expiresAt = json.opt("expiresAt") as? String ?: return@runCatching null
+        if (!validNodeId(requestId) || !validNodeId(deliveryId) ||
+            !validNodeId(sourceId) || body.isEmpty() || body.length > MAX_SHARE_CHARACTERS) {
+            return@runCatching null
+        }
+        val deadline = Instant.parse(expiresAt).toEpochMilli()
+        // Limit any server-side expiry to one minute of local UI exposure.
+        if (deadline <= nowMs || deadline > nowMs + 60_000L) return@runCatching null
+        IncomingDeviceShare(requestId, deliveryId, sourceId, body, deadline)
+    }.getOrNull()
+
+internal enum class IncomingShareOutcome { ACCEPTED, DECLINED, BUSY, COPY_FAILED }
+
+internal fun incomingDeviceShareResponse(requestId: String, outcome: IncomingShareOutcome): String {
+    require(validNodeId(requestId))
+    val result = JSONObject().put("type", "response").put("requestId", requestId)
+    if (outcome == IncomingShareOutcome.BUSY || outcome == IncomingShareOutcome.COPY_FAILED) {
+        val code = if (outcome == IncomingShareOutcome.BUSY) "SHARE_BUSY" else "SHARE_CLIPBOARD_FAILED"
+        return result.put("ok", false).put("error", JSONObject()
+            .put("code", code).put("message", "Receiving Node could not accept this share.")).toString()
+    }
+    return result.put("ok", true).put("result", JSONObject()
+        .put("accepted", outcome == IncomingShareOutcome.ACCEPTED)).toString()
+}
 
 /** Explicit, manually chosen Node target. Never infer sender identity from the client. */
 internal fun validNodeId(value: String): Boolean =
