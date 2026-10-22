@@ -16,6 +16,10 @@ export class AuditService {
         const project = (page: MonitoringActivityPage): MonitoringActivityPage => input.safeDetails
             ? { ...page, items: page.items.map(projectMonitoringEvent) } : page;
         if (this.store.queryMonitoringActivity) return project(await this.store.queryMonitoringActivity(query));
+        // A JSON fixture has no authoritative logical Workspace ↔ checkout map.
+        // Reject rather than silently return unscoped or misleading activity.
+        if (input.logicalWorkspaceId) throw new Error(
+            'Logical Workspace activity requires PostgreSQL checkout associations.');
         // The JSON fixture adapter must keep the same filter semantics as PostgreSQL.
         const data = await this.store.snapshot();
         const category = (operation: string) => {
