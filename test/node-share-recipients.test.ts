@@ -78,7 +78,6 @@ test('authenticated recipient directory only shows sender-approved and active pe
         assert.equal(blocked.error.code,'SHARE_DENIED');
     } finally {
         for (const ws of opened) ws.terminate();
-        await services.nodeGateway.close();
         await new Promise<void>(resolve=>http.close(()=>resolve()));
         await services.lifecycle.close();
     }
