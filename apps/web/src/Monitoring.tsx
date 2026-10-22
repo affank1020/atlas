@@ -34,7 +34,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         const controller = new AbortController();
         setLoading(true); setError(''); setPage(undefined);
         const input = Object.fromEntries(Object.entries(filters).filter(([key, value]) => key !== 'offset' && value));
-        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true }, controller.signal)
+        void callTool<ActivityPage>('query_monitoring_activity', { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
             .then(value => { if (!controller.signal.aborted) setPage(value); })
             .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
             .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -63,8 +63,9 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         </div>
         {loading && <p role="status" className="empty">Loading audit history…</p>}
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
-        {page && <><div className="activity-scroll"><ActivityRows events={page.items} />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
+        {page && <><div className="activity-scroll"><ActivityRows events={page.items} safeDetails />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
+        <p className="activity-footnote">Monitoring shows a limited operational summary; raw audit snapshots, paths and error text are deliberately omitted. Legacy audit history remains unchanged.</p>
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
 }
