@@ -142,11 +142,13 @@ export class PostgresRepository implements AtlasRepository {
         if (input.checkoutId) scope.push('a.workspace_id=' + param(uuid(input.checkoutId)));
         if (input.client) scope.push('lower(a.client)=lower(' + param(input.client) + ')');
 
+        const projections: string[] = [];
         const aggregates: string[] = [];
         const matches: string[] = [];
         const matchAny = (expression: string) => {
-            const field = 'matched_' + aggregates.length;
-            aggregates.push('bool_or(COALESCE(' + expression + ', false)) AS ' + field);
+            const field = 'matched_' + projections.length;
+            projections.push('COALESCE(' + expression + ', false) AS ' + field);
+            aggregates.push('bool_or(b.' + field + ') AS ' + field);
             matches.push('g.' + field);
         };
         if (input.storeId) matchAny('a.store_id=' + param(uuid(input.storeId)));
@@ -199,8 +201,17 @@ export class PostgresRepository implements AtlasRepository {
             OR a.after_state->>'outcome' IN ('failed','failed_or_uncertain','error','editor_error')
             OR a.after_state->>'success'='false')`;
         const sql = `
-            WITH base AS (
-                SELECT a.*,
+            WITH base AS MATERIALIZED (
+                -- No JSON snapshots or other wide columns flow through the
+                -- materialized history scan. Only scalars needed by grouping,
+                -- operation predicates and representative selection are retained.
+                SELECT a.id, a.created_at,
+                    COALESCE(${failed}, false) AS failed,
+                    (a.operation <> 'workspace.mutation_requested') AS has_terminal,
+                    CASE WHEN COALESCE(${failed}, false) THEN 'failed'
+                         WHEN a.operation='workspace.mutation_requested' THEN 'requested'
+                         ELSE 'result' END AS member_kind,
+                    ${projections.length ? projections.join(', ') + ',' : ''}
                     CASE WHEN a.operation LIKE 'workspace.%'
                         AND jsonb_typeof(a.after_state->'attemptId') = 'string'
                         AND length(a.after_state->>'attemptId') > 0
@@ -209,11 +220,11 @@ export class PostgresRepository implements AtlasRepository {
                     ELSE 'event:' || a.id::text END AS group_key
                 FROM audit_events a${scope.length ? ' WHERE ' + scope.join(' AND ') : ''}
             ), grouped AS (
-                SELECT a.group_key, max(a.created_at) AS latest_at,
-                    bool_or(COALESCE(${failed}, false)) AS failed,
-                    bool_or(a.operation <> 'workspace.mutation_requested') AS has_terminal
+                SELECT b.group_key, max(b.created_at) AS latest_at,
+                    bool_or(b.failed) AS failed,
+                    bool_or(b.has_terminal) AS has_terminal
                     ${aggregates.length ? ', ' + aggregates.join(', ') : ''}
-                FROM base a GROUP BY a.group_key
+                FROM base b GROUP BY b.group_key
             ), matches AS (
                 SELECT g.group_key, g.latest_at FROM grouped g
                 ${matches.length ? ' WHERE ' + matches.join(' AND ') : ''}
@@ -222,20 +233,19 @@ export class PostgresRepository implements AtlasRepository {
                 LIMIT ${sizeParam} OFFSET ${startParam}
             )
             , representative AS (
-                SELECT a.*, p.latest_at AS group_latest_at, p.group_key AS page_group_key,
+                SELECT b.id, p.latest_at AS group_latest_at, p.group_key AS page_group_key,
                     row_number() OVER (
-                        PARTITION BY a.group_key,
-                            CASE WHEN COALESCE(${failed}, false) THEN 'failed'
-                                 WHEN a.operation='workspace.mutation_requested' THEN 'requested'
-                                 ELSE 'result' END
-                        ORDER BY a.created_at DESC, a.id DESC
+                        PARTITION BY b.group_key, b.member_kind
+                        ORDER BY b.created_at DESC, b.id DESC
                     ) AS member_rank
-                FROM page p JOIN base a ON a.group_key=p.group_key
+                FROM page p JOIN base b ON b.group_key=p.group_key
             )
-            SELECT a.*, totals.total FROM
+            SELECT d.*, totals.total FROM
                 (SELECT count(*)::int AS total FROM matches) totals
-                LEFT JOIN representative a ON a.member_rank=1
-            ORDER BY a.group_latest_at DESC, a.page_group_key DESC, a.created_at DESC, a.id DESC`;
+                LEFT JOIN representative r ON r.member_rank=1
+                -- Only selected representative IDs cause full audit row/JSON reads.
+                LEFT JOIN audit_events d ON d.id=r.id
+            ORDER BY r.group_latest_at DESC, r.page_group_key DESC, d.created_at DESC, d.id DESC`;
         const result = await this.query(sql, values);
         return { items: result.rows.filter(row => row.id !== null).map(auditFromRow),
             total: Number(result.rows[0]?.total ?? 0), limit, offset };
