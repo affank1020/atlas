@@ -372,6 +372,19 @@ class ReceiptStore:
         return value
 
 
+def cleanup_preclaim_inputs(stage_dir: Path, base: Path, *inputs: Path) -> None:
+    """Remove private copies when the request was NOT durably claimed.
+
+    The caller invokes this only when no claiming receipt has been created.
+    Never remove inputs after an uncertain Server claim: they are evidence
+    needed for host-side reconciliation.
+    """
+    for item in inputs:
+        item.unlink(missing_ok=True)
+    stage_dir.rmdir()
+    fsync_dir(base)
+
+
 def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
              *, approval_module, runner) -> dict:
     store = approval_module.ApprovalStore(STATE)
@@ -403,40 +416,50 @@ def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
 
         # Snapshot untrusted caller inputs exactly once into root-private files.
         stage_dir = Path(tempfile.mkdtemp(prefix=".executor-input-", dir=store.base))
-        fsync_dir(store.base)
-        os.chmod(stage_dir, 0o700)
-        archive_copy = stage_dir / ("atlas-node-" + target_name + ".tar.gz")
-        checksum_copy = stage_dir / (archive_copy.name + ".sha256")
-        bundle_copy = stage_dir / "attestations.jsonl"
-        copy_snapshot(archive, archive_copy, MAX_ARCHIVE)
-        copy_snapshot(checksum, checksum_copy, MAX_SMALL_FILE)
-        copy_snapshot(bundle, bundle_copy, MAX_BUNDLE)
-        fsync_dir(stage_dir)
-        verify_snapshot(archive_copy, checksum_copy, bundle_copy, grant, runner)
-        # Do not consume either one-use approval when an existing lifecycle
-        # is unresolved or the independent recovery timer cannot run.
-        for action, unit in (
-            ("is-enabled", "atlas-node-lifecycle-recover.timer"),
-            ("is-active", "atlas-node-lifecycle-recover.timer"),
-            ("is-active", "atlas-node.service"),
-        ):
-            runner(["/usr/bin/systemctl", action, "--quiet", unit],
-                   check=True, env=SAFE_ENV)
-
-        print("Node: " + node_id + "\nInstalled: " + installed +
-              "\nTarget: " + target_name + "\nDigest: " + grant["targetSha256"])
-        exact = "EXECUTE " + intent_id
-        if input("Type '" + exact + "' to consume both approvals and update this host: ") != exact:
-            raise Refused("Host operator did not confirm execution.")
-        # Re-validate fast-moving local state just before the irreversible
-        # server claim; prolonged signature checks may outlast approval.
-        if (approval_module.read_installed_version() != installed or
-                approval_module.when(grant["notAfter"]) <= approval_module.clock()):
-            raise Refused("Local release or host approval changed during verification.")
-        record = {"schema": 1, "intentId": intent_id, "nodeId": node_id,
-                  "installedVersion": installed, "targetVersion": grant["targetVersion"],
-                  "targetCommit": grant["targetCommit"], "targetSha256": grant["targetSha256"]}
-        record = receipts.mark(record, "claiming", create=True)
+        claiming_recorded = False
+        try:
+            fsync_dir(store.base)
+            os.chmod(stage_dir, 0o700)
+            archive_copy = stage_dir / ("atlas-node-" + target_name + ".tar.gz")
+            checksum_copy = stage_dir / (archive_copy.name + ".sha256")
+            bundle_copy = stage_dir / "attestations.jsonl"
+            copy_snapshot(archive, archive_copy, MAX_ARCHIVE)
+            copy_snapshot(checksum, checksum_copy, MAX_SMALL_FILE)
+            copy_snapshot(bundle, bundle_copy, MAX_BUNDLE)
+            fsync_dir(stage_dir)
+            verify_snapshot(archive_copy, checksum_copy, bundle_copy, grant, runner)
+            # Do not consume either one-use approval when an existing lifecycle
+            # is unresolved or the independent recovery timer cannot run.
+            for action, unit in (
+                ("is-enabled", "atlas-node-lifecycle-recover.timer"),
+                ("is-active", "atlas-node-lifecycle-recover.timer"),
+                ("is-active", "atlas-node.service"),
+            ):
+                runner(["/usr/bin/systemctl", action, "--quiet", unit],
+                       check=True, env=SAFE_ENV)
+    
+            print("Node: " + node_id + "\nInstalled: " + installed +
+                  "\nTarget: " + target_name + "\nDigest: " + grant["targetSha256"])
+            exact = "EXECUTE " + intent_id
+            if input("Type '" + exact + "' to consume both approvals and update this host: ") != exact:
+                raise Refused("Host operator did not confirm execution.")
+            # Re-validate fast-moving local state just before the irreversible
+            # server claim; prolonged signature checks may outlast approval.
+            if (approval_module.read_installed_version() != installed or
+                    approval_module.when(grant["notAfter"]) <= approval_module.clock()):
+                raise Refused("Local release or host approval changed during verification.")
+            record = {"schema": 1, "intentId": intent_id, "nodeId": node_id,
+                      "installedVersion": installed, "targetVersion": grant["targetVersion"],
+                      "targetCommit": grant["targetCommit"], "targetSha256": grant["targetSha256"]}
+            record = receipts.mark(record, "claiming", create=True)
+            claiming_recorded = True
+        finally:
+            # A failed initial receipt fsync can leave its name visible.
+            # Preserve all inputs in that case too; a retry must fail closed.
+            receipt_path = receipts._path(intent_id)
+            if not claiming_recorded and not (receipt_path.exists() or receipt_path.is_symlink()):
+                cleanup_preclaim_inputs(stage_dir, store.base,
+                                        archive_copy, checksum_copy, bundle_copy)
     # A network error after POST is ambiguous. There is NO automatic retry.
     try:
         claim_server(endpoint, node_id, configuration["ATLAS_NODE_CREDENTIAL"], grant)
@@ -466,7 +489,12 @@ def _execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
                 str(archive_copy), str(checksum_copy), str(bundle_copy)], check=True, env=SAFE_ENV)
         record = receipts.mark(record, "activating")
         runner(["/usr/bin/bash", str(LIFECYCLE), "plan", target_name], check=True, env=SAFE_ENV)
-        runner(["/usr/bin/bash", str(LIFECYCLE), "activate", target_name], check=True, env=SAFE_ENV)
+        expected_source = "v" + installed.replace("+", "-", 1)
+        # Recheck the exact approved source INSIDE the lifecycle's own flock.
+        # A legacy manual update/rollback can bypass .executor.lock, but not
+        # this atomic source-version assertion immediately before switching.
+        runner(["/usr/bin/bash", str(LIFECYCLE), "activate", target_name,
+                "--expect-current", expected_source], check=True, env=SAFE_ENV)
         if approval_module.read_installed_version() != grant["targetVersion"] + "+" + grant["targetCommit"]:
             raise Refused("Lifecycle returned without the intended active release.")
         record = receipts.mark(record, "activated")
