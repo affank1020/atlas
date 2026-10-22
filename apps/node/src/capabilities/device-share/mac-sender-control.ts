@@ -21,12 +21,13 @@ type Approve = (targetId: string, text: string) => Promise<boolean>;
 export async function promptMacOutgoingShare(targetId: string, text: string): Promise<boolean> {
     if (process.platform !== 'darwin') return false;
     const shortId = targetId.slice(0, 8);
-    const preview = text.slice(0, 150).replace(/[\\u0000-\\u001f\\u007f]/g, ' ')
-        .replace(/[\\\\"]/g, '\\\\type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare'>;');
+    const preview = text.slice(0, 150)
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/[\\"]/g, char => '\\' + char);
     const script = 'set response to display dialog "Send Atlas clipboard to Node ' +
         shortId + '?" & return & return & "' + preview +
-        '" with title "Atlas" buttons {"Cancel", "Send"} default button "Cancel" giving up after 15\\n' +
-        'return button returned of response\\n';
+        '" with title "Atlas" buttons {"Cancel", "Send"} default button "Cancel" giving up after 15\n' +
+        'return button returned of response\n';
     return new Promise(resolve => {
         const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'ignore'] });
         let output = '', done = false;
