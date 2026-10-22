@@ -1,6 +1,8 @@
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { NodeIdentity } from '../nodes/identity.js';
+import { NodeShareApprovals } from '../nodes/share-approvals.js';
 import { NodeService } from '../nodes/service.js';
+import { NodeUpdateIntentLedger } from '../nodes/update-intents.js';
 import { NodeRouter } from '../nodes/router.js';
 import { PostgresNodeRepository } from '../infrastructure/database/nodes.js';
 import { PostgresWorkspaceRepository } from "../infrastructure/database/workspaces.js";
@@ -16,8 +18,11 @@ import { PortfolioMediaService, PortfolioService, PORTFOLIO_PROJECT_ID, PORTFOLI
 import { WorkspaceService } from '../workspaces/application.js';
 import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
+import { ServerDiagnostics } from './diagnostics.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
+import { NodeFileIngestService } from './node-file-ingest.js';
+import { NodeResumableTransferService } from './node-resumable-transfer.js';
 import { ApplicationRegistry } from '../apps/registry.js';
 import { portfolioApplication } from '../apps/portfolio-definition.js';
 import { FootballTrainingService, footballTrainingApplication } from '../apps/football-training.js';
@@ -29,6 +34,7 @@ import type { NodeRuntime } from '../nodes/runtime.js';
 export function composeServer(config: ServerConfig = loadServerConfig(), executionHost?: NodeRuntime) {
     const repository = new AtlasStore(config.databaseUrl);
     const catalog = new CoreService(repository);
+    const diagnostics = new ServerDiagnostics(config.serverDiagnosticsEnabled);
     const storageUsage = new StorageUsageService(repository.pool, config.storageAnalytics);
     const fabric = createFabric(config.databaseUrl, new OllamaEmbeddingProvider(config.retrieval.embeddingModel, config.ai.baseUrl));
     const retrieval = new RetrievalService(fabric.search, fabric.context, fabric.authority);
@@ -39,15 +45,20 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const media = new PortfolioMediaService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2);
     const files = new AtlasFilesService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2);
     const identity = new NodeIdentity(repository.pool);
-    const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity);
-    const nodeGateway = new RemoteNodeGateway(nodes);
+    const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
+    const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
+    const shareApprovals = new NodeShareApprovals(repository.pool, config.deviceShares.approvedPairs);
+    const nodes = new NodeService(new PostgresNodeRepository(repository.pool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
-    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files]);
+    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { await repository.close(); } } }, fabric.repository, portfolio, media, files],
+        message => { diagnostics.record('background_task_failed'); console.error(message); });
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const codeReviews = new CodeReviewsService(catalog);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
-    const services = { config, catalog, storageUsage, nodes, identity, nodeGateway, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    diagnostics.record('server_initialised');
+    const services = { config, catalog, diagnostics, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

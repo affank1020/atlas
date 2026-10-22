@@ -3,6 +3,10 @@ import { nodeSchemas, type NodeToolName } from './contracts.js';
 import type { AtlasNode } from './model.js';
 import type { NodeRepository } from './repository.js';
 import { NodeIdentity } from './identity.js';
+import type { NodeShareApprovals, ShareAuditClient } from './share-approvals.js';
+import { listNodeReleases } from './releases.js';
+import { buildNodeUpdatePlan } from './update-plan.js';
+import { NodeUpdateIntentLedger } from './update-intents.js';
 import type { NodeRuntime } from './runtime.js';
 
 /** Durable registry plus ephemeral runtime attachments. No transport implementation lives here. */
@@ -11,7 +15,7 @@ export class NodeService {
     private readonly lastSeen = new Map<string, string>();
     private registration?: Promise<string>;
     private closing = false;
-    constructor(readonly repository: NodeRepository, private readonly local?: NodeRuntime, private readonly localName = 'Local Node', readonly identity?: NodeIdentity) {}
+    constructor(readonly repository: NodeRepository, private readonly local?: NodeRuntime, private readonly localName = 'Local Node', readonly identity?: NodeIdentity, private readonly shareApprovals?: NodeShareApprovals, readonly updateIntents?: NodeUpdateIntentLedger) {}
     get hasLocalRuntime() { return !!this.local; }
     registerLocalNode(): Promise<string> {
         if (!this.local) return Promise.reject(new AtlasError('No in-process Node is configured.', 'NODE_UNAVAILABLE'));
@@ -43,17 +47,73 @@ export class NodeService {
     }
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
-    async call(name: NodeToolName, input: unknown) {
+    /** Minimal sender-scoped directory; never return unrelated registry details. */
+    async shareRecipients(sourceId: string) {
+        const approved = await this.requireShareApprovals().targetsFor(sourceId);
+        if (!approved.size) return [];
+        const nodes = await this.list();
+        return nodes.filter(node => approved.has(node.id.toLowerCase())
+            && node.id.toLowerCase() !== sourceId.toLowerCase()
+            && node.credentialState === 'active')
+            .map(node => ({
+                nodeId: node.id, name: node.name, platform: node.platform,
+                status: node.status,
+                available: node.status === 'online' && node.capabilities.includes('device.share.receive'),
+            })).slice(0,64);
+    }
+    async call(name: NodeToolName, input: unknown, caller: ShareAuditClient = 'atlas-server') {
         const parsed = nodeSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x = parsed.data as any;
         if (name === 'list_nodes') return this.list();
+        if (name === 'list_node_share_approvals') return this.requireShareApprovals().list();
+        if (name === 'update_node_share_approval') return this.requireShareApprovals().update(x, caller);
+        if (name === 'list_node_releases') return listNodeReleases(x.refresh === true);
+        if (name === 'plan_node_update') {
+            const node = await this.get(x.nodeId);
+            // Do not query GitHub for Nodes that are categorically unsupported
+            // or disconnected; they cannot be sent an update in this phase.
+            const unsupported = node.platform !== 'linux' || node.metadata.runtime !== 'remote'
+                || node.credentialState !== 'active' || node.status !== 'online';
+            const catalogue = unsupported
+                ? { state: 'unavailable' as const, releases: [] }
+                : await listNodeReleases(x.refresh === true);
+            return buildNodeUpdatePlan(node, catalogue);
+        }
+        if (name === 'list_node_update_intents') {
+            if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
+            return this.updateIntents.list(x.nodeId, x.limit);
+        }
+        if (name === 'cancel_node_update_intent') {
+            if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
+            return this.updateIntents.cancel(x.nodeId, x.intentId);
+        }
+        if (name === 'prepare_node_update') {
+            if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
+            const node = await this.get(x.nodeId);
+            if (node.platform !== 'linux' || node.metadata.runtime !== 'remote' ||
+                node.status !== 'online' || node.credentialState !== 'active')
+                throw new AtlasError('Node is not eligible for Linux update preparation.', 'NODE_UNAVAILABLE');
+            if (node.version !== x.expectedVersion || node.credentialUpdatedAt !== x.expectedCredentialUpdatedAt)
+                throw new AtlasError('Node state changed; refresh eligibility.', 'CONFLICT');
+            const catalogue = await listNodeReleases(true);
+            const plan = buildNodeUpdatePlan(node, catalogue);
+            if (plan.status !== 'candidate' || !plan.candidate || plan.candidate.commit !== x.targetCommit)
+                throw new AtlasError('Selected release is no longer an eligible update candidate.', 'CONFLICT');
+            return this.updateIntents.prepare(node.id, x.expectedVersion, x.expectedCredentialUpdatedAt, plan.candidate);
+        }
         if (name === 'read_node_logs') {
             const node = await this.get(x.nodeId);
             const runtime = this.runtimes.get(x.nodeId);
             if (node.status !== 'online' || !runtime) throw new AtlasError('Node is not connected.', 'NODE_OFFLINE');
             if (!node.capabilities.includes('node.logs') || !runtime.readLogs) throw new AtlasError('Node log retrieval is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
-            return runtime.readLogs(x.source, x.lines);
+            // Resolve the omitted source *after* determining the selected Node's platform.
+            // Preserve explicitly requested sources: never silently turn stderr into journal.
+            const source = x.source ?? (node.platform === 'linux' ? 'journal' : 'stderr');
+            if ((node.platform === 'linux' && source !== 'journal') ||
+                (node.platform !== 'linux' && source === 'journal'))
+                throw new AtlasError('Selected log source is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
+            return runtime.readLogs(source, x.lines);
         }
         if (name === 'create_node_enrolment') return this.requireIdentity().ticket();
         if (name === 'update_node') return this.requireIdentity().update(x.nodeId, x.name);
@@ -63,6 +123,10 @@ export class NodeService {
 
         const node = await this.get((parsed.data as { nodeId: string }).nodeId);
         return { ...node, workspaces: await this.repository.hostedWorkspaces(node.id), activity: this.identity ? await this.identity.activity(node.id) : [] };
+    }
+    private requireShareApprovals() {
+        if (!this.shareApprovals) throw new AtlasError('Share permission management is unavailable.', 'SHARE_UNAVAILABLE');
+        return this.shareApprovals;
     }
     private requireIdentity() { if (!this.identity) throw new AtlasError('Node identity service unavailable.', 'NODE_UNAVAILABLE'); return this.identity; }
     async close() {

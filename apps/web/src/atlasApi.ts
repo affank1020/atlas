@@ -23,6 +23,12 @@ const projectScope = (projectId: string) => `project:${projectId}`;
 /** Explicit dependencies keep writes within their project or store. */
 export function mutationTags({ name, input }: AtlasMutation): Tag[] {
     if (name.includes('portfolio')) return [tag('ApplicationData', 'portfolio')];
+    // Files retains the owner list across navigation. Every operation that can
+    // add, rename, move or retire a Workspace must invalidate that cached list.
+    if (['create_workspace', 'update_workspace', 'archive_workspace', 'link_workspace_project', 'unlink_workspace_project',
+        'link_logical_workspace_project', 'unlink_logical_workspace_project',
+        'assign_workspace_node', 'workspace_git_clone_repository', 'workspace_git_create_worktree',
+        'workspace_git_remove_worktree'].includes(name)) return [tag('ApplicationData', 'workspaces')];
     const projectId = String(input.projectId ?? '');
     const storeId = String(input.storeId ?? '');
     const viewId = String(input.viewId ?? '');
@@ -65,7 +71,7 @@ export const atlasApi = createApi({
         }),
         applicationRead: build.query<unknown, { name: ApplicationReadName; input: Record<string, unknown> }>({
             queryFn: ({ name, input }, api) => read(name, input, api.signal),
-            providesTags: (_result, _error, { name, input }) => [tag('ApplicationData', name.includes('portfolio') ? 'portfolio' : String(input.projectId ?? 'football'))],
+            providesTags: (_result, _error, { name, input }) => [tag('ApplicationData', name === 'list_workspaces' ? 'workspaces' : name.includes('portfolio') ? 'portfolio' : String(input.projectId ?? 'football'))],
         }),
         listProjects: build.query<Project[], { includeArchived?: boolean; withMetrics?: boolean }>({
             queryFn: (arg, api) => read<Project[]>('list_projects', arg, api.signal),
@@ -122,7 +128,7 @@ export function useAtlasMutation() {
 }
 
 // Explicit allowlist: operational commands can never accidentally enter this cache.
-export type ApplicationReadName = 'list_applications' | 'list_all_applications' | 'get_application' |
+export type ApplicationReadName = 'list_applications' | 'list_all_applications' | 'get_application' | 'list_workspaces' |
     'get_portfolio_schemas' | 'list_portfolio_entries' | 'get_portfolio_dashboard' | 'list_portfolio_media' | 'list_portfolio_revisions' |
     'football_generalist_manifest' | 'football_generalist_runs' | 'football_generalist_policies' | 'football_generalist_activity' | 'football_generalist_assessments' |
     'code_reviews_overview' | 'code_reviews_list_runs' | 'code_reviews_list_findings';

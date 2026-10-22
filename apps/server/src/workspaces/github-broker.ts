@@ -7,7 +7,7 @@ const MAX_INSTALLATIONS = 100;
 const MAX_REPO_PAGES = 10;
 
 type Transport = typeof fetch;
-type TokenResponse = { token?: string; repositories?: { full_name: string }[] };
+type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string } };
 type Installation = { id: number; account?: { login?: string; type?: string } };
 type InstalledRepository = { full_name?: string; private?: boolean; default_branch?: string; archived?: boolean };
 type RepositoryPage = { repositories?: InstalledRepository[]; total_count?: number };
@@ -64,26 +64,33 @@ export class GitHubBroker {
         return result as Installation[];
     }
 
-    private async tokenForInstallation(installationId: number, repository?: string, readonly = false) {
-        const body = repository
-            ? { repositories: [repository.split('/')[1]], permissions: readonly ? { contents: 'read' } : { contents: 'write', pull_requests: 'write' } }
-            : { permissions: { contents: 'read' } };
+    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'pr' | 'push' = 'read') {
+        const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
+            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : { contents: 'read' };
+        const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
+        // HTTP 403 and 422 also cover throttling and validation failures. Do
+        // not infer missing permission from status alone or echo GitHub bodies.
+        // A successful token response must explicitly confirm workflow-write.
         const result = await this.request(`/app/installations/${installationId}/access_tokens`, 'POST', this.jwt(), body) as TokenResponse;
         if (!result.token) throw new AtlasError('GitHub App did not issue a token.', 'GITHUB_REQUEST_FAILED');
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
+        // Never publish with a token unless GitHub explicitly confirms the requested scope.
+        if (purpose === 'push' && result.permissions?.workflows !== 'write')
+            throw new AtlasError('GitHub installation token lacks workflow-write permission. Approve the GitHub App permission update.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
         return result.token;
     }
 
-    async installationToken(repository: string) { return this.scopedToken(repository, false); }
-    async repositoryReadToken(repository: string) { return this.scopedToken(repository, true); }
-    private async scopedToken(repository: string, readonly: boolean) {
+    async installationToken(repository: string) { return this.scopedToken(repository, 'pr'); }
+    async gitPublishToken(repository: string) { return this.scopedToken(repository, 'push'); }
+    async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
+    private async scopedToken(repository: string, purpose: 'read' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();
         const installation = installations.find(item => item.account!.login!.toLowerCase() === owner);
         if (!installation) throw new AtlasError('GitHub App is not installed on this repository owner.', 'WORKSPACE_DENIED');
-        return this.tokenForInstallation(installation.id, repository, readonly);
+        return this.tokenForInstallation(installation.id, repository, purpose);
     }
 
     async listRepositories() {
@@ -111,6 +118,36 @@ export class GitHubBroker {
         }
         return { repositories: repositories.sort((a, b) => a.repository.localeCompare(b.repository)), installations: installations.map(item =>
             ({ id: item.id, owner: item.account!.login!, type: item.account!.type || 'User' })) };
+    }
+
+    /** Refuse managed-worktree retirement unless the exact branch tip has a
+     * merged PR into this repository's default branch. Squash merges are valid:
+     * ancestry is not used as a substitute for GitHub's merged_at evidence. */
+    async verifyMergedPullRequest(repository: string, branch: string, expectedHead: string) {
+        if (!repositoryPattern.test(repository) || !branchPattern.test(branch) ||
+            branch.includes('//') || branch.endsWith('/') || !/^[a-f0-9]{40}$/.test(expectedHead))
+            throw new AtlasError('Invalid worktree retirement identity.', 'INVALID_REQUEST');
+        const token = await this.installationToken(repository);
+        const [owner, repo] = repository.split('/');
+        const details = await this.request(`/repos/${owner}/${repo}`, 'GET', token) as { default_branch?: string };
+        const base = details.default_branch;
+        if (!base || !/^[A-Za-z0-9._/-]{1,200}$/.test(base) || base.includes('..') ||
+            base.includes('//') || base.startsWith('/') || base.endsWith('/'))
+            throw new AtlasError('GitHub default branch could not be verified.', 'GITHUB_REQUEST_FAILED');
+        const query = new URLSearchParams({ state: 'closed', head: `${owner}:${branch}`, per_page: '100' });
+        const pulls = await this.request(`/repos/${owner}/${repo}/pulls?${query}`, 'GET', token) as Array<{
+            number?: number; html_url?: string; merged_at?: string | null;
+            head?: { sha?: string }; base?: { ref?: string };
+        }>;
+        if (!Array.isArray(pulls) || pulls.length >= 100)
+            throw new AtlasError('Merged PR verification is incomplete; retirement blocked.', 'GITHUB_REQUEST_FAILED');
+        const merged = pulls.find(pr => Number.isSafeInteger(pr.number) && pr.number! > 0 &&
+            pr.head?.sha === expectedHead && pr.base?.ref === base &&
+            typeof pr.merged_at === 'string' && !Number.isNaN(Date.parse(pr.merged_at)) &&
+            pr.html_url === `https://github.com/${repository}/pull/${pr.number}`);
+        if (!merged)
+            throw new AtlasError('No merged PR matches this exact branch HEAD on the default branch. Local files were preserved.', 'CONFLICT');
+        return { number: merged.number!, url: merged.html_url! };
     }
 
     async createDraftPullRequest(repository: string, branch: string, expectedHead: string, title: string, body = '') {

@@ -16,10 +16,53 @@ export class WorkspaceService {
         const parsed = workspaceSchemas[name].safeParse(input);
         if (!parsed.success) throw new AtlasError(parsed.error.message);
         const x: any = parsed.data;
+        // Public checkoutId is a server-only alias for the historical physical
+        // workspaceId. Keep the Node v2 wire contract strict and unchanged.
+        // Both forms together (including equal IDs) are rejected by the
+        // external schema, rather than silently choosing one.
+        if (x.checkoutId !== undefined) {
+            x.workspaceId = x.checkoutId;
+            delete x.checkoutId;
+        }
+        if (x.targetCheckoutId !== undefined) {
+            x.targetWorkspaceId = x.targetCheckoutId;
+            delete x.targetCheckoutId;
+        }
         if (name === 'list_github_repositories') return this.github.listRepositories();
         if (name === 'list_workspaces') return this.repository.listAll(x.includeArchived, x.nodeId);
-        if (x.projectId) await this.catalog.getProject(x.projectId, x.includeArchived);
+        if (name === 'list_logical_workspaces') return this.repository.listLogical(x.includeArchived);
+        if (x.projectId) await this.catalog.getProject(x.projectId,
+            x.includeArchived || name === 'unlink_logical_workspace_project' || name === 'unlink_workspace_project');
         if (name === 'list_project_workspaces') return this.repository.list(x.projectId, x.includeArchived);
+        if (name === 'link_logical_workspace_project' || name === 'unlink_logical_workspace_project') {
+            const group = (await this.repository.listLogical()).find(item => item.id === x.logicalWorkspaceId);
+            if (!group?.checkouts.length)
+                throw new AtlasError('Active logical Workspace not found.', 'NOT_FOUND');
+            const representative = group.checkouts[0];
+            const db = await this.repository.connect();
+            try {
+                await db.begin();
+                if (name === 'unlink_logical_workspace_project') await db.requireProject(x.projectId, true);
+                else await db.requireActiveProject(x.projectId, true);
+                // Serialize logical mutations with reconciliation and feature
+                // worktree registration; never bind a link to a stale group.
+                await db.lockExecution(`logical-workspace:${group.id}`);
+                await db.lockWorkspace(representative.id);
+                const current = await db.getById(representative.id);
+                if (current.logicalWorkspaceId !== group.id)
+                    throw new AtlasError('Logical Workspace changed; refresh and retry.', 'CONFLICT');
+                if (name === 'link_logical_workspace_project')
+                    await db.linkLogical(group.id, x.projectId);
+                else await db.unlinkLogical(group.id, x.projectId);
+                const updated = await db.getById(representative.id);
+                await db.audit(updated, name === 'link_logical_workspace_project'
+                    ? 'workspace.logical_project_linked' : 'workspace.logical_project_unlinked',
+                    x.client, { logicalWorkspaceId: group.id, projectId: x.projectId });
+                await db.commit();
+                return (await this.repository.listLogical()).find(item => item.id === group.id);
+            } catch (error) { await db.rollback(); throw error; }
+            finally { db.release(); }
+        }
         if (name === 'create_workspace') {
             const binding = await this.runtime.bindDefault(x.rootPath, x.nodeId);
             const db = await this.repository.connect();
@@ -35,12 +78,52 @@ export class WorkspaceService {
             ? await this.repository.get(x.projectId, x.workspaceId, x.includeArchived)
             : await this.repository.getById(x.workspaceId, x.includeArchived);
         if (name === 'get_workspace') return workspace;
+        if (name === 'attach_checkout_repository') {
+            // The caller cannot supply an origin: only the Node's verified Git
+            // inspection may determine which repository owns this checkout.
+            if (workspace.status !== 'active' || workspace.kind !== 'generic')
+                throw new AtlasError('Only active Git checkouts can attach to a repository.', 'WORKSPACE_DENIED');
+            const inspection = await this.runtime.execute(workspace, 'workspace_git_status',
+                { workspaceId: workspace.id }) as { available?: boolean; originRepository?: string | null };
+            const repository = inspection?.originRepository;
+            if (inspection?.available !== true || typeof repository !== 'string' ||
+                !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
+                throw new AtlasError('The Node did not verify a GitHub origin for this checkout.', 'WORKSPACE_DENIED');
+            const db = await this.repository.connect();
+            try {
+                await db.begin();
+                // A provisional logical group can contain multiple managed
+                // checkouts. Serialise recognition by the group's original ID
+                // BEFORE taking any per-checkout row locks: otherwise two
+                // callers can each hold one checkout lock, then deadlock when
+                // one tries to move all siblings together.
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
+                await db.lockWorkspace(workspace.id);
+                const current = await db.getById(workspace.id);
+                if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath ||
+                    current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                    throw new AtlasError('Checkout binding or repository assignment changed; retry discovery.', 'CONFLICT');
+                const updated = await db.attachRepository(workspace.id, repository);
+                await db.audit(updated, 'workspace.repository_attached', x.client, {
+                    checkoutId: workspace.id, logicalWorkspaceId: updated.logicalWorkspaceId,
+                    repository,
+                });
+                await db.commit();
+                return updated;
+            } catch (error) { await db.rollback(); throw error; }
+            finally { db.release(); }
+        }
         if (name === 'link_workspace_project' || name === 'unlink_workspace_project') {
             const db = await this.repository.connect();
             try {
                 await db.begin();
-                await db.requireActiveProject(x.projectId, true);
+                if (name === 'unlink_workspace_project') await db.requireProject(x.projectId, true);
+                else await db.requireActiveProject(x.projectId, true);
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
                 await db.lockWorkspace(workspace.id);
+                const current = await db.getById(workspace.id);
+                if (current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                    throw new AtlasError('Workspace association changed; refresh and retry.', 'CONFLICT');
                 if (name === 'link_workspace_project') await db.link(workspace.id, x.projectId);
                 else await db.unlink(workspace.id, x.projectId);
                 const updated = await db.getById(workspace.id);
@@ -70,13 +153,41 @@ export class WorkspaceService {
         if (footballAction && (x.projectId !== 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7' || workspace.kind !== 'unity' || workspace.status !== 'active'))
             throw new AtlasError('Football MCP actions require the active AI Football Unity Workspace.', 'WORKSPACE_UNAVAILABLE');
         const nodeOperation = (footballAction ? 'football_control' : name) as WorkspaceOperation;
-        const target = name === 'workspace_git_remove_worktree'
+        const target = (name === 'workspace_git_remove_worktree' || name === 'workspace_git_retirement_preflight')
             ? await this.repository.getById(x.targetWorkspaceId) : undefined;
         if (target && (target.nodeId !== workspace.nodeId || target.id === workspace.id ||
-            target.kind !== 'generic'))
+            target.kind !== 'generic' || target.logicalWorkspaceId !== workspace.logicalWorkspaceId))
             throw new AtlasError('Worktree must be a different active Workspace on the same Node.', 'WORKSPACE_DENIED');
         const nodeInput = footballAction ? { ...x, action: footballAction }
             : target ? { ...x, targetPath: target.rootPath } : x;
+        if (name === 'workspace_git_retirement_preflight' && target) {
+            // Read-only inspection: no mutation intent, archive or Git writes.
+            // A later removal always revalidates the original SHA and all Node guards.
+            const db = await this.repository.connect();
+            let expectedBranch: string | null;
+            try {
+                await db.begin();
+                expectedBranch = await db.managedWorktreeBranch(target.id, target.rootPath);
+                await db.commit();
+            } catch (error) {
+                await db.rollback();
+                throw error;
+            } finally { db.release(); }
+            if (!expectedBranch) return { eligible: false, reason: 'Not an Atlas-managed temporary worktree.' };
+            try {
+                const source = await this.runtime.execute(workspace, 'workspace_git_status',
+                    { workspaceId: workspace.id }) as { available?: boolean; originRepository?: string | null };
+                if (source.available !== true || !source.originRepository)
+                    throw new AtlasError('Cannot verify the GitHub repository.', 'WORKSPACE_DENIED');
+                const mergedPullRequest = await this.github.verifyMergedPullRequest(
+                    source.originRepository, expectedBranch, x.expectedHead);
+                const report = await this.runtime.execute(workspace, 'workspace_git_retirement_preflight',
+                    { ...nodeInput, expectedBranch }) as object;
+                return { ...report, targetWorkspaceId: target.id, mergedPullRequest };
+            } catch (error) {
+                return { eligible: false, targetWorkspaceId: target.id, reason: auditError(error) };
+            }
+        }
         const invoke = () => this.runtime.execute(workspace, nodeOperation, nodeInput);
         const operation = ({ workspace_create_file: 'workspace.file_created', workspace_patch_file: 'workspace.file_patched', workspace_delete_file: 'workspace.file_deleted', workspace_git_create_branch: 'workspace.git_branch_created', workspace_git_switch_branch: 'workspace.git_branch_switched', workspace_git_stage: 'workspace.git_staged', workspace_git_commit: 'workspace.git_committed', workspace_git_push_branch: 'workspace.git_pushed', workspace_git_clone_repository: 'workspace.git_repository_cloned', workspace_git_create_worktree: 'workspace.git_worktree_created', workspace_git_remove_worktree: 'workspace.git_worktree_removed', workspace_git_open_pull_request: 'workspace.git_pull_request_created',  unity_run_command: 'workspace.unity_invoked', workspace_run_dev_task: 'workspace.dev_invoked', football_train: 'football.training_requested', football_evaluate: 'football.evaluation_requested', football_stop: 'football.stop_requested' } as Record<string, string>)[name];
         const inspection = ({ workspace_list_files: 'workspace.file_listed', workspace_read_file: 'workspace.file_read', workspace_search_files: 'workspace.files_searched', workspace_git_status: 'workspace.git_status', workspace_git_diff: 'workspace.git_diff', workspace_git_list_worktrees: 'workspace.git_worktrees_listed', unity_status: 'workspace.unity_status', unity_list_commands: 'workspace.unity_commands', workspace_list_dev_tasks: 'workspace.dev_tasks_listed', football_training_status: 'football.jobs_inspected', football_evaluation_status: 'football.evaluation_inspected' } as Record<string, string>)[name];
@@ -132,17 +243,33 @@ export class WorkspaceService {
                 })()
                 : target
                     ? async (current: Workspace) => {
-                        const expectedBranch = await db!.managedWorktreeBranch(
-                            target.id, workspace.id, target.rootPath);
+                        const expectedBranch = await db!.managedWorktreeBranch(target.id, target.rootPath);
                         if (!expectedBranch)
                             throw new AtlasError('Only an Atlas-created worktree can be removed through Atlas.', 'WORKSPACE_DENIED');
-                        // Never trust the caller to provide the branch or target
-                        // path. The Node independently checks both Git identity
-                        // and the expected branch before any filesystem deletion.
-                        return removeRuntime!.execute(current, nodeOperation, { ...nodeInput, expectedBranch });
+                        // This path bypasses NodeRouter.prepare to avoid Node
+                        // re-resolution under database locks. Strip server-only
+                        // fields for strict Node v2 before both Git inspection
+                        // and destructive retirement.
+                        const { logicalWorkspaceId: _logicalWorkspaceId, ...nodeCheckout } = current;
+                        const git = await removeRuntime!.execute(nodeCheckout, 'workspace_git_status', {
+                            workspaceId: nodeCheckout.id,
+                        }) as { available?: boolean; originRepository?: string | null };
+                        if (git?.available !== true || !git.originRepository)
+                            throw new AtlasError('Cannot verify the source GitHub repository; local files were preserved.', 'WORKSPACE_DENIED');
+                        // Git ancestry alone cannot prove a squash-merged PR.
+                        // Fail closed if the exact feature HEAD was not merged
+                        // into the current default branch on GitHub.
+                        const mergedPullRequest = await this.github.verifyMergedPullRequest(
+                            git.originRepository, expectedBranch, x.expectedHead);
+                        // The Node confirms both checkouts share a Git common directory and
+                        // rechecks branch, HEAD, ignored files, index flags and processes.
+                        const removal = await removeRuntime!.execute(nodeCheckout, nodeOperation, {
+                            ...nodeInput, expectedBranch,
+                        });
+                        return { ...(removal as object), mergedPullRequest };
                     }
                 : await this.runtime.prepare(workspace, nodeOperation, name === 'workspace_git_push_branch'
-                    ? { ...nodeInput, githubToken: await this.github.installationToken(x.repository) }
+                    ? { ...nodeInput, githubToken: await this.github.gitPublishToken(x.repository) }
                     : name === 'workspace_git_clone_repository'
                         ? { ...nodeInput, githubToken: await this.github.repositoryReadToken(x.repository) }
                         : nodeInput);
@@ -155,12 +282,22 @@ export class WorkspaceService {
             db = await this.repository.connect();
             await db.begin();
             await db.lockExecution(`${workspace.nodeId}:${workspace.rootPath}`);
+            if (name === 'workspace_git_create_worktree') {
+                // Recognition moves every member of a provisional logical group
+                // while holding that group's advisory lock. Take the SAME lock
+                // before locking the source checkout or touching the Node:
+                // otherwise the new checkout's FK to the old group can deadlock
+                // against recognition's bulk checkout update, leaving a real
+                // Git worktree on disk without an Atlas registration.
+                await db.lockExecution(`logical-workspace:${workspace.logicalWorkspaceId}`);
+            }
             // Do not hold a Core project row lock across slow external-tool calls.
             if (x.projectId) await db.requireActiveProject(x.projectId);
             await db.lockWorkspace(workspace.id);
             const current = x.projectId ? await db.get(x.projectId, workspace.id, false) : await db.getById(workspace.id, false);
-            if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath)
-                throw new AtlasError('Workspace binding changed; retry the operation.', 'CONFLICT');
+            if (current.nodeId !== workspace.nodeId || current.rootPath !== workspace.rootPath ||
+                current.logicalWorkspaceId !== workspace.logicalWorkspaceId)
+                throw new AtlasError('Workspace binding or repository association changed; retry the operation.', 'CONFLICT');
             if (target) {
                 await db.lockWorkspace(target.id);
                 const latest = await db.getById(target.id);
@@ -177,12 +314,19 @@ export class WorkspaceService {
                 if (boundPath !== expectedPath || result.rootPath !== expectedPath)
                     throw new AtlasError('Created checkout binding changed.', 'CONFLICT');
                 const registered = await db.insert({ nodeId: workspace.nodeId,
-                    // A manager directory is infrastructure, not the cloned repo's Project.
-                    // Clones start independent unless explicitly scoped; feature worktrees
-                    // inherit their source Project if no Project was supplied.
-                    projectId: name === 'workspace_git_clone_repository'
-                        ? (x.projectId ?? null) : (x.projectId ?? workspace.projectId),
-                    rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic' });
+                    // Project links belong to the logical Workspace. A feature
+                    // checkout inherits its canonical links through insert()'s
+                    // syncLogicalProjects(), never from a stale checkout primary
+                    // captured before locking. Clones remain independent unless
+                    // the caller explicitly provided a Project scope.
+                    ...(name === 'workspace_git_clone_repository' && x.projectId
+                        ? { projectId: x.projectId } : {}),
+                    rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic',
+                    // A feature worktree inherits the source's logical identity.
+                    // A fresh clone joins the globally verified repository identity.
+                    ...(name === 'workspace_git_create_worktree'
+                        ? { logicalWorkspaceId: current.logicalWorkspaceId }
+                        : { repository: x.repository }) });
                 await db.audit(registered, 'workspace.created', x.client, {
                     sourceWorkspaceId: workspace.id, branch: result.branch,
                     rootPath: registered.rootPath,
@@ -202,13 +346,32 @@ export class WorkspaceService {
             await db.commit(); return result;
         } catch (error) {
             await db?.rollback().catch(() => undefined);
-            await (db ?? this.repository).audit(workspace, 'workspace.mutation_failed', x.client, { ...metadata, outcome: 'failed_or_uncertain', error: auditError(error) }).catch(() => undefined);
+            await (db ?? this.repository).audit(workspace, 'workspace.mutation_failed', x.client, {
+                ...metadata, outcome: 'failed_or_uncertain', error: auditError(error),
+                ...(name === 'workspace_git_push_branch' ? auditGitPushErrorCode(error) : {}),
+            }).catch(() => undefined);
             if (applied) throw new AtlasError('The mutation completed but audit finalization failed. Inspect the file/Editor and audit intent before retrying.', 'OUTCOME_UNCERTAIN');
             throw error;
         } finally { db?.release(); }
 
     }
 }
+// Persist only stable, known failure codes. Remote errors and plugin inputs are
+// untrusted; arbitrary error.code strings must never enter the audit stream.
+const gitPushAuditCodes = new Set([
+    'GITHUB_WORKFLOWS_PERMISSION_REQUIRED', 'GITHUB_REQUEST_FAILED', 'GITHUB_UNAVAILABLE',
+    'GIT_PUSH_NON_FAST_FORWARD', 'GIT_PUSH_PROTECTED', 'GIT_PUSH_AUTH_FAILED',
+    'GIT_PUSH_NETWORK_FAILED', 'GIT_PUSH_TIMEOUT', 'GIT_PUSH_NODE_UNAVAILABLE',
+    'GIT_PUSH_FAILED', 'GIT_REMOTE_INVALID', 'GIT_REMOTE_MISMATCH',
+    'WORKSPACE_DENIED', 'CAPABILITY_UNAVAILABLE', 'CONFLICT',
+    'NODE_OFFLINE', 'NODE_UNAVAILABLE', 'NODE_EXECUTION_ERROR',
+]);
+function auditGitPushErrorCode(error: unknown): { errorCode?: string } {
+    return error instanceof AtlasError && gitPushAuditCodes.has(error.code)
+        ? { errorCode: error.code }
+        : {};
+}
+
 // Bounded diagnostic only; never serialize arbitrary adapter error payloads.
 function auditError(error: unknown): string {
     if (error instanceof AtlasError) return error.message.slice(0, 500);

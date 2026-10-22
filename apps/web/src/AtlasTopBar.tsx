@@ -31,7 +31,6 @@ export function AtlasTopBar({ page, context, menuOpen, onToggleMenu }: {
             <div className="header-actions">
                 {IS_MOCK_MODE && <span className="badge muted" title="Illustrative local fixtures; server writes are disabled">Mock data</span>}
                 <button className="header-icon-link" type="button" onClick={() => setSearchOpen(true)} aria-label="Search Atlas" title="Search Atlas (⌘K)"><ShellIcon name="search" /></button>
-                <a className="header-icon-link" href="#/activity" aria-label="Activity" title="Activity" aria-current={page === 'activity' ? 'page' : undefined}><ShellIcon name="activity" /></a>
                 <a className="header-icon-link" href="#/settings" aria-label="Settings" title="Settings" aria-current={['settings', 'developer', 'fabric', 'ask-atlas'].includes(page) ? 'page' : undefined}><ShellIcon name="settings" /></a>
                 {onToggleMenu && <button className="nav-toggle ghost" aria-expanded={!!menuOpen} aria-controls="global-navigation" onClick={onToggleMenu}>{menuOpen ? 'Close menu' : 'Menu'}</button>}
             </div>

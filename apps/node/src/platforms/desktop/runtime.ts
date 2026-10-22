@@ -1,16 +1,18 @@
 import { runDevTask } from '../../capabilities/dev/runner.js';
 import { readAtlasNodeLog } from '../../capabilities/node-logs.js';
+import { readAtlasLinuxJournal } from '../../capabilities/linux-journal.js';
 import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
 import { gitWrite } from '../../capabilities/workspace-files/git-write.js';
-import { listManagedWorktrees, createManagedWorktree, removeManagedWorktree, cloneManagedRepository } from '../../capabilities/workspace-files/git-managed.js';
+import { listManagedWorktrees, createManagedWorktree, removeManagedWorktree, preflightManagedWorktreeRetirement, cloneManagedRepository } from '../../capabilities/workspace-files/git-managed.js';
 import { UnityAdapter } from '../../capabilities/unity/unity.js';
 import { footballControl } from '../../capabilities/football.js';
 import { footballValidation } from '../../capabilities/football-validation.js';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 import type { NodeCapability } from '@atlas/protocol/node-model';
+import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
 import type { Workspace, WorkspaceAdapter } from '@atlas/protocol/workspace';
 import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 export class LocalNodeRuntime implements NodeRuntime {
@@ -19,8 +21,11 @@ export class LocalNodeRuntime implements NodeRuntime {
     readonly files: WorkspaceFiles;
     readonly adapters: Map<string, WorkspaceAdapter>;
     private readonly platform: NodeJS.Platform;
-    constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>, platform: NodeJS.Platform = process.platform) {
+    private readonly shareReceiver?: MacShareReceiver;
+    constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>,
+        platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver) {
         this.platform = platform;
+        this.shareReceiver = platform === 'darwin' ? shareReceiver : undefined;
         this.files = new WorkspaceFiles(roots);
         // The Linux Node is intentionally not a Unity/football host. A Linux
         // development sandbox is not ready, so no dev execution is advertised.
@@ -29,11 +34,26 @@ export class LocalNodeRuntime implements NodeRuntime {
     }
     getCapabilities(): NodeCapability[] {
         const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
-        if (this.platform === 'linux') return shared;
-        return [...shared, "workspace.dev", "football.training", "node.logs", ...(this.adapters.has("unity") ? ["unity" as const] : [])];
+        if (this.platform === 'linux') return [...shared, 'node.logs'];
+        return [...shared, "workspace.dev", "football.training", "node.logs",
+            ...(this.adapters.has("unity") ? ["unity" as const] : []),
+            ...(this.shareReceiver ? ["device.share.receive" as const] : [])];
     }
     bind(rootPath: string) { return this.files.bind(rootPath); }
-    async readLogs(source: 'stdout' | 'stderr', lines: number) { return readAtlasNodeLog(source, lines, this.platform); }
+    async receiveDeviceShare(input: { deliveryId: string; sourceNodeId: string; text: string; expiresAt: string }) {
+        if (!this.shareReceiver) throw new AtlasError('Mac sharing approval not enabled.', 'CAPABILITY_UNAVAILABLE');
+        return this.shareReceiver.receive(input, this.shutdown.signal);
+    }
+    async readLogs(source: 'stdout' | 'stderr' | 'journal', lines: number) {
+        if (this.platform === 'linux') {
+            if (source !== 'journal')
+                throw new AtlasError('Linux Nodes expose only the fixed Atlas systemd journal.', 'CAPABILITY_UNAVAILABLE');
+            return readAtlasLinuxJournal(lines);
+        }
+        if (source === 'journal')
+            throw new AtlasError('Atlas systemd journal access is unavailable on this platform.', 'CAPABILITY_UNAVAILABLE');
+        return readAtlasNodeLog(source, lines, this.platform);
+    }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {
         // Defence in depth even for direct runtime callers: do not let a
         // forged remote request execute development or macOS-only operations.
@@ -80,6 +100,8 @@ export class LocalNodeRuntime implements NodeRuntime {
                     return createManagedWorktree(workspace.rootPath, this.files, x.branch, x.targetPath);
                 case 'workspace_git_remove_worktree':
                     return removeManagedWorktree(workspace.rootPath, this.files, x.targetPath, x.expectedHead, x.expectedBranch);
+                case 'workspace_git_retirement_preflight':
+                    return preflightManagedWorktreeRetirement(workspace.rootPath, this.files, x.targetPath, x.expectedHead, x.expectedBranch);
                 case 'workspace_git_create_branch':
                 case 'workspace_git_switch_branch':
                 case 'workspace_git_stage':

@@ -42,6 +42,44 @@ test('broker dynamically locates installation and issues token scoped to one rep
     assert.equal(calls, 2);
 });
 
+test('Git pushes use a separate repository-scoped token with workflow-write, without PR permissions', async () => {
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        assert.equal(String(url), 'https://api.github.com/app/installations/456789/access_tokens');
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+            repositories: ['portfolio-site'], permissions: { contents: 'write', workflows: 'write' },
+        });
+        return response(201, { ...tokenBody, permissions: { contents: 'write', workflows: 'write' } });
+    }) as typeof fetch);
+    assert.equal(await broker.gitPublishToken(repo), tokenBody.token);
+});
+
+test('ambiguous token endpoint failures retain redacted, generic GitHub request errors', async () => {
+    for (const status of [403, 422]) {
+        const broker = new GitHubBroker(env, (async url =>
+            String(url).includes('/app/installations?') ? response(200, installations) :
+                response(status, { message: 'secret upsteam detail ghs_shall-not-leak' })) as typeof fetch);
+        await assert.rejects(broker.gitPublishToken(repo), (error: any) => {
+            assert.equal(error.code, 'GITHUB_REQUEST_FAILED');
+            assert.match(error.message, new RegExp(`HTTP ${status}`));
+            assert.doesNotMatch(error.message, /ghs_shall-not-leak|secret upsteam|workflow-write token/);
+            return true;
+        });
+    }
+    // A returned token with a missing scope *is* positive evidence of
+    // unapproved permissions; unlike the ambiguous HTTP statuses above.
+    const missing = new GitHubBroker(env, (async url =>
+        String(url).includes('/app/installations?') ? response(200, installations) :
+            response(201, { ...tokenBody, permissions: { contents: 'write' } })) as typeof fetch);
+    await assert.rejects(missing.gitPublishToken(repo), (error: any) =>
+        error.code === 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+    const wrongRepository = new GitHubBroker(env, (async url =>
+        String(url).includes('/app/installations?') ? response(200, installations) :
+            response(201, { ...tokenBody, repositories: [{ full_name: 'affank1020/other' }],
+                permissions: { workflows: 'write' } })) as typeof fetch);
+    await assert.rejects(wrongRepository.gitPublishToken(repo), (error: any) => error.code === 'WORKSPACE_DENIED');
+});
+
 test('repository discovery enumerates installed account repositories and returns safe metadata', async () => {
     const broker = new GitHubBroker(env, (async (url, init) => {
         if (String(url).includes('/app/installations?')) return response(200, installations);
@@ -108,6 +146,45 @@ test('reject changed remote heads and never surface GitHub response bodies', asy
     await assert.rejects(denied.installationToken(repo), error => {
         assert.doesNotMatch(String(error), /LEAK_PRIVATE_DATA/); return true;
     });
+});
+
+test('retirement requires a merged PR for the exact HEAD and default branch (including squash merges)', async () => {
+    const broker = new GitHubBroker(env, (async (url) => {
+        const u = String(url);
+        if (u.includes('/app/installations?')) return response(200, installations);
+        if (u.endsWith('/access_tokens')) return response(201, tokenBody);
+        if (u === 'https://api.github.com/repos/affank1020/portfolio-site')
+            return response(200, { default_branch: 'main' });
+        assert.match(u, /\/pulls\?state=closed&head=affank1020%3Aatlas%2Ffeature&per_page=100$/);
+        return response(200, [
+            { number: 13, html_url: 'https://github.com/affank1020/portfolio-site/pull/13',
+                merged_at: null, head: { sha: head }, base: { ref: 'main' } },
+            { number: 14, html_url: 'https://github.com/affank1020/portfolio-site/pull/14',
+                merged_at: '2026-10-20T12:00:00Z', head: { sha: head }, base: { ref: 'main' } },
+        ]);
+    }) as typeof fetch);
+    assert.deepEqual(await broker.verifyMergedPullRequest(repo, 'atlas/feature', head), {
+        number: 14, url: 'https://github.com/affank1020/portfolio-site/pull/14',
+    });
+    await assert.rejects(broker.verifyMergedPullRequest(repo, 'atlas/feature', 'b'.repeat(40)), /No merged PR matches/);
+    await assert.rejects(broker.verifyMergedPullRequest(repo, 'main', head), /Invalid worktree retirement/);
+});
+
+test('retirement fails closed if a PR merged into a different base or is still open', async () => {
+    const broker = new GitHubBroker(env, (async (url) => {
+        const u = String(url);
+        if (u.includes('/app/installations?')) return response(200, installations);
+        if (u.endsWith('/access_tokens')) return response(201, tokenBody);
+        if (u === 'https://api.github.com/repos/affank1020/portfolio-site')
+            return response(200, { default_branch: 'main' });
+        return response(200, [
+            { number: 21, html_url: 'https://github.com/affank1020/portfolio-site/pull/21',
+                merged_at: '2026-10-20T12:00:00Z', head: { sha: head }, base: { ref: 'develop' } },
+            { number: 22, html_url: 'https://github.com/affank1020/portfolio-site/pull/22',
+                merged_at: null, head: { sha: head }, base: { ref: 'main' } },
+        ]);
+    }) as typeof fetch);
+    await assert.rejects(broker.verifyMergedPullRequest(repo, 'atlas/feature', head), /No merged PR matches/);
 });
 
 test('public push schema rejects injected GitHub secrets and Node requires brokered token', () => {

@@ -1,8 +1,22 @@
 import { z } from 'zod';
 export const nodeSchemas = {
     list_nodes: z.object({}).strict(),
+    list_node_share_approvals: z.object({}).strict(),
+    update_node_share_approval: z.object({
+        sourceNodeId: z.string().uuid(), targetNodeId: z.string().uuid(), enabled: z.boolean(),
+    }).strict(),
+    list_node_releases: z.object({ refresh: z.boolean().optional() }).strict(),
+    plan_node_update: z.object({ nodeId: z.string().uuid(), refresh: z.boolean().optional() }).strict(),
+    prepare_node_update: z.object({
+        nodeId: z.string().uuid(),
+        expectedVersion: z.string().trim().min(1).max(80),
+        expectedCredentialUpdatedAt: z.string().datetime().nullable(),
+        targetCommit: z.string().regex(/^[a-f0-9]{12}$/),
+    }).strict(),
+    list_node_update_intents: z.object({ nodeId: z.string().uuid(), limit: z.number().int().min(1).max(50).optional() }).strict(),
+    cancel_node_update_intent: z.object({ nodeId: z.string().uuid(), intentId: z.string().uuid() }).strict(),
     get_node: z.object({ nodeId: z.string().uuid() }).strict(),
-    read_node_logs: z.object({ nodeId: z.string().uuid(), source: z.enum(['stdout', 'stderr']).default('stderr'), lines: z.number().int().min(1).max(200).default(100) }).strict(),
+    read_node_logs: z.object({ nodeId: z.string().uuid(), source: z.enum(['stdout', 'stderr', 'journal']).optional(), lines: z.number().int().min(1).max(200).default(100) }).strict(),
     create_node_enrolment: z.object({}).strict(),
     update_node: z.object({ nodeId: z.string().uuid(), name: z.string().trim().min(1).max(200) }).strict(),
     rotate_node_credential: z.object({ nodeId: z.string().uuid() }).strict(),

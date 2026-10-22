@@ -9,7 +9,7 @@ class ToolRequestError extends Error {
 
 export type ToolMutation = { name: string; input: Record<string, unknown> };
 const mutationListeners = new Set<(mutation: ToolMutation) => void>();
-const MUTATION = /^(create_|update_|archive_|delete_|save_|publish_|unpublish_|restore_|upload_|bulk_|patch_|upsert_|configure_|execute_view_action$)/;
+const MUTATION = /^(create_|update_|archive_|delete_|save_|publish_|unpublish_|restore_|upload_|bulk_|patch_|upsert_|configure_|execute_view_action$|workspace_git_(?:clone_repository|create_worktree|remove_worktree)$|(?:link|unlink)_workspace_project$|assign_workspace_node$)/;
 let toolRequestCount = 0;
 
 /** Counts actual HTTP tool requests, including failed attempts. */

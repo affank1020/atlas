@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch for interrupted Atlas Linux Node activations
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=atlas-node-lifecycle-recover.service
+
+[Install]
+WantedBy=timers.target

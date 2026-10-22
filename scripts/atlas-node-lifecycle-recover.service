@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover an interrupted Atlas Linux Node activation
+Documentation=https://github.com/affank1020/atlas/blob/main/docs/LINUX_NODE_LIFECYCLE.md
+After=local-fs.target
+ConditionPathExists=/opt/atlas-node
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/bash /usr/local/libexec/atlas-node-lifecycle.sh recover
+TimeoutStartSec=180
+NoNewPrivileges=true

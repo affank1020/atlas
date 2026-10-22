@@ -1,8 +1,11 @@
-import { WorkspaceHome, WorkspaceSettings, MonitoringOverview, DeveloperHub } from './Workspace';
+import { WorkspaceHome, WorkspaceSettings, DeveloperHub } from './Workspace';
+import { MonitoringPage } from './Monitoring';
 import { DataOverview } from './DataOverview';
+import { Files } from './Files';
 import { rememberWork } from './recentWork';
 import { beginRoute, useRouteTiming } from './performance';
 import { Nodes } from './Nodes';
+import { NodeSoftware } from './NodeSoftware';
 import { Workspaces } from './Workspaces';
 import { Modal } from "./Dialog";
 import { AppShell, ProjectNav, type ProjectSection } from "./AppShell";
@@ -25,7 +28,7 @@ import { ApplicationsDirectory } from "./ApplicationsDirectory";
 import { CatalogueHeading, CatalogueToolbar, filterCatalogue } from './CatalogueBrowse';
 import type { AtlasRecord, AuditEvent, FieldDefinition, FilterOperator, Page, Project, RecordFilter, SortSpec, Store, View } from "./types";
 
-type Route = { page: "applications" | "data" | "settings" | "monitoring" | "developer" | "nodes" | "workspaces" | "overview" | "projects" | "activity" | "ask-atlas" | "ask-portfolio" | "portfolio" | "fabric" } | { page: "project"; projectId: string; section: ProjectSection } | { page: "store"; projectId: string; storeId: string; tab: "records" | "schema" | "audit" | "query" | "bulk" } | { page: "view"; projectId: string; viewId: string } | { page: "application"; projectId?: string; slug: string };
+type Route = { page: "applications" | "data" | "files" | "settings" | "monitoring" | "developer" | "nodes" | "node-software" | "workspaces" | "overview" | "projects" | "ask-atlas" | "ask-portfolio" | "portfolio" | "fabric" } | { page: "project"; projectId: string; section: ProjectSection } | { page: "store"; projectId: string; storeId: string; tab: "records" | "schema" | "audit" | "query" | "bulk" } | { page: "view"; projectId: string; viewId: string } | { page: "application"; projectId?: string; slug: string };
 const EMPTY_PAGE: Page<AtlasRecord> = { items: [], total: 0, limit: 25, offset: 0 };
 const TYPES = ["string", "number", "boolean", "date", "datetime", "enum", "array", "object"] as const;
 const OPS: FilterOperator[] = ["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"];
@@ -41,12 +44,13 @@ function parseRoute(): Route {
     if (parts[0] === "applications") return { page: "applications" };
     // Old global Views bookmarks now open Projects; Views remain inside each project.
     if (parts[0] === 'views') return { page: 'projects' };
-    if (["data", "settings", "monitoring", "developer"].includes(parts[0])) return { page: parts[0] } as Route;
+    if (["data", "files", "settings", "monitoring", "developer"].includes(parts[0])) return { page: parts[0] } as Route;
     // Preserve existing shared Infrastructure links while moving its content to Monitoring.
     if (parts[0] === "infrastructure") return { page: "monitoring" };
+    if (parts[0] === "nodes" && parts[1] === "software") return { page: "node-software" };
     if (parts[0] === "nodes") return { page: "nodes" };
     if (parts[0] === "workspaces") return { page: "workspaces" };
-    if (parts[0] === "activity") return { page: "activity" };
+    if (parts[0] === "activity") return { page: "monitoring" };
     if (parts[0] === "fabric") return { page: "fabric" };
     if (parts[0] === "ask-atlas") return { page: "ask-atlas" };
     if (parts[0] === "ask-portfolio") return { page: "ask-portfolio" };
@@ -81,7 +85,7 @@ function App() {
     beginRoute(JSON.stringify(route));
     const askPage = route.page === "ask-atlas" || route.page === "ask-portfolio";
     if (route.page === "application") return <ApplicationWindow projectId={route.projectId} slug={route.slug} />;
-    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === 'monitoring' && <MonitoringOverview />}{route.page === 'developer' && <DeveloperHub />}{route.page === 'settings' && <WorkspaceSettings />}{route.page === 'data' && <DataOverview />}{route.page === "overview" && <WorkspaceHome />}{route.page === "projects" && <Projects />}{route.page === "applications" && <ApplicationsDirectory />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "workspaces" && <Workspaces />}{route.page === "activity" && <Activity />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Suspense fallback={<p role="status">Loading portfolio interface…</p>}><Portfolio /></Suspense>}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
+    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === 'monitoring' && <MonitoringPage />}{route.page === 'developer' && <DeveloperHub />}{route.page === 'settings' && <WorkspaceSettings />}{route.page === 'data' && <DataOverview />}{route.page === 'files' && <Files />}{route.page === "overview" && <WorkspaceHome />}{route.page === "projects" && <Projects />}{route.page === "applications" && <ApplicationsDirectory />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "node-software" && <NodeSoftware />}{route.page === "workspaces" && <Workspaces />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Suspense fallback={<p role="status">Loading portfolio interface…</p>}><Portfolio /></Suspense>}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
 }
 
 function Projects() {
@@ -203,6 +207,5 @@ function Bulk({ store }: { store: Store }) { const mutate = useAtlasMutation(); 
 
 function AuditList({ title, events }: { title: string; events: AuditEvent[] }) { return <section className="panel"><div className="panel-head"><h2>{title}</h2></div><ActivityRows events={events} />{events.length === 0 && <Empty>No audit events.</Empty>}</section>; }
 function StoreAudit({ store }: { store: Store }) { const events = useTool<AuditEvent[]>("get_audit_history", { projectId: store.projectId, storeId: store.id, limit: 200 }, [store.id]); return <><ErrorBox message={events.error} /><Loading show={events.busy} /><AuditList title="Store audit history" events={events.data ?? []} /></>; }
-function Activity() { return <><PageHead eyebrow="Atlas-wide" title="Activity" copy="Workspace operations, Core changes, and Views across every project." /><ActivityFeed /></>; }
 
 export default App;

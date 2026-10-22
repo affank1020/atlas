@@ -30,15 +30,17 @@ test('launch-app query resolves an application without being confused by command
     assert.ok(!result.results.some(item => item.kind === 'record'));
 });
 
-test('node-log intent exposes only a bounded, typed log action for an approved Node', async () => {
+test('node-log intent deep-links to Monitoring without reading logs in search', async () => {
     const result = await searchEverywhere(dependencies(), { query: 'check logs for my Mac node' });
     assert.equal(result.results[0]?.kind, 'node');
     assert.match(result.results[0]?.title || '', /logs/);
-    assert.deepEqual(result.results[0]?.action, { type: 'read_node_logs', nodeId: node.id, source: 'stdout', lines: 100 });
-    assert.equal(result.results[0]?.href, '#/nodes?node=' + node.id);
+    assert.equal(result.results[0]?.action, undefined);
+    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stdout&lines=100');
     assert.match(result.results[0]?.description || '', /Latest 100 lines/);
+    const stdout = await searchEverywhere(dependencies(), { query: 'show the last 37 stdout lines from my Mac node' });
+    assert.equal(stdout.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stdout&lines=37');
     const errors = await searchEverywhere(dependencies(), { query: 'show the last 100 error lines from my Mac node' });
-    assert.deepEqual(errors.results[0]?.action, { type: 'read_node_logs', nodeId: node.id, source: 'stderr', lines: 100 });
+    assert.equal(errors.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stderr&lines=100');
 });
 
 test('record search uses indexed Fabric results and includes incomplete-source diagnostics', async () => {
@@ -68,6 +70,69 @@ test('Nodes without log capability fall back to activity, never a privileged rea
         : { workspaces: [] };
     const result = await searchEverywhere(deps, { query: 'show Mac node logs' });
     assert.equal(result.results[0]?.action, undefined);
-    assert.equal(result.results[0]?.href, '#/nodes?node=' + node.id);
+    assert.equal(result.results[0]?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=stdout&lines=100');
     assert.match(result.results[0]?.description || '', /raw logs unavailable/);
+});
+
+test('Linux log search selects only the fixed unit journal while preserving requested count', async () => {
+    const deps = dependencies();
+    deps.nodes.call = async (name: string) => name === 'list_nodes'
+        ? [{ ...node, platform: 'linux', name: 'Atlas Linux VPS' }]
+        : { workspaces: [] };
+    const result = await searchEverywhere(deps, { query: 'show the last 37 error lines from my Linux node' });
+    const hit = result.results.find(item => item.kind === 'node');
+    assert.equal(hit?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=37');
+    assert.match(hit?.description || '', /systemd journal/);
+});
+
+test('journal and systemd search vocabulary resolves Linux Node links even without journal in the Node name', async () => {
+    const deps = dependencies();
+    deps.nodes.call = async (name: string) => name === 'list_nodes'
+        ? [{ ...node, platform: 'linux', name: 'Atlas Linux VPS' }]
+        : { workspaces: [] };
+    for (const [phrase, count] of [
+        ['show Linux node journal logs', 100],
+        ['show the last 37 journal lines from my Linux node', 37],
+        ['show Linux node systemd journal', 100],
+        ['show the last 25 systemd lines from my Linux node', 25],
+    ] as const) {
+        const result = await searchEverywhere(deps, { query: phrase });
+        const link = result.results.find(item => item.kind === 'node');
+        assert.ok(link, phrase);
+        assert.equal(link.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=' + count, phrase);
+        assert.match(link.description, /systemd journal/);
+    }
+});
+
+test('unqualified journal document queries preserve Fabric and catalogue retrieval', async () => {
+    const deps = dependencies();
+    const retrieved: string[] = [];
+    let catalogCalls = 0;
+    deps.listProjects = async () => { catalogCalls++; return [project]; };
+    deps.retrieval.search = async (input: { query: string }) => {
+        retrieved.push(input.query);
+        return { results: [{
+            record: { id: 'journal-note', data: { title: 'Research journal 2026' } },
+            store: { id: 'notes', name: 'Notes' },
+            project, snippet: 'Research journal article notes', score: 0.8,
+        }] };
+    };
+    for (const [query, lookup] of [
+        ['Find my research journal', 'research journal'],
+        ['journal article', 'journal article'],
+        ['Find my systemd documentation', 'systemd documentation'],
+        ['Find my systemd service configuration', 'systemd service configuration'],
+        ['Find the systemd unit documentation', 'systemd unit documentation'],
+        ['Find the systemd journal configuration', 'systemd journal configuration'],
+    ]) {
+        const intent = interpretSearch(query);
+        assert.equal(intent.intent, null, query);
+        assert.equal(intent.nodeLogs, false, query);
+        assert.equal(intent.term, lookup, query);
+        const results = await searchEverywhere(deps, { query });
+        assert.ok(results.results.some(hit => hit.kind === 'record' && hit.id === 'journal-note'), query);
+    }
+    assert.deepEqual(retrieved, ['research journal', 'journal article', 'systemd documentation',
+        'systemd service configuration', 'systemd unit documentation', 'systemd journal configuration']);
+    assert.equal(catalogCalls, 6, 'Document searches must continue loading the project catalogue');
 });

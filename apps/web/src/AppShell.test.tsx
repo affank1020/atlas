@@ -19,7 +19,7 @@ test('shell exposes focused navigation and keeps experimental tools out of the h
     expect(brand.querySelector('.brand-period')).toHaveTextContent('.');
     expect(brand.querySelector('.brand-period')).toHaveAttribute('aria-hidden', 'true');
     expect(within(header).getByRole('button', { name: 'Search Atlas' })).toBeInTheDocument();
-    expect(within(header).getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#/activity');
+    expect(within(header).queryByRole('link', { name: 'Activity' })).not.toBeInTheDocument();
     expect(within(header).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
     expect(within(sidebar).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Activity' })).not.toBeInTheDocument();

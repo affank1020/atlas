@@ -237,23 +237,15 @@ To remove the tunnel completely:
 
 ## Safe database backup (on the VPS)
 
-Take a custom-format backup and store it outside the repository. Because
-`atlas_import` contains real records and hashed Node credentials, restrict file
-permissions and encrypt off-host backups. Example:
+Use the reviewed [manual age-encrypted PostgreSQL snapshot runbook](POSTGRES_BACKUP.md).
+It creates a consistent, explicitly confirmed `pg_dump` stream encrypted before
+writing to private host storage and derives the actual database name from the
+running Server container. The former manual plain-text dump example is retired.
 
-```bash
-cd ~/atlas-deploy
-mkdir -p ~/atlas-private-backups
-chmod 700 ~/atlas-private-backups
-umask 077
-docker compose --env-file infra/production.env -f infra/docker-compose.production.yml \
-  exec -T postgres pg_dump -U atlas --format=custom --no-owner --no-acl \
-  atlas_import > ~/atlas-private-backups/atlas-$(date -u +%Y%m%dT%H%M%SZ).dump
-```
-
-Copy securely to a separate host and test a restore before relying on it.
-PostgreSQL dumps do not include local Portfolio media in Docker's
-`atlas_media` volume; back that up separately if you have uploaded media.
+**Important:** This is still only a local encrypted snapshot. An independent
+offsite copy with verified checksum, retention controls and an isolated
+restoration drill are required before Atlas can claim database disaster
+recovery. Do not prune snapshots while these guarantees are unverified.
 
 ## Moving to a purchased domain later
 

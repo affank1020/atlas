@@ -5,6 +5,7 @@ import type { NodeRuntime, NodeOperation } from '../../nodes/runtime.js';
 import type { NodeCapability } from '../../nodes/model.js';
 import type { Workspace } from '../../workspaces/model.js';
 import { nodeResponseSchema } from '../../nodes/protocol.js';
+import { deviceShareReceiptSchema } from '@atlas/protocol/device-protocol';
 
 /** One live connection implements the shared NodeRuntime contract. */
 export class RemoteNodeRuntime implements NodeRuntime {
@@ -16,16 +17,31 @@ export class RemoteNodeRuntime implements NodeRuntime {
         if (typeof value !== 'string') throw new AtlasError('Node returned an invalid binding.', 'NODE_PROTOCOL');
         return value;
     }); }
-    readLogs(source: 'stdout' | 'stderr', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }> {
+    readLogs(source: 'stdout' | 'stderr' | 'journal', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }> {
         if (!this.capabilities.includes('node.logs')) return Promise.reject(new AtlasError('Node logs are not available.', 'CAPABILITY_UNAVAILABLE'));
         return this.request({ kind: 'node_logs', source, lines }, 15_000) as Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;
     }
     execute(workspace: Workspace, operation: NodeOperation, input: Record<string, any>): Promise<unknown> {
         const taskTimeout = operation === 'workspace_run_dev_task' ? workspace.devTasks[input.task]?.timeoutMs ?? (input.task === 'test' ? 600_000 : 120_000) : 0;
         const validation = operation === 'football_control' && ['validation_python', 'validation_editor', 'validation_physics'].includes(input.action);
-        const timeoutMs = taskTimeout ? Math.min(taskTimeout + 15_000, 615_000) : validation ? 210_000 : operation.startsWith('unity_') ? 60_000 : operation === 'football_control' ? 60_000 : 30_000;
+        const timeoutMs = taskTimeout ? Math.min(taskTimeout + 15_000, 615_000) : validation ? 210_000 : operation.startsWith('unity_') ? 60_000 : operation === 'football_control' || operation === 'workspace_git_push_branch' ? 60_000 : 30_000;
         return this.request({ kind: 'execute', workspace, operation, input }, timeoutMs);
     }
+    /**
+     * Server-authored message only. The recipient must explicitly approve before
+     * returning {accepted:true}; merely sending is not delivery.
+     */
+    async deliverDeviceShare(input: {
+        deliveryId: string; sourceNodeId: string; text: string; expiresAt: string;
+    }): Promise<{ accepted: boolean }> {
+        if (!this.capabilities.includes('device.share.receive'))
+            throw new AtlasError('Target Node does not receive shares.', 'CAPABILITY_UNAVAILABLE');
+        const receipt = await this.request({ kind: 'device_share', ...input }, 30_000);
+        const result = deviceShareReceiptSchema.safeParse(receipt);
+        if (!result.success) throw new AtlasError('Invalid share acknowledgement.', 'NODE_PROTOCOL');
+        return result.data;
+    }
+
     private request(payload: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
         if (this.closed || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new AtlasError('Node connection is closed.', 'NODE_DISCONNECTED'));
         const requestId = randomUUID();

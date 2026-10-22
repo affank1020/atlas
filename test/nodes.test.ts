@@ -10,6 +10,7 @@ import { WorkspaceService } from '../apps/server/src/workspaces/application.js';
 import { NodeService } from '../apps/server/src/nodes/service.js';
 import { NodeRouter } from '../apps/server/src/nodes/router.js';
 import { requiredCapability, type NodeRuntime, type NodeOperation } from '../apps/server/src/nodes/runtime.js';
+import { AtlasError } from '../apps/server/src/shared/errors.js';
 import type { NodeCapability } from '../apps/server/src/nodes/model.js';
 after(cleanupDatabases);
 const all: NodeCapability[] = ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs', 'unity'];
@@ -79,7 +80,8 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
     const router = new NodeRouter(nodes);
     const github = {
         approve: () => undefined,
-        installationToken: async () => 'ghs_testOnlyBrokeredToken123456789',
+        installationToken: async () => { throw new Error('PR token must not be used for Git push'); },
+        gitPublishToken: async () => 'ghs_testOnlyBrokeredToken123456789',
     };
     const service = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool), router, github as any);
     const project = await catalog.createProject({ name: 'Routed' });
@@ -96,7 +98,7 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
         workspace_git_push_branch: { repository: 'affank1020/portfolio-site', branch: 'atlas/test', expectedHead: 'a'.repeat(40) },
         unity_status: {}, unity_list_commands: {}, unity_run_command: { command: 'editor_play', parameters: {} },
     };
-    for (const operation of Object.keys(requiredCapability).filter(op => !['football_control', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree'].includes(op)) as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
+    for (const operation of Object.keys(requiredCapability).filter(op => !['football_control', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'workspace_git_retirement_preflight'].includes(op)) as NodeOperation[]) await service.call(operation as any, { ...scope, ...inputs[operation] });
     assert.equal(invoked.length, 19);
     // Internal first-party Application commands reach the owning Node through NodeRouter,
     // but are intentionally not exposed by WorkspaceService's generic public API.
@@ -123,19 +125,86 @@ test('every filesystem/Git/Unity operation routes to the owning Node; failures n
     await nodes.close();
 });
 
+test('Git push failures persist allowlisted codes without accepting untrusted audit codes', async () => {
+    const { store, catalog } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Git push audit' });
+    let nodeFailure = new AtlasError('Remote branch changed.', 'GIT_PUSH_NON_FAST_FORWARD');
+    let brokerFailure: AtlasError | undefined;
+    const local = runtime();
+    local.execute = async () => { throw nodeFailure; };
+    const nodes = new NodeService(new PostgresNodeRepository(store.pool), local, 'Push Audit Node');
+    const github = {
+        gitPublishToken: async () => {
+            if (brokerFailure) throw brokerFailure;
+            return 'ghs_testOnlyBrokeredToken123456789';
+        },
+    };
+    const service = new WorkspaceService(catalog, new PostgresWorkspaceRepository(store.pool),
+        new NodeRouter(nodes), github as any);
+    const workspace: any = await service.call('create_workspace', {
+        projectId: project.id, name: 'Push audit', rootPath: '/opaque/push-audit',
+    });
+    const scope = { projectId: project.id, workspaceId: workspace.id };
+    const push = { ...scope, repository: 'affank1020/atlas',
+        branch: 'atlas/audit-test', expectedHead: 'a'.repeat(40) };
+    const failureMetadata = async () => (await catalog.auditHistory({ workspaceId: workspace.id }))
+        .filter(event => event.operation === 'workspace.mutation_failed')
+        .map(event => event.resulting as Record<string, any>);
+
+    try {
+        await assert.rejects(service.call('workspace_git_push_branch', push),
+            (error: any) => error.code === 'GIT_PUSH_NON_FAST_FORWARD');
+        let failures = await failureMetadata();
+        assert.equal(failures.length, 1);
+        assert.equal(failures[0]?.errorCode, 'GIT_PUSH_NON_FAST_FORWARD');
+        assert.equal(failures[0]?.error, 'Remote branch changed.');
+
+        // Token-broker errors arise before runtime dispatch but use the same audit path.
+        brokerFailure = new AtlasError('Workflow permission unavailable.', 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+        await assert.rejects(service.call('workspace_git_push_branch', push),
+            (error: any) => error.code === 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED');
+        failures = await failureMetadata();
+        assert.ok(failures.some(event => event.errorCode === 'GITHUB_WORKFLOWS_PERMISSION_REQUIRED'));
+
+        // Even an AtlasError code from an untrusted source must never be stored.
+        brokerFailure = undefined;
+        nodeFailure = new AtlasError('A safe message.', 'GIT_PUSH_ghs_untrustedCredential');
+        await assert.rejects(service.call('workspace_git_push_branch', push),
+            (error: any) => error.code === 'GIT_PUSH_ghs_untrustedCredential');
+        failures = await failureMetadata();
+        assert.ok(failures.some(event => event.error === 'A safe message.' &&
+            !Object.hasOwn(event, 'errorCode')));
+        assert.doesNotMatch(JSON.stringify(failures), /ghs_untrustedCredential/);
+
+        // Non-push mutations must not gain a new audit code field.
+        nodeFailure = new AtlasError('A file operation failed.', 'GIT_PUSH_NON_FAST_FORWARD');
+        await assert.rejects(service.call('workspace_create_file', {
+            ...scope, path: 'file.txt', text: 'test',
+        }), (error: any) => error.code === 'GIT_PUSH_NON_FAST_FORWARD');
+        failures = await failureMetadata();
+        assert.ok(failures.some(event => event.error === 'A file operation failed.' &&
+            !Object.hasOwn(event, 'errorCode')));
+    } finally {
+        await nodes.close();
+    }
+});
+
 test('LocalNodeRuntime advertises implemented capabilities without claiming a connected Editor', () => {
     assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(), ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs']);
     assert.deepEqual(new LocalNodeRuntime([], undefined, 'darwin').getCapabilities(), all);
 });
 
-test('Linux runtime advertises only file/Git capabilities and blocks process execution', async () => {
+test('Linux runtime exposes fixed journal logs without development execution', async () => {
     const linux = new LocalNodeRuntime([], undefined, 'linux');
     if (process.platform === 'linux') {
-        assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), ['workspace.files', 'workspace.git']);
+        assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), ['workspace.files', 'workspace.git', 'node.logs']);
     }
-    assert.deepEqual(linux.getCapabilities(), ['workspace.files', 'workspace.git']);
+    assert.deepEqual(linux.getCapabilities(), ['workspace.files', 'workspace.git', 'node.logs']);
     assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(),
         ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs']);
+    await assert.rejects(linux.readLogs('stderr', 10), (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+    await assert.rejects(new LocalNodeRuntime([], undefined, 'darwin').readLogs('journal', 10),
+        (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
     const folder = '/invalid-test-linux-workspace';
     await assert.rejects(
         linux.execute({ rootPath: folder } as any, 'workspace_run_dev_task', { task: 'test' }),
@@ -143,4 +212,54 @@ test('Linux runtime advertises only file/Git capabilities and blocks process exe
     await assert.rejects(
         linux.execute({ rootPath: folder } as any, 'football_control', { action: 'status' }),
         (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+});
+
+test('NodeService resolves omitted log source after looking up Node platform', async () => {
+    const linuxId = randomUUID(), macId = randomUUID();
+    const when = new Date().toISOString();
+    const makeNode = (id: string, platform: string) => ({
+        id, platform, name: platform + ' node', status: 'online' as const,
+        capabilities: ['node.logs'] as NodeCapability[], metadata: { runtime: 'remote' },
+        lastSeen: null, version: null, credentialState: 'active' as const, credentialUpdatedAt: null,
+        createdAt: when, updatedAt: when, hostedWorkspaceCount: 0,
+    });
+    const linuxNode = makeNode(linuxId, 'linux'), macNode = makeNode(macId, 'darwin');
+    const nodesById = new Map([[linuxId, linuxNode], [macId, macNode]]);
+    const repository = {
+        get: async (id: string) => {
+            const found = nodesById.get(id);
+            if (!found) throw new Error('Unexpected Node');
+            return found;
+        },
+    } as unknown as import('../apps/server/src/nodes/repository.js').NodeRepository;
+    const service = new NodeService(repository);
+    const observed: Array<{ platform: string; source: string; lines: number }> = [];
+    for (const [id, platform] of [[linuxId, 'linux'], [macId, 'darwin']]) {
+        const remoteRuntime = {
+            getCapabilities: () => ['node.logs'] as NodeCapability[],
+            readLogs: async (source: 'stdout' | 'stderr' | 'journal', lines: number) => {
+                observed.push({ platform, source, lines });
+                return { source, lines: ['safe log'], available: true, truncated: false };
+            },
+        } as NodeRuntime;
+        service.attachRemote(id, remoteRuntime);
+    }
+    const linuxDefault = await service.call('read_node_logs', { nodeId: linuxId }) as { source: string };
+    assert.equal(linuxDefault.source, 'journal');
+    const macDefault = await service.call('read_node_logs', { nodeId: macId }) as { source: string };
+    assert.equal(macDefault.source, 'stderr');
+    assert.equal((await service.call('read_node_logs', { nodeId: linuxId, source: 'journal', lines: 37 }) as { source: string }).source, 'journal');
+    assert.equal((await service.call('read_node_logs', { nodeId: macId, source: 'stdout', lines: 9 }) as { source: string }).source, 'stdout');
+    assert.deepEqual(observed, [
+        { platform: 'linux', source: 'journal', lines: 100 },
+        { platform: 'darwin', source: 'stderr', lines: 100 },
+        { platform: 'linux', source: 'journal', lines: 37 },
+        { platform: 'darwin', source: 'stdout', lines: 9 },
+    ]);
+    for (const source of ['stdout', 'stderr'] as const)
+        await assert.rejects(service.call('read_node_logs', { nodeId: linuxId, source }),
+            (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+    await assert.rejects(service.call('read_node_logs', { nodeId: macId, source: 'journal' }),
+        (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+    assert.equal(observed.length, 4, 'Rejected explicit sources must not dispatch');
 });

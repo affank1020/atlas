@@ -4,7 +4,7 @@ import { devTasksSchema } from './dev-tasks.js';
 import { requiredCapability } from './runtime.js';
 export const NODE_PROTOCOL_VERSION = 2;
 export const MAX_NODE_FRAME_BYTES = 2 * 1024 * 1024;
-export const capabilitySchema = z.enum(['workspace.files', 'workspace.git', 'workspace.dev', 'unity', 'football.training', 'node.logs']);
+export const capabilitySchema = z.enum(['workspace.files', 'workspace.git', 'workspace.dev', 'unity', 'football.training', 'node.logs', 'device.share.send', 'device.share.receive']);
 export const registrationSchema = z.object({
     type: z.literal('register'), protocol: z.literal(NODE_PROTOCOL_VERSION),
     nodeId: z.string().uuid(), name: z.string().trim().min(1).max(200),
@@ -20,7 +20,7 @@ const workspaceSchema = z.object({
 }).strict();
 export const nodeRequestSchema = z.discriminatedUnion('kind', [
     z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('bind'), rootPath: z.string().min(1).max(4096) }).strict(),
-    z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('node_logs'), source: z.enum(['stdout', 'stderr']), lines: z.number().int().min(1).max(200) }).strict(),
+    z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('node_logs'), source: z.enum(['stdout', 'stderr', 'journal']), lines: z.number().int().min(1).max(200) }).strict(),
     z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('execute'), workspace: workspaceSchema,
         operation: z.enum(Object.keys(requiredCapability) as [keyof typeof requiredCapability, ...(keyof typeof requiredCapability)[]]),
         input: z.record(z.string(), z.unknown()),

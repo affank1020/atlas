@@ -59,11 +59,17 @@ const commandWords = new Set([
 ]);
 export function interpretSearch(query: string): { term: string; intent: Intent; nodeActivity: boolean; nodeLogs: boolean; logSource: 'stdout' | 'stderr'; logLines: number } {
     const lower = query.toLocaleLowerCase();
-    const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower);
+    // "journal" may be a document title, not operational output. Only interpret
+    // journal/systemd vocabulary as logs when a Node/runtime or explicit log
+    // context is present; systemd service/unit by itself is not a log request.\n    // Preserve these terms for general Fabric searches.
+    const nodeContext = /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
+    const journalContext = /\b(?:journal|systemd)\b/.test(lower) &&
+        (nodeContext || /\b(?:journal|systemd)\s+(?:logs?|lines?|output)\b|\b(?:logs?|tail)\s+(?:journal|systemd)\b/.test(lower));
+    const nodeLogs = /\b(logs?|stderr|stdout)\b|\berror\s+(?:lines?|output)\b/.test(lower) || journalContext;
     const logSource = /\b(stderr|errors?|error\s+logs?)\b/.test(lower) ? 'stderr' as const : 'stdout' as const;
-    const requestedLines = /\b(\d{1,3})\s*(?:errors?\s*)?lines?\b/.exec(lower)?.[1];
+    const requestedLines = /\b(\d{1,3})\s*(?:(?:errors?|stdout|stderr|journal|systemd)\s*)?lines?\b/.exec(lower)?.[1];
     const logLines = requestedLines ? Math.min(Math.max(Number(requestedLines), 1), 200) : 100;
-    const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && /\b(nodes?|mac|macbook|linux|windows|runtime|host)\b/.test(lower);
+    const nodeActivity = (nodeLogs || /\b(activity|events?|history)\b/.test(lower)) && nodeContext;
     const intent: Intent = nodeActivity || nodeLogs ? 'node'
         : /\b(apps?|applications?|launch)\b/.test(lower) ? 'application'
         : /\bworkspaces?\b/.test(lower) ? 'workspace'
@@ -76,7 +82,7 @@ export function interpretSearch(query: string): { term: string; intent: Intent; 
         : /\bservers?|infrastructure|health\b/.test(lower) ? 'infrastructure'
         : /\bdata\b/.test(lower) ? 'store' : null;
     const term = lower.replace(/\b\d{1,3}\b/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').split(' ')
-        .filter(word => word && !commandWords.has(word)).join(' ').trim();
+        .filter(word => word && !commandWords.has(word) && !(nodeLogs && (word === 'journal' || word === 'systemd'))).join(' ').trim();
     return { term, intent, nodeActivity, nodeLogs, logSource, logLines };
 }
 
@@ -98,8 +104,8 @@ export async function searchEverywhere(deps: SearchDeps, raw: z.input<typeof glo
         const scored = { ...makeHit(lookup || query, hit), score: lookup ? relevance(lookup, hit.title, hit.description, hit.context) : (intent ? 45 : 0) };
         if (scored.score) hits.push(scored);
     };
-    if (intent === 'activity') hits.push({ kind: 'node', id: 'atlas-activity', title: 'View Atlas activity', description: 'Recent recorded operations across Atlas', context: 'Activity', href: '#/activity', score: 135 });
-    if (intent === 'infrastructure') hits.push({ kind: 'node', id: 'atlas-infrastructure', title: 'Inspect Atlas Server', description: 'Server connectivity, registered nodes and health overview', context: 'Infrastructure', href: '#/infrastructure', score: 135 });
+    if (intent === 'activity') hits.push({ kind: 'node', id: 'atlas-activity', title: 'View Atlas activity', description: 'Recent recorded operations across Atlas', context: 'Activity', href: '#/monitoring?tab=activity', score: 135 });
+    if (intent === 'infrastructure') hits.push({ kind: 'node', id: 'atlas-infrastructure', title: 'Inspect Atlas Server', description: 'Server connectivity, registered nodes and health overview', context: 'Infrastructure', href: '#/monitoring?tab=overview', score: 135 });
 
     const [catalogue, records, nodes] = await Promise.allSettled([
         intent === 'node' ? Promise.resolve([] as Project[]) : deps.listProjects(false),
@@ -152,13 +158,13 @@ export async function searchEverywhere(deps: SearchDeps, raw: z.input<typeof glo
         for (const node of list) {
             if (nodeActivity) {
                 const logAvailable = nodeLogs && (node as { capabilities?: string[] }).capabilities?.includes('node.logs') && node.status === 'online';
+                const selectedLogSource = node.platform === 'linux' ? 'journal' : logSource;
                 const hit = makeHit(lookup || query, {
                     kind: 'node', id: node.id,
-                    title: logAvailable ? 'Read ' + node.name + ' ' + (logSource === 'stderr' ? 'error logs' : 'logs') : 'Inspect ' + node.name + ' activity',
-                    description: logAvailable ? 'Latest ' + logLines + ' lines · ' + (logSource === 'stderr' ? 'stderr' : 'stdout') : 'Recent operations · raw logs unavailable until the Node supports log access',
+                    title: logAvailable ? 'Read ' + node.name + ' ' + (selectedLogSource === 'journal' ? 'journal' : logSource === 'stderr' ? 'error logs' : 'logs') : 'Inspect ' + node.name + ' activity',
+                    description: logAvailable ? 'Latest ' + logLines + ' lines · ' + (selectedLogSource === 'journal' ? 'systemd journal' : logSource === 'stderr' ? 'stderr' : 'stdout') : 'Recent operations · raw logs unavailable until the Node supports log access',
                     context: node.name + ' / ' + nodeDescription(node),
-                    href: '#/nodes?node=' + encodeURIComponent(node.id),
-                    ...(logAvailable ? { action: { type: 'read_node_logs' as const, nodeId: node.id, source: logSource, lines: logLines } } : {}),
+                    href: nodeLogs ? '#/monitoring?tab=logs&nodeId=' + encodeURIComponent(node.id) + '&source=' + selectedLogSource + '&lines=' + logLines : '#/monitoring?tab=activity&nodeId=' + encodeURIComponent(node.id),
                 });
                 if (!lookup || relevance(lookup, node.name, nodeDescription(node))) hits.push({ ...hit, score: 120 + relevance(lookup, node.name, nodeDescription(node)) });
             } else {
