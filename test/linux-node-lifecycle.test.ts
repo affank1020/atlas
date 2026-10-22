@@ -171,3 +171,18 @@ test('interrupted manual rollback finishes rollback, never restores the rejected
         'recovery must never undo an explicitly requested rollback');
     assert.equal(existsSync(join(f.root, '.activation-pending')), false);
 });
+
+test('failed manual rollback does not re-activate its rejected newer release', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    assert.equal(f.run(['activate', f.newer.name]).status, 0);
+    const failed = f.run(['rollback'], { ATLAS_TEST_FAIL_TARGET: f.old.folder });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /host recovery will retry/);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), true);
+    const recovered = f.run(['recover']);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+});
