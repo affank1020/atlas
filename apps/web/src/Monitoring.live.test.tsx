@@ -108,3 +108,41 @@ test('late live response from an abandoned scope cannot replace the current Acti
     await act(async () => { finishOld(activity('stale')); });
     expect(screen.getByText('Record created').closest('[data-activity-id]')).toHaveAttribute('data-activity-id', 'current');
 });
+
+test('rapid tab switching does not bypass the 30-second live read cooldown', async () => {
+    vi.useFakeTimers();
+    let visibility = 'visible';
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility as DocumentVisibilityState);
+    location.hash = '#/monitoring?tab=activity&live=1';
+    vi.mocked(callTool).mockResolvedValue(activity('live') as never);
+    render(<MonitoringPage />);
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    visibility = 'hidden';
+    fireEvent(document, new Event('visibilitychange'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    visibility = 'visible';
+    fireEvent(document, new Event('visibilitychange'));
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(28_999); });
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(callTool).toHaveBeenCalledTimes(2);
+});
+
+test('a live Activity deep link opened in a hidden tab does not read until visible', async () => {
+    vi.useFakeTimers();
+    let visibility = 'hidden';
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility as DocumentVisibilityState);
+    location.hash = '#/monitoring?tab=activity&live=1';
+    vi.mocked(callTool).mockResolvedValue(activity('live') as never);
+    render(<MonitoringPage />);
+    await flush();
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(callTool).not.toHaveBeenCalled();
+    visibility = 'visible';
+    fireEvent(document, new Event('visibilitychange'));
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+});
