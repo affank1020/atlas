@@ -198,8 +198,10 @@ export function parseRecoveryCatalogArgs(args: string[]): { maxRecords: number }
  * avoids keeping a DB transaction open through slow R2 reads. Objects added
  * after the SELECT are explicitly outside this report's scope.
  *
- * A cap hit is *partial*, never proof of a complete catalog. This checks
- * both primary and recovery object bytes but does not restore PostgreSQL,
+ * A cap hit is *partial*, never proof of a complete catalog. The caller
+ * supplies the effective live Files source (bounded R2 + confirmed-NoSuchKey
+ * legacy local fallback), while backup always uses the recovery R2 store.
+ * This does not restore PostgreSQL,
  * validate an offsite DB snapshot or prove a coordinated Files/DB cutover. */
 export async function verifyR2RecoveryCatalog(input: {
     database: Pick<Pool, 'query'>; primary: RecoveryObjectStore; backup: RecoveryObjectStore;
