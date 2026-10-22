@@ -1,4 +1,5 @@
 import { createServer, createConnection, type Socket } from 'node:net';
+import { spawn } from 'node:child_process';
 import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { nodeStatusPath } from '../../core/node-installation.js';
@@ -11,6 +12,39 @@ export function macShareSocketPath(): string {
 
 const MAX_LOCAL_REQUEST = 80 * 1024; // UTF-8 JSON up to 16,384 UTF-16 characters.
 type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare'>;
+type Approve = (targetId: string, text: string) => Promise<boolean>;
+
+/** A local socket caller is not proof that the user consented. Require a
+ * separate macOS GUI decision before forwarding any clipboard content.
+ * Only a short preview enters osascript stdin, never argv or Node logs.
+ */
+export async function promptMacOutgoingShare(targetId: string, text: string): Promise<boolean> {
+    if (process.platform !== 'darwin') return false;
+    const shortId = targetId.slice(0, 8);
+    const preview = text.slice(0, 150).replace(/[\\u0000-\\u001f\\u007f]/g, ' ')
+        .replace(/[\\\\"]/g, '\\\\type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare'>;');
+    const script = 'set response to display dialog "Send Atlas clipboard to Node ' +
+        shortId + '?" & return & return & "' + preview +
+        '" with title "Atlas" buttons {"Cancel", "Send"} default button "Cancel" giving up after 15\\n' +
+        'return button returned of response\\n';
+    return new Promise(resolve => {
+        const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'ignore'] });
+        let output = '', done = false;
+        const finish = (allowed: boolean) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+            resolve(allowed);
+        };
+        const timeout = setTimeout(() => { proc.kill('SIGKILL'); finish(false); }, 18_000);
+        proc.stdout.on('data', bytes => { output = (output + String(bytes)).slice(0, 16); });
+        proc.on('error', () => finish(false));
+        proc.on('close', code => finish(code === 0 && output.trim() === 'Send'));
+        proc.stdin.on('error', () => undefined);
+        proc.stdin.end(script);
+    });
+}
+
 
 function checkDirectory(parent: string) {
     mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -45,7 +79,9 @@ async function cleanStaleSocket(path: string) {
     unlinkSync(path);
 }
 
-export async function startMacShareControlServer(node: ShareControl, path = macShareSocketPath()) {
+export async function startMacShareControlServer(
+    node: ShareControl, path = macShareSocketPath(), approve: Approve = promptMacOutgoingShare,
+) {
     if (process.platform !== 'darwin' && path === macShareSocketPath())
         throw new Error('Mac sharing is supported only in a macOS login session.');
     checkDirectory(dirname(path));
@@ -80,7 +116,15 @@ export async function startMacShareControlServer(node: ShareControl, path = macS
                         result = { recipients: await node.shareRecipients() };
                     } else if (data.action === 'send' && Object.keys(data).length === 3 &&
                         typeof data.targetNodeId === 'string' && typeof data.text === 'string') {
-                        result = await node.sendDeviceShare(data.targetNodeId, data.text);
+                        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+                            .test(data.targetNodeId) ||
+                            !data.text.trim() || data.text.length > 16_384)
+                            throw Error('Invalid request');
+                        if (!await approve(data.targetNodeId, data.text) || socket.destroyed) {
+                            result = { accepted: false };
+                        } else {
+                            result = await node.sendDeviceShare(data.targetNodeId, data.text);
+                        }
                     } else throw Error('Invalid request');
                     socket.end(JSON.stringify({ ok: true, result }) + '\n');
                 } catch (error) {
