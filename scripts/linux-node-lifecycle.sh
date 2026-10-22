@@ -183,14 +183,12 @@ if [[ "$action" == recover ]]; then
   if [[ "$observed" == "$attempted" ]]; then
     echo "Recovering interrupted activation: restoring ${pending[0]}."
     atomic_link "$original" current || die "Could not restore previous release."
-    # Even a healthy PID may still be running the attempted version.
-    # Restart unconditionally after changing the symlink.
-    systemctl restart "$SERVICE" && wait_healthy ||
-      die "Previous release is not connected; recovery will retry."
-  elif ! healthy; then
-    systemctl restart "$SERVICE" && wait_healthy ||
-      die "Previous release is not connected; recovery will retry."
   fi
+  # A healthy PID may still be running the attempted version (for example
+  # after a failed restart with the original symlink already restored).
+  # Always restart to prove the original release is the one running.
+  systemctl restart "$SERVICE" && wait_healthy ||
+    die "Previous release is not connected; recovery will retry."
   clear_pending || die "Could not clear pending activation marker."
   echo "Recovery completed; original Node connection confirmed."
   exit 0
