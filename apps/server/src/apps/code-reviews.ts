@@ -4,7 +4,7 @@ import type { CoreService } from '../core/service.js';
 import type { ApplicationDefinition } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import type { AtlasData } from '../types.js';
-import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
+import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
 type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store' | 'createRecordInState'>;
@@ -61,7 +61,7 @@ export class CodeReviewsService {
             throw new AtlasError('No trusted Code Reviewer publisher IDs are configured for this repository.', 'CAPABILITY_UNAVAILABLE');
         const stores = await this.storeIds();
         // No writes occur until every requested GitHub snapshot has arrived and validated.
-        const sources = [];
+        const sources: { prNumber: number; snapshot: ReviewSource }[] = [];
         for (const prNumber of prNumbers)
             sources.push({ prNumber, snapshot: await this.history.read(repository, prNumber) });
         const reconcile = (state: AtlasData, persisted: boolean) => {
