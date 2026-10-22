@@ -208,3 +208,33 @@ test('grouped operation filter includes pending and failed-only request wrappers
     assert.equal((await audit.page({ ...filter, operation: 'workspace.git_committed;invalid' })).total, 0,
         'Malformed requested-operation metadata must not match');
 });
+
+
+test('grouped failed attempt uses latest event time after a contradictory later success', async () => {
+    const { catalog, store } = await databaseFixture();
+    const project = await catalog.createProject({ name: 'Correlation timestamp regression', client: 'setup' });
+    const events = [
+        { operation: 'workspace.mutation_requested', at: '2026-10-22T08:00:00Z',
+          data: { attemptId: 'same', operation: 'workspace.git_committed' } },
+        { operation: 'workspace.mutation_failed', at: '2026-10-22T08:01:00Z',
+          data: { attemptId: 'same', operation: 'workspace.git_committed', outcome: 'failed', error: 'Rejected' } },
+        { operation: 'workspace.git_committed', at: '2026-10-22T08:02:00Z',
+          data: { attemptId: 'same', outcome: 'completed' } },
+    ];
+    for (const event of events) {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'timestamp-test', $1, $2, $3::jsonb, $4::timestamptz)`,
+            [event.operation, project.id, JSON.stringify(event.data), event.at]);
+    }
+    const query = { projectId: project.id, client: 'timestamp-test', groupOperations: true };
+    const page = await new ActivityService(new AuditService(store)).page({
+        ...query, outcome: 'failed', operation: 'workspace.git_committed',
+        from: '2026-10-22T08:01:30Z', to: '2026-10-22T08:02:30Z',
+    });
+    assert.equal(page.total, 1, 'Time filters use latest event even when failure is older');
+    assert.equal(page.items.length, 3, 'Request, failure and contradictory result stay correlated');
+    assert.equal(page.items[0]?.occurredAt, '2026-10-22T08:02:00.000Z');
+    assert.equal((await new ActivityService(new AuditService(store)).page({
+        ...query, outcome: 'completed', from: '2026-10-22T08:01:30Z',
+    })).total, 0, 'A later success must not conceal the earlier failure');
+});
