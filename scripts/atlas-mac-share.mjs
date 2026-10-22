@@ -84,8 +84,7 @@ export async function shareFromMacClipboard() {
             console.log('Cancelled.'); return;
         }
         const target = ready[index];
-        const confirmed = (await rl.question('Send clipboard to ' + target.name + '? Type yes: ')).trim();
-        if (confirmed !== 'yes') { console.log('Cancelled; nothing sent.'); return; }
+        console.log('Confirm Send in the native Atlas dialog on your Mac.');
         const receipt = await localRequest({
             action: 'send', targetNodeId: target.nodeId, text,
         });
@@ -93,7 +92,9 @@ export async function shareFromMacClipboard() {
             throw Error('Atlas did not confirm delivery (' + (receipt.code || 'SHARE_UNAVAILABLE') +
                 '). If interrupted, do not resend until checking the target.');
         }
-        if (receipt.result?.accepted === true)
+        if (receipt.result?.cancelled === true)
+            console.log('Cancelled on Mac; nothing sent.');
+        else if (receipt.result?.accepted === true)
             console.log('Accepted. The receiving device confirmed the copy.');
         else if (receipt.result?.accepted === false)
             console.log('The receiving device declined the share.');
