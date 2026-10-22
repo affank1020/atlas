@@ -15,7 +15,14 @@ usage() {
   echo "Version example: v2.0.0-78840cd92a90 (must already be installed and verified)."
 }
 die() { echo "Atlas Node lifecycle: $*" >&2; exit 1; }
-[[ "$ROOT" == /* && "$ROOT" != / && "$ROOT" != */../* ]] || die "Invalid release root."
+[[ "$ROOT" == /* && "$ROOT" != / ]] || die "Invalid release root."
+# Compare against the canonical filesystem path, not the environment string.
+# Otherwise /opt/atlas-node/, /opt/atlas-node/., or a symlink alias could
+# access the production tree while skipping root ownership and watchdog gates.
+command -v realpath >/dev/null || die "realpath is required."
+canonical_root="$(realpath -m -- "$ROOT")" || die "Cannot resolve release root."
+[[ "$ROOT" == "$canonical_root" ]] ||
+  die "Release root must be a canonical absolute path (no trailing slash, traversal or aliases)."
 [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && (( TIMEOUT >= 1 && TIMEOUT <= 120 )) || die "Timeout must be 1-120 seconds."
 action="${1:-}"
 case "$action" in
