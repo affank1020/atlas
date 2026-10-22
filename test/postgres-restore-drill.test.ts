@@ -29,7 +29,18 @@ function fixture(t: import('node:test').TestContext) {
   const fakeDocker = [
     '#!/usr/bin/env bash',
     'printf "%s\\n" "$*" >> "$MOCK_DOCKER_TRACE"',
+    '[[ "$1" == --host && "$2" == unix:///var/run/docker.sock ]] || exit 81',
+    'shift 2',
+    'if [[ "$1" == info ]]; then printf "%s\\n" "$MOCK_DOCKER_ID"; exit 0; fi',
     'if [[ "$1" == run ]]; then printf "mockcontainer\\n"; exit 0; fi',
+    'if [[ "$1" == inspect ]]; then',
+    '  if [[ "$MOCK_BAD_MOUNTS" == 1 ]]; then',
+    '    printf \'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,size=1536m"},"NetworkMode":"none"},"Mounts":[{"Type":"volume","Destination":"/var/lib/postgresql/data"}]}\\n\'',
+    '  else',
+    '    printf \'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,size=1536m"},"NetworkMode":"none"},"Mounts":[]}\\n\'',
+    '  fi',
+    '  exit 0',
+    'fi',
     'if [[ "$1" == rm ]]; then exit 0; fi',
     'if [[ "$*" == *"pg_isready"* ]]; then exit 0; fi',
     'if [[ "$*" == *"pg_restore"* ]]; then cat >/dev/null; [[ "$MOCK_RESTORE_FAIL" == 1 ]] && exit 32; exit 0; fi',
@@ -49,7 +60,11 @@ function fixture(t: import('node:test').TestContext) {
   const run = (args: string[], overrides: Record<string, string> = {}) =>
     spawnSync('bash', [script, ...args], {encoding:'utf8', cwd:root,
       env: {...process.env, PATH:bin + ':' + process.env.PATH,
-        MOCK_DOCKER_TRACE:trace, MOCK_RESTORE_FAIL:'0', MOCK_ZERO_PROJECTS:'0', MOCK_AGE_FAIL:'0', ...overrides}});
+        MOCK_DOCKER_TRACE:trace, MOCK_RESTORE_FAIL:'0', MOCK_ZERO_PROJECTS:'0', MOCK_AGE_FAIL:'0',
+        MOCK_BAD_MOUNTS:'0', MOCK_DOCKER_ID:'LOCAL-RECOVERY-DAEMON-123',
+        ATLAS_RECOVERY_DOCKER_ID:'LOCAL-RECOVERY-DAEMON-123',
+        DOCKER_HOST:'', DOCKER_CONTEXT:'', DOCKER_CONFIG:'', DOCKER_TLS_VERIFY:'', DOCKER_CERT_PATH:'',
+        ...overrides}});
   return {root,archive,manifest,identity,trace,hash,run};
 }
 
@@ -102,15 +117,20 @@ test('successful drill uses ephemeral networkless container and reports SHA', t 
   assert.equal(report.status,'isolated_restore_passed');
   assert.equal(report.archiveCiphertextSha256,f.hash);
   assert.equal(report.databaseRestored,true);
+  assert.equal(report.noHostBackedDatabaseVolume,true);
   assert.equal(report.r2ObjectsRestored,false);
   const log=readFileSync(f.trace,'utf8');
-  assert.match(log,/run --detach --rm --name atlas-pg-drill-/);
+  assert.match(log,/--host unix:\/\/\/var\/run\/docker.sock info --format/);
+  assert.match(log,/--host unix:\/\/\/var\/run\/docker.sock run --detach --rm --name atlas-pg-drill-/);
+  assert.match(log,/--host unix:\/\/\/var\/run\/docker.sock inspect --format/);
+  assert.ok(log.trim().split('\n').every(line=>line.startsWith('--host unix:///var/run/docker.sock ')));
   assert.match(log,/--network none/);
+  assert.match(log,/--tmpfs \/var\/lib\/postgresql\/data:rw,nosuid,nodev,noexec,size=1536m,mode=0700/);
   assert.match(log,/POSTGRES_DB=atlas_recovery/);
   assert.match(log,/pg_restore/);
   assert.match(log,/psql/);
   assert.match(log,/rm -f atlas-pg-drill-/);
-  assert.doesNotMatch(log.split('\n')[0]!,/(^| )(-p|--publish|-v|--volume|--network host)( |$)/m);
+  assert.doesNotMatch(log,/(^| )(-p|--publish|-v|--volume|--network host)( |$)/m);
 });
 
 test('failed decrypt, failed restore and empty restored catalog never report success and clean container', t => {
@@ -131,4 +151,42 @@ test('never runs from a production deploy working directory', t => {
   assert.notEqual(r.status,0);
   assert.match(r.stderr,/production deployment directory/);
   assert.equal(existsSync(f.trace),false);
+});
+
+test('refuses Docker endpoint overrides before accessing even the mocked daemon', t => {
+  for (const key of ['DOCKER_HOST','DOCKER_CONTEXT','DOCKER_CONFIG','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH']) {
+    const f=fixture(t);
+    const r=f.run(['--archive='+f.archive,'--identity='+f.identity,'--apply','--confirm=ISOLATED_PG_RESTORE'],
+      {[key]:'ssh://production.example'});
+    assert.notEqual(r.status,0,key);
+    assert.match(r.stderr,/overrides are not permitted/);
+    assert.equal(existsSync(f.trace),false);
+  }
+});
+
+test('refuses missing or mismatched approved recovery daemon before container creation', t => {
+  for (const overrides of [
+    {ATLAS_RECOVERY_DOCKER_ID:''},
+    {ATLAS_RECOVERY_DOCKER_ID:'OTHER-DOCKER-DAEMON'},
+    {MOCK_DOCKER_ID:'ANOTHER-DOCKER-DAEMON'}
+  ]) {
+    const f=fixture(t);
+    const r=f.run(['--archive='+f.archive,'--identity='+f.identity,'--apply','--confirm=ISOLATED_PG_RESTORE'],overrides);
+    assert.notEqual(r.status,0);
+    assert.equal(existsSync(f.trace) ? readFileSync(f.trace,'utf8').includes(' run ') : false,false);
+    assert.doesNotMatch(r.stdout,/isolated_restore_passed/);
+  }
+});
+
+test('refuses Docker implicit volume and cleans container before decrypting', t => {
+  const f=fixture(t);
+  const r=f.run(['--archive='+f.archive,'--identity='+f.identity,'--apply','--confirm=ISOLATED_PG_RESTORE'],
+    {MOCK_BAD_MOUNTS:'1'});
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/Docker isolation inspection failed/);
+  const commands=readFileSync(f.trace,'utf8');
+  assert.match(commands,/ inspect --format /);
+  assert.match(commands,/ rm -f atlas-pg-drill-/);
+  assert.doesNotMatch(commands,/ pg_restore/);
+  assert.doesNotMatch(r.stdout,/isolated_restore_passed/);
 });
