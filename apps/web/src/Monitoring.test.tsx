@@ -142,3 +142,52 @@ test('activity uses correlated operation paging and counts attempts rather than 
     expect(screen.getByText('test · running')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
 });
+
+
+test('overview renders live Server/Node health and refreshes on demand', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockResolvedValue({
+        checkedAt: '2026-10-22T12:00:00Z', overall: 'degraded',
+        server: { status: 'healthy', startedAt: '2026-10-22T11:00:00Z', uptimeSeconds: 3600,
+            database: { status: 'reachable', latencyMs: 24 } },
+        nodes: { available: true, summary: { total: 2, healthy: 1, stale: 1, offline: 0,
+            unavailable: 0, revoked: 0, unknown: 0 }, items: [
+            { id: 'a', name: 'Node A', state: 'healthy', platform: 'linux', version: '2.0.0',
+                lastSeen: '2026-10-22T11:59:50Z', ageSeconds: 10 },
+            { id: 'b', name: 'Node B', state: 'stale', platform: 'darwin', version: null,
+                lastSeen: '2026-10-22T11:56:00Z', ageSeconds: 240 },
+        ] },
+    } as never);
+    render(<MonitoringPage />);
+    const region = await screen.findByRole('region', { name: 'Live operational health' });
+    expect(region).toHaveTextContent('degraded');
+    expect(region).toHaveTextContent('Database query succeeded · 24 ms');
+    expect(region).toHaveTextContent('1 healthy · 2 registered Nodes');
+    expect(region).toHaveTextContent('Node B');
+    expect(region).toHaveTextContent('stale');
+    expect(callTool).toHaveBeenCalledWith('get_monitoring_health', {}, expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh health' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledTimes(2));
+});
+
+test('overview fails closed when health cannot be checked instead of retaining a healthy snapshot', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockRejectedValue(new Error('Health endpoint unavailable'));
+    render(<MonitoringPage />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Health snapshot unavailable');
+    expect(screen.queryByText('reachable')).not.toBeInTheDocument();
+});
+
+test('overview distinguishes unavailable Node registry from zero healthy Nodes', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockResolvedValue({
+        checkedAt: '2026-10-22T12:00:00Z', overall: 'unknown',
+        server: { status: 'healthy', startedAt: '2026-10-22T11:00:00Z', uptimeSeconds: 3600,
+            database: { status: 'reachable', latencyMs: 1 } },
+        nodes: { available: false, summary: { total: 0, healthy: 0, stale: 0,
+            offline: 0, unavailable: 0, revoked: 0, unknown: 0 }, items: [] },
+    } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Node registry could not be checked/)).toBeInTheDocument();
+    expect(screen.queryByText(/No Nodes registered/)).not.toBeInTheDocument();
+});
