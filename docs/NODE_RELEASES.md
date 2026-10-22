@@ -368,7 +368,11 @@ provenance verification **before** claiming the request from Atlas Server.
 Only after reviewing the exact digest and typing `EXECUTE <intent UUID>` does
 the host issue the once-only Server claim and consume the separately
 root-approved grant. It then runs trusted staging and the root-owned lifecycle
-script. No process invokes `sudo` on the Node's behalf. Nothing is scheduled
+script. The lifecycle's `activate <target> --expect-current <approved-source>`
+checks the exact original release **inside its own activation flock**,
+including when a separate manual updater changed `current` after the Server
+claim; on mismatch it refuses activation without updating the rollback pointer.
+No process invokes `sudo` on the Node's behalf. Nothing is scheduled
 automatically:
 
 ```bash
@@ -379,6 +383,13 @@ sudo /usr/local/libexec/atlas-node-update-executor execute <intent-uuid> \
 
 sudo /usr/local/libexec/atlas-node-update-executor status <intent-uuid>
 ```
+
+Any failure **before** the durable `claiming` receipt (including missing
+attestation, invalid checksum, watchdog unavailability, interrupted input copy
+or rejected interactive confirmation) removes the root-private archive copies,
+allowing a corrected pre-claim attempt without leaking 512 MiB staging trees.
+After a claim might have committed, snapshots are retained for investigation
+unless activation succeeds and private cleanup is safe.
 
 **Reconciliation is intentionally conservative.** Before the Server POST,
 the executor writes a durable private `claiming` receipt beneath
