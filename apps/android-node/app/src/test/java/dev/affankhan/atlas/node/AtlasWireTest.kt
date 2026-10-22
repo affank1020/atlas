@@ -55,7 +55,7 @@ class AtlasWireTest {
         val mac = "123e4567-e89b-42d3-a456-426614174002"
         val request = org.json.JSONObject(recipientDirectoryMessage(id))
         assertEquals("device.share.recipients", request.getString("type"))
-        assertEquals(2, request.length)
+        assertEquals(2, request.length())
         assertFalse(request.has("sourceNodeId"))
         val raw = """{"type":"response","requestId":"$id","ok":true,"result":{"recipients":[{"nodeId":"$mac","name":"My Mac","platform":"darwin","status":"online","available":true}]}}"""
         val parsed = parseRecipientsReply(raw)
