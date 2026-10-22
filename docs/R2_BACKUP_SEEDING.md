@@ -119,9 +119,47 @@ A status of `failed` or `empty` exits with code 2; a configuration or remote
 failure exits with code 1 and redacted details. `partial` exits 0 but must not
 be considered proof of complete seeding.
 
-**After seeding:** independently run
-`npm run files:r2:verify-recovery` against the same destination. The verifier
-is read-only and has its own limits and cursor. Separately implement and test
-consistent **PostgreSQL** backup, an isolated restore of both metadata and
-objects, credential recovery, retention, and periodic scheduling. This CLI
-alone does not provide any of those protections.
+## Whole-catalog verification after seeding
+
+For a recoverability check across the *whole bounded catalog*, rather than
+manually repeating the small sampled verifier's cursor, run:
+
+```sh
+npm run build:server
+npm run files:r2:verify-catalog
+# If the report indicates a cap hit, rerun with a larger limit (up to 200):
+npm run files:r2:verify-catalog -- --max-records=200
+```
+
+This is a **read-only** command: one PostgreSQL `SELECT` captures up to
+`maxRecords+1` committed Files metadata rows from a single SQL statement
+snapshot. Only the first `maxRecords` rows (default **100**, maximum **200**)
+are checked sequentially using bounded R2 GETs against both the primary and
+recovery buckets. No DB transaction is held during remote network requests.
+No seed/PUT/DELETE, plaintext download to disk, server route or scheduler is
+introduced. Note that a run may download up to 25 MiB per object **from each
+bucket**, so R2 request/transfer costs and operator runtime apply.
+
+A report may be `passed` **only** if all captured rows fit under the limit,
+the catalog is nonempty, and every row passed checksum/metadata validation for
+**both** copies. `partial` means the cap was reached; `failed` means at
+least one invalid, missing or corrupt object; `empty` is not a pass. Only
+`passed` exits 0; any other result exits 2, and an unexpected DB/R2 error
+exits 1 without leaking endpoints/credentials. At most ten opaque File IDs
+appear as failure examples; no filenames or object bytes are logged.
+
+**Scope matters:** The report describes the database metadata visible to its
+*one SELECT statement*; later writes are not covered. This is evidence for
+object-level recoverability **at that observation**, not a shared
+PostgreSQL/R2 point-in-time snapshot or proof of full application recovery.
+Re-run after recent writes or seeding changes, and use the isolated
+PostgreSQL recovery drill plus the operator
+[recovery acceptance runbook](RECOVERY_ACCEPTANCE.md) before claiming DR ready.
+
+The existing `npm run files:r2:verify-recovery` remains available for
+targeted small-batch debugging with explicit cursors. Neither verifier
+creates or updates backup copies.
+
+Finally, plan and test an isolated restore of both PostgreSQL metadata and
+objects, credential recovery, retention, and periodic scheduling. Seeding
+and object verification alone do not provide those protections.
