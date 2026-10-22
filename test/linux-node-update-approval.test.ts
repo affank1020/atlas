@@ -130,3 +130,48 @@ print("invalid intent and manifest cases rejected")
     const result = runPython(py);
     assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
 });
+
+
+test('concurrent processes cannot claim the same host approval twice', { skip: !available }, () => {
+    const py = String.raw`
+import datetime as dt, importlib.util, multiprocessing as mp, pathlib, sys, tempfile, uuid
+spec = importlib.util.spec_from_file_location("host_approval", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+now = dt.datetime.now(dt.timezone.utc)
+node, ident, source = str(uuid.uuid4()), str(uuid.uuid4()), "a"*40
+digest = "b"*64
+old = "2.0.0+" + "c"*12
+intent = dict(id=ident, nodeId=node, installedVersion=old, targetVersion="2.0.1",
+    targetCommit=source[:12], targetSourceCommit=source, targetSha256=digest,
+    status="requested", approved=False, executable=False, resolvedAt=None,
+    createdAt=m.iso(now), expiresAt=m.iso(now + dt.timedelta(minutes=10)))
+def worker(root, ready, start, result):
+    state = m.ApprovalStore(pathlib.Path(root), owner_uid=None)
+    ready.put("ready")
+    start.wait(timeout=10)
+    try:
+        state.claim_once(ident, node, digest, old, now)
+        result.put("claimed")
+    except m.Refused:
+        result.put("rejected")
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory) / "state"
+    m.ApprovalStore(root, owner_uid=None).approve(intent, node, old, now)
+    ctx = mp.get_context("fork")
+    ready, start, result = ctx.Queue(), ctx.Event(), ctx.Queue()
+    children = [ctx.Process(target=worker, args=(str(root), ready, start, result)) for _ in range(2)]
+    for child in children: child.start()
+    for _ in children: assert ready.get(timeout=10) == "ready"
+    start.set()
+    outcomes = [result.get(timeout=10) for _ in children]
+    for child in children:
+        child.join(timeout=10)
+        assert child.exitcode == 0
+    assert sorted(outcomes) == ["claimed", "rejected"], outcomes
+    assert m.ApprovalStore(root, owner_uid=None).status(ident)["status"] == "claimed"
+print("concurrent claim rejected exactly once")
+`;
+    const result = runPython(py);
+    assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
+});
