@@ -137,10 +137,40 @@ test('activity uses correlated operation paging and counts attempts rather than 
     vi.mocked(callTool).mockResolvedValue({ items: [result, request], total: 1, offset: 0, limit: 30 });
     render(<MonitoringPage />);
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
-        { offset: 0, limit: 30, groupOperations: true }, expect.any(AbortSignal)));
+        { offset: 0, limit: 30, groupOperations: true, safeDetails: true }, expect.any(AbortSignal)));
     expect(await screen.findByText(/1–1 of 1 operations/)).toBeInTheDocument();
     expect(screen.getByText('test · running')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+});
+
+
+test('Monitoring never exposes unexpected raw payloads and links to related context', async () => {
+    location.hash = '#/monitoring?tab=activity&projectId=11111111-1111-4111-8111-111111111111';
+    const event = {
+        id: 'event-1', occurredAt: '2026-10-22T09:00:00Z', client: 'chatgpt',
+        projectId: '11111111-1111-4111-8111-111111111111',
+        workspaceId: '22222222-2222-4222-8222-222222222222',
+        operation: 'workspace.dev_invoked',
+        previous: { apiKey: 'SHOULD_NOT_RENDER_BEFORE' },
+        resulting: { nodeId: '33333333-3333-4333-8333-333333333333',
+            attemptId: 'run-10', task: 'build', outcome: 'failed',
+            error: 'SHOULD_NOT_RENDER_ERROR', token: 'SHOULD_NOT_RENDER_TOKEN',
+            path: '/private/SHOULD_NOT_RENDER_PATH' },
+    };
+    vi.mocked(callTool).mockResolvedValue({ items: [event], total: 1, offset: 0, limit: 30 } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/1–1 of 1 operations/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/build · running/));
+    expect(screen.queryByText(/SHOULD_NOT_RENDER_/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Project activity' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&projectId=11111111-1111-4111-8111-111111111111');
+    expect(screen.getByRole('link', { name: 'Checkout activity' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&checkoutId=22222222-2222-4222-8222-222222222222');
+    expect(screen.getByRole('link', { name: 'Node activity' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&nodeId=33333333-3333-4333-8333-333333333333');
+    expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
+        expect.objectContaining({ safeDetails: true, projectId: '11111111-1111-4111-8111-111111111111' }),
+        expect.any(AbortSignal));
 });
 
 
