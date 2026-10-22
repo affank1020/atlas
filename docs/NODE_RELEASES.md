@@ -269,3 +269,51 @@ These host approvals are **not** written into the Atlas Server's intent ledger
 and must not be represented as remote approval or execution in the Web UI.
 Until the separate reconciled host executor is built and tested, requests
 continue to show `approved: false` and `executable: false` on Atlas.
+
+## One-shot control-plane claim (host executor prerequisite)
+
+The authenticated native-Node endpoint `POST /node/update-intents/claim`
+uses the existing Node-issued Bearer credential and `x-atlas-node-id`
+header. **It is disabled by default** (`ATLAS_NODE_UPDATE_CLAIMS_ENABLED=false`); do not enable it on production until the root-owned executor and reconciliation path are separately reviewed and deployed. An API or MCP request cannot enable it. This is **only** a transactional reservation of an existing
+`requested` intention, not host approval, an instruction to the Linux Node,
+nor a signal that installation has started or succeeded.
+
+A future **root-owned Linux executor** will call this endpoint over the
+configured TLS-protected Atlas Server connection, after its independently
+reviewed host approval and verified release bytes have been checked.
+The JSON body is strictly scoped to:
+
+```json
+{
+  "intentId": "<intent UUID>",
+  "expectedInstalledVersion": "2.0.0+<12-character-source-SHA>",
+  "targetSha256": "<64 lowercase hex characters>"
+}
+```
+
+The Server checks the Node's active credential **inside the same database
+transaction** as the claim. It also requires a connected remote Linux Node,
+exact installed build and archive digest, a non-expired and uncancelled
+request, and no credential rotation since the request was prepared. A row
+lock makes concurrent cancellation and claims mutually exclusive. Only the
+first valid claim succeeds. Subsequent claims and cancellations fail.
+Requests with a `claimed` status still report `approved: false` and
+`executable: false`—the Node's credential is **not** a privileged
+administrator approval.
+
+The `claimed` state intentionally **blocks further update requests for
+that Node** until a future audited completion/reconciliation operation
+exists. This is a fail-closed safety fence: a lost HTTP response is
+indistinguishable from a committed claim, so callers must inspect the
+ledger rather than retrying a potentially consumed one-time request.
+Do **not** delete a claimed row, edit its status, or deactivate this
+constraint to force another update. The eventual executor must preserve
+its own root-owned local records and report a verified outcome; server
+claim alone never proves that the host changed releases.
+
+The production and private Node ingress configurations forward this
+credential-protected route without human Basic Auth, just like the
+existing Node upload endpoints. Browser `Origin` headers are denied,
+there is no CORS allowance, credentials are never logged, and the
+request is limited to a small exact JSON schema. No scheduler or
+remote command is activated by enabling the route.

@@ -24,7 +24,7 @@ type Catalogue = { state: 'ready' | 'unavailable'; releases: NodeRelease[]; chec
 export type NodeUpdateIntent = {
     id: string; nodeId: string;
     targetVersion: string; targetCommit: string; installedVersion: string;
-    status: 'requested' | 'cancelled' | 'expired';
+    status: 'requested' | 'cancelled' | 'expired' | 'claimed';
     createdAt: string; expiresAt: string;
     approved: false; executable: false;
 };
@@ -102,20 +102,20 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
     const expiresAt = storedIntent?.status === 'requested' ? Date.parse(storedIntent.expiresAt) : NaN;
     const intentStatus = storedIntent?.status === 'requested' &&
         (!Number.isFinite(expiresAt) || expiresAt <= clock) ? 'expired' : storedIntent?.status;
-    const hasPendingIntent = intentStatus === 'requested';
+    const hasPendingIntent = intentStatus === 'requested' || intentStatus === 'claimed';
 
-    function refreshIntents(nodeId: string) {
+    function refreshIntents(nodeId: string, silent = false): Promise<void> {
         const generation = ++intentReadGeneration.current;
-        setIntention(current => ({
+        if (!silent) setIntention(current => ({
             ...(current?.nodeId === nodeId ? current : { nodeId }),
             nodeId, loading: true,
         }));
-        void callTool<NodeUpdateIntent[]>('list_node_update_intents', { nodeId, limit: 20 })
+        return callTool<NodeUpdateIntent[]>('list_node_update_intents', { nodeId, limit: 20 })
             .then(items => {
                 if (intentReadGeneration.current !== generation) return;
                 const scoped = items.filter(item => item.nodeId === nodeId);
-                const active = scoped.find(item => item.status === 'requested' &&
-                    Number.isFinite(Date.parse(item.expiresAt)) && Date.parse(item.expiresAt) > Date.now());
+                const active = scoped.find(item => item.status === 'claimed' ||
+                    (item.status === 'requested' && Number.isFinite(Date.parse(item.expiresAt)) && Date.parse(item.expiresAt) > Date.now()));
                 setClock(Date.now());
                 setIntention(current => current?.nodeId === nodeId ? {
                     ...current, result: active ?? scoped[0], loading: false, error: undefined,
@@ -147,6 +147,21 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         // eligibility check. It must not update a different Node after switch.
         return () => { ++intentMutationGeneration.current; intentMutationBusy.current = false; };
     }, [node.id]);
+
+    useEffect(() => {
+        // A native Node can claim an intent without changing the Node's
+        // reported version or connection snapshot. Reconcile while a request
+        // is pending; otherwise the operator sees a stale Cancel button.
+        // Background polls leave the current status visible while fetching.
+        if (node.platform !== 'linux' || intentStatus !== 'requested') return;
+        let inFlight = false;
+        const interval = window.setInterval(() => {
+            if (inFlight || intentMutationBusy.current) return;
+            inFlight = true;
+            void refreshIntents(node.id, true).finally(() => { inFlight = false; });
+        }, 5_000);
+        return () => window.clearInterval(interval);
+    }, [node.id, nodeSnapshot, intentStatus]);
 
     useEffect(() => {
         if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
@@ -264,7 +279,9 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
                 <strong>Update request: {intentStatus}</strong>
                 <p>Target v{storedIntent.targetVersion}+{storedIntent.targetCommit}.
                     {intentStatus === 'requested' ? ' Expires ' + new Date(storedIntent.expiresAt).toLocaleString() + '.' : ''}
-                    {' '}Not approved. No installation or restart will occur.</p>
+                    {' '}{intentStatus === 'claimed'
+                        ? 'Reserved by the Node identity. This is not a host approval or proof of installation; reconciliation is required before preparing another update.'
+                        : 'Not approved. No installation or restart will occur.'}</p>
                 {intentStatus === 'requested' &&
                     <button type="button" className="ghost" disabled={currentIntent?.busy === true || currentIntent?.loading === true} onClick={cancelIntent}>
                         Cancel update request
