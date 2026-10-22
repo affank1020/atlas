@@ -78,9 +78,17 @@ export class AuditService {
                 Math.max(...b.map(e => Date.parse(e.occurredAt))) - Math.max(...a.map(e => Date.parse(e.occurredAt)))
                 || keyB.localeCompare(keyA));
             const page = matching.slice(offset, offset + limit);
-            return { items: page.flatMap(([, events]) => events.sort((a, b) =>
-                b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id))),
-                total: matching.length, offset, limit };
+            return { items: page.flatMap(([, events]) => {
+                const representatives = new Map<string, AuditEvent>();
+                for (const event of [...events].sort((a, b) =>
+                    b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id))) {
+                    const kind = failed(event) ? 'failed' :
+                        event.operation === 'workspace.mutation_requested' ? 'requested' : 'result';
+                    if (!representatives.has(kind)) representatives.set(kind, event);
+                }
+                return [...representatives.values()].sort((a, b) =>
+                    b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
+            }), total: matching.length, offset, limit };
         }
         const items = data.auditEvents.filter(event => {
             const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
