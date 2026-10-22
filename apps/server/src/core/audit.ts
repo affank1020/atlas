@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { projectMonitoringEvent } from './monitoring-projection.js';
 import type { AtlasRepository, MonitoringActivityQuery, MonitoringActivityPage } from "./repository.js";
 import type { AtlasData, AuditEvent, AuditOperation } from "../types.js";
 const now = () => new Date().toISOString();
@@ -12,7 +13,9 @@ export class AuditService {
         const limit = Math.min(Math.max(input.limit ?? 30, 1), 100);
         const offset = Math.min(Math.max(input.offset ?? 0, 0), 10000);
         const query = { ...input, limit, offset };
-        if (this.store.queryMonitoringActivity) return this.store.queryMonitoringActivity(query);
+        const project = (page: MonitoringActivityPage): MonitoringActivityPage => input.safeDetails
+            ? { ...page, items: page.items.map(projectMonitoringEvent) } : page;
+        if (this.store.queryMonitoringActivity) return project(await this.store.queryMonitoringActivity(query));
         // The JSON fixture adapter must keep the same filter semantics as PostgreSQL.
         const data = await this.store.snapshot();
         const category = (operation: string) => {
@@ -78,7 +81,7 @@ export class AuditService {
                 Math.max(...b.map(e => Date.parse(e.occurredAt))) - Math.max(...a.map(e => Date.parse(e.occurredAt)))
                 || keyB.localeCompare(keyA));
             const page = matching.slice(offset, offset + limit);
-            return { items: page.flatMap(([, events]) => {
+            return project({ items: page.flatMap(([, events]) => {
                 const representatives = new Map<string, AuditEvent>();
                 for (const event of [...events].sort((a, b) =>
                     b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id))) {
@@ -88,7 +91,7 @@ export class AuditService {
                 }
                 return [...representatives.values()].sort((a, b) =>
                     b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
-            }), total: matching.length, offset, limit };
+            }), total: matching.length, offset, limit });
         }
         const items = data.auditEvents.filter(event => {
             const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
@@ -118,7 +121,7 @@ export class AuditService {
                 && (!input.to || event.occurredAt <= input.to)
                 && (!search || [event.operation, event.client, details.error, details.task].some(value => String(value ?? '').toLowerCase().includes(search)));
         }).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
-        return { items: items.slice(offset, offset + limit), total: items.length, offset, limit };
+        return project({ items: items.slice(offset, offset + limit), total: items.length, offset, limit });
     }
     async history(input: { workspaceId?: string; projectId?: string; storeId?: string; recordId?: string; operation?: AuditOperation; limit?: number }) { const limit = Math.min(Math.max(input.limit ?? 50, 1), 200); if (this.store.readAudit) return this.store.readAudit({ ...input, limit }); const data = await this.store.snapshot(); return data.auditEvents.filter((x) => (!input.workspaceId || x.workspaceId === input.workspaceId) && (!input.projectId || x.projectId === input.projectId) && (!input.storeId || x.storeId === input.storeId) && (!input.recordId || x.recordId === input.recordId) && (!input.operation || x.operation === input.operation)).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).slice(0, limit); }
 }

@@ -97,9 +97,11 @@ export function createHttpTransport(services: ServerServices) {
             try {
                 const chunks: Buffer[] = []; let bytes = 0; for await (const chunk of request) { bytes += chunk.length; if (workspaceRoute && bytes > 2 * 1024 * 1024) throw new AtlasError("Workspace request exceeds 2 MiB."); chunks.push(Buffer.from(chunk)); }
                 const input = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
-                // Read-only Server diagnostics has a strict argument schema without a client field.
-                // Keep the Web attribution header from mutating its input.
-                if (!Object.hasOwn(nodeSchemas,toolMatch[1]!) && toolMatch[1]!=="execute_view_action" && toolMatch[1]!=="read_server_diagnostics" && toolMatch[1]!=="get_monitoring_health" && (!Object.hasOwn(workspaceSchemas,toolMatch[1]!) || "client" in workspaceSchemas[toolMatch[1] as WorkspaceToolName].shape) && !input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
+                // Monitoring queries use "client" strictly as a user-specified filter;
+                // never turn the transport's x-atlas-client attribution into an
+                // implicit filter that hides other agents' audit history.
+                // Other read-only diagnostics expose strict input schemas.
+                if (!Object.hasOwn(nodeSchemas,toolMatch[1]!) && toolMatch[1]!=="execute_view_action" && toolMatch[1]!=="read_server_diagnostics" && toolMatch[1]!=="get_monitoring_health" && toolMatch[1]!=="query_monitoring_activity" && (!Object.hasOwn(workspaceSchemas,toolMatch[1]!) || "client" in workspaceSchemas[toolMatch[1] as WorkspaceToolName].shape) && !input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
                 const value = await services.dispatch(toolMatch[1]!, input, 'atlas-http');
                 response.writeHead(200, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify(value));
             } catch (error) {

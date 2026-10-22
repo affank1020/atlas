@@ -137,7 +137,7 @@ test('activity uses correlated operation paging and counts attempts rather than 
     vi.mocked(callTool).mockResolvedValue({ items: [result, request], total: 1, offset: 0, limit: 30 });
     render(<MonitoringPage />);
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
-        { offset: 0, limit: 30, groupOperations: true }, expect.any(AbortSignal)));
+        { offset: 0, limit: 30, groupOperations: true, safeDetails: true }, expect.any(AbortSignal)));
     expect(await screen.findByText(/1–1 of 1 operations/)).toBeInTheDocument();
     expect(screen.getByText('test · running')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
@@ -190,4 +190,94 @@ test('overview distinguishes unavailable Node registry from zero healthy Nodes',
     render(<MonitoringPage />);
     expect(await screen.findByText(/Node registry could not be checked/)).toBeInTheDocument();
     expect(screen.queryByText(/No Nodes registered/)).not.toBeInTheDocument();
+});
+
+test('Monitoring activity requests safe projection and links only known scoped IDs', async () => {
+    location.hash = '#/monitoring?tab=activity&projectId=22222222-2222-4222-8222-222222222222';
+    vi.mocked(callTool).mockResolvedValue({
+        offset: 0, total: 1, limit: 30,
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            client: 'Atlas Web', operation: 'workspace.mutation_failed',
+            occurredAt: '2026-10-22T12:00:00Z',
+            projectId: '22222222-2222-4222-8222-222222222222',
+            workspaceId: '33333333-3333-4333-8333-333333333333',
+            resulting: { attemptId: 'operation-1', operation: 'workspace.file_patched',
+                outcome: 'failed', nodeId: '44444444-4444-4444-8444-444444444444' },
+        }],
+    } as never);
+    render(<MonitoringPage />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
+        expect.objectContaining({ groupOperations: true, safeDetails: true }), expect.any(AbortSignal)));
+    const row = await screen.findByText('The operation failed; inspect the details or client response.');
+    expect(row).toBeInTheDocument();
+    const summary = row.closest('summary');
+    expect(summary).not.toBeNull();
+    fireEvent.click(summary!);
+    expect(screen.getByRole('link', { name: 'Project activity' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&projectId=22222222-2222-4222-8222-222222222222');
+    expect(screen.getByRole('link', { name: 'Workspace activity' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&workspaceId=33333333-3333-4333-8333-333333333333');
+    expect(screen.getByRole('link', { name: 'Node activity' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&nodeId=44444444-4444-4444-8444-444444444444');
+});
+
+test('safe-projected Workspace event keeps a stable identity without exposing an audit display name', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const workspaceId = '33333333-3333-4333-8333-333333333333';
+    vi.mocked(callTool).mockResolvedValue({
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', occurredAt: '2026-10-22T12:00:00Z',
+            client: 'Atlas Web', operation: 'workspace.dev_invoked', workspaceId,
+            resulting: { attemptId: 'safe-projected', task: 'test', durationMs: 150 },
+        }], total: 1, offset: 0, limit: 30,
+    } as never);
+    render(<MonitoringPage />);
+    const title = await screen.findByText('test · 0.1s');
+    const summary = title.closest('summary');
+    expect(summary).not.toBeNull();
+    expect(summary).toHaveTextContent(`Workspace ${workspaceId}`);
+    expect(summary).not.toHaveTextContent('Unknown workspace');
+    fireEvent.click(summary!);
+    expect(screen.getByText(workspaceId)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Workspace activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&workspaceId=${workspaceId}`);
+});
+
+test('share audit rows provide separate source and recipient Node activity links', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const sourceNodeId = '11111111-1111-4111-8111-111111111111';
+    const targetNodeId = '22222222-2222-4222-8222-222222222222';
+    vi.mocked(callTool).mockResolvedValue({
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', occurredAt: '2026-10-22T12:00:00Z',
+            client: 'Atlas Web', operation: 'node.share.approved',
+            resulting: { sourceNodeId, targetNodeId },
+        }], total: 1, offset: 0, limit: 30,
+    } as never);
+    render(<MonitoringPage />);
+    const title = await screen.findByText('Node share approved');
+    fireEvent.click(title.closest('summary')!);
+    expect(screen.getByRole('link', { name: 'Source Node activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&nodeId=${sourceNodeId}`);
+    expect(screen.getByRole('link', { name: 'Target Node activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&nodeId=${targetNodeId}`);
+});
+
+test('share audit navigation deduplicates equal source and target Node IDs', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const nodeId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(callTool).mockResolvedValue({
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', occurredAt: '2026-10-22T12:00:00Z',
+            client: 'Atlas Web', operation: 'node.share.revoked',
+            resulting: { sourceNodeId: nodeId, targetNodeId: nodeId },
+        }], total: 1, offset: 0, limit: 30,
+    } as never);
+    render(<MonitoringPage />);
+    fireEvent.click((await screen.findByText('Node share revoked')).closest('summary')!);
+    expect(screen.getByRole('link', { name: 'Source Node activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&nodeId=${nodeId}`);
+    expect(screen.queryByRole('link', { name: 'Target Node activity' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /Node activity/i })).toHaveLength(1);
 });
