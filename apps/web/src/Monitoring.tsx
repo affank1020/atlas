@@ -271,7 +271,7 @@ export function MonitoringPage() {
     const tabs: { key: MonitoringTab; title: string }[] = [{key:'overview',title:'Overview'},{key:'activity',title:'Activity'},{key:'logs',title:'Logs'}];
     return <div className="monitoring-page">
         <nav className="tabs project-nav" aria-label="Monitoring sections">{tabs.map(tab => <a key={tab.key} href={monitoringHash(tab.key, tab.key === route.tab ? route.filters : {})} aria-current={route.tab === tab.key ? 'page' : undefined} className={route.tab === tab.key ? 'active' : ''}>{tab.title}</a>)}</nav>
-        {route.tab === 'overview' && <><MonitoringHealthPanel /><MonitoringOverview /></>}
+        {route.tab === 'overview' && <><MonitoringOverview /><MonitoringHealthPanel /></>}
         {route.tab === 'activity' && <><header className="page-head"><div><p className="eyebrow">Atlas Monitoring</p><h1>Activity</h1><p>Search and investigate structured operations across Atlas.</p></div></header><ActivityPanel filters={route.filters} /></>}
         {route.tab === 'logs' && <><header className="page-head"><div><p className="eyebrow">Atlas Monitoring</p><h1>Logs</h1><p>Inspect approved Node tails and bounded Atlas Server diagnostics.</p></div></header><LogsPanel filters={route.filters} /></>}
     </div>;
