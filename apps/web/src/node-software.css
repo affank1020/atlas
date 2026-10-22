@@ -21,3 +21,7 @@
 .node-software-preflight button { font-size: .78rem; }
 .node-software-preflight p { font-size: .76rem; line-height: 1.6; color: var(--text-secondary); margin: 9px 0 0; overflow-wrap: anywhere; }
 .node-software-preflight p span { display: block; }
+
+.node-update-intent { border:1px solid var(--border); border-radius:9px; padding:10px 12px; margin-top:10px; }
+.node-update-intent strong { font-size:.78rem; }
+.node-update-intent p { margin:7px 0 11px; font-size:.76rem; color:var(--text-secondary); overflow-wrap:anywhere; }
