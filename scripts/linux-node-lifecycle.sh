@@ -230,6 +230,12 @@ if systemctl restart "$SERVICE" && wait_healthy; then
   show_status
   exit 0
 fi
+if [[ "$action" == rollback ]]; then
+  # An explicit rollback must never silently re-activate the rejected version.
+  # Leave the intended rollback target and journal for the host watchdog.
+  echo "Rollback target did not reconnect; host recovery will retry the chosen release." >&2
+  exit 1
+fi
 echo "New Node did not connect within ${TIMEOUT}s; restoring previous release." >&2
 atomic_link "$old" current || die "URGENT: automatic rollback symlink failed."
 if systemctl restart "$SERVICE" && wait_healthy; then
