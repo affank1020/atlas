@@ -66,6 +66,16 @@ timestamp, database name, size and ciphertext SHA-256. It sets
 `verifiedRestore: false` deliberately: snapshot/encryption success is **not**
 proof that restoration works. The SHA-256 is a transport-integrity check only.
 
+## Isolated restore drill
+
+The operator-only [PostgreSQL restore drill](POSTGRES_RESTORE_DRILL.md)
+supports dry-run checks and an explicit restore into a disposable, networkless
+PostgreSQL 16 Docker instance **on a separate recovery host**. It consumes a
+verified age-encrypted snapshot and offline-held identity without writing a
+plaintext archive or touching production. Passing this drill proves only that
+one database snapshot restored; it does not verify offsite copy custody, R2
+objects or coordinated application recovery.
+
 ## Recovery and retention work still required
 
 1. **Off-site copy:** Transfer both the ciphertext and manifest, with
