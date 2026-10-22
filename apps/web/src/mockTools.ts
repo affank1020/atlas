@@ -224,6 +224,12 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
             }
             break;
         }
+        case 'get_monitoring_health': result = {
+            checkedAt: stamp, overall: 'healthy',
+            server: { status: 'healthy', startedAt: stamp, uptimeSeconds: 0, database: { status: 'reachable', latencyMs: 0 } },
+            nodes: { available: true, summary: { total: 0, healthy: 0, stale: 0, offline: 0,
+                unavailable: 0, revoked: 0, unknown: 0 }, items: [] },
+        }; break;
         case 'read_server_diagnostics': result = {
             source: 'atlas-server-process', available: true, startedAt: stamp,
             retention: 'current-process', truncated: false,
