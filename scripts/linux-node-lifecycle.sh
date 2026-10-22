@@ -11,7 +11,7 @@ LOCK_FILE="${ATLAS_LIFECYCLE_LOCK_FILE:-/run/lock/atlas-node-lifecycle.lock}"
 TIMEOUT="${ATLAS_LIFECYCLE_TIMEOUT:-45}"
 
 usage() {
-  echo "Usage: atlas-node-lifecycle status | plan <version> | activate <version> | rollback | recover"
+  echo "Usage: atlas-node-lifecycle status | plan <version> | activate <version> [--expect-current <version>] | rollback | recover"
   echo "Version example: v2.0.0-78840cd92a90 (must already be installed and verified)."
 }
 die() { echo "Atlas Node lifecycle: $*" >&2; exit 1; }
@@ -27,7 +27,15 @@ canonical_root="$(realpath -m -- "$ROOT")" || die "Cannot resolve release root."
 action="${1:-}"
 case "$action" in
   status|rollback|recover) [[ $# -eq 1 ]] || { usage >&2; exit 2; } ;;
-  plan|activate) [[ $# -eq 2 ]] || { usage >&2; exit 2; } ;;
+  plan) [[ $# -eq 2 ]] || { usage >&2; exit 2; } ;;
+  activate)
+    [[ $# -eq 2 || ( $# -eq 4 && "$3" == --expect-current ) ]] ||
+      { usage >&2; exit 2; }
+    if [[ $# -eq 4 ]]; then
+      [[ "$4" =~ ^v[0-9]+[.][0-9]+[.][0-9]+(-[A-Za-z0-9.-]+)?-[a-f0-9]{12}$ ]] ||
+        die "Invalid expected current release name."
+    fi
+    ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -221,6 +229,14 @@ if [[ "$ROOT" == /opt/atlas-node ]]; then
     die "Recovery timer must be installed, enabled and running before activation."
 fi
 old="$(current)" || die "No valid current symlink: refusing activation."
+# The optional source guard is evaluated INSIDE the existing lifecycle flock.
+# It is used by the root-only update executor after its Server claim: a
+# concurrent manual activate/rollback using this same lifecycle must never
+# replace the source release after the administrator approved that exact build.
+if [[ "$action" == activate && $# -eq 4 ]]; then
+  [[ "$old" == "$ROOT/releases/$4" ]] ||
+    die "Current release no longer matches the host-approved starting release."
+fi
 if [[ "$action" == rollback ]]; then
   target="$(previous)" || die "No valid previous release recorded."
 else
