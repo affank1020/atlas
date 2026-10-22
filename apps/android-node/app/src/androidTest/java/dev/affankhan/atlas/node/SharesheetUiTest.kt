@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
@@ -18,13 +20,18 @@ import org.junit.Test
 class SharesheetUiTest {
     @get:Rule val compose = createComposeRule()
     private var state by mutableStateOf(CompanionSession())
+    private var selected by mutableStateOf("")
+    private val senderNode = StoredNode("https://atlas.example.com",
+        "123e4567-e89b-42d3-a456-426614174000", "a".repeat(43), "Samsung")
+    private val mac = ShareRecipient("123e4567-e89b-42d3-a456-426614174002", "MacBook", "darwin", "online", true)
+    private val offline = ShareRecipient("123e4567-e89b-42d3-a456-426614174003", "Offline Mac", "darwin", "offline", false)
 
-    private fun mount() {
+    private fun mount(ready: Boolean = false) {
         compose.setContent {
             AtlasCompanion(
                 session = state,
-                node = null,
-                connection = "Not enrolled",
+                node = if (ready) senderNode else null,
+                connection = if (ready) "Online" else "Not enrolled",
                 pairing = false,
                 pairingError = null,
                 recoveryNodeId = null,
@@ -34,11 +41,11 @@ class SharesheetUiTest {
                 onForget = {},
                 onNavigate = { state = state.navigate(it) },
                 onEditDraft = { state = state.editDraft(it) },
-                shareTarget = "",
-                recipients = emptyList(),
+                shareTarget = selected,
+                recipients = if (ready) listOf(mac, offline) else emptyList(),
                 recipientsLoading = false,
                 recipientsError = null,
-                onSelectRecipient = {},
+                onSelectRecipient = { selected = it },
                 onRefreshRecipients = {},
                 shareStatus = "Nothing sent yet",
                 sharePending = false,
@@ -65,6 +72,15 @@ class SharesheetUiTest {
         compose.onNodeWithTag("share-draft").assertTextContains("A submitted")
         compose.onNodeWithTag("load-next-share").performClick()
         compose.onNodeWithTag("share-draft").assertTextContains("B arrived")
+    }
+
+    @Test fun pickerShowsApprovedNamesDisablesOfflineAndRequiresSelection() {
+        mount(ready = true)
+        compose.runOnIdle { state = state.editDraft("Send after selecting a recipient") }
+        compose.onNodeWithTag("share-submit").assertIsNotEnabled()
+        compose.onNodeWithTag("recipient-" + offline.nodeId).assertIsNotEnabled()
+        compose.onNodeWithTag("recipient-" + mac.nodeId).assertIsEnabled().performClick()
+        compose.onNodeWithTag("share-submit").assertIsEnabled()
     }
 
     @Test fun leavingSendAndReturningRetainsDraft() {
