@@ -18,6 +18,21 @@ export class NodeShareApprovals {
         return (result.rowCount ?? 0) > 0;
     }
 
+    /** Used only after Node socket auth. Never enumerate all configured pairs to a device. */
+    async targetsFor(sourceId: string): Promise<Set<string>> {
+        const source = sourceId.toLowerCase();
+        const result = await this.pool.query(
+            'SELECT target_node_id FROM node_share_approvals WHERE source_node_id=$1 LIMIT 65', [source]);
+        const targets = new Set<string>();
+        for (const row of result.rows) targets.add(String(row.target_node_id).toLowerCase());
+        for (const pair of this.environmentPairs) {
+            const [from, target] = pair.split(':');
+            if (from === source && target) targets.add(target);
+        }
+        if (targets.size > 64) throw new AtlasError('Recipient directory is unavailable.', 'SHARE_UNAVAILABLE');
+        return targets;
+    }
+
     async list(): Promise<NodeShareApproval[]> {
         const result = await this.pool.query(
             'SELECT source_node_id, target_node_id FROM node_share_approvals ORDER BY source_node_id,target_node_id');
