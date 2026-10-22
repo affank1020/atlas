@@ -55,3 +55,15 @@ it('shows development outcomes with Node, task and duration without output blobs
     expect(items[0].details).toMatchObject({ nodeId: 'node', task: 'test', exitCode: 1, durationMs: 4200 });
     expect(filterActivity(items, 'dev')).toHaveLength(1);
 });
+
+it('does not hide a correlated failure behind a later successful event', () => {
+    const request = event('request', 'workspace.mutation_requested', { attemptId: 'retry', operation: 'workspace.git_committed' });
+    const failure = event('failure', 'workspace.mutation_failed', { attemptId: 'retry', operation: 'workspace.git_committed', outcome: 'failed', error: 'Push rejected' },
+        { occurredAt: '2026-10-22T08:00:00Z' });
+    const later = event('result', 'workspace.git_committed', { attemptId: 'retry', outcome: 'completed' },
+        { occurredAt: '2026-10-22T08:01:00Z' });
+    const items = presentActivity([later, request, failure]);
+    expect(items).toHaveLength(1);
+    expect(items[0].status).toBe('failed');
+    expect(items[0].description).toBe('Push rejected');
+});
