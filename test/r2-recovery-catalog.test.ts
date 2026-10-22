@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Pool } from 'pg';
-import { ObjectNotFound } from '../apps/server/src/server/file-storage.js';
+import { LocalObjectStore, ObjectNotFound } from '../apps/server/src/server/file-storage.js';
+import { createR2SeedPrimarySource, seedR2Backup } from '../apps/server/src/server/r2-backup-seeding.js';
 import {
     verifyR2RecoveryCatalog, parseRecoveryCatalogArgs, R2_RECOVERY_MAX_CATALOG_RECORDS,
 } from '../apps/server/src/server/r2-recovery-verification.js';
@@ -147,4 +151,87 @@ test('bounded scan refuses overdeliver and any unclassified remote errors', asyn
             database:source([]).db, primary:store(map).backend,backup:store(map).backend,
             maxRecords:limit,
         }),/limit/);
+});
+
+test('legacy local-only File is seeded then catalog-verified without primary R2', async t => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'atlas-r2-catalog-legacy-'));
+    t.after(async () => { await rm(dir, { recursive: true, force: true }); });
+    const legacy = file(50);
+    await writeFile(path.join(dir, legacy.row.storage_key), legacy.bytes);
+    let remoteReads = 0;
+    const primary = createR2SeedPrimarySource({
+        getBounded: async () => { remoteReads++; throw new ObjectNotFound(); },
+    }, new LocalObjectStore(dir));
+    const recovered = new Map<string, Buffer>();
+    let writes = 0;
+    const backup = {
+        getBounded: async (key: string, maxBytes: number) => {
+            assert.ok(maxBytes <= 25 * 1024 * 1024);
+            const bytes = recovered.get(key);
+            if (bytes === undefined) throw new ObjectNotFound();
+            return bytes;
+        },
+        putIfAbsent: async (key: string, bytes: Buffer) => {
+            writes++;
+            assert.equal(recovered.has(key), false);
+            recovered.set(key, Buffer.from(bytes));
+            return true;
+        },
+    };
+    // This is the same bounded source actually used by the seeder and new
+    // catalog CLI; the catalog uses a different query, on the same metadata.
+    const seedDb = { query: async () => ({ rows: [legacy.row] }) } as unknown as Pick<Pool, 'query'>;
+    const seed = await seedR2Backup({
+        database: seedDb, primary, backup, apply: true,
+    });
+    assert.equal(seed.status, 'completed');
+    assert.equal(seed.createdVerified, 1);
+    assert.equal(writes, 1);
+    assert.deepEqual(recovered.get(legacy.row.storage_key), legacy.bytes);
+
+    const report = await verifyR2RecoveryCatalog({
+        database: source([legacy.row]).db, primary, backup,
+    });
+    assert.equal(report.status, 'passed');
+    assert.equal(report.primarySource, 'effective-atlas-files');
+    assert.equal(report.checked, 1);
+    assert.equal(report.verifiedBoth, 1);
+    assert.equal(report.verifiedPrimaryViaLegacyLocal, 1);
+    assert.equal(report.primaryMissing, 0);
+    assert.equal(report.noWrites, true);
+    assert.equal(writes, 1, 'catalog verification must never upload');
+    assert.equal(remoteReads, 2, 'only classified R2 object absence permits local fallback');
+});
+
+test('catalog refuses unsafe remote error, corrupt legacy bytes or unmounted local root', async t => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'atlas-r2-catalog-errors-'));
+    t.after(async () => { await rm(dir, { recursive: true, force: true }); });
+    const legacy = file(51);
+    await writeFile(path.join(dir, legacy.row.storage_key), legacy.bytes);
+    const backup = store(new Map([[legacy.row.storage_key, legacy.bytes]])).backend;
+    const remoteError = createR2SeedPrimarySource({
+        getBounded: async () => { throw new Error('primary R2 HTTP 403'); },
+    }, new LocalObjectStore(dir));
+    await assert.rejects(verifyR2RecoveryCatalog({
+        database: source([legacy.row]).db, primary: remoteError, backup,
+    }), /primary R2 HTTP 403/, 'never hide auth, network or bucket errors behind local data');
+
+    await writeFile(path.join(dir, legacy.row.storage_key), Buffer.from('tampered'));
+    const remoteMissing = {getBounded: async (): Promise<Buffer> => { throw new ObjectNotFound(); }};
+    const corrupt = await verifyR2RecoveryCatalog({
+        database: source([legacy.row]).db,
+        primary: createR2SeedPrimarySource(remoteMissing, new LocalObjectStore(dir)),
+        backup,
+    });
+    assert.equal(corrupt.status, 'failed');
+    assert.equal(corrupt.primaryCorrupt, 1);
+    assert.equal(corrupt.verifiedPrimaryViaLegacyLocal, 0,
+        'only intact local fallback objects can count as verified');
+
+    await rm(dir, { recursive: true, force: true });
+    await assert.rejects(verifyR2RecoveryCatalog({
+        database: source([legacy.row]).db,
+        primary: createR2SeedPrimarySource(remoteMissing, new LocalObjectStore(dir)),
+        backup,
+    }), /ENOENT/, 'a missing legacy mount must be inconclusive, not misclassified as a missing File');
 });
