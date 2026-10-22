@@ -121,7 +121,7 @@ export class NodeUpdateIntentLedger {
     async claim(nodeId: string, intentId: string, credential: string,
         expectedInstalledVersion: string, expectedSha256: string): Promise<NodeUpdateIntent> {
         if (!/^[0-9a-f]{64}$/.test(expectedSha256) ||
-            !/^[0-9]+[.][0-9]+[.][0-9]+[+][0-9a-f]{12}$/.test(expectedInstalledVersion) ||
+            !/^[0-9]+[.][0-9]+[.][0-9]+(?:[+][0-9a-f]{12})?$/.test(expectedInstalledVersion) ||
             typeof credential !== 'string' || credential.length < 32)
             throw new AtlasError('Invalid Node update claim.', 'INVALID_INPUT');
         const credentialHash = createHash('sha256').update(credential).digest('hex');
@@ -143,17 +143,20 @@ export class NodeUpdateIntentLedger {
                 WHERE id=$1 AND node_id=$2 FOR UPDATE`, [intentId, nodeId]);
             const item = selected.rows[0];
             if (!item) throw new AtlasError('Node update request not found.', 'NOT_FOUND');
-            // Use DB clock, not the API process clock, under the row lock.
-            const valid = await client.query(`SELECT 1 FROM node_update_intents
-                WHERE id=$1 AND node_id=$2 AND status='requested' AND expires_at>now()
-                  AND installed_version=$3 AND target_sha256=$4
-                  AND created_at >= $5::timestamptz`,
-                [intentId,nodeId,expectedInstalledVersion,expectedSha256,node.credential_updated_at]);
-            if (!valid.rowCount || item.status !== 'requested')
-                throw new AtlasError('Update intent is stale, cancelled, expired or already claimed.', 'CONFLICT');
+            // now() is frozen at BEGIN, including time spent waiting for
+            // the Node/intent row locks. Test expiry with a live DB clock in
+            // the *conditional UPDATE*, after both locks have been acquired.
+            // An expired request can never become claimed after a lock wait.
             const result = await client.query<Row>(`UPDATE node_update_intents
-                SET status='claimed',resolved_at=now() WHERE id=$1 AND node_id=$2
-                RETURNING *`, [intentId,nodeId]);
+                SET status='claimed',resolved_at=clock_timestamp()
+                WHERE id=$1 AND node_id=$2 AND status='requested'
+                  AND expires_at>clock_timestamp()
+                  AND installed_version=$3 AND target_sha256=$4
+                  AND created_at >= $5::timestamptz
+                RETURNING *`,
+                [intentId,nodeId,expectedInstalledVersion,expectedSha256,node.credential_updated_at]);
+            if (!result.rowCount || item.status !== 'requested')
+                throw new AtlasError('Update intent is stale, cancelled, expired or already claimed.', 'CONFLICT');
             await this.audit(client, 'node.update_intent_claimed', {
                 nodeId, intentId, status: 'claimed', installedVersion: expectedInstalledVersion,
                 targetCommit: item.target_commit.trim(), approved: false, executable: false,
