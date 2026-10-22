@@ -245,3 +245,84 @@ with tempfile.TemporaryDirectory() as td:
 print("failure remains claimed and requires reconciliation")
 `);
 });
+
+test('root executor cleans private snapshots on every preclaim refusal but preserves them on uncertain claim', { skip: !available }, () => {
+    passes(String.raw`
+import importlib.util,datetime as dt,pathlib,sys,tempfile
+def load(name,fn):
+    spec=importlib.util.spec_from_file_location(name,fn)
+    mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod);return mod
+e=load("exe",sys.argv[1]);a=load("approval",sys.argv[2])
+node="01234567-89ab-4cde-8fab-0123456789ab"
+ident="12345678-90ab-4cde-8fab-1234567890ab"
+old="2.0.0+"+"c"*12;commit="b"*40
+now=dt.datetime.now(dt.timezone.utc)
+intent=dict(id=ident,nodeId=node,installedVersion=old,targetVersion="2.0.1",
+    targetCommit=commit[:12],targetSourceCommit=commit,targetSha256="d"*64,
+    createdAt=a.iso(now),expiresAt=a.iso(now+dt.timedelta(minutes=10)),
+    status="requested",resolvedAt=None,approved=False,executable=False)
+with tempfile.TemporaryDirectory() as td:
+    parent=pathlib.Path(td)
+    state=parent/"approvals"
+    class Store(a.ApprovalStore):
+        def __init__(self,unused):super().__init__(state,owner_uid=None)
+    class Module: pass
+    m=Module();m.ApprovalStore=Store;m.when=a.when;m.clock=a.clock
+    m.read_host_node_id=lambda:node;m.read_installed_version=lambda:old
+    Store(None).approve(intent,node,old,now)
+    e.STATE=state;e.RELEASE_ROOT=parent/"root"
+    (e.RELEASE_ROOT/"releases").mkdir(parents=True)
+    e.secure_executable=lambda _:None
+    e.read_node_config=lambda _:{"ATLAS_NODE_ID":node,
+        "ATLAS_NODE_CREDENTIAL":"s"*43,
+        "ATLAS_SERVER_URL":"wss://atlas.example.com/node/connect"}
+    archive=parent/"archive";archive.write_bytes(b"archive")
+    checksum=parent/"checksum";checksum.write_bytes(b"sidecar")
+    bundle=parent/"bundle";bundle.write_bytes(b"attestation")
+    e.claim_server=lambda *args: (_ for _ in ()).throw(e.Refused("uncertain Server reply"))
+    good_copy=e.copy_snapshot
+    def good_runner(args,**kwargs): return None
+    def fail_runner(args,**kwargs):
+        if args[0]=="/usr/bin/systemctl":raise RuntimeError("watchdog offline")
+    for mode in ("partial_snapshot","bad_signature","watchdog_offline","declined"):
+        e.copy_snapshot=good_copy
+        e.verify_snapshot=lambda *args:None
+        e.input=lambda _: "EXECUTE "+ident
+        runner=good_runner
+        if mode=="partial_snapshot":
+            writes=[0]
+            def incomplete_copy(src,dst,limit):
+                writes[0]+=1
+                if writes[0]==2:
+                    dst.write_bytes(b"partial data")
+                    raise RuntimeError("interrupted copying")
+                return good_copy(src,dst,limit)
+            e.copy_snapshot=incomplete_copy
+        elif mode=="bad_signature":
+            def invalid_signature(*args):
+                raise e.Refused("missing verified attestation")
+            e.verify_snapshot=invalid_signature
+        elif mode=="watchdog_offline": runner=fail_runner
+        else:e.input=lambda _: "NO"
+        try:
+            e._execute(ident,archive,checksum,bundle,approval_module=m,runner=runner)
+        except (e.Refused,RuntimeError):
+            pass
+        else:raise AssertionError("unsafe preclaim path accepted: "+mode)
+        assert not list(state.glob(".executor-input-*")), mode+": private stage leaked"
+        assert e.ReceiptStore(Store(None)).read(ident) is None, mode+": a claim was recorded"
+        assert Store(None).status(ident)["status"]=="approved",mode
+    # A subsequent attempt with repaired inputs can still reach the Server,
+    # but an ambiguous result MUST preserve the snapshot and receipt.
+    e.copy_snapshot=good_copy
+    e.verify_snapshot=lambda *args:None
+    e.input=lambda _: "EXECUTE "+ident
+    try:e._execute(ident,archive,checksum,bundle,approval_module=m,runner=good_runner)
+    except e.Refused as exc: assert "uncertain" in str(exc)
+    else:raise AssertionError("simulated uncertain claim accepted")
+    assert e.ReceiptStore(Store(None)).read(ident)["stage"]=="requires_reconciliation"
+    assert len(list(state.glob(".executor-input-*")))==1
+    assert Store(None).status(ident)["status"]=="approved"
+print("preclaim refused snapshots removed, uncertain claim retained")
+`);
+});
