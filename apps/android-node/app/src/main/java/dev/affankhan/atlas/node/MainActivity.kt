@@ -212,6 +212,7 @@ internal fun AtlasCompanion(
                             sharePending = sharePending,
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
+                            inboxStatus = inboxStatus,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
