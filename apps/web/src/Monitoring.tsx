@@ -89,7 +89,9 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         return event.operation.startsWith('workspace.') && attempt
             ? `attempt:${event.projectId ?? ''}:${event.workspaceId ?? ''}:${attempt}` : event.id;
     })).size : 0;
-    const changePage = (next: number) => { location.hash = monitoringHash('activity', { ...filters, offset: String(next) }); };
+    const changePage = (next: number) => { location.hash = monitoringHash('activity', {
+        ...filters, offset: String(next), live: next > 0 ? undefined : filters.live,
+    }); };
     return <section className="panel activity-panel" aria-label="Monitoring activity">
         <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions">
             <button type="button" className="ghost" aria-pressed={live}
