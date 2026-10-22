@@ -10,9 +10,10 @@ const credential = 'a'.repeat(43);
 const digest = 'b'.repeat(64);
 const version = '2.0.0+cccccccccccc';
 
-async function fixture(options: { refuseAuth?: boolean; refuseClaim?: boolean } = {}) {
+async function fixture(options: { refuseAuth?: boolean; refuseClaim?: boolean; disabled?: boolean } = {}) {
     const operations: string[] = [];
     const services = {
+        config: { nodeUpdateClaims: { enabled: !options.disabled } },
         identity: { authenticate: async (id: string, token: string) => {
             operations.push('auth:' + id + ':' + token.length);
             if (options.refuseAuth) {
@@ -108,4 +109,11 @@ test('Node claim never treats a failed reservation as host execution', async t =
         body: JSON.stringify(data) });
     assert.notEqual(res.status, 200);
     assert.equal(f.operations.length, 2);
+});
+
+test('Node claim endpoint is unavailable by default until host execution is reviewed', async t => {
+    const f = await fixture({ disabled: true }); t.after(f.close);
+    const res = await fetch(f.url, { method: 'POST', headers: f.headers, body: JSON.stringify(data) });
+    assert.equal(res.status, 404);
+    assert.deepEqual(f.operations, [], 'disabled route must not authenticate or touch intent ledger');
 });
