@@ -156,12 +156,18 @@ with tempfile.TemporaryDirectory() as td:
     e.verify_snapshot=verified
     def server(url,node_id,token,grant):
         log.append("server")
-        assert log==["verify","server"],"server claim must follow signed verification"
+        assert log==["verify","watchdog-enabled","watchdog-active","node-active","server"], "claim requires signed verification and watchdog preflight"
         return {"status":"claimed"}
     e.claim_server=server
     e.input=lambda prompt:"EXECUTE "+ident
     def shell(command,**kwargs):
         assert kwargs["check"] and kwargs["env"]==e.SAFE_ENV
+        if command[0]=="/usr/bin/systemctl":
+            assert command[2]=="--quiet"
+            assert command[3] in ("atlas-node-lifecycle-recover.timer", "atlas-node.service")
+            log.append({"is-enabled":"watchdog-enabled",
+                "is-active":("node-active" if command[3]=="atlas-node.service" else "watchdog-active")}[command[1]])
+            return
         assert command[0]=="/usr/bin/bash"
         if command[1]==str(e.TRUSTED_STAGE) and command[2]=="install":
             log.append("install")
@@ -177,12 +183,12 @@ with tempfile.TemporaryDirectory() as td:
     with mock.patch.object(e.sys,"platform","linux"):
         record=e._execute(ident,archive,checksum,bundle,approval_module=m,runner=shell)
     assert record["stage"]=="activated",record
-    assert log==["verify","server","install","plan","activate"],log
+    assert log==["verify","watchdog-enabled","watchdog-active","node-active","server","install","plan","activate"],log
     assert Store(None).status(ident)["status"]=="claimed"
     receipt=e.ReceiptStore(Store(None)).read(ident)
     assert receipt["stage"]=="activated"
     refuses(lambda:e._execute(ident,archive,checksum,bundle,approval_module=m,runner=shell))
-    assert log==["verify","server","install","plan","activate"],"replay must stop before any mutation"
+    assert log==["verify","watchdog-enabled","watchdog-active","node-active","server","install","plan","activate"],"replay must stop before any mutation"
 print("execution receipt and no-replay proof passed")
 `);
 });
