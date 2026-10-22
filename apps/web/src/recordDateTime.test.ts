@@ -22,3 +22,9 @@ test('local editor rejects impossible calendar dates and DST gaps rather than si
         expect(() => localInputToStoredDateTime(raw)).toThrow();
     }
 });
+
+test('whole-minute timestamps use the browser-normalized datetime-local representation', () => {
+    const local = storedDateTimeToLocalInput('2026-10-22T12:00:00Z');
+    expect(local).toMatch(/T\d{2}:\d{2}$/);
+    expect(localInputToStoredDateTime(local)).toBe('2026-10-22T12:00:00.000Z');
+});

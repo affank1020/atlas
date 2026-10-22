@@ -8,7 +8,7 @@ export function storedDateTimeToLocalInput(value: unknown): string {
     if (Number.isNaN(date.getTime())) return '';
     const pad = (number: number, width = 2) => String(number).padStart(width, '0');
     const milliseconds = date.getMilliseconds();
-    return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${milliseconds ? '.' + pad(milliseconds, 3) : ''}`;
+    return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}${date.getSeconds() || milliseconds ? ':' + pad(date.getSeconds()) : ''}${milliseconds ? '.' + pad(milliseconds, 3) : ''}`;
 }
 
 /** Interpret an edited wall-clock value in the browser's local timezone,
