@@ -43,6 +43,10 @@ function fixture() {
         '  is-active) exit 0 ;;',
         '  show) echo 4242 ;;',
         '  restart)',
+        '    if [[ "${ATLAS_TEST_KILL_ACTIVATOR:-0}" == "1" ]]; then',
+        '      kill -KILL "$PPID"',
+        '      sleep 0.1',
+        '    fi',
         '    target="$(readlink "$ATLAS_LIFECYCLE_ROOT/current")"',
         '    if [[ "$ATLAS_TEST_FAIL_TARGET" == "$target" ]]; then',
         '      printf \'{"pid":4242,"state":"reconnecting"}\' > "$ATLAS_LIFECYCLE_STATUS_FILE"',
@@ -102,4 +106,46 @@ test('lifecycle refuses missing target and auto-rolls back an unconnected releas
     assert.equal(f.run(['status']).status, 0);
     const events = readFileSync(f.log, 'utf8');
     assert.ok((events.match(/^restart atlas-node$/gm) ?? []).length >= 2);
+});
+
+test('killed activator leaves a durable journal; host recovery restores and restarts old Node', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const killed = f.run(['activate', f.newer.name], { ATLAS_TEST_KILL_ACTIVATOR: '1' });
+    assert.notEqual(killed.status, 0, 'a killed activation cannot report success');
+    assert.equal(readlinkSync(join(f.root, 'current')), f.newer.folder);
+    assert.equal(readFileSync(join(f.root, '.activation-pending'), 'utf8'), f.old.name + '\n' + f.newer.name + '\n');
+    assert.match(f.run(['status']).stdout, /Recovery: pending/);
+    const blocked = f.run(['rollback']);
+    assert.notEqual(blocked.status, 0);
+    assert.match(blocked.stderr, /Pending activation must be recovered/);
+    const restored = f.run(['recover']);
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false);
+    assert.match(restored.stdout, /Recovery completed/);
+    assert.match(readFileSync(f.log, 'utf8'), /restart atlas-node/);
+    assert.equal(f.run(['recover']).status, 0, 'recovery should be idempotent');
+});
+
+test('malformed interrupted activation journal cannot redirect or trigger a recovery', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    writeFileSync(join(f.root, '.activation-pending'), 'v2.0.0-' + 'c'.repeat(12) + '\n/other/path\n');
+    const recovery = f.run(['recover']);
+    assert.notEqual(recovery.status, 0);
+    assert.match(recovery.stderr, /Invalid pending activation journal/);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(f.log), false, 'no systemctl invocation permitted with a malformed journal');
+    assert.notEqual(f.run(['activate', f.newer.name]).status, 0);
+});
+
+test('failed health restoration keeps journal until the old Node reconnects', { skip: !available }, t => {
+    const f = fixture();
+    t.after(() => rmSync(f.root, { recursive: true, force: true }));
+    const failed = f.run(['activate', f.newer.name], { ATLAS_TEST_FAIL_TARGET: f.newer.folder });
+    assert.notEqual(failed.status, 0);
+    assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder);
+    assert.equal(existsSync(join(f.root, '.activation-pending')), false,
+        'healthy rollback must clear the pending journal');
 });
