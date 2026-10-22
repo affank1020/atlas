@@ -79,8 +79,12 @@ export function verifyRootUpdateAttestation(
             return false;
         const key = createPublicKey(pinnedPublicKeyPem);
         if (key.asymmetricKeyType !== 'ed25519') return false;
-        return verifySignature(null, rootUpdateAttestationMessage(value), key,
-            Buffer.from(value.signature, 'base64'));
+        const signature = Buffer.from(value.signature, 'base64');
+        // Node's base64 parser accepts alternate trailing pad bits. Refuse
+        // noncanonical encodings to keep future nonce/audit dedupe stable.
+        if (signature.length !== 64 || signature.toString('base64') !== value.signature)
+            return false;
+        return verifySignature(null, rootUpdateAttestationMessage(value), key, signature);
     } catch {
         return false;
     }
