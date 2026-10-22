@@ -221,3 +221,63 @@ test('Monitoring activity requests safe projection and links only known scoped I
     expect(screen.getByRole('link', { name: 'Node activity' })).toHaveAttribute('href',
         '#/monitoring?tab=activity&nodeId=44444444-4444-4444-8444-444444444444');
 });
+
+test('safe-projected Workspace event keeps a stable identity without exposing an audit display name', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const workspaceId = '33333333-3333-4333-8333-333333333333';
+    vi.mocked(callTool).mockResolvedValue({
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', occurredAt: '2026-10-22T12:00:00Z',
+            client: 'Atlas Web', operation: 'workspace.dev_invoked', workspaceId,
+            resulting: { attemptId: 'safe-projected', task: 'test', durationMs: 150 },
+        }], total: 1, offset: 0, limit: 30,
+    } as never);
+    render(<MonitoringPage />);
+    const title = await screen.findByText('test · 0.1s');
+    const summary = title.closest('summary');
+    expect(summary).not.toBeNull();
+    expect(summary).toHaveTextContent(`Workspace ${workspaceId}`);
+    expect(summary).not.toHaveTextContent('Unknown workspace');
+    fireEvent.click(summary!);
+    expect(screen.getByText(workspaceId)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Workspace activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&workspaceId=${workspaceId}`);
+});
+
+test('share audit rows provide separate source and recipient Node activity links', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const sourceNodeId = '11111111-1111-4111-8111-111111111111';
+    const targetNodeId = '22222222-2222-4222-8222-222222222222';
+    vi.mocked(callTool).mockResolvedValue({
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', occurredAt: '2026-10-22T12:00:00Z',
+            client: 'Atlas Web', operation: 'node.share.approved',
+            resulting: { sourceNodeId, targetNodeId },
+        }], total: 1, offset: 0, limit: 30,
+    } as never);
+    render(<MonitoringPage />);
+    const title = await screen.findByText('Node share approved');
+    fireEvent.click(title.closest('summary')!);
+    expect(screen.getByRole('link', { name: 'Source Node activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&nodeId=${sourceNodeId}`);
+    expect(screen.getByRole('link', { name: 'Target Node activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&nodeId=${targetNodeId}`);
+});
+
+test('share audit navigation deduplicates equal source and target Node IDs', async () => {
+    location.hash = '#/monitoring?tab=activity';
+    const nodeId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(callTool).mockResolvedValue({
+        items: [{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', occurredAt: '2026-10-22T12:00:00Z',
+            client: 'Atlas Web', operation: 'node.share.revoked',
+            resulting: { sourceNodeId: nodeId, targetNodeId: nodeId },
+        }], total: 1, offset: 0, limit: 30,
+    } as never);
+    render(<MonitoringPage />);
+    fireEvent.click((await screen.findByText('Node share revoked')).closest('summary')!);
+    expect(screen.getByRole('link', { name: 'Source Node activity' })).toHaveAttribute('href',
+        `#/monitoring?tab=activity&nodeId=${nodeId}`);
+    expect(screen.queryByRole('link', { name: 'Target Node activity' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /Node activity/i })).toHaveLength(1);
+});
