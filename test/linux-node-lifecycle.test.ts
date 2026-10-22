@@ -169,6 +169,8 @@ test('interrupted manual rollback finishes rollback, never restores the rejected
     assert.equal(recovered.status, 0, recovered.stderr);
     assert.equal(readlinkSync(join(f.root, 'current')), f.old.folder,
         'recovery must never undo an explicitly requested rollback');
+    assert.equal(readlinkSync(join(f.root, 'previous')), f.newer.folder,
+        'recovery must also reconcile the rollback pointer');
     assert.equal(existsSync(join(f.root, '.activation-pending')), false);
 });
 
