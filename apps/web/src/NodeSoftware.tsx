@@ -104,13 +104,13 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         (!Number.isFinite(expiresAt) || expiresAt <= clock) ? 'expired' : storedIntent?.status;
     const hasPendingIntent = intentStatus === 'requested' || intentStatus === 'claimed';
 
-    function refreshIntents(nodeId: string) {
+    function refreshIntents(nodeId: string, silent = false): Promise<void> {
         const generation = ++intentReadGeneration.current;
-        setIntention(current => ({
+        if (!silent) setIntention(current => ({
             ...(current?.nodeId === nodeId ? current : { nodeId }),
             nodeId, loading: true,
         }));
-        void callTool<NodeUpdateIntent[]>('list_node_update_intents', { nodeId, limit: 20 })
+        return callTool<NodeUpdateIntent[]>('list_node_update_intents', { nodeId, limit: 20 })
             .then(items => {
                 if (intentReadGeneration.current !== generation) return;
                 const scoped = items.filter(item => item.nodeId === nodeId);
@@ -147,6 +147,21 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         // eligibility check. It must not update a different Node after switch.
         return () => { ++intentMutationGeneration.current; intentMutationBusy.current = false; };
     }, [node.id]);
+
+    useEffect(() => {
+        // A native Node can claim an intent without changing the Node's
+        // reported version or connection snapshot. Reconcile while a request
+        // is pending; otherwise the operator sees a stale Cancel button.
+        // Background polls leave the current status visible while fetching.
+        if (node.platform !== 'linux' || intentStatus !== 'requested') return;
+        let inFlight = false;
+        const interval = window.setInterval(() => {
+            if (inFlight || intentMutationBusy.current) return;
+            inFlight = true;
+            void refreshIntents(node.id, true).finally(() => { inFlight = false; });
+        }, 5_000);
+        return () => window.clearInterval(interval);
+    }, [node.id, nodeSnapshot, intentStatus]);
 
     useEffect(() => {
         if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
