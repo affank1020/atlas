@@ -182,12 +182,30 @@ class ApprovalStore:
         if (self.owner_uid is not None and info.st_uid != self.owner_uid) or (stat.S_IMODE(info.st_mode) & 0o077):
             raise Refused("Approval store directory is not privately owned.")
 
+    @staticmethod
+    def _sync_directory(path: Path):
+        """Persist the containing directory entry before acknowledging a grant.
+
+        Syncing only records/ is insufficient on a newly provisioned host:
+        its entry in the store root and the store root's entry in /var/lib
+        also require independent fsync barriers.
+        """
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
     @contextlib.contextmanager
     def locked(self):
         self.base.mkdir(mode=0o700, exist_ok=True)
         self._check_directory(self.base)
+        # Also sync on subsequent openings, to recover an interrupted first
+        # initialization that left a visible but not yet durable directory.
+        self._sync_directory(self.base.parent)
         self.records.mkdir(mode=0o700, exist_ok=True)
         self._check_directory(self.records)
+        self._sync_directory(self.base)
         flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
         fd = os.open(self.base / ".lock", flags, 0o600)
         try:
@@ -232,7 +250,15 @@ class ApprovalStore:
         fd, name = tempfile.mkstemp(prefix=".pending-", dir=self.records)
         try:
             os.fchmod(fd, 0o600)
-            os.write(fd, raw)
+            # A successful os.write may write fewer bytes than requested.
+            # Never publish a truncated record, even under disk/quota pressure.
+            data = memoryview(raw)
+            written = 0
+            while written < len(data):
+                count = os.write(fd, data[written:])
+                if count <= 0:
+                    raise Refused("Approval record write made no progress.")
+                written += count
             os.fsync(fd)
             os.close(fd)
             fd = -1
