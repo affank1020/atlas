@@ -410,16 +410,19 @@ def execute(intent_id: str, archive: Path, checksum: Path, bundle: Path,
                   "installedVersion": installed, "targetVersion": grant["targetVersion"],
                   "targetCommit": grant["targetCommit"], "targetSha256": grant["targetSha256"]}
         record = receipts.mark(record, "claiming", create=True)
-        # A network error after POST is ambiguous. There is NO automatic retry.
-        try:
-            claim_server(endpoint, node_id, configuration["ATLAS_NODE_CREDENTIAL"], grant)
-        except Exception:
-            receipts.mark(record, "requires_reconciliation")
-            raise
-        # Atomically consume the independent root-owned grant. A revoke that
-        # happened prior to this transaction stops execution, never bypasses it.
-        store.claim_once(intent_id, node_id, grant["targetSha256"], installed)
-        record = receipts.mark(record, "claimed")
+    # A network error after POST is ambiguous. There is NO automatic retry.
+    try:
+        claim_server(endpoint, node_id, configuration["ATLAS_NODE_CREDENTIAL"], grant)
+    except Exception:
+        receipts.mark(record, "requires_reconciliation")
+        raise
+    # We MUST drop the ApprovalStore flock before calling claim_once():
+    # that method takes its own exclusive lock on a different open-file
+    # description. Nesting those locks would deadlock the root executor.
+    # If an administrator revokes during the Server request, claim_once
+    # refuses and no privileged host mutation can occur.
+    store.claim_once(intent_id, node_id, grant["targetSha256"], installed)
+    record = receipts.mark(record, "claimed")
 
     # Host mutations happen only after BOTH one-use claims and signed bytes.
     # Input snapshots remain private and are not cleaned up on uncertainty.
