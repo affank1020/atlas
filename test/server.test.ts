@@ -15,7 +15,7 @@ test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () =
     const names = (await client.listTools()).tools.map((x) => x.name); assert.ok(names.includes("create_record")); assert.ok(names.includes("query_records")); assert.ok(names.includes("ask_atlas")); assert.ok(names.includes("ask_portfolio")); assert.ok(names.includes("sync_portfolio")); assert.ok(names.includes("get_contentful_status")); assert.ok(names.includes("query_monitoring_activity")); assert.ok(names.includes("read_server_diagnostics")); assert.ok(names.includes("search_atlas")); assert.ok(names.includes("request_context")); assert.ok(!names.includes("ingest_conversation"));
     const status = await client.callTool({ name: "get_atlas_status", arguments: {} }); assert.equal((status.structuredContent as any).result.version, "2.0.0"); assert.deepEqual((status.structuredContent as any).result.subsystems.fabric,{status:"active",visibility:"public"});
     const diagnosticsHttp = await fetch(`http://127.0.0.1:${address.port}/api/tools/read_server_diagnostics`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 10 }),
+        method: "POST", headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" }, body: JSON.stringify({ limit: 10 }),
     });
     assert.equal(diagnosticsHttp.status, 200);
     const diag = await diagnosticsHttp.json() as any;
@@ -24,9 +24,16 @@ test("HTTP and MCP expose Core, Fabric and conversational Ask Atlas", async () =
     assert.ok(diag.events.some((event: any) => event.code === 'server_initialised'));
     assert.ok(diag.events.every((event: any) => !Object.hasOwn(event, 'details') && !Object.hasOwn(event, 'error')));
     const rejectedDiagnosticInput = await fetch(`http://127.0.0.1:${address.port}/api/tools/read_server_diagnostics`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 10, path: '/var/run/docker.sock' }),
+        method: "POST", headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" }, body: JSON.stringify({ limit: 10, path: '/var/run/docker.sock' }),
     });
     assert.equal(rejectedDiagnosticInput.status, 400);
+    // The bridge must not inject client metadata into this strict read-only schema.
+    // An explicitly supplied client field must still be rejected.
+    const userSuppliedClient = await fetch(`http://127.0.0.1:${address.port}/api/tools/read_server_diagnostics`, {
+        method: "POST", headers: { "content-type": "application/json", "x-atlas-client": "Atlas Web" },
+        body: JSON.stringify({ limit: 10, client: 'untrusted-attribution' }),
+    });
+    assert.equal(userSuppliedClient.status, 400);
     const bridge = await fetch(`http://127.0.0.1:${address.port}/api/tools/get_atlas_status`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(bridge.status, 200); assert.equal((await bridge.json() as any).version, "2.0.0");
     assert.ok(names.includes("preview_view"));assert.ok(names.includes("get_view_history"));
