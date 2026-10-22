@@ -38,6 +38,16 @@ test('valid host-root evidence verifies only under the independently pinned Ed25
         .export({ format: 'pem', type: 'spki' }).toString();
     assert.equal(verifyRootUpdateAttestation(attestation, rsa, expected), false);
     assert.equal(verifyRootUpdateAttestation(attestation, 'untrusted key text', expected), false);
+    // Alternate base64 pad bits can decode to the same 64-byte signature.
+    // They must NOT be treated as a second valid wire representation.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const penultimate = attestation.signature.at(-3)!;
+    const idx = alphabet.indexOf(penultimate);
+    assert.ok(idx >= 0 && idx % 16 === 0);
+    const alias = attestation.signature.slice(0, -3) + alphabet[idx + 1] + '==';
+    assert.equal(Buffer.from(alias, 'base64').equals(Buffer.from(attestation.signature, 'base64')), true);
+    assert.equal(verifyRootUpdateAttestation({ ...attestation, signature: alias },
+        publicPem, expected), false);
 });
 
 test('identity, target, challenge and version cannot be substituted after signing', () => {
