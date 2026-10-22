@@ -187,3 +187,75 @@ test('simultaneous claims and cancellation produce at most one terminal decision
     assert.ok(current.status === 'cancelled' || current.status === 'claimed');
     assert.equal(results.filter(x => x.status === 'rejected').length, 2);
 });
+
+test('claims legacy SemVer-only Node versions that planning and preparation accept', async () => {
+    const f = await fixture();
+    const legacy = '1.9.9';
+    await f.db.store.pool.query('UPDATE nodes SET version=$2 WHERE id=$1', [f.nodeId, legacy]);
+    const intent = await f.ledger.prepare(f.nodeId, legacy, f.credentialAt, candidate);
+    assert.equal(intent.installedVersion, legacy);
+    await assert.rejects(
+        f.ledger.claim(f.nodeId, intent.id, f.credential, '1.9.9+aaaaaaaaaaaa', candidate.sha256),
+        fails('CONFLICT'),
+    );
+    const result = await f.ledger.claim(f.nodeId, intent.id, f.credential, legacy, candidate.sha256);
+    assert.equal(result.status, 'claimed');
+    assert.equal(result.installedVersion, legacy);
+    assert.equal(result.executable, false);
+});
+
+test('an intent that expires while claim waits for its Node lock cannot be claimed', async () => {
+    const f = await fixture();
+    const intent = await f.ledger.prepare(f.nodeId, f.version, f.credentialAt, candidate);
+    // Use actual PostgreSQL lock contention. PostgreSQL now() would still
+    // evaluate at transaction start, allowing a stale claim after this wait.
+    const blocker = await f.db.store.pool.connect();
+    let claim: Promise<unknown> | undefined;
+    try {
+        await blocker.query('BEGIN');
+        await blocker.query('SELECT id FROM nodes WHERE id=$1 FOR UPDATE', [f.nodeId]);
+        await blocker.query(`UPDATE node_update_intents
+            SET expires_at=clock_timestamp()+interval '3 seconds'
+            WHERE id=$1`, [intent.id]);
+        // The UPDATE belongs to the blocker transaction; commit expiry first,
+        // while preserving the Node row lock via a separate transaction.
+        // The committed expiry can be checked from another connection.
+        await blocker.query('COMMIT');
+        await blocker.query('BEGIN');
+        await blocker.query('SELECT id FROM nodes WHERE id=$1 FOR UPDATE', [f.nodeId]);
+        claim = f.ledger.claim(f.nodeId, intent.id, f.credential, f.version, candidate.sha256);
+        // Prove the claim began BEFORE expiry, but is blocked on the Node lock.
+        let waiting = false;
+        for (let attempt = 0; attempt < 80; attempt++) {
+            const state = await blocker.query(`SELECT EXISTS(
+                SELECT 1 FROM pg_stat_activity
+                WHERE datname=current_database() AND wait_event_type='Lock'
+                  AND query LIKE '%FROM nodes WHERE id=$1 FOR UPDATE%'
+            ) AS blocked`);
+            if (state.rows[0].blocked) { waiting = true; break; }
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        assert.equal(waiting, true, 'claim should be blocked before the intent expires');
+        let expired = false;
+        for (let attempt = 0; attempt < 50; attempt++) {
+            const check = await blocker.query(`SELECT clock_timestamp() >= expires_at AS expired
+                FROM node_update_intents WHERE id=$1`, [intent.id]);
+            if (check.rows[0].expired) { expired = true; break; }
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        assert.equal(expired, true, 'intent must have expired while claim holds its transaction');
+        await blocker.query('COMMIT');
+        await assert.rejects(claim, fails('CONFLICT'));
+        claim = undefined;
+        const saved = (await f.ledger.list(f.nodeId))[0]!;
+        assert.equal(saved.status, 'expired');
+        const record = await f.db.store.pool.query(
+            'SELECT status,resolved_at FROM node_update_intents WHERE id=$1', [intent.id]);
+        assert.equal(record.rows[0].status, 'requested');
+        assert.equal(record.rows[0].resolved_at, null);
+    } finally {
+        await blocker.query('ROLLBACK').catch(() => undefined);
+        blocker.release();
+        if (claim) await claim.catch(() => undefined);
+    }
+});
