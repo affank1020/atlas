@@ -28,6 +28,7 @@ import { NodeResumableTransferService } from './node-resumable-transfer.js';
 import { ApplicationRegistry } from '../apps/registry.js';
 import { portfolioApplication } from '../apps/portfolio-definition.js';
 import { FootballTrainingService, footballTrainingApplication } from '../apps/football-training.js';
+import { CodeReviewsService, codeReviewsApplication } from '../apps/code-reviews.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
 import type { NodeRuntime } from '../nodes/runtime.js';
@@ -63,7 +64,8 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await healthPool.end(); } finally { await repository.close(); } } } }, fabric.repository, portfolio, media, files],
         message => { diagnostics.record('background_task_failed'); console.error(message); });
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
-    const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football)]);
+    const codeReviews = new CodeReviewsService(catalog);
+    const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
     const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };

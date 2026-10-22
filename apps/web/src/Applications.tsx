@@ -5,6 +5,7 @@ import { useApplicationRead } from './atlasApi';
 import { AtlasTopBar } from './AtlasTopBar';
 const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
+const CodeReviews = lazy(() => import('./CodeReviews').then(module => ({ default: module.CodeReviews })));
 import './applications.css';
 
 export type ApplicationManifest = {
@@ -20,6 +21,7 @@ export type ApplicationManifest = {
 const applicationComponents: Record<string, ComponentType> = {
     portfolio: Portfolio,
     'football-training': FootballGeneralistExperience,
+    'code-reviews': CodeReviews,
 };
 
 export function ProjectApplications({ projectId, refreshVersion = 0 }: { projectId: string; refreshVersion?: number }) {

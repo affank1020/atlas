@@ -7,6 +7,29 @@ import { AtlasError } from "../shared/errors.js";
 type Client = { client?: string };
 const now = () => new Date().toISOString();
 const active = <T extends { archivedAt?: string }>(items: T[], includeArchived = false) => items.filter((item) => includeArchived || !item.archivedAt);
+/** Accept explicit-offset ISO timestamps whose calendar date and clock components are real.
+ * JavaScript Date.parse silently normalizes impossible days such as February 30.
+ * Restrict the accepted shape so values can also be cast by PostgreSQL timestamptz.
+ */
+const validTimestamp = (value: unknown): value is string => {
+    if (typeof value !== 'string') return false;
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+    if (!match) return false;
+    const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone] = match;
+    const year = Number(yearText), month = Number(monthText), day = Number(dayText);
+    const hour = Number(hourText), minute = Number(minuteText), second = Number(secondText);
+    if (year < 1 || month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+    if (day < 1 || day > daysInMonth) return false;
+    if (zone !== 'Z') {
+        const offsetHour = Number(zone.slice(1, 3));
+        const offsetMinute = Number(zone.slice(4, 6));
+        if (offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) return false;
+    }
+    return !Number.isNaN(Date.parse(value));
+};
+
 const cleanText = (value: string, label: string) => { const result = value.trim(); if (!result) throw new AtlasError(`${label} cannot be empty.`); return result; };
 
 export class CoreService {
@@ -46,7 +69,7 @@ export class CoreService {
         return this.store.transaction((data) => { const store = this.requireStore(data, input.projectId, input.storeId); const before = structuredClone(store); if (input.name !== undefined) { const name = cleanText(input.name, "Store name"); this.unique(data.stores.filter((x) => x.projectId === input.projectId), name, "store", store.id); store.name = name; } if (input.description !== undefined) input.description === null ? delete store.description : store.description = input.description; store.updatedAt = now(); this.audit(data, "store.updated", input.client, input.projectId, store.id, undefined, before, store); return store; });
     }
     async updateSchema(input: { projectId: string; storeId: string; fields: FieldDefinition[]; dropRemovedFields?: boolean } & Client) {
-        return this.store.transaction((data) => { const store = this.requireStore(data, input.projectId, input.storeId); const before = structuredClone(store); const fields = this.validateSchema(input.fields); const names = new Set(fields.map((x) => x.name)); const records = data.records.filter((x) => x.storeId === store.id && !x.archivedAt); for (const record of records) { const candidate = structuredClone(record.data); for (const key of Object.keys(candidate)) if (!names.has(key)) { if (!input.dropRemovedFields) throw new AtlasError(`Schema removes field '${key}' used by existing records; set dropRemovedFields=true to remove it explicitly.`); delete candidate[key]; } record.data = this.validateRecord(fields, candidate); record.updatedAt = now(); } store.schema = { version: store.schema.version + 1, fields }; store.updatedAt = now(); this.audit(data, "store.schema_updated", input.client, input.projectId, store.id, undefined, before.schema, store.schema); return store; });
+        return this.store.transaction((data) => { const store = this.requireStore(data, input.projectId, input.storeId); const before = structuredClone(store); const fields = this.validateSchema(input.fields); const names = new Set(fields.map((x) => x.name)); const records = data.records.filter((x) => x.storeId === store.id && !x.archivedAt); for (const record of records) { const candidate = structuredClone(record.data); for (const key of Object.keys(candidate)) if (!names.has(key)) { if (!input.dropRemovedFields) throw new AtlasError(`Schema removes field '${key}' used by existing records; set dropRemovedFields=true to remove it explicitly.`); delete candidate[key]; } record.data = this.validateRecord(fields, candidate, record.data, store.schema.fields); record.updatedAt = now(); } store.schema = { version: store.schema.version + 1, fields }; store.updatedAt = now(); this.audit(data, "store.schema_updated", input.client, input.projectId, store.id, undefined, before.schema, store.schema); return store; });
     }
     async archiveStore(projectId: string, storeId: string, client?: string) { return this.store.transaction((data) => { const store = this.requireStore(data, projectId, storeId); const before = structuredClone(store); const stamp = now(); store.archivedAt = stamp; store.updatedAt = stamp; for (const record of data.records.filter((x) => x.storeId === store.id && !x.archivedAt)) { record.archivedAt = stamp; record.updatedAt = stamp; } this.audit(data, "store.archived", client, projectId, storeId, undefined, before, store); return store; }); }
 
@@ -64,14 +87,14 @@ export class CoreService {
     }
     updateRecordInState(state:AtlasData,input:{projectId:string;storeId:string;recordId:string;data:RecordData;replace?:boolean}&Client,viewId?:string){
         this.requireProject(state,input.projectId);const store=this.requireStore(state,input.projectId,input.storeId);const record=this.requireRecord(state,input.projectId,input.storeId,input.recordId);const before=structuredClone(record);
-        record.data=this.validateRecord(store.schema.fields,input.replace?input.data:{...record.data,...input.data});record.updatedAt=now();
+        record.data=this.validateRecord(store.schema.fields,input.replace?input.data:{...record.data,...input.data},record.data);record.updatedAt=now();
         this.audit(state,"record.updated",input.client,input.projectId,input.storeId,record.id,before,record,viewId);return record;
     }
     async archiveRecord(projectId: string, storeId: string, recordId: string, client?: string) { return this.store.transaction((data) => { this.requireStore(data, projectId, storeId); const record = this.requireRecord(data, projectId, storeId, recordId); const before = structuredClone(record); record.archivedAt = now(); record.updatedAt = record.archivedAt; this.audit(data, "record.archived", client, projectId, storeId, recordId, before, record); return record; }); }
     async bulkRecords(input: { projectId: string; storeId: string; operations: ({ action: "create"; data: RecordData } | { action: "update"; recordId: string; data: RecordData; replace?: boolean } | { action: "archive"; recordId: string })[] } & Client) {
         if (!input.operations.length) throw new AtlasError("Bulk operations must contain at least one operation.");
         if (input.operations.length > 100) throw new AtlasError("Bulk operations are limited to 100 items.");
-        return this.store.transaction((state) => { const store = this.requireStore(state, input.projectId, input.storeId); const results: AtlasRecord[] = []; for (const operation of input.operations) { if (operation.action === "create") { const stamp = now(); const record: AtlasRecord = { id: randomUUID(), projectId: input.projectId, storeId: input.storeId, data: this.validateRecord(store.schema.fields, operation.data), createdAt: stamp, updatedAt: stamp }; state.records.push(record); this.audit(state, "record.created", input.client, input.projectId, input.storeId, record.id, undefined, record); results.push(record); } else { const record = this.requireRecord(state, input.projectId, input.storeId, operation.recordId); const before = structuredClone(record); if (operation.action === "update") { record.data = this.validateRecord(store.schema.fields, operation.replace ? operation.data : { ...record.data, ...operation.data }); record.updatedAt = now(); this.audit(state, "record.updated", input.client, input.projectId, input.storeId, record.id, before, record); } else { record.archivedAt = now(); record.updatedAt = record.archivedAt; this.audit(state, "record.archived", input.client, input.projectId, input.storeId, record.id, before, record); } results.push(record); } } return { results }; });
+        return this.store.transaction((state) => { const store = this.requireStore(state, input.projectId, input.storeId); const results: AtlasRecord[] = []; for (const operation of input.operations) { if (operation.action === "create") { const stamp = now(); const record: AtlasRecord = { id: randomUUID(), projectId: input.projectId, storeId: input.storeId, data: this.validateRecord(store.schema.fields, operation.data), createdAt: stamp, updatedAt: stamp }; state.records.push(record); this.audit(state, "record.created", input.client, input.projectId, input.storeId, record.id, undefined, record); results.push(record); } else { const record = this.requireRecord(state, input.projectId, input.storeId, operation.recordId); const before = structuredClone(record); if (operation.action === "update") { record.data = this.validateRecord(store.schema.fields, operation.replace ? operation.data : { ...record.data, ...operation.data }, record.data); record.updatedAt = now(); this.audit(state, "record.updated", input.client, input.projectId, input.storeId, record.id, before, record); } else { record.archivedAt = now(); record.updatedAt = record.archivedAt; this.audit(state, "record.archived", input.client, input.projectId, input.storeId, record.id, before, record); } results.push(record); } } return { results }; });
     }
     async queryRecords(input: { projectId: string; storeId: string; filters?: RecordFilter[]; sort?: SortSpec[]; limit?: number; offset?: number; includeArchived?: boolean }): Promise<Page<AtlasRecord>> {
         const data = await this.catalogue({ projectId: input.projectId, stores: input.storeId, includeArchived: input.includeArchived }); const store = this.requireStore(data, input.projectId, input.storeId, input.includeArchived); const known = new Set(store.schema.fields.map((x) => x.name)); for (const filter of input.filters ?? []) { if (!known.has(filter.field)) throw new AtlasError(`Unknown filter field '${filter.field}' for store '${store.name}'.`); if(filter.operator==="in"&&!Array.isArray(filter.value)) throw new AtlasError(`Filter 'in' for '${filter.field}' requires an array value.`); } for (const sort of input.sort ?? []) if (!known.has(sort.field) && !["createdAt", "updatedAt"].includes(sort.field)) throw new AtlasError(`Unknown sort field '${sort.field}' for store '${store.name}'.`);
@@ -85,6 +108,26 @@ export class CoreService {
     unique(items: { id: string; name: string; archivedAt?: string }[], name: string, kind: string, except?: string) { if (items.some((x) => !x.archivedAt && x.id !== except && x.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new AtlasError(`An active ${kind} named '${name}' already exists.`); }
     audit = appendAudit;
     private validateSchema(fields: FieldDefinition[]) { if (!Array.isArray(fields) || fields.length === 0) throw new AtlasError("A store schema must contain at least one field."); const seen = new Set<string>(); return fields.map((raw) => { const field = structuredClone(raw); if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(field.name)) throw new AtlasError(`Invalid field name '${field.name}'. Use letters, numbers, and underscores, starting with a letter.`); if (seen.has(field.name)) throw new AtlasError(`Duplicate schema field '${field.name}'.`); seen.add(field.name); if (field.type === "enum" && (!field.enumValues?.length || new Set(field.enumValues).size !== field.enumValues.length)) throw new AtlasError(`Enum field '${field.name}' requires unique enumValues.`); if (field.type !== "enum" && field.enumValues) throw new AtlasError(`enumValues is only valid for enum fields ('${field.name}').`); if (field.default !== undefined) this.assertType(field, field.default); return field; }); }
-    private validateRecord(fields: FieldDefinition[], input: RecordData) { if (!input || typeof input !== "object" || Array.isArray(input)) throw new AtlasError("Record data must be an object."); const known = new Map(fields.map((x) => [x.name, x])); for (const key of Object.keys(input)) if (!known.has(key)) throw new AtlasError(`Unknown record field '${key}'.`); const output: RecordData = structuredClone(input); for (const field of fields) { if (output[field.name] === undefined && field.default !== undefined) output[field.name] = structuredClone(field.default); if (output[field.name] === undefined) { if (field.required) throw new AtlasError(`Required field '${field.name}' is missing.`); continue; } this.assertType(field, output[field.name]); } return output; }
-    assertType(field: FieldDefinition, value: unknown) { let valid = false; switch (field.type) { case "string": valid = typeof value === "string"; break; case "number": valid = typeof value === "number" && Number.isFinite(value); break; case "boolean": valid = typeof value === "boolean"; break; case "date": valid = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)); break; case "datetime": valid = typeof value === "string" && !Number.isNaN(Date.parse(value)); break; case "enum": valid = typeof value === "string" && !!field.enumValues?.includes(value); break; case "array": valid = Array.isArray(value); break; case "object": valid = !!value && typeof value === "object" && !Array.isArray(value); } if (!valid) throw new AtlasError(`Field '${field.name}' must be a valid ${field.type}${field.type === "enum" ? ` (${field.enumValues?.join(", ")})` : ""}.`); }
+    private validateRecord(fields: FieldDefinition[], input: RecordData, previous?: RecordData, previousFields: FieldDefinition[] = fields) {
+        if (!input || typeof input !== "object" || Array.isArray(input)) throw new AtlasError("Record data must be an object.");
+        const known = new Map(fields.map((field) => [field.name, field]));
+        const existingDatetimes = new Set(previousFields.filter((field) => field.type === "datetime").map((field) => field.name));
+        for (const key of Object.keys(input)) if (!known.has(key)) throw new AtlasError(`Unknown record field '${key}'.`);
+        const output: RecordData = structuredClone(input);
+        for (const field of fields) {
+            if (output[field.name] === undefined && field.default !== undefined) output[field.name] = structuredClone(field.default);
+            if (output[field.name] === undefined) {
+                if (field.required) throw new AtlasError(`Required field '${field.name}' is missing.`);
+                continue;
+            }
+            // Before strict datetime validation, Atlas accepted timezone-less and malformed
+            // timestamps. Allow their exact persisted values to survive unrelated updates
+            // and schema changes, but never accept new or modified invalid datetimes.
+            if (previous && field.type === "datetime" && existingDatetimes.has(field.name) &&
+                Object.hasOwn(previous, field.name) && output[field.name] === previous[field.name]) continue;
+            this.assertType(field, output[field.name]);
+        }
+        return output;
+    }
+    assertType(field: FieldDefinition, value: unknown) { let valid = false; switch (field.type) { case "string": valid = typeof value === "string"; break; case "number": valid = typeof value === "number" && Number.isFinite(value); break; case "boolean": valid = typeof value === "boolean"; break; case "date": valid = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)); break; case "datetime": valid = validTimestamp(value); break; case "enum": valid = typeof value === "string" && !!field.enumValues?.includes(value); break; case "array": valid = Array.isArray(value); break; case "object": valid = !!value && typeof value === "object" && !Array.isArray(value); } if (!valid) throw new AtlasError(`Field '${field.name}' must be a valid ${field.type}${field.type === "enum" ? ` (${field.enumValues?.join(", ")})` : ""}.`); }
 }

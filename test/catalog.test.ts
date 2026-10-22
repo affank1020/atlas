@@ -76,3 +76,117 @@ test("failed bulk writes neither partial records nor audit events", async()=>{
     await assert.rejects(()=>catalog.bulkRecords({projectId:project.id,storeId:store.id,operations:[{action:"create",data:{company:"Good"}},{action:"create",data:{company:"Bad",score:"invalid"}}],client:"rollback-test"}));
     assert.equal((await catalog.queryRecords({projectId:project.id,storeId:store.id})).total,0); assert.equal((await catalog.auditHistory({storeId:store.id})).length,before);
 });
+
+
+test("datetime sorting uses instants across mixed timezone offsets and fractional seconds, including pagination", async () => {
+    const { catalog } = await fixture();
+    const project = await catalog.createProject({ name: "Chronological Review Runs" });
+    const store = await catalog.createStore({ projectId: project.id, name: "Run history", fields: [
+        { name: "label", type: "string", required: true },
+        { name: "reviewedAt", type: "datetime", required: true },
+    ] });
+    const values = [
+        { label: "first", reviewedAt: "2026-10-22T12:00:00Z" },
+        { label: "second", reviewedAt: "2026-10-22T12:00:00.100Z" },
+        { label: "third", reviewedAt: "2026-10-22T13:00:00.050+01:00" },
+        { label: "fourth", reviewedAt: "2026-10-22T12:00:01Z" },
+    ];
+    for (const item of values)
+        await catalog.createRecord({ projectId: project.id, storeId: store.id, data: item });
+    const first = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2 });
+    const second = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2, offset: 2 });
+    assert.equal(first.total, 4);
+    assert.deepEqual([...first.items, ...second.items].map(row => row.data.label),
+        ["fourth", "second", "third", "first"]);
+    const asc = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "asc" }], limit: 4 });
+    assert.deepEqual(asc.items.map(row => row.data.label), ["first", "third", "second", "fourth"]);
+});
+
+test("datetime writes reject parser-normalized or database-incompatible values", async () => {
+    const { catalog } = await fixture();
+    const project = await catalog.createProject({ name: "Strict datetimes" });
+    const store = await catalog.createStore({ projectId: project.id, name: "Runs",
+        fields: [{ name: "reviewedAt", type: "datetime", required: true }] });
+    const invalid = [
+        "2026-02-30T12:00:00Z", "2025-02-29T12:00:00Z", "2026-04-31T12:00:00Z",
+        "2026-10-22T24:00:00Z", "2026-10-22T12:60:00Z", "2026-10-22T12:00:60Z",
+        "2026-10-22T12:00:00+14:30", "2026-10-22T12:00:00", "not a date",
+    ];
+    for (const reviewedAt of invalid)
+        await assert.rejects(
+            catalog.createRecord({ projectId: project.id, storeId: store.id, data: { reviewedAt } }),
+            /must be a valid datetime/, reviewedAt);
+    for (const reviewedAt of [
+        "2024-02-29T12:00:00Z", "2026-10-22T13:00:00.123456+01:00",
+        "2026-10-22T12:00:00.100Z",
+    ])
+        await catalog.createRecord({ projectId: project.id, storeId: store.id, data: { reviewedAt } });
+    assert.equal((await catalog.queryRecords({ projectId: project.id, storeId: store.id })).total, 3);
+});
+
+test("legacy invalid datetime rows cannot abort PostgreSQL timestamp sorts or pagination", async () => {
+    const { catalog, store: repository } = await fixture();
+    const project = await catalog.createProject({ name: "Legacy datetime records" });
+    const store = await catalog.createStore({ projectId: project.id, name: "Review runs",
+        fields: [{ name: "reviewedAt", type: "datetime", required: true }] });
+    // Model a value accepted by older Atlas versions before strict calendar validation.
+    await repository.pool.query(
+        "INSERT INTO records(id,store_id,schema_version,data,created_at,updated_at) VALUES(gen_random_uuid(),$1,1,$2::jsonb,now(),now())",
+        [store.id, JSON.stringify({ reviewedAt: "2026-02-30T12:00:00Z" })]);
+    for (const reviewedAt of ["2026-03-01T12:00:00Z", "2026-03-02T12:00:00.100Z"])
+        await catalog.createRecord({ projectId: project.id, storeId: store.id, data: { reviewedAt } });
+    const first = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2, offset: 0 });
+    const second = await catalog.queryRecords({ projectId: project.id, storeId: store.id,
+        sort: [{ field: "reviewedAt", direction: "desc" }], limit: 2, offset: 2 });
+    assert.equal(first.total, 3);
+    assert.deepEqual([...first.items, ...second.items].map(row => row.data.reviewedAt),
+        ["2026-03-02T12:00:00.100Z", "2026-03-01T12:00:00Z", "2026-02-30T12:00:00Z"]);
+});
+
+test("existing legacy datetimes remain unchanged during edits, bulk updates and compatible schema changes", async () => {
+    const { catalog, store: repository } = await fixture();
+    const project = await catalog.createProject({ name: "Legacy record editor compatibility" });
+    const fields = [
+        { name: "reviewedAt", type: "datetime" as const, required: true },
+        { name: "title", type: "string" as const, required: true },
+    ];
+    const store = await catalog.createStore({ projectId: project.id, name: "Legacy records", fields });
+    const original = "2026-10-22T12:00";
+    const inserted = await repository.pool.query(
+        "INSERT INTO records(id,store_id,schema_version,data,created_at,updated_at) VALUES(gen_random_uuid(),$1,1,$2::jsonb,now(),now()) RETURNING id",
+        [store.id, JSON.stringify({ reviewedAt: original, title: "Original" })]);
+    const recordId = inserted.rows[0].id as string;
+
+    const edited = await catalog.updateRecord({ projectId: project.id, storeId: store.id,
+        recordId, replace: true, data: { reviewedAt: original, title: "Edited" } });
+    assert.deepEqual(edited.data, { reviewedAt: original, title: "Edited" },
+        "Editing an unrelated field must not shift an ambiguous legacy wall time");
+
+    const patched = await catalog.updateRecord({ projectId: project.id, storeId: store.id,
+        recordId, data: { title: "Patched" } });
+    assert.equal(patched.data.reviewedAt, original);
+    const batch = await catalog.bulkRecords({ projectId: project.id, storeId: store.id,
+        operations: [{ action: "update", recordId, replace: true,
+            data: { title: "Batch update", reviewedAt: original } }] });
+    assert.equal(batch.results[0]?.data.reviewedAt, original);
+
+    await catalog.updateSchema({ projectId: project.id, storeId: store.id,
+        fields: [...fields, { name: "notes", type: "string" }] });
+    assert.equal((await catalog.getRecord(project.id, store.id, recordId)).data.reviewedAt, original);
+
+    await assert.rejects(catalog.createRecord({ projectId: project.id, storeId: store.id,
+        data: { title: "New invalid timestamp", reviewedAt: original } }), /valid datetime/);
+    await assert.rejects(catalog.updateRecord({ projectId: project.id, storeId: store.id, recordId,
+        data: { reviewedAt: "2026-10-23T12:00" } }), /valid datetime/);
+    await assert.rejects(catalog.bulkRecords({ projectId: project.id, storeId: store.id,
+        operations: [{ action: "update", recordId,
+            data: { reviewedAt: "2026-10-23T12:00" } }] }), /valid datetime/);
+
+    const converted = await catalog.updateRecord({ projectId: project.id, storeId: store.id,
+        recordId, data: { reviewedAt: "2026-10-22T12:00:00Z" } });
+    assert.equal(converted.data.reviewedAt, "2026-10-22T12:00:00Z");
+});
