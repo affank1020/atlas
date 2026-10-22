@@ -103,3 +103,69 @@ test('PostgreSQL Monitoring Node filter includes sender and recipient sharing ev
     }
     assert.equal((await monitoring.page({nodeId:c.nodeId,operation:'node.share.approved'})).total,0);
 });
+
+
+test('operation mode correlates before filtering and paginates completed attempts atomically', async () => {
+    const { catalog, store } = await databaseFixture();
+    const first = await catalog.createProject({ name: 'Correlation one', client: 'setup' });
+    const other = await catalog.createProject({ name: 'Correlation two', client: 'setup' });
+    const nodeId = '00000000-0000-4000-8000-000000001234';
+    async function put(projectId: string, operation: string, attemptId: string, at: string, extra: Record<string, unknown> = {}) {
+        await store.pool.query(`INSERT INTO audit_events (id, client, operation, project_id, after_state, created_at)
+            VALUES (gen_random_uuid(), 'correlation-test', $1, $2, $3::jsonb, $4::timestamptz)`,
+            [operation, projectId, JSON.stringify({ attemptId, ...extra }), at]);
+    }
+    await put(first.id, 'workspace.mutation_requested', 'a', '2026-10-22T08:00:00Z',
+        { operation: 'workspace.dev_invoked', task: 'build', nodeId });
+    await put(first.id, 'workspace.dev_invoked', 'a', '2026-10-22T08:01:00Z',
+        { outcome: 'completed', task: 'build' });
+    await put(first.id, 'workspace.mutation_requested', 'b', '2026-10-22T09:00:00Z',
+        { operation: 'workspace.git_committed', task: 'publish', nodeId });
+    await put(first.id, 'workspace.mutation_failed', 'b', '2026-10-22T09:01:00Z',
+        { operation: 'workspace.git_committed', outcome: 'failed_or_uncertain' });
+    await put(first.id, 'workspace.mutation_requested', 'c', '2026-10-22T10:00:00Z',
+        { operation: 'workspace.file_patched', nodeId });
+    // Same attempt ID under a different Project must never be coalesced.
+    await put(other.id, 'workspace.mutation_failed', 'a', '2026-10-22T12:00:00Z',
+        { outcome: 'failed' });
+
+    const audit = new ActivityService(new AuditService(store));
+    const query = { projectId: first.id, client: 'correlation-test', groupOperations: true };
+    const firstPage = await audit.page({ ...query, limit: 1 });
+    assert.equal(firstPage.total, 3);
+    assert.equal(firstPage.items.length, 1);
+    assert.equal(firstPage.items[0].operation, 'workspace.mutation_requested');
+    const secondPage = await audit.page({ ...query, limit: 1, offset: 1 });
+    assert.equal(secondPage.total, 3);
+    assert.deepEqual(secondPage.items.map(e => e.operation).sort(),
+        ['workspace.mutation_failed', 'workspace.mutation_requested']);
+    const thirdPage = await audit.page({ ...query, limit: 1, offset: 2 });
+    assert.equal(thirdPage.total, 3);
+    assert.deepEqual(thirdPage.items.map(e => e.operation).sort(),
+        ['workspace.dev_invoked', 'workspace.mutation_requested']);
+    const completed = await audit.page({ ...query, outcome: 'completed' });
+    assert.equal(completed.total, 1);
+    assert.equal(completed.items.length, 2, 'A completed attempt retains its request');
+    const failed = await audit.page({ ...query, outcome: 'failed', category: 'git' });
+    assert.equal(failed.total, 1);
+    assert.equal(failed.items.length, 2, 'A failed attempt retains its request');
+    const pending = await audit.page({ ...query, outcome: 'pending' });
+    assert.equal(pending.total, 1);
+    assert.equal(pending.items[0].operation, 'workspace.mutation_requested');
+    const searched = await audit.page({ ...query, search: 'publish', outcome: 'failed' });
+    assert.equal(searched.total, 1, 'Search on the request must still include the failure');
+    assert.equal(searched.items.length, 2);
+    const byNode = await audit.page({ ...query, nodeId, outcome: 'completed' });
+    assert.equal(byNode.total, 1, 'Node association on request must also retain the result');
+    assert.equal(byNode.items.length, 2);
+    const byTerminal = await audit.page({ ...query, operation: 'workspace.dev_invoked' });
+    assert.equal(byTerminal.total, 1);
+    assert.equal(byTerminal.items.length, 2, 'Operation matching a terminal event includes the request');
+    const dated = await audit.page({ ...query, from: '2026-10-22T09:00:30Z', to: '2026-10-22T09:05:00Z' });
+    assert.equal(dated.total, 1, 'Time scope uses the operation completion timestamp');
+    const offPage = await audit.page({ ...query, limit: 1, offset: 99 });
+    assert.equal(offPage.total, 3, 'Empty pages keep the filtered total');
+    assert.deepEqual(offPage.items, []);
+    const oldMode = await audit.page({ projectId: first.id, client: 'correlation-test' });
+    assert.equal(oldMode.total, 5, 'Legacy row-based pagination is unchanged');
+});
