@@ -103,7 +103,7 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
             assert.equal(id, target); assert.equal(text, 'secret message');
             return { accepted: true };
         },
-    } as any, path);
+    } as any, path, async () => true);
     try {
         assert.equal((await stat(path)).mode & 0o077, 0);
         assert.equal((await ipc(path, { action: 'recipients' })).result.recipients[0].name, 'Samsung');
