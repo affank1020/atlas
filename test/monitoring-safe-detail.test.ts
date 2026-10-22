@@ -60,6 +60,13 @@ test('server-side filtering and grouped totals happen before safe projection; le
     const { catalog, store } = await databaseFixture();
     const project = await catalog.createProject({ name: 'Safe monitoring read model', client: 'setup' });
     const workspace = checkoutId;
+    // Audit Workspace IDs are FK-bound; seed a real V2 logical checkout.
+    const legacyNode = (await store.pool.query("SELECT id FROM nodes WHERE local_key='local'")).rows[0].id as string;
+    await store.pool.query("INSERT INTO logical_workspaces(id,name) VALUES($1,'Safety checkout')", [workspace]);
+    await store.pool.query(
+        "INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id) VALUES($1,$2,'Safety checkout','/tmp/monitoring-safe-detail','generic',NULL,$3,$1)",
+        [workspace, project.id, legacyNode],
+    );
     await store.pool.query(
         `INSERT INTO audit_events(id,client,operation,project_id,workspace_id,after_state,before_state,created_at)
          VALUES (gen_random_uuid(),'safety-audit','workspace.mutation_requested',$1,$2,$3::jsonb,$4::jsonb,'2026-10-22T09:00:00Z'),
