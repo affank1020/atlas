@@ -88,7 +88,7 @@ export function existingStructuredReview(state: AtlasData, stores: StoreIds, inp
 }
 
 export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasData,
-    stores: StoreIds, input: StructuredReview, verifiedHeadSha: string) {
+    stores: StoreIds, input: StructuredReview, verifiedHeadSha: string, verifiedAt: string) {
     const previous = existingStructuredReview(state, stores, input);
     if (previous) return previous;
     if (verifiedHeadSha !== input.headSha)
@@ -115,7 +115,7 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
                 source: 'atlas_structured_submission', submissionId: input.submissionId,
                 payloadSha256: digest, findingCount: input.findings.length,
                 ...(input.summary !== undefined && { summary: input.summary }),
-                githubHeadVerifiedAt: reviewedAt,
+                githubHeadVerifiedAt: verifiedAt,
                 publisherIdentityVerified: false, publication: 'not_published',
             },
         },

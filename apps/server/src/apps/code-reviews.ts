@@ -53,8 +53,9 @@ export class CodeReviewsService {
         const remote = await this.history.currentHead(input.repository, input.prNumber);
         if (!remote.open || remote.headSha !== input.headSha)
             throw new AtlasError('Pull request is closed or its head has changed; review the current open head.', 'CONFLICT');
+        const verifiedAt = new Date().toISOString();
         return this.catalog.store.transaction(state =>
-            saveStructuredReview(this.catalog, state, ids, input, remote.headSha));
+            saveStructuredReview(this.catalog, state, ids, input, remote.headSha, verifiedAt));
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */

@@ -159,7 +159,7 @@ is reported as zero new runs, **not** as evidence it was never reviewed.
 ### Structured native review submission
 
 The `code_reviews_submit_structured` Application operation creates one
-**immutable, server-timestamped review run** and zero to thirty **structured
+**append-only-through-this-operation, server-timestamped review run** and zero to thirty **structured
 findings** directly in the existing Code Reviews PostgreSQL Stores. It does
 not parse Markdown, publish a GitHub review, create a Check, or approve a PR.
 
@@ -198,11 +198,14 @@ Atlas obtains a repository-scoped `pull_requests:read` GitHub App token and
 verifies the PR is open and the submitted SHA matches GitHub's current head
 **before starting the write transaction**. There remains an unavoidable short
 race between remote verification and committing locally; the recorded
-`githubHeadVerifiedAt` describes a point-in-time check, not a guarantee the
+`githubHeadVerifiedAt` timestamps the completed GitHub read, not a guarantee the
 head never changed afterward. The server issues the review timestamp instead
 of trusting caller-supplied dates.
 
-The ID and a payload SHA-256 fingerprint are stored as receipt metadata. A
+The ID and a payload SHA-256 fingerprint are stored as receipt metadata.
+The submission operation has no update/delete pathway, but Atlas's generic
+Store administration APIs can still edit or archive records; strict
+immutability across *all* administrator operations is not yet guaranteed. A
 retry with the **same ID and identical normalized payload** returns the
 original run/finding IDs without another GitHub fetch, even if the PR has
 advanced. Reusing that ID for different content fails with a conflict.
