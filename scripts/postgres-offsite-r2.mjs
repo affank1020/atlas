@@ -68,7 +68,7 @@ export async function readSnapshot(archive) {
     let manifest;
     try { manifest = JSON.parse(metadata.toString("utf8")); }
     catch { fail("invalid snapshot manifest JSON"); }
-    if (manifest.schemaVersion !== 1 || manifest.kind !== "postgres-custom-age" ||
+    if (!manifest || typeof manifest !== "object" || manifest.schemaVersion !== 1 || manifest.kind !== "postgres-custom-age" ||
         typeof manifest.database !== "string" || !/^[A-Za-z0-9_]+$/.test(manifest.database) ||
         typeof manifest.createdAt !== "string" ||
         !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(manifest.createdAt) ||
@@ -194,7 +194,11 @@ export class R2BackupStore {
             await response.body?.cancel();
             fail("R2 request failed (HTTP " + response.status + ")");
         }
-        return { response, created: method === "PUT" };
+        if (method === "PUT") {
+            await response.body?.cancel();
+            return { created: true };
+        }
+        return { response };
     }
     async get(key, maxBytes) {
         const response = await this.request("GET", key);
