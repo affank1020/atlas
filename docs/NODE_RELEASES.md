@@ -551,3 +551,87 @@ reconciliation endpoint and no authorisation to clear existing claimed
 intents. The offline output is evidence-format scaffolding and never a
 completed or verified update in the dashboard. No production services,
 credentials or release pointers are modified by adding these files.
+
+
+## Server-side root-key pinning and challenge verification (manual foundation)
+
+The **trusted operator** now has a database-backed path from the offline
+Ed25519 signer to verified, consumed evidence. This remains **manual,
+Server-side-only, and non-executable**. Neither the Node credential nor MCP,
+HTTP or Atlas Web can enrol public keys, issue a challenge, submit signatures,
+or clear a claimed intent.
+
+A newly reviewed SQL migration `030_node_update_root_trust.sql` stores
+(1) an immutable per-Node pinned public key, (2) a single 5-minute,
+cryptographically random challenge bound to one **claimed** update intent,
+and (3) a one-time verified-evidence row containing the canonical signed
+proof for later independent re-verification. The operator's status view and
+central audit event omit the signature and challenge. All operations are
+serialized on the Node, update intent and challenge, with live-clock expiry checks after
+locks; the successful verification consumes the nonce atomically. Failed
+verification does not consume the nonce. Duplicate enrolment, a second
+challenge, expired challenge or replayed evidence are refused.
+
+**Root evidence verification is not reconciliation or completion.** Even
+with a valid signature, Atlas **does not** update `claimed`, installed
+release, Node version, host approval, rollback pointers, or the one-active-
+update fence; it must not display a successful update. It proves only
+possession of the independently pinned signing key over the expected
+Node/intent/challenge/target/version/PID bytes. The connected PID and
+heartbeat originated with the Node and do not independently prove process
+health. Future trusted reconciliation also needs a separate health/recovery
+drill and explicit clearance policy.
+
+For a **disposable nonproduction Atlas Server** with a local administrator
+terminal and a configured private `DATABASE_URL`, after its migrations
+have been applied, run the compiled operator-only CLI:
+
+```bash
+# On the Linux test host only: export the PUBLIC key out of band.
+sudo openssl pkey -in /etc/atlas-node/update-evidence-ed25519.key -pubout \
+  -out /tmp/atlas-update-public.pem
+
+# On the separate Atlas Server administrator terminal, after checking the
+# public-key fingerprint via an independent host-admin channel:
+node apps/server/dist/server/node-root-trust-cli.js pin \
+  <node-uuid> ./atlas-update-public.pem
+
+# Only after the matching update intent is already claimed:
+node apps/server/dist/server/node-root-trust-cli.js issue \
+  <node-uuid> <claimed-intent-uuid>
+
+# Manually supply the printed 64-character challenge to the root signer on
+# the host. Copy its returned public JSON evidence to a private operator file.
+sudo /usr/bin/python3 /usr/local/libexec/linux-node-root-evidence.py \
+  <claimed-intent-uuid> <issued-challenge>
+
+# Back on the Atlas Server operator terminal, verify AND consume one challenge.
+node apps/server/dist/server/node-root-trust-cli.js verify \
+  <node-uuid> <claimed-intent-uuid> ./root-evidence.json
+
+# Read-only; reports evidence separately from the claimed status.
+node apps/server/dist/server/node-root-trust-cli.js status \
+  <node-uuid> <claimed-intent-uuid>
+```
+
+All **mutating commands require interactive, exact typed confirmation**.
+The key-pinning prompt requires the SHA-256 SPKI DER fingerprint (compare it
+independently against the host's root-managed key). The CLI rejects symlinked,
+oversized or nonregular input files. Only canonical Ed25519 SPKI PEM is
+accepted; other algorithms and duplicate keys are refused. The audit stream
+records operation and immutable identifiers, not PEM, nonce or signature.
+
+**Operational safety:** A challenge is issued at most once per intent in
+this foundation. If it expires, it deliberately remains unusable; do not
+edit the nonce, remove evidence, reset the claimed row or hand-edit SQL.
+An explicit independently reviewed recovery/reissue path must be developed
+before any live rollout. The CLI uses the administrator's PostgreSQL
+connection, **not a Node-supplied key or credential**; protect the Server's
+DB admin access. There is no trusted web/API exposure or automated flow,
+and this PR does not install scripts, create production keys, enable the
+update-claims flag or operate on the VPS.
+
+**Production status:** entirely inactive without a separately invoked CLI.
+The next step after independently reviewing this foundation is a scoped
+challenge/verification integration and an explicit, safe policy for resolving
+a previously claimed intent, tested first on a disposable host.
