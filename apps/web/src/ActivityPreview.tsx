@@ -11,7 +11,15 @@ type Props = ActivityScope & { title?: string; refreshVersion?: number };
 const PREVIEW_LIMIT = 5;
 
 /** A bounded, manual-refresh entry point into the full Monitoring Activity reader. */
-export function ActivityPreview({
+export function ActivityPreview(props: Props) {
+    // A different scope must never show an old scope's cached rows, even for
+    // a moment while the replacement request is pending.
+    const key = JSON.stringify([props.projectId, props.nodeId, props.logicalWorkspaceId,
+        props.checkoutId, props.storeId]);
+    return <ScopedActivityPreview key={key} {...props} />;
+}
+
+function ScopedActivityPreview({
     projectId, nodeId, logicalWorkspaceId, checkoutId, storeId,
     title = 'Recent activity', refreshVersion = 0,
 }: Props) {
