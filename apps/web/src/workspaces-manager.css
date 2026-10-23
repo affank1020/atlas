@@ -132,3 +132,9 @@
 .wm-retirement-blocked { color:var(--danger) !important; }
 .wm-retire-confirm { color:var(--danger); }
 @media(max-width:610px) { .wm-tree { flex-wrap:wrap; } .wm-retire-actions { width:100%; justify-content:flex-start; } }
+
+.wm-activity-preview .actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.wm-activity-preview .actions label { display:grid; gap:4px; font-size:12px; }
+.wm-activity-preview .actions select { max-width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:inherit; }
+.wm-activity-preview .activity-preview { margin-top:12px; }
+.wm-activity-preview .activity-preview .panel-head { align-items:flex-start; gap:10px; flex-wrap:wrap; }
