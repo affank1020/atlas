@@ -806,8 +806,13 @@ an install/activate/rollback action that the Server cannot safely
 authorize.
 
 Fleet requests are read-only, limited to three parallel Linux history
-lookups, scoped to their matching Node ID and discarded on refresh
-or unmount. If a Node's request history or the release catalogue cannot
+lookups **per poll**, scoped to their matching Node ID and discarded on
+refresh or unmount. While the Software page is open, Atlas revalidates
+Linux request histories every five seconds without overlapping polls;
+an explicit Node deep-link change also updates the selected inspector
+without a remount. Prepared requests are re-evaluated at their exact
+expiration deadline even if nothing else changes. If a Node's request
+history or the release catalogue cannot
 be loaded, the view explicitly marks the information **unavailable or
 unknown** rather than assuming no pending review or a healthy installation.
 A partial operator-review count is annotated when any histories remain
