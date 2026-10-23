@@ -91,7 +91,8 @@ export class PostgresRepository implements AtlasRepository {
         }
         if (input.nodeId) {
             const id = param(uuid(input.nodeId)?.toLowerCase());
-            where.push("(a.after_state->>'nodeId'=" + id +
+            where.push("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + id + "::uuid)" +
+                " OR a.after_state->>'nodeId'=" + id +
                 " OR a.after_state->>'previousNodeId'=" + id +
                 " OR (a.operation IN ('node.share.approved','node.share.revoked') AND " +
                 "(a.after_state->>'sourceNodeId'=" + id + " OR a.after_state->>'targetNodeId'=" + id + ")))");
@@ -165,7 +166,8 @@ export class PostgresRepository implements AtlasRepository {
         if (input.recordId) matchAny('a.record_id=' + param(uuid(input.recordId)));
         if (input.nodeId) {
             const id = param(uuid(input.nodeId)?.toLowerCase());
-            matchAny("(a.after_state->>'nodeId'=" + id
+            matchAny("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + id + "::uuid)"
+                + " OR a.after_state->>'nodeId'=" + id
                 + " OR a.after_state->>'previousNodeId'=" + id
                 + " OR (a.operation IN ('node.share.approved','node.share.revoked') AND "
                 + "(a.after_state->>'sourceNodeId'=" + id
