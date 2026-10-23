@@ -111,8 +111,8 @@ function NodeSummary({ node, detail, nodes, loading, unavailable, onClear, onCha
     </aside>;
 }
 
-function NodeDetails({ node, detail, loading, detailError }: {
-    node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string;
+function NodeDetails({ node, detail, loading, detailError, refreshVersion }: {
+    node: AtlasNode; detail: AtlasNode | undefined; loading: boolean; detailError: string; refreshVersion: number;
 }) {
     const current = detail || node;
     return <section className="node-details" aria-label="Selected node details">
@@ -127,7 +127,7 @@ function NodeDetails({ node, detail, loading, detailError }: {
                 </li>)}</ul> : <p className="node-detail-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : detailError ? 'Workspace details unavailable.' : 'Loading workspace details…'}</p>}
             </section>
             <div className="node-detail-activity">
-                <ActivityPreview nodeId={node.id} title="Recent activity" />
+                <ActivityPreview nodeId={node.id} title="Recent activity" refreshVersion={refreshVersion} />
             </div>
             <section className="node-detail-card node-detail-technical">
                 <h3>Technical details</h3>
@@ -239,7 +239,7 @@ export function Nodes() {
             <NodeSummary node={selected} detail={detail?.id === selected?.id ? detail : undefined} nodes={nodes} loading={busy} unavailable={registryError} onClear={() => setSelectedId(null)} onChange={change} onTicket={setTicket} />
         </div>
         {selected && <NodeDetails key={selected.id} node={selected} detail={detail?.id === selected.id ? detail : undefined}
-            detailError={detailError} loading={detailLoading} />}
+            detailError={detailError} loading={detailLoading} refreshVersion={revision} />}
         {selected && <NodeSharePermissions key={'sharing-' + selected.id} source={selected} nodes={nodes} />}
     </div>;
 }
