@@ -30,8 +30,6 @@ CREATE TABLE node_update_root_evidence (
     active_version text NOT NULL,
     target_sha256 char(64) NOT NULL CHECK (target_sha256 ~ '^[0-9a-f]{64}$'),
     observed_pid integer NOT NULL CHECK (observed_pid > 1),
-    signature char(88) NOT NULL CHECK (signature ~ '^[A-Za-z0-9+/]{86}== NOT NULL DEFAULT clock_timestamp()
-);
-),
+    signature char(88) NOT NULL CHECK (char_length(signature) = 88),
     verified_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
