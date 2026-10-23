@@ -143,7 +143,6 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
         if (action === 'upload-binary') {
             const input = await readBinaryUpload(request);
             await requireActiveOwner(input.owner, services);
-            if (input.owner.kind !== 'project') throw new AtlasError('New browser uploads require a Project.');
             sendJson(response, 201, await services.files.upload({ ...input, visibility: 'private', client: 'Atlas Web' }));
             return true;
         }
@@ -179,7 +178,6 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
             const destination = body.folderId === undefined ? undefined : parseFolderId(body.folderId);
             sendJson(response, 200, await services.files.list(owner, status, destination));
         } else if (action === 'upload') {
-            if (owner.kind !== 'project') throw new AtlasError('New browser uploads require a Project.');
             const destination = body.folderId === undefined ? null : parseFolderId(body.folderId);
             const encoded = body.base64;
             if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4 ||
@@ -212,11 +210,9 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
             });
             response.end(bytes);
         } else if (action === 'archive') {
-            if (owner.kind !== 'project') throw new AtlasError('Legacy owner files are read-only via this API.');
             await services.files.archive(owner, safeFileId(body.fileId));
             sendJson(response, 200, { archived: true });
         } else {
-            if (owner.kind !== 'project') throw new AtlasError('Legacy owner files are read-only via this API.');
             sendJson(response, 200, await services.files.restore(owner, safeFileId(body.fileId)));
         }
     } catch (error) {
