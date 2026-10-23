@@ -700,9 +700,12 @@ operator terminal can authorise this transition.
 
 The new command is **disabled by default**, separately from the Node claim
 feature. On a disposable **nonproduction** Server, an operator must deliberately
-set `ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED=1` in the *terminal invoking*
-the root-trust CLI. No API, Node credential, MCP tool, background job or Web
-UI can perform this action.
+set `ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED=1` in the **launch environment**
+of that individual root-trust CLI invocation. The opt-in is captured **before**
+the CLI loads persistent `apps/server/.env` configuration, so adding the flag
+to that file cannot enable reconciliation on later invocations. Do not store
+the opt-in in persistent deployment environment files. No API, Node credential,
+MCP tool, background job or Web UI can perform this action.
 
 **Prerequisites for a claimed intent:**
 
