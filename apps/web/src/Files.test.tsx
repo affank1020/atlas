@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Files } from './Files';
 import {
     archiveFile, archiveProjectFolder, createProjectFolder, downloadFile, listFiles, listProjectFolders,
-    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile,
+    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile, listPortfolioProjectMedia,
 } from './filesApi';
 
 const projectId = '00000000-0000-4000-8000-000000000001';
@@ -32,10 +32,12 @@ vi.mock('./filesApi', () => ({
     listFiles: vi.fn(), listProjectFolders: vi.fn(), uploadFile: vi.fn(), downloadFile: vi.fn(),
     archiveFile: vi.fn(), restoreFile: vi.fn(), createProjectFolder: vi.fn(),
     renameProjectFolder: vi.fn(), archiveProjectFolder: vi.fn(), restoreProjectFolder: vi.fn(), moveProjectFile: vi.fn(),
+    listPortfolioProjectMedia: vi.fn(),
 }));
 
 beforeEach(() => {
     vi.mocked(listFiles).mockResolvedValue([]);
+    vi.mocked(listPortfolioProjectMedia).mockResolvedValue([]);
     vi.mocked(listProjectFolders).mockResolvedValue([]);
     vi.mocked(downloadFile).mockResolvedValue(undefined);
     vi.mocked(archiveFile).mockResolvedValue(undefined);
@@ -168,4 +170,38 @@ test('Downloads and archives stay scoped to selected Project', async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive research.pdf' }));
     await waitFor(() => expect(archiveFile).toHaveBeenCalledWith(owner, saved.id));
     confirm.mockRestore();
+});
+
+test('Portfolio originals and variants appear read-only under their Project and archived assets have no open link', async () => {
+    const active = { id: '00000000-0000-4000-8000-000000000077', projectId: otherProject,
+        fileName: 'hero.png', mimeType: 'image/png', byteSize: 420, checksum: 'a'.repeat(64),
+        status: 'active' as const, createdAt: firstFolder.createdAt, updatedAt: firstFolder.updatedAt,
+        url: '/api/media/00000000-0000-4000-8000-000000000077/original',
+        variants: [{ name: 'preview', mimeType: 'image/webp', byteSize: 160 }] };
+    const archived = { ...active, id: '00000000-0000-4000-8000-000000000078',
+        fileName: 'old.png', status: 'archived' as const, url: null };
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(async id =>
+        id === otherProject ? [active, archived] : []);
+    render(<Files />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: otherProject } });
+    expect(await screen.findByText('hero.png')).toBeInTheDocument();
+    expect(listPortfolioProjectMedia).toHaveBeenCalledWith(otherProject);
+    expect(screen.getByText(/1 variants/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Portfolio media hero.png' }))
+        .toHaveAttribute('href', active.url);
+    expect(screen.queryByRole('button', { name: 'Move hero.png' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive hero.png' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'File status' }), { target: { value: 'archived' } });
+    expect(await screen.findByText('old.png')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open Portfolio media old.png' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: projectId } });
+    await waitFor(() => expect(screen.queryByText('old.png')).not.toBeInTheDocument());
+});
+
+test('Portfolio projection failures do not hide native Project files', async () => {
+    vi.mocked(listFiles).mockResolvedValue([saved] as never);
+    vi.mocked(listPortfolioProjectMedia).mockRejectedValue(new Error('Media projection unavailable'));
+    render(<Files />);
+    expect(await screen.findByText('research.pdf')).toBeInTheDocument();
+    expect(screen.getByText(/Portfolio media catalogue unavailable/)).toBeInTheDocument();
 });

@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { archiveProjectFolder, createProjectFolder, listFiles, listProjectFolders, moveProjectFile,
-    renameProjectFolder, restoreProjectFolder, uploadFile } from './filesApi';
+    renameProjectFolder, restoreProjectFolder, uploadFile, listPortfolioProjectMedia } from './filesApi';
 
 vi.mock('./api', () => ({ API_BASE: 'http://127.0.0.1:3000', IS_MOCK_MODE: false }));
 
@@ -92,4 +92,17 @@ test('Non-Project folder destinations are rejected before binary upload', async 
     await expect(uploadFile({ kind: 'workspace', id: '00000000-0000-4000-8000-000000000002' },
         new File(['x'], 'x.txt'), '00000000-0000-4000-8000-000000000003')).rejects.toThrow(/Project ownership/);
     expect(fetcher).not.toHaveBeenCalled();
+});
+
+test('Portfolio media catalog requests are scoped to one Project and read-only', async () => {
+    const projectId = 'd99a6c45-a4ec-5ef6-8f22-c07d31f8bb38';
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await listPortfolioProjectMedia(projectId)).toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:3000/api/files/portfolio-catalog');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ owner: { kind: 'project', id: projectId } });
 });

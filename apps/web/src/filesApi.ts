@@ -201,3 +201,18 @@ export async function moveProjectFile(projectId: string, fileId: string, folderI
     }
     await postFiles('file-move', { owner: { kind: 'project', id: projectId }, fileId, folderId });
 }
+
+/** Read-only Project projection of Portfolio originals and known variants.
+ * Source media rows/public URLs remain managed by the Portfolio application. */
+export type PortfolioProjectMedia = {
+    id: string; projectId: string; fileName: string; mimeType: string; byteSize: number;
+    checksum: string; status: 'active' | 'archived'; createdAt: string; updatedAt: string;
+    url: string | null;
+    variants: { name: string; mimeType: string; byteSize: number }[];
+};
+export async function listPortfolioProjectMedia(projectId: string): Promise<PortfolioProjectMedia[]> {
+    if (IS_MOCK_MODE) return [];
+    return postFiles<PortfolioProjectMedia[]>('portfolio-catalog', {
+        owner: { kind: 'project', id: projectId },
+    });
+}

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useListProjectsQuery } from './atlasApi';
 import {
     archiveFile, archiveProjectFolder, createProjectFolder, downloadFile, listFiles, listProjectFolders,
-    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile,
-    type AtlasFile, type FileOwner, type ProjectFolder,
+    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile, listPortfolioProjectMedia,
+    type AtlasFile, type FileOwner, type ProjectFolder, type PortfolioProjectMedia,
 } from './filesApi';
 import './files.css';
 
@@ -43,6 +43,8 @@ export function Files() {
     const [fileStatus, setFileStatus] = useState<AtlasFile['status']>('active');
     const [entries, setEntries] = useState<AtlasFile[]>([]);
     const [folders, setFolders] = useState<ProjectFolder[]>([]);
+    const [mediaEntries, setMediaEntries] = useState<PortfolioProjectMedia[]>([]);
+    const [mediaError, setMediaError] = useState('');
     const [busy, setBusy] = useState(false);
     const [mutating, setMutating] = useState(false);
     const [error, setError] = useState('');
@@ -67,11 +69,18 @@ export function Files() {
 
     useEffect(() => {
         let live = true;
-        if (!owner) { setEntries([]); setFolders([]); setBusy(false); return; }
-        setBusy(true); setEntries([]); setFolders([]); setError('');
-        void Promise.all([listFiles(owner, fileStatus, folderId), listProjectFolders(owner.id)])
-            .then(([files, folderRows]) => {
-                if (live) { setEntries(files); setFolders(folderRows); }
+        if (!owner) { setEntries([]); setFolders([]); setMediaEntries([]); setBusy(false); return; }
+        setBusy(true); setEntries([]); setFolders([]); setMediaEntries([]); setError(''); setMediaError('');
+        // Portfolio is an independent, read-only catalogue projection. A
+        // transient failure in it must not make ordinary Project files vanish.
+        const projected = folderId === null
+            ? listPortfolioProjectMedia(owner.id).catch(reason => {
+                if (live) setMediaError(reason instanceof Error ? reason.message : 'Portfolio media could not be loaded.');
+                return [] as PortfolioProjectMedia[];
+            }) : Promise.resolve([] as PortfolioProjectMedia[]);
+        void Promise.all([listFiles(owner, fileStatus, folderId), listProjectFolders(owner.id), projected])
+            .then(([files, folderRows, mediaRows]) => {
+                if (live) { setEntries(files); setFolders(folderRows); setMediaEntries(mediaRows); }
             })
             .catch(reason => { if (live) setError(reason instanceof Error ? reason.message : 'Could not load Project files.'); })
             .finally(() => { if (live) setBusy(false); });
@@ -106,6 +115,8 @@ export function Files() {
         item.name.toLocaleLowerCase().includes(searchText));
     const visibleFiles = entries.filter(item =>
         (item.fileName + ' ' + item.mimeType).toLocaleLowerCase().includes(searchText));
+    const visibleMedia = folderId === null ? mediaEntries.filter(item =>
+        item.status === fileStatus && (item.fileName + ' ' + item.mimeType).toLocaleLowerCase().includes(searchText)) : [];
     const totalBytes = entries.reduce((sum, item) => sum + item.byteSize, 0);
     const canWrite = !!owner && fileStatus === 'active' && !busy && !mutating && (folderId === null || currentFolder?.status === 'active');
 
@@ -289,13 +300,35 @@ export function Files() {
                 </div>}
             </div>)}
         </div>}
+        {!busy && !error && owner && folderId === null && mediaError && <p className="notice error" role="alert">
+            Portfolio media catalogue unavailable: {mediaError}
+        </p>}
+        {!busy && !error && owner && visibleMedia.length > 0 && <section className="files-portfolio-section" aria-label="Portfolio media">
+            <div className="files-portfolio-header">
+                <h3>Portfolio media</h3>
+                <span>Read-only · Managed by Portfolio · {visibleMedia.length} items</span>
+            </div>
+            <div className="files-list">
+                {visibleMedia.map(item => <div className="files-list-row" key={'portfolio-' + item.id}>
+                    <FileGlyph mimeType={item.mimeType} />
+                    <div className="files-item-details"><strong title={item.fileName}>{item.fileName}</strong>
+                        <span>{prettySize(item.byteSize)} · {item.mimeType} · {item.variants.length} variants · {prettyDate(item.createdAt)}</span>
+                    </div>
+                    <span className="files-privacy">{item.status === 'archived' ? 'Archived' : 'Portfolio'}</span>
+                    <div className="files-item-actions">
+                        {item.url && <a className="files-media-link" href={item.url} target="_blank"
+                            rel="noopener noreferrer" aria-label={'Open Portfolio media ' + item.fileName}>Open media</a>}
+                    </div>
+                </div>)}
+            </div>
+        </section>}
         {!busy && !error && !owner && <div className="files-empty">{projects.isLoading ? 'Loading Projects…' : 'No Projects available. Create a Project to store files.'}</div>}
-        {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length &&
+        {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length && !visibleMedia.length &&
             <div className="files-empty">{searchText
                 ? 'Nothing matches your search in this folder.'
                 : fileStatus === 'archived'
                     ? <><h3>No archived items here</h3><p>Archived files and folders can be restored while their original bytes are retained.</p></>
-                    : <><h3>This folder is empty</h3><p>Create a folder or upload files to {currentFolder?.name ?? projectName}. Portfolio media remains available in its own application.</p></>}
+                    : <><h3>This folder is empty</h3><p>Create a folder or upload files to {currentFolder?.name ?? projectName}. Existing Portfolio assets appear here as read-only media.</p></>}
             </div>}
     </section>;
 }
