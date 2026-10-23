@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { NodeSoftware, NodeSoftwareSummary, releaseUpdateState, type NodeRelease, type NodeUpdateIntent } from './NodeSoftware';
 import { callTool } from './api';
@@ -15,14 +15,16 @@ const release: NodeRelease = {
     sha256: 'a'.repeat(64), provenance: 'unverified',
 };
 it('keeps downloads absent until verified catalogue entries exist', async () => {
-    vi.mocked(callTool).mockResolvedValue({ state: 'unavailable', releases: [], error: 'offline', checkedAt: '' });
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [] :
+        { state: 'unavailable', releases: [], error: 'offline', checkedAt: '' });
     render(<NodeSoftware />);
     expect(await screen.findByRole('alert')).toHaveTextContent('offline');
     expect(screen.queryByRole('link', { name: /Download release archive/ })).not.toBeInTheDocument();
     expect(screen.getByText(/not production-signed/i)).toBeInTheDocument();
 });
 it('offers only real published assets and retains platform separation', async () => {
-    vi.mocked(callTool).mockResolvedValue({ state: 'ready', releases: [release], checkedAt: '' });
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [] :
+        { state: 'ready', releases: [release], checkedAt: '' });
     render(<NodeSoftware />);
     const link = await screen.findByRole('link', { name: /Download release archive/ });
     expect(link).toHaveAttribute('href', release.downloadUrl);
@@ -444,4 +446,100 @@ it('shows manually reconciled closure without claiming Atlas has verified a succ
     expect(screen.getByText('Not recorded')).toBeInTheDocument();
     expect(screen.queryByRole('button',{name:/Cancel update request/})).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:/Install|Activate|Update now/i})).not.toBeInTheDocument();
+});
+
+it('software fleet shows real Node versions and platform-specific capabilities without fabricated update buttons', async () => {
+    const nodes = [
+        { id:'11111111-1111-4111-8111-111111111111',name:'Linux VPS',platform:'linux',
+            status:'online',version:'1.9.9+aaaaaaaaaaaa',capabilities:[],lastSeen:null,hostedWorkspaceCount:0 },
+        { id:'22222222-2222-4222-8222-222222222222',name:'Mac desktop',platform:'darwin',
+            status:'offline',version:'2.0.0+bbbbbbbbbbbb',capabilities:[],lastSeen:null,hostedWorkspaceCount:0 },
+        { id:'33333333-3333-4333-8333-333333333333',name:'Android tablet',platform:'android',
+            deviceType:'tablet',status:'online',version:'2.0.0',capabilities:[],lastSeen:null,hostedWorkspaceCount:0 },
+        { id:'44444444-4444-4444-8444-444444444444',name:'Experimental device',platform:'freebsd',
+            status:'unavailable',version:null,capabilities:[],lastSeen:null,hostedWorkspaceCount:0 },
+    ];
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return nodes;
+        if (name === 'list_node_update_intents') return [];
+        if (name === 'list_node_releases') return { state:'ready',releases:[release],checkedAt:'' };
+        throw new Error('Unexpected tool '+name);
+    });
+    render(<NodeSoftware />);
+    const fleet = await screen.findByRole('region',{name:'Node software fleet'});
+    expect(within(fleet).getByText('Linux VPS')).toBeInTheDocument();
+    expect(within(fleet).getByText('Mac desktop')).toBeInTheDocument();
+    expect(within(fleet).getByText('Android tablet')).toBeInTheDocument();
+    expect(within(fleet).getByText('Experimental device')).toBeInTheDocument();
+    expect(within(fleet).getByText('Newer release available')).toBeInTheDocument();
+    expect(within(fleet).getByText('4 of 4 Nodes')).toBeInTheDocument();
+    expect(within(fleet).queryByRole('button',{name:/Install|Activate|Update now/i})).not.toBeInTheDocument();
+    fireEvent.click(within(fleet).getByRole('button',{name:/Android tablet/}));
+    const detail = within(fleet).getByRole('region',{name:'Selected Node software details'});
+    expect(within(detail).getByText('Android tablet')).toBeInTheDocument();
+    expect(within(detail).getByText('No stable distribution')).toBeInTheDocument();
+    expect(within(detail).getAllByText('Not supported')).toHaveLength(2);
+    expect(within(detail).getByText(/Stable signed APK distribution/)).toBeInTheDocument();
+    expect(within(detail).getByRole('link',{name:/Open Node details/}))
+        .toHaveAttribute('href','#/nodes?node='+nodes[2].id);
+    fireEvent.change(within(fleet).getByRole('combobox',{name:'Show Nodes'}),{target:{value:'linux'}});
+    expect(within(fleet).getByText('1 of 4 Nodes')).toBeInTheDocument();
+    expect(within(fleet).queryByRole('button',{name:/Android tablet/})).not.toBeInTheDocument();
+    expect(within(fleet).getByRole('button',{name:/Linux VPS/})).toBeInTheDocument();
+});
+
+it('shows only the selected Linux claim and marks Node-credential outcomes as unverified', async () => {
+    const one='11111111-1111-4111-8111-111111111111';
+    const two='22222222-2222-4222-8222-222222222222';
+    const nodes=[one,two].map((id,i)=>({id,name:i===0?'First Linux':'Second Linux',
+        platform:'linux',status:'online',version:'2.0.0+abc123abc123',
+        capabilities:[],lastSeen:null,hostedWorkspaceCount:0}));
+    const claimed:NodeUpdateIntent={id:'44444444-4444-4444-8444-444444444444',nodeId:one,
+        targetVersion:'2.0.1',targetCommit:'aaaaaaaaaaaa',installedVersion:'2.0.0+abc123abc123',
+        status:'claimed',approved:false,executable:false,
+        createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()-10_000).toISOString(),
+        reportedOutcome:{intentId:'44444444-4444-4444-8444-444444444444',nodeId:one,
+            reportedState:'activated',reportedAt:new Date().toISOString(),verified:false,clearsClaim:false}};
+    vi.mocked(callTool).mockImplementation(async (name,args) => {
+        if(name==='list_nodes') return nodes;
+        if(name==='list_node_releases') return {state:'ready',releases:[release],checkedAt:''};
+        if(name==='list_node_update_intents') return (args as {nodeId:string}).nodeId===one?[claimed]:[];
+        throw new Error('Unexpected tool '+name);
+    });
+    render(<NodeSoftware />);
+    const fleet=await screen.findByRole('region',{name:'Node software fleet'});
+    expect(await within(fleet).findByText('Operator reconciliation needed')).toBeInTheDocument();
+    expect(within(fleet).getByText(/A claimed update blocks another request/)).toBeInTheDocument();
+    expect(within(fleet).getByText(/Node-credential report: activated/)).toBeInTheDocument();
+    expect(within(fleet).getByText('Not recorded')).toBeInTheDocument();
+    fireEvent.change(within(fleet).getByRole('combobox',{name:'Show Nodes'}),{target:{value:'review'}});
+    expect(within(fleet).getByText('1 of 2 Nodes')).toBeInTheDocument();
+    expect(within(fleet).queryByRole('button',{name:/Second Linux/})).not.toBeInTheDocument();
+    fireEvent.change(within(fleet).getByRole('combobox',{name:'Show Nodes'}),{target:{value:'all'}});
+    fireEvent.click(within(fleet).getByRole('button',{name:/Second Linux/}));
+    const detail=within(fleet).getByRole('region',{name:'Selected Node software details'});
+    expect(within(detail).getByText('No update requests recorded.')).toBeInTheDocument();
+    expect(within(detail).queryByText(/Node-credential report: activated/)).not.toBeInTheDocument();
+    expect(within(detail).queryByText(/A claimed update blocks/)).not.toBeInTheDocument();
+});
+
+it('isolates failed intent lookup and unknown release provenance without inventing a clean state', async () => {
+    const node={
+        id:'11111111-1111-4111-8111-111111111111',name:'Unreachable history',platform:'linux',
+        status:'offline',version:'2.0.0+abc123abc123',capabilities:[],
+        lastSeen:null,hostedWorkspaceCount:0,
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if(name==='list_nodes') return [node];
+        if(name==='list_node_releases') return {state:'unavailable',releases:[],checkedAt:'',error:'offline'};
+        if(name==='list_node_update_intents') throw new Error('Connection refused');
+        throw new Error('Unexpected tool '+name);
+    });
+    render(<NodeSoftware />);
+    const fleet=await screen.findByRole('region',{name:'Node software fleet'});
+    expect(await within(fleet).findByText('Request history unavailable')).toBeInTheDocument();
+    expect(within(fleet).getByText(/Update history unavailable/)).toBeInTheDocument();
+    expect(within(fleet).getAllByText('Release status unknown').length).toBeGreaterThanOrEqual(1);
+    expect(within(fleet).getByText(/Some Linux histories unavailable/)).toBeInTheDocument();
+    expect(within(fleet).queryByText('Matches published release')).not.toBeInTheDocument();
 });
