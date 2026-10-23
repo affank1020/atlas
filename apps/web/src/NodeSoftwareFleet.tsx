@@ -17,13 +17,14 @@ function useNodeSoftwareFleet(refreshGeneration: number) {
     const [intents, setIntents] = useState<Record<string, SoftwareIntentSnapshot>>({});
     useEffect(() => {
         let active = true;
+        const controller = new AbortController();
         let polling = false;
         let pollInterval: number | undefined;
         setFleet({ nodes: [], loading: true, error: null });
         setIntents({});
         void (async () => {
             try {
-                const nodes = await callTool<AtlasNode[]>('list_nodes', {});
+                const nodes = await callTool<AtlasNode[]>('list_nodes', {}, controller.signal);
                 if (!active) return;
                 const sorted = [...nodes].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
                 setFleet({ nodes: sorted, loading: false, error: null });
@@ -41,7 +42,7 @@ function useNodeSoftwareFleet(refreshGeneration: number) {
                                 const node = linux[next++]!;
                                 try {
                                     const records = await callTool<NodeUpdateIntent[]>('list_node_update_intents',
-                                        { nodeId: node.id, limit: 20 });
+                                        { nodeId: node.id, limit: 20 }, controller.signal);
                                     if (!active) return;
                                     setIntents(current => ({
                                         ...current, [node.id]: {
@@ -73,6 +74,10 @@ function useNodeSoftwareFleet(refreshGeneration: number) {
         })();
         return () => {
             active = false;
+            // Abort in-flight reads before the next refresh generation starts.
+            // Without transport cancellation, each Refresh could temporarily
+            // add three more requests while old 30-second fetches linger.
+            controller.abort();
             if (pollInterval !== undefined) window.clearInterval(pollInterval);
         };
     }, [refreshGeneration]);
