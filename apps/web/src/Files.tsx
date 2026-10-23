@@ -266,7 +266,8 @@ export function Files() {
                 <span className="files-privacy">{fileStatus === 'archived' ? 'Archived' : 'Private'}</span>
                 <div className="files-item-actions">
                     {fileStatus === 'archived' ?
-                        <button type="button" className="ghost" disabled={mutating}
+                        <button type="button" className="ghost" disabled={mutating || currentFolder?.status === 'archived'}
+                            title={currentFolder?.status === 'archived' ? 'Restore the containing folder first' : undefined}
                             onClick={() => onRestore(file)} aria-label={'Restore ' + file.fileName}>Restore</button> : <>
                         <button type="button" className="ghost" disabled={mutating}
                             onClick={() => void onDownload(file)} aria-label={'Download ' + file.fileName}>Download</button>
