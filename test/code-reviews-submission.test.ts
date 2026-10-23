@@ -5,10 +5,13 @@ import { GitHubReviewHistoryReader } from '../apps/server/src/apps/github-review
 import { structuredReviewSchema, existingStructuredReview } from '../apps/server/src/apps/review-submission.js';
 import { CODE_REVIEWS_PROJECT_ID } from '../apps/server/src/apps/review-import.js';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
+import { createDispatcher } from '../apps/server/src/server/dispatch.js';
 import { databaseFixture, cleanupDatabases } from './database.js';
 
 after(cleanupDatabases);
 
+const reviewer = { kind: 'mcp-oauth' as const, subject: 'auth0|independent-test', issuer: 'https://oauth.example.com/' };
+const differentReviewer = { ...reviewer, subject: 'auth0|another-test' };
 const repository = 'affank1020/atlas';
 const sha = 'a'.repeat(40);
 const request = {
@@ -58,10 +61,38 @@ const openHead = (headSha = sha, open = true) => ({
     },
 });
 
+test('only authenticated MCP transport identity authorizes structured submissions', async () => {
+    const { catalog, runs } = await fixture();
+    let gitHubReads = 0;
+    const app = new ApplicationRegistry([codeReviewsApplication(new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => {
+            gitHubReads++;
+            return { repository, prNumber: 84, headSha: sha, open: true };
+        },
+    }))]);
+    const dispatch = createDispatcher({ applications: app } as any);
+    const input = { submission: request, caller: reviewer,
+        authenticatedCaller: reviewer, client: 'atlas-mcp' };
+    await assert.rejects(app.invoke('code_reviews_submit_structured', input), /authenticated MCP OAuth caller/);
+    await assert.rejects(dispatch('code_reviews_submit_structured', input, 'atlas-http'), /authenticated MCP OAuth caller/);
+    await assert.rejects(dispatch('code_reviews_submit_structured', input, 'atlas-mcp'), /authenticated MCP OAuth caller/);
+    assert.equal(gitHubReads, 0, 'unauthenticated calls must fail before external I/O');
+    assert.equal((await catalog.queryRecords({projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id})).total, 0);
+    const accepted = await dispatch('code_reviews_submit_structured', { submission: request }, 'atlas-mcp', reviewer) as any;
+    assert.equal(accepted.created, true);
+    assert.equal(gitHubReads, 1);
+    const saved = await catalog.queryRecords({projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id});
+    assert.deepEqual((saved.items[0]!.data.coverage as any).authenticatedCaller, reviewer);
+    await assert.rejects(dispatch('code_reviews_submit_structured', input, 'atlas-mcp', differentReviewer),
+        /different authenticated caller/);
+    assert.equal(gitHubReads, 1, 'cross-subject replay must fail before external I/O');
+});
+
 test('structured review submits one immutable run and linked findings with server-assigned provenance', async () => {
     const { catalog, runs, findings } = await fixture();
     const app = new ApplicationRegistry([codeReviewsApplication(new CodeReviewsService(catalog, openHead()))]);
-    const first = await app.invoke('code_reviews_submit_structured', { submission: request }) as any;
+    const first = await app.invoke('code_reviews_submit_structured', { submission: request }, reviewer) as any;
     assert.equal(first.created, true);
     assert.equal(first.publishedToGitHub, false);
     assert.equal(first.headSha, sha);
@@ -94,13 +125,13 @@ test('replay returns original receipt after PR SHA advances, without querying Gi
         read: async () => ({ reviews: [], comments: [] }),
         currentHead: async () => { calls++; return { repository, prNumber: 84, headSha: sha, open: true }; },
     });
-    const first = await service.submitStructuredReview(request);
-    const again = await service.submitStructuredReview(request);
+    const first = await service.submitStructuredReview(request, reviewer);
+    const again = await service.submitStructuredReview(request, reviewer);
     assert.deepEqual({ ...again, created: true }, first);
     assert.equal(again.created, false);
     assert.equal(calls, 1);
     await assert.rejects(
-        service.submitStructuredReview({ ...request, summary: 'Different content' }),
+        service.submitStructuredReview({ ...request, summary: 'Different content' }, reviewer),
         /already belongs to another payload/);
     assert.equal(calls, 1);
     assert.equal((await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id})).total, 1);
@@ -111,7 +142,7 @@ test('changed/closed PR heads are rejected with zero writes', async () => {
     const { catalog, runs } = await fixture();
     for (const source of [openHead('b'.repeat(40)), openHead(sha, false)]) {
         const service = new CodeReviewsService(catalog, source);
-        await assert.rejects(service.submitStructuredReview(request), /head has changed|closed/i);
+        await assert.rejects(service.submitStructuredReview(request, reviewer), /head has changed|closed/i);
     }
     assert.equal((await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id})).total, 0);
 });
@@ -119,12 +150,12 @@ test('changed/closed PR heads are rejected with zero writes', async () => {
 test('concurrent identical submissions coalesce; different IDs on the same SHA stay distinct', async () => {
     const { catalog, runs, findings } = await fixture();
     const service = new CodeReviewsService(catalog, openHead());
-    const receipts = await Promise.all(Array.from({length:4}, () => service.submitStructuredReview(request)));
+    const receipts = await Promise.all(Array.from({length:4}, () => service.submitStructuredReview(request, reviewer)));
     assert.equal(receipts.filter(result => result.created).length, 1);
     assert.equal(new Set(receipts.map(result => result.runId)).size, 1);
     await service.submitStructuredReview({
         ...request, submissionId: 'df56ae1c-81b6-4334-aa53-205861494d84',
-    });
+    }, reviewer);
     assert.equal((await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id})).total, 2);
     assert.equal((await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id})).total, 2);
 });
@@ -135,7 +166,7 @@ test('finding schema failure aborts run and findings atomically', async () => {
         ...findings.schema.fields, { name: 'mandatorySource', type: 'string', required: true },
     ] });
     const service = new CodeReviewsService(catalog, openHead());
-    await assert.rejects(service.submitStructuredReview(request), /Required field.*mandatorySource/);
+    await assert.rejects(service.submitStructuredReview(request, reviewer), /Required field.*mandatorySource/);
     assert.equal((await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id})).total, 0);
     assert.equal((await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id})).total, 0);
 });
@@ -155,7 +186,7 @@ test('strict payload validation rejects duplicate keys, false clean verdicts, ov
         { ...request, headSha: 'short' },
     ];
     for (const payload of invalid)
-        await assert.rejects(service.submitStructuredReview(payload as any));
+        await assert.rejects(service.submitStructuredReview(payload as any, reviewer));
     assert.equal(checked, false);
     assert.equal(structuredReviewSchema.safeParse({
         ...request, verdict: 'no_findings', findings: [],
@@ -199,7 +230,7 @@ test('multi-finding receipts preserve key-to-ID order across tied PostgreSQL tim
         ],
     };
     const service = new CodeReviewsService(catalog, openHead());
-    const first = await service.submitStructuredReview(payload);
+    const first = await service.submitStructuredReview(payload, reviewer);
     assert.equal(first.created, true);
     assert.deepEqual(first.findingReceipts.map((item: any) => item.key), ['first', 'second', 'third']);
     assert.deepEqual(first.findingIds, first.findingReceipts.map((item: any) => item.id));
@@ -212,11 +243,11 @@ test('multi-finding receipts preserve key-to-ID order across tied PostgreSQL tim
     const ids = { runs: runs.id, findings: findings.id };
     const normalized = structuredReviewSchema.parse(payload);
     const reversed = { ...snapshot, records: [...snapshot.records].reverse() };
-    const reorderedReceipt = existingStructuredReview(reversed, ids, normalized);
+    const reorderedReceipt = existingStructuredReview(reversed, ids, normalized, reviewer);
     assert.deepEqual(reorderedReceipt?.findingReceipts, first.findingReceipts);
     assert.deepEqual(reorderedReceipt?.findingIds, first.findingIds);
 
-    const replay = await service.submitStructuredReview(payload);
+    const replay = await service.submitStructuredReview(payload, reviewer);
     assert.equal(replay.created, false);
     assert.deepEqual(replay.findingReceipts, first.findingReceipts);
     assert.deepEqual(replay.findingIds, first.findingIds);
@@ -253,9 +284,9 @@ test('a concurrent retry returns a committed receipt after the PR head closes or
         },
     });
     // Both calls reach GitHub while neither has written a run.
-    const firstPending = service.submitStructuredReview(request);
+    const firstPending = service.submitStructuredReview(request, reviewer);
     await firstAtGitHub;
-    const retryPending = service.submitStructuredReview(request);
+    const retryPending = service.submitStructuredReview(request, reviewer);
     await secondAtGitHub;
     firstHead({ repository, prNumber: 84, headSha: sha, open: true });
     const first = await firstPending;
@@ -271,5 +302,5 @@ test('a concurrent retry returns a committed receipt after the PR head closes or
     // an unmatched new submission on an outdated/closed PR.
     await assert.rejects(service.submitStructuredReview({
         ...request, submissionId: 'df56ae1c-81b6-4334-aa53-205861494d84',
-    }), /head has changed|closed/i);
+    }, reviewer), /head has changed|closed/i);
 });

@@ -162,7 +162,9 @@ export function createHttpTransport(services: ServerServices) {
         let server: ReturnType<typeof createMcpTransport> | undefined;
         try {
             stage = 'creating_transport'; trace('stage');
-            server = createMcpTransport(services, config.mcpAuth.enabled ? config.mcpAuth.scope : undefined);
+            server = createMcpTransport(services,
+                config.mcpAuth.enabled ? config.mcpAuth.scope : undefined,
+                config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined);
             const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
             const connectedServer = server;
             response.once('close', () => { void connectedServer.close().catch(() => trace('cleanup_failed')); });

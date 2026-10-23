@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AtlasError } from '../shared/errors.js';
 import type { AtlasData, AtlasRecord, RecordData } from '../types.js';
 import type { CoreService } from '../core/service.js';
+import type { ApplicationCaller } from './registry.js';
 import { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
 const sha = z.string().regex(/^[a-fA-F0-9]{40}$/).transform(value => value.toLowerCase());
@@ -41,6 +42,16 @@ export type StructuredReview = z.infer<typeof structuredReviewSchema>;
 type SubmissionCatalog = Pick<CoreService, 'createRecordInState'>;
 type StoreIds = { runs: string; findings: string };
 
+export function assertStructuredCaller(caller?: ApplicationCaller): asserts caller is ApplicationCaller {
+    if (caller?.kind !== 'mcp-oauth' || typeof caller.subject !== 'string' || !caller.subject ||
+        typeof caller.issuer !== 'string' || !caller.issuer.startsWith('https://'))
+        throw new AtlasError('Structured review submissions require an authenticated MCP OAuth caller.', 'WORKSPACE_DENIED');
+}
+
+function actorMetadata(caller: ApplicationCaller) {
+    return { kind: caller.kind, subject: caller.subject, issuer: caller.issuer };
+}
+
 function fingerprint(input: StructuredReview) {
     return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
@@ -56,10 +67,13 @@ function locate(state: AtlasData, stores: StoreIds, submissionId: string): Atlas
     return matches[0];
 }
 
-function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, input: StructuredReview, created: boolean) {
+function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, input: StructuredReview, created: boolean, caller: ApplicationCaller) {
     const metadata = run.data.coverage as RecordData | undefined;
     if (run.archivedAt || !metadata || metadata.payloadSha256 !== fingerprint(input))
         throw new AtlasError('Structured review submission ID already belongs to another payload or an archived run.', 'CONFLICT');
+    const actor = metadata.authenticatedCaller as RecordData | undefined;
+    if (!actor || actor.kind !== caller.kind || actor.subject !== caller.subject || actor.issuer !== caller.issuer)
+        throw new AtlasError('Structured review receipt belongs to a different authenticated caller.', 'WORKSPACE_DENIED');
     const findings = state.records.filter(record => record.storeId === stores.findings &&
         record.data.reviewRunId === run.id);
     const byKey = new Map(findings.map(record => [record.data.findingKey, record]));
@@ -92,14 +106,14 @@ function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, input: St
 /** Unique submission ID is checked inside the serialized PostgreSQL transaction.
  * Retries return the original receipt, even if the PR head has advanced.
  */
-export function existingStructuredReview(state: AtlasData, stores: StoreIds, input: StructuredReview) {
+export function existingStructuredReview(state: AtlasData, stores: StoreIds, input: StructuredReview, caller: ApplicationCaller) {
     const run = locate(state, stores, input.submissionId);
-    return run ? receipt(state, stores, run, input, false) : undefined;
+    return run ? receipt(state, stores, run, input, false, caller) : undefined;
 }
 
 export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasData,
-    stores: StoreIds, input: StructuredReview, verifiedHeadSha: string, verifiedAt: string) {
-    const previous = existingStructuredReview(state, stores, input);
+    stores: StoreIds, input: StructuredReview, verifiedHeadSha: string, verifiedAt: string, caller: ApplicationCaller) {
+    const previous = existingStructuredReview(state, stores, input, caller);
     if (previous) return previous;
     if (verifiedHeadSha !== input.headSha)
         throw new AtlasError('PR head changed before review submission; re-review the latest commit.', 'CONFLICT');
@@ -127,6 +141,7 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
                 ...(input.summary !== undefined && { summary: input.summary }),
                 githubHeadVerifiedAt: verifiedAt,
                 publisherIdentityVerified: false, publication: 'not_published',
+                authenticatedCaller: actorMetadata(caller),
             },
         },
     });
@@ -144,5 +159,5 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
             },
         });
     }
-    return receipt(state, stores, run, input, true);
+    return receipt(state, stores, run, input, true, caller);
 }
