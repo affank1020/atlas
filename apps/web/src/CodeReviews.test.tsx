@@ -65,7 +65,7 @@ const makeRun = (id: string, n: number) => ({ id, data: {
 } });
 
 test('Expanding a review loads only its findings and preserves its verified source and publication context', () => {
-    vi.mocked(useApplicationRead).mockImplementation((name: string, input: Record<string, unknown>) => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string, input: Record<string, unknown> = {}) => {
         if (name === 'code_reviews_overview') return { data: {
             projectId: 'project', reviewRuns: 2, findingObservations: 2 }, isLoading:false,isFetching:false,refetch } as never;
         if (name === 'code_reviews_list_runs') return { data: { total:2,items:[
