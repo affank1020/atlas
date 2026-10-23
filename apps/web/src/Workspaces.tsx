@@ -29,6 +29,33 @@ function suggestTarget(path: string, branch: string) {
     return slash > 0 ? path.slice(0, slash + 1) + path.slice(slash + 1) + '-' + branch.replace(/^atlas\//, '').replaceAll('/', '-') : '';
 }
 
+/** Keyed to one logical Workspace so leaving it discards expansion state
+ * before a different Workspace can render, including hash navigation. */
+function WorkspaceActivityPreview({ logicalWorkspaceId, checkoutId, refreshVersion }: {
+    logicalWorkspaceId?: string; checkoutId: string; refreshVersion: number;
+}) {
+    const [expanded, setExpanded] = useState(false);
+    const [scope, setScope] = useState<'logical' | 'checkout'>('logical');
+    return <section className="wm-subsection wm-activity-preview" aria-label="Workspace activity preview">
+        <div className="actions">
+            <button type="button" className="ghost" aria-expanded={expanded}
+                onClick={() => setExpanded(value => !value)}>
+                {expanded ? 'Hide recent activity' : 'Show recent activity'}
+            </button>
+            {expanded && logicalWorkspaceId && <label>Activity scope
+                <select aria-label="Activity preview scope" value={scope}
+                    onChange={event => setScope(event.target.value as 'logical' | 'checkout')}>
+                    <option value="logical">Whole Workspace</option>
+                    <option value="checkout">Selected checkout</option>
+                </select>
+            </label>}
+        </div>
+        {expanded && (scope === 'logical' && logicalWorkspaceId
+            ? <ActivityPreview logicalWorkspaceId={logicalWorkspaceId} refreshVersion={refreshVersion} title="Recent activity" />
+            : <ActivityPreview checkoutId={checkoutId} refreshVersion={refreshVersion} title="Recent activity" />)}
+    </section>;
+}
+
 export function Workspaces() {
     const [nodes, setNodes] = useState<AtlasNode[]>([]);
     const [all, setAll] = useState<Workspace[]>([]);
@@ -66,7 +93,6 @@ export function Workspaces() {
     const [prBody, setPrBody] = useState('');
     const [draftPR, setDraftPR] = useState<Draft>();
     const [retirement, setRetirement] = useState<RetirementState>();
-    const [activityPreview, setActivityPreview] = useState<{ ownerId: string; scope: 'logical' | 'checkout' }>();
 
     // Preserve existing ?workspace= deep links (logical or physical) while
     // public checkout operations explicitly select one Node-bound checkoutId.
@@ -92,11 +118,6 @@ export function Workspaces() {
             .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
     const selectedLogical = (logical.length ? logical : groups)
         .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
-    // Ownership is checked during render: a newly selected logical Workspace
-    // cannot mount an Activity reader using another Workspace's open state.
-    const activityOwnerId = selectedLogical?.id ?? selected?.id;
-    const showActivity = !!activityOwnerId && activityPreview?.ownerId === activityOwnerId;
-    const activityScope = showActivity && activityPreview?.scope === 'checkout' ? 'checkout' : 'logical';
     const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
     const availableProjects = projects.filter(project => !project.archivedAt && !linkedProjects.includes(project.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
@@ -459,27 +480,10 @@ export function Workspaces() {
                                 </button>;
                             })}
                         </div>)}
-                    <section className="wm-subsection wm-activity-preview" aria-label="Workspace activity preview">
-                        <div className="actions">
-                            <button type="button" className="ghost"
-                                aria-expanded={showActivity}
-                                onClick={() => setActivityPreview(current => current?.ownerId === activityOwnerId
-                                    ? undefined : activityOwnerId ? { ownerId: activityOwnerId, scope: 'logical' } : undefined)}>
-                                {showActivity ? 'Hide recent activity' : 'Show recent activity'}
-                            </button>
-                            {showActivity && logical.length > 0 && selectedLogical && <label>Activity scope
-                                <select aria-label="Activity preview scope" value={activityScope}
-                                    onChange={event => setActivityPreview(current => current?.ownerId === activityOwnerId
-                                        ? { ...current, scope: event.target.value as 'logical' | 'checkout' } : current)}>
-                                    <option value="logical">Whole Workspace</option>
-                                    <option value="checkout">Selected checkout</option>
-                                </select>
-                            </label>}
-                        </div>
-                        {showActivity && (activityScope === 'logical' && logical.length > 0 && selectedLogical
-                            ? <ActivityPreview logicalWorkspaceId={selectedLogical.id} refreshVersion={revision} title="Recent activity" />
-                            : <ActivityPreview checkoutId={selected.id} refreshVersion={revision} title="Recent activity" />)}
-                    </section>
+                    <WorkspaceActivityPreview
+                        key={logical.length > 0 && selectedLogical ? selectedLogical.id : selected.id}
+                        logicalWorkspaceId={logical.length > 0 ? selectedLogical?.id : undefined}
+                        checkoutId={selected.id} refreshVersion={revision} />
                     <div className="wm-selected-checkout">
                         <p className="eyebrow">Selected checkout</p>
                         <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
