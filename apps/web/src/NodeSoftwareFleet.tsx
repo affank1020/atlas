@@ -17,6 +17,8 @@ function useNodeSoftwareFleet(refreshGeneration: number) {
     const [intents, setIntents] = useState<Record<string, SoftwareIntentSnapshot>>({});
     useEffect(() => {
         let active = true;
+        let polling = false;
+        let pollInterval: number | undefined;
         setFleet({ nodes: [], loading: true, error: null });
         setIntents({});
         void (async () => {
@@ -27,34 +29,52 @@ function useNodeSoftwareFleet(refreshGeneration: number) {
                 setFleet({ nodes: sorted, loading: false, error: null });
                 const linux = sorted.filter(node => node.platform === 'linux');
                 setIntents(Object.fromEntries(linux.map(node => [node.id, { state: 'loading' as const }])));
-                // Bounded concurrency: do not issue one unbounded request per Node.
-                let next = 0;
-                await Promise.all(Array.from({ length: Math.min(3, linux.length) }, async () => {
-                    while (active && next < linux.length) {
-                        const node = linux[next++]!;
-                        try {
-                            const records = await callTool<NodeUpdateIntent[]>('list_node_update_intents',
-                                { nodeId: node.id, limit: 20 });
-                            if (!active) return;
-                            setIntents(current => ({
-                                ...current, [node.id]: {
-                                    state:'ready', records:records.filter(record => record.nodeId === node.id),
-                                },
-                            }));
-                        } catch {
-                            if (!active) return;
-                            // Intent reads are independent: an offline/inaccessible
-                            // Node cannot erase the visibility of other Nodes.
-                            setIntents(current => ({ ...current, [node.id]: { state:'unavailable' } }));
-                        }
+                async function pollIntents() {
+                    // Avoid overlapping polls (and unbounded requests) if the
+                    // Server is slow. Old refresh generations never publish.
+                    if (!active || polling) return;
+                    polling = true;
+                    try {
+                        let next = 0;
+                        await Promise.all(Array.from({ length: Math.min(3, linux.length) }, async () => {
+                            while (active && next < linux.length) {
+                                const node = linux[next++]!;
+                                try {
+                                    const records = await callTool<NodeUpdateIntent[]>('list_node_update_intents',
+                                        { nodeId: node.id, limit: 20 });
+                                    if (!active) return;
+                                    setIntents(current => ({
+                                        ...current, [node.id]: {
+                                            state:'ready', records:records.filter(record => record.nodeId === node.id),
+                                        },
+                                    }));
+                                } catch {
+                                    if (!active) return;
+                                    // Never treat a failed poll as proof that a
+                                    // claimed intent disappeared or was resolved.
+                                    setIntents(current => ({ ...current, [node.id]: { state:'unavailable' } }));
+                                }
+                            }
+                        }));
+                    } finally {
+                        polling = false;
                     }
-                }));
+                }
+                await pollIntents();
+                if (active && linux.length) {
+                    // The Node can claim an intent or an operator can reconcile
+                    // it without changing the registry snapshot or this route.
+                    pollInterval = window.setInterval(() => { void pollIntents(); }, 5_000);
+                }
             } catch (error) {
                 if (active) setFleet({ nodes: [], loading:false,
                     error:error instanceof Error ? error.message : 'Node inventory unavailable.' });
             }
         })();
-        return () => { active = false; };
+        return () => {
+            active = false;
+            if (pollInterval !== undefined) window.clearInterval(pollInterval);
+        };
     }, [refreshGeneration]);
     return { ...fleet, intents };
 }
@@ -91,7 +111,40 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
     const [filter, setFilter] = useState<Filter>('all');
     const [selectedId, setSelectedId] = useState<string | null>(() =>
         new URLSearchParams(window.location.hash.split('?')[1] || '').get('node'));
-    const now = Date.now();
+    useEffect(() => {
+        // App.tsx keeps this component mounted when the route query changes.
+        // Match Nodes.tsx: browser history and cross-page deep links must
+        // update the inspected Node without a page remount.
+        const fromHash = () => setSelectedId(
+            new URLSearchParams(window.location.hash.split('?')[1] || '').get('node'));
+        window.addEventListener('hashchange', fromHash);
+        return () => window.removeEventListener('hashchange', fromHash);
+    }, []);
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        // An expiry changes the meaning of a prepared request even with no
+        // network response. Schedule the closest upcoming expiration exactly;
+        // the five-second poll separately detects remote status transitions.
+        let nextExpiry = Infinity;
+        for (const snapshot of Object.values(intents)) {
+            if (snapshot.state !== 'ready') continue;
+            for (const record of snapshot.records) {
+                if (record.status !== 'requested') continue;
+                const expiry = Date.parse(record.expiresAt);
+                if (Number.isFinite(expiry) && expiry > now) nextExpiry = Math.min(nextExpiry, expiry);
+            }
+        }
+        if (!Number.isFinite(nextExpiry)) return;
+        const timer = window.setTimeout(() => setNow(Date.now()),
+            Math.min(2_147_483_647, Math.max(1, nextExpiry - Date.now() + 1)));
+        return () => window.clearTimeout(timer);
+    }, [intents, now]);
+    useEffect(() => {
+        // Refresh display-time checks if the tab stays open across a long
+        // interval, even when a network poll returns unchanged records.
+        const interval = window.setInterval(() => setNow(Date.now()), 5_000);
+        return () => window.clearInterval(interval);
+    }, []);
     const visible = nodes.filter(node => {
         if (filter === 'all') return true;
         if (filter === 'review') {
