@@ -186,7 +186,7 @@ test('Portfolio originals and variants appear read-only under their Project and 
     fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: otherProject } });
     expect(await screen.findByText('hero.png')).toBeInTheDocument();
     expect(listPortfolioProjectMedia).toHaveBeenCalledWith(otherProject);
-    expect(screen.getByText('1 variants')).toBeInTheDocument();
+    expect(screen.getByText(/1 variants/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open Portfolio media hero.png' }))
         .toHaveAttribute('href', active.url);
     expect(screen.queryByRole('button', { name: 'Move hero.png' })).not.toBeInTheDocument();
