@@ -46,7 +46,7 @@ async function fixture() {
         { name: 'state', type: 'enum', required: true, enumValues: ['new','persisting','resolved','unverified'] },
         { name: 'evidence', type: 'object' }, { name: 'schemaVersion', type: 'number', required: true, default: 1 },
     ] });
-    return { catalog, runs, findings };
+    return { catalog, store, runs, findings };
 }
 
 const openHead = (headSha = sha, open = true) => ({
