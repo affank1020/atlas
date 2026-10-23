@@ -43,3 +43,21 @@
 @media (prefers-reduced-motion:reduce) { .files-skeleton-row > span,.files-skeleton-row i { animation:none; } }
 @media(max-width:920px) { .files-scope-panel { align-items:stretch; flex-direction:column; gap:8px; } .files-private-note { padding:0; } .files-privacy { display:none; } }
 @media(max-width:700px) { .files-page-header { flex-direction:column; align-items:stretch; } .files-scope-fields { flex-direction:column; } .files-scope-fields label:first-child { flex:1; } .files-collection-head { align-items:stretch; flex-direction:column; } .files-collection-head input { width:100%; } .files-collection-controls { flex-wrap:wrap; } .files-collection-controls input { flex:1; min-width:160px; } .files-list-row { gap:10px; padding:13px; } .files-item-actions { flex-direction:column; } .files-glyph { width:35px; height:35px; flex-basis:35px; } }
+
+/* Project-first folder navigation and inline metadata-only file movement. */
+.files-breadcrumbs { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin:-9px 0 20px; font-size:.83rem; color:var(--text-muted); }
+.files-breadcrumbs button { appearance:none; border:0; background:none; padding:5px 3px; font:inherit; color:var(--text-secondary); cursor:pointer; border-radius:5px; }
+.files-breadcrumbs button:disabled { cursor:default; color:var(--text-primary); font-weight:650; }
+.files-breadcrumbs button:not(:disabled):hover { color:var(--text-primary); text-decoration:underline; }
+.files-crumb { display:flex; gap:7px; align-items:center; min-width:0; }
+.files-crumb button { overflow:hidden; text-overflow:ellipsis; max-width:220px; white-space:nowrap; }
+.files-folder-link { border:0; padding:0; background:none; color:inherit; font:inherit; font-weight:inherit; text-align:left; cursor:pointer; }
+.files-folder-link:not(:disabled):hover { text-decoration:underline; }
+.files-folder-link:disabled { cursor:default; }
+.files-breadcrumbs button:focus-visible,.files-folder-link:focus-visible { outline:2px solid var(--accent-solid); outline-offset:3px; }
+.files-list-row { flex-wrap:wrap; }
+.files-move-panel { display:flex; width:100%; gap:10px; align-items:end; flex-wrap:wrap; padding:6px 0 4px 59px; }
+.files-move-panel label { display:flex; flex-direction:column; gap:6px; color:var(--text-muted); font-size:.75rem; min-width:210px; flex:1; }
+.files-move-panel select { min-height:36px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text-primary); padding:6px 9px; }
+.files-move-panel button { min-height:36px; }
+@media(max-width:700px) { .files-actions { flex-wrap:wrap; } .files-move-panel { padding-left:0; } .files-scope-fields label:first-child { flex:1; } }
