@@ -1,5 +1,5 @@
 import { WorkspaceHome, WorkspaceSettings, DeveloperHub } from './Workspace';
-import { MonitoringPage } from './Monitoring';
+import { MonitoringPage, ProjectActivityPanel } from './Monitoring';
 import { DataOverview } from './DataOverview';
 import { Files } from './Files';
 import { rememberWork } from './recentWork';
@@ -11,7 +11,7 @@ import { Modal } from "./Dialog";
 import { AppShell, ProjectNav, type ProjectSection } from "./AppShell";
 import { ProjectOverview, ViewContainer } from "./ProjectOverview";
 import "./projects.css";
-import { ActivityFeed, ActivityRows } from "./ActivityFeed";
+import { ActivityRows } from "./ActivityFeed";
 import { StoreActivityLink } from "./StoreActivityLink";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { ViewPage } from "./ViewPage";
@@ -158,7 +158,7 @@ function ProjectDetail({ id, section }: { id: string; section: ProjectSection })
     <p className="view-collection-intro">Live snapshots for quick reference. Open a View in a new tab to scroll and interact, or use Edit to change its definition.</p>
     <div className="view-gallery">{views.data?.map(v => <ViewContainer key={v.id} view={v} refreshVersion={refreshVersion} />)}</div>
     {views.data?.length === 0 && <Empty>No Views yet. Create a View to bring your project data together.</Empty>}
-</section>}{section === "applications" && <ProjectApplications projectId={id} refreshVersion={refreshVersion} />}{section === "workspaces" && <WorkspacePanel key={`${id}:${refreshVersion}`} projectId={id} archived={!!project.data?.archivedAt} />}{section === "activity" && <ActivityFeed projectId={id} title="Project activity" refreshVersion={refreshVersion} />}{create && <Modal title="Create store" onClose={() => setCreate(false)}><form onSubmit={submit} className="form"><label>Name<input name="name" required autoFocus /></label><label>Description<textarea name="description" /></label><div className="inline"><label>First field<input name="field" required placeholder="title" pattern="[A-Za-z][A-Za-z0-9_]*" /></label><label>Type<select name="type">{TYPES.map(t => <option key={t}>{t}</option>)}</select></label></div><p className="hint">Add and refine fields from the Schema tab after creation.</p><div className="form-actions"><button type="button" className="ghost" onClick={() => setCreate(false)}>Cancel</button><button>Create store</button></div></form></Modal>}{edit && project.data && <Modal title="Edit project" onClose={() => setEdit(false)}><form onSubmit={update} className="form"><label>Name<input name="name" required defaultValue={project.data.name} /></label><label>Description<textarea name="description" defaultValue={project.data.description} /></label><div className="form-actions"><button type="button" className="ghost" onClick={() => setEdit(false)}>Cancel</button><button>Save changes</button></div></form></Modal>}</>;
+</section>}{section === "applications" && <ProjectApplications projectId={id} refreshVersion={refreshVersion} />}{section === "workspaces" && <WorkspacePanel key={`${id}:${refreshVersion}`} projectId={id} archived={!!project.data?.archivedAt} />}{section === "activity" && <ProjectActivityPanel projectId={id} refreshVersion={refreshVersion} />}{create && <Modal title="Create store" onClose={() => setCreate(false)}><form onSubmit={submit} className="form"><label>Name<input name="name" required autoFocus /></label><label>Description<textarea name="description" /></label><div className="inline"><label>First field<input name="field" required placeholder="title" pattern="[A-Za-z][A-Za-z0-9_]*" /></label><label>Type<select name="type">{TYPES.map(t => <option key={t}>{t}</option>)}</select></label></div><p className="hint">Add and refine fields from the Schema tab after creation.</p><div className="form-actions"><button type="button" className="ghost" onClick={() => setCreate(false)}>Cancel</button><button>Create store</button></div></form></Modal>}{edit && project.data && <Modal title="Edit project" onClose={() => setEdit(false)}><form onSubmit={update} className="form"><label>Name<input name="name" required defaultValue={project.data.name} /></label><label>Description<textarea name="description" defaultValue={project.data.description} /></label><div className="form-actions"><button type="button" className="ghost" onClick={() => setEdit(false)}>Cancel</button><button>Save changes</button></div></form></Modal>}</>;
 }
 
 function StoreDetail({ route }: { route: Extract<Route, { page: "store" }> }) {
