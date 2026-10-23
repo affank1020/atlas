@@ -41,7 +41,7 @@ async function parseJson(request: IncomingMessage, maxBytes: number): Promise<Re
     return parsed as Record<string, unknown>;
 }
 
-async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer; folderId: string | null }> {
+async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer; folderId?: string | null }> {
     if (request.headers['content-type'] !== 'application/octet-stream')
         throw new AtlasError('Binary uploads must use application/octet-stream.');
     const header = (name: string, maxLength: number) => {
@@ -56,7 +56,7 @@ async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: File
     catch { throw new AtlasError('Invalid binary upload file name.'); }
     const mimeType = header('x-atlas-file-type', 120);
     const folderHeader = request.headers['x-atlas-folder-id'];
-    const folderId = folderHeader === undefined ? null : parseFolderId(folderHeader);
+    const folderId = folderHeader === undefined ? undefined : parseFolderId(folderHeader);
     const length = request.headers['content-length'];
     if (length && (!/^\d+$/.test(length) || Number(length) > MAX_FILE_BYTES))
         throw new AtlasError('Files request exceeds the upload limit.');
@@ -178,7 +178,7 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
             const destination = body.folderId === undefined ? undefined : parseFolderId(body.folderId);
             sendJson(response, 200, await services.files.list(owner, status, destination));
         } else if (action === 'upload') {
-            const destination = body.folderId === undefined ? null : parseFolderId(body.folderId);
+            const destination = body.folderId === undefined ? undefined : parseFolderId(body.folderId);
             const encoded = body.base64;
             if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4 ||
                 !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))
