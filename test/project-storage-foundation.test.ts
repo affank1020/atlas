@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
+import { readFile } from "node:fs/promises";
 import type { Pool } from "pg";
 import { cleanupDatabases, databaseFixture } from "./database.js";
 
@@ -95,4 +96,32 @@ test("Project file folder references reject cross-Project and legacy-owner scope
     const archived = await db.query("SELECT folder_id FROM atlas_files WHERE id=$1", [id]);
     assert.equal(archived.rows[0]?.folder_id, folderA);
     await assert.rejects(db.query("DELETE FROM atlas_file_folders WHERE id=$1", [folderA]), { code: "23503" });
+});
+
+test("Additive migration preserves pre-existing Project, legacy and Portfolio metadata", async () => {
+    const { store } = await databaseFixture("031_node_root_challenge_reissue.sql");
+    const db = store.pool;
+    const projectId = await addProject(db, "Existing project");
+    const projectFile = await addFile(db, "project", projectId, null);
+    const legacyFile = await addFile(db, "workspace", randomUUID(), null);
+    const originalId = randomUUID();
+    const key = "b".repeat(64) + ".jpg";
+    await db.query(
+        `INSERT INTO media_assets
+           (id,checksum,storage_key,original_name,mime_type,byte_size,created_by)
+           VALUES($1,$2,$3,'original.jpg','image/jpeg',3,'test')`,
+        [originalId, "b".repeat(64), key]);
+    const before = await db.query(
+        "SELECT id,owner_kind,owner_id,storage_key FROM atlas_files ORDER BY id");
+
+    await db.query(await readFile(
+        new URL("../apps/server/migrations/032_project_storage_foundation.sql", import.meta.url), "utf8"));
+
+    const after = await db.query(
+        "SELECT id,owner_kind,owner_id,storage_key,folder_id FROM atlas_files ORDER BY id");
+    assert.deepEqual(after.rows.map(({ folder_id: _folderId, ...row }) => row), before.rows);
+    assert.deepEqual(after.rows.map(row => row.folder_id), [null, null]);
+    assert.deepEqual(new Set(after.rows.map(row => row.id)), new Set([projectFile, legacyFile]));
+    const portfolio = await db.query("SELECT id,storage_key FROM media_assets WHERE id=$1", [originalId]);
+    assert.equal(portfolio.rows[0]?.storage_key, key);
 });
