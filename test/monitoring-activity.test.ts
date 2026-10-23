@@ -375,4 +375,38 @@ test('logical Workspace Monitoring unifies physical checkouts across Nodes witho
     assert.equal((await monitoring.page({
         logicalWorkspaceId: '77777777-7777-4777-8777-777777777777', client: 'logical-monitor-test',
     })).total, 0, 'Unknown logical IDs return no rows');
+
+    // Workspace Git inspections and many mutation attempts contain no nodeId in
+    // their audit JSON. Resolve host ownership using the checkout registry.
+    const insert = async (checkoutId: string, operation: string, resulting: object) => {
+        await store.pool.query(`INSERT INTO audit_events
+            (id,client,operation,project_id,workspace_id,after_state,created_at)
+            VALUES(gen_random_uuid(),'logical-node-filter-test',$1,$2,$3,$4::jsonb,now())`,
+            [operation, project.id, checkoutId, JSON.stringify(resulting)]);
+    };
+    for (const [checkoutId, tag] of [[first, 'mac'], [second, 'remote'], [unrelated, 'foreign']] as const) {
+        await insert(checkoutId, 'workspace.git_status', { outcome: 'completed' });
+        await insert(checkoutId, 'workspace.mutation_requested',
+            { attemptId: tag, operation: 'workspace.git_committed' });
+        await insert(checkoutId, 'workspace.git_committed', { attemptId: tag, outcome: 'completed' });
+    }
+    for (const [nodeId, checkoutId] of [[localId, first], [host, second]] as const) {
+        const filter = { ...shared, client: 'logical-node-filter-test', nodeId, projectId: project.id };
+        const byRow = await monitoring.page(filter);
+        assert.equal(byRow.total, 3, 'Node scope includes inspection and mutation audits without JSON node IDs');
+        assert.ok(byRow.items.every(event => event.workspaceId === checkoutId));
+        assert.deepEqual(byRow.items.map(e => e.operation).sort(),
+            ['workspace.git_committed', 'workspace.git_status', 'workspace.mutation_requested']);
+
+        const byOperation = await monitoring.page({ ...filter, groupOperations: true });
+        assert.equal(byOperation.total, 2, 'Node-scoped grouped operations retain inspection and complete mutation');
+        assert.equal(byOperation.items.length, 3);
+        assert.ok(byOperation.items.every(event => event.workspaceId === checkoutId));
+    }
+    assert.equal((await monitoring.page({
+        ...shared, client: 'logical-node-filter-test', nodeId: host, checkoutId: unrelated,
+    })).total, 0, 'Node identity never overrides a foreign logical Workspace scope');
+    assert.equal((await monitoring.page({
+        client: 'logical-node-filter-test', nodeId: host,
+    })).total, 6, 'Node-only filtering continues to find checkout events without JSON node IDs');
 });
