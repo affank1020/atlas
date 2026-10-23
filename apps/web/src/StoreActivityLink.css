@@ -1,0 +1,15 @@
+/* A Store-to-Monitoring link needs the same usable hit area as adjacent buttons. */
+.store-activity-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    max-width: 100%;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: var(--text-sm);
+    font-weight: 550;
+    line-height: 1.25;
+    text-align: center;
+}
