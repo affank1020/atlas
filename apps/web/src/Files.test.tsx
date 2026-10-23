@@ -98,6 +98,9 @@ test('Folder creation, rename, archive and restore use Project-scoped actions', 
 test('Archived folders remain discoverable and restorable; active upload is disabled inside them', async () => {
     const archivedFolder = { ...firstFolder, status: 'archived' };
     vi.mocked(listProjectFolders).mockResolvedValue([archivedFolder] as never);
+    vi.mocked(listFiles).mockImplementation(async (_owner, status, destination) =>
+        status === 'archived' && destination === folderId
+            ? [{ ...saved, folderId, status: 'archived' }] as never : []);
     render(<Files />);
     await screen.findByText('This folder is empty');
     expect(screen.queryByRole('button', { name: 'Modules' })).not.toBeInTheDocument();
@@ -106,8 +109,9 @@ test('Archived folders remain discoverable and restorable; active upload is disa
     fireEvent.click(screen.getByRole('button', { name: 'Modules' }));
     await waitFor(() => expect(listFiles).toHaveBeenCalledWith(owner, 'archived', folderId));
     expect(screen.getByRole('button', { name: 'Upload files' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Restore research.pdf' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Research' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Restore folder Modules' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore folder Modules' }));
     await waitFor(() => expect(restoreProjectFolder).toHaveBeenCalledWith(projectId, folderId));
 });
 
