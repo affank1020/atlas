@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ActivityPreview } from './ActivityPreview';
+import { ProjectOverview } from './ProjectOverview';
+import type { Project } from './types';
 import { callTool } from './api';
 import type { AuditEvent } from './types';
 
@@ -91,4 +93,19 @@ test('preview failure is explicit, permits retry and preserves prior valid rows'
     fireEvent.click(screen.getByRole('button', { name: 'Refresh activity' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('network interruption');
     expect(screen.getByText('Record created')).toBeInTheDocument();
+});
+
+test('Project Overview renders the bounded preview instead of the legacy auto-polling ActivityFeed', async () => {
+    const project: Project = {
+        id: projectA, name: 'Preview Project', description: '', createdAt: '2026-10-22T09:00:00Z',
+        updatedAt: '2026-10-23T09:00:00Z',
+    };
+    vi.mocked(callTool).mockResolvedValue(page(['one']) as never);
+    render(<ProjectOverview project={project} views={[]} viewsBusy={false} />);
+    expect(await screen.findByText('Record created')).toBeInTheDocument();
+    expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: projectA, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal));
+    expect(screen.queryByText('Auto-refresh')).not.toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.map(call => call[0])).toEqual(['query_monitoring_activity']);
 });
