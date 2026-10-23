@@ -17,6 +17,7 @@ Its reporters emit:
   JUnit + Vitest JUnit, with no re-execution of test suites
 - `benchmark-lcov` containing root `lcov.info`: Node V8 coverage restricted
   to exercised `apps/*/{src,dist}` and `packages/*/{src,dist}` modules
+  **within the actual Atlas checkout root** (never nested dependency or fixture paths)
 
 **Coverage is Node-side exercised-module coverage, not whole-monorepo
 coverage.** It does not include files never loaded by the Node tests,

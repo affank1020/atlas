@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve } from "node:path";
+
 // Reporting-only helpers: parse CI-generated JUnit and restrict V8 LCOV to
 // exercised Atlas application/package code. This is NOT whole-repo coverage.
 const JUNIT_LIMIT = 10 * 1024 * 1024;
@@ -20,17 +22,26 @@ export function mergeJunit(nodeXml, webXml) {
   return result;
 }
 
-export function scopeLcov(raw) {
+export function scopeLcov(raw, checkoutRoot) {
+  // Coverage source paths may be absolute or relative to the checkout. Never
+  // search for a nested "apps/" or "packages/" segment in an arbitrary path:
+  // dependencies and test fixtures can have those same directory names.
+  if (typeof checkoutRoot !== "string" || !isAbsolute(checkoutRoot)) {
+    throw new Error("Atlas checkout root must be an absolute path");
+  }
+  const root = resolve(checkoutRoot);
   const selected = [];
-  // The native Node coverage reporter includes test harness files and
-  // loaded dependencies. Count only exercised application/package modules.
-  // Unloaded files and Vitest browser code are not represented.
+  // Include only exercised Atlas app/package modules under the top-level
+  // checkout directories, not test fixtures, node_modules or external files.
+  // Unloaded files and Vitest/browser code are not represented.
   for (const chunk of raw.split("end_of_record")) {
     const lines = chunk.trim();
     if (!lines) continue;
-    const path = /^SF:(.+)$/m.exec(lines)?.[1]?.replaceAll("\\", "/");
-    if (!path) throw new Error("LCOV record missing source filename");
-    if (!/(?:^|\/)(?:apps|packages)\/[^/]+\/(?:src|dist)\//.test(path)) continue;
+    const source = /^SF:(.+)$/m.exec(lines)?.[1]?.replaceAll("\\", "/");
+    if (!source) throw new Error("LCOV record missing source filename");
+    const localPath = relative(root, resolve(root, source)).replaceAll("\\", "/");
+    if (!/^(?:apps|packages)\/[^/]+\/(?:src|dist)\/[^/]+/.test(localPath)) continue;
+    if (localPath.split("/").includes("node_modules")) continue;
     selected.push(lines + "\nend_of_record\n");
   }
   if (!selected.length) {

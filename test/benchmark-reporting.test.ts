@@ -31,12 +31,47 @@ test("Benchmark Node coverage excludes test runners/dependencies and web-only co
     "TN:\nSF:apps/node/dist/node.js\nLH:3\nLF:3\nend_of_record\n",
     "TN:\nSF:packages/protocol/src/schema.ts\nLH:2\nLF:4\nend_of_record\n"
   ].join("");
-  const filtered = scopeLcov(source);
+  const filtered = scopeLcov(source, "/checkout");
   assert.equal((filtered.match(/end_of_record/g) ?? []).length, 3);
   assert.doesNotMatch(filtered, /test\/unit|node_modules/);
   assert.match(filtered, /SF:\/checkout\/apps\/server\/src\/server\.ts/);
   assert.match(filtered, /SF:apps\/node\/dist\/node\.js/);
   assert.match(filtered, /SF:packages\/protocol\/src\/schema\.ts/);
-  assert.throws(() => scopeLcov("TN:\nSF:test/sample.test.ts\nLH:1\nLF:1\nend_of_record\n"),
+  assert.throws(() => scopeLcov("TN:\nSF:test/sample.test.ts\nLH:1\nLF:1\nend_of_record\n", "/checkout"),
     /no Atlas application/);
+});
+
+test("Benchmark LCOV accepts only top-level Atlas paths under the chosen checkout", () => {
+  const record = (path, hit) =>
+    "TN:\nSF:" + path + "\nLH:" + hit + "\nLF:5\nend_of_record\n";
+  const source = [
+    record("/checkout/apps/server/src/api.ts", 4),
+    record("packages/protocol/dist/schema.js", 3),
+    record("/checkout/node_modules/vendor/packages/engine/src/index.js", 2),
+    record("/checkout/test/fixtures/apps/demo/src/index.ts", 1),
+    record("/checkout-backup/apps/server/src/copy.ts", 1),
+    record("../untrusted/apps/server/src/other.ts", 1),
+    record("/checkout/apps/server/src/node_modules/nested/index.js", 1),
+    record("/checkout/apps/server/fixtures/src/fixture.ts", 1)
+  ].join("");
+  const scoped = scopeLcov(source, "/checkout");
+  assert.equal((scoped.match(/end_of_record/g) ?? []).length, 2);
+  assert.match(scoped, /SF:\/checkout\/apps\/server\/src\/api\.ts/);
+  assert.match(scoped, /SF:packages\/protocol\/dist\/schema\.js/);
+  assert.doesNotMatch(scoped, /node_modules|fixtures|checkout-backup|untrusted/);
+  assert.throws(() => scopeLcov(source), /checkout root must be an absolute path/);
+  assert.throws(() => scopeLcov(source, "."), /checkout root must be an absolute path/);
+});
+
+test("Benchmark LCOV rejects external sources even if their path contains apps and packages", () => {
+  for (const source of [
+    "/checkout/node_modules/vendor/packages/engine/src/index.js",
+    "/checkout/test/fixtures/apps/demo/src/index.ts",
+    "/checkout-copy/apps/server/src/api.ts",
+    "../another-repo/apps/server/src/api.ts"
+  ]) {
+    const record = "SF:" + source + "\nLH:1\nLF:1\nend_of_record\n";
+    assert.throws(() => scopeLcov(record, "/checkout"),
+      /no Atlas application or package files/, source);
+  }
 });

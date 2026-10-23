@@ -71,7 +71,7 @@ try {
   }
   const raw = await optionalFile(paths.rawLcov);
   if (raw) {
-    await writeFile(paths.lcov, scopeLcov(raw));
+    await writeFile(paths.lcov, scopeLcov(raw, root));
   }
 }
 if (!success) process.exitCode = 1;
