@@ -5,12 +5,13 @@ import { open } from 'node:fs/promises';
 import { Pool } from 'pg';
 import { requireDatabaseUrl } from './config.js';
 import { fingerprintHostRootKey, NodeRootTrustLedger } from '../nodes/root-trust-ledger.js';
+import { NodeUpdateReconciliationLedger } from '../nodes/root-reconciliation.js';
 
 // No HTTP, MCP, background task or Node capability calls this executable.
 // Run only from a separately authenticated administrator's Server-side
 // terminal with explicit, scoped PostgreSQL privileges.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const help = 'Usage: node-root-trust-cli pin <nodeId> <public-pem-file> | issue <nodeId> <claimed-intent-id> | reissue-expired <nodeId> <claimed-intent-id> | verify <nodeId> <intentId> <attestation-json-file> | status <nodeId> <intentId>';
+const help = 'Usage: node-root-trust-cli pin <nodeId> <public-pem-file> | issue <nodeId> <claimed-intent-id> | reissue-expired <nodeId> <claimed-intent-id> | verify <nodeId> <intentId> <attestation-json-file> | status <nodeId> <intentId> | reconcile <nodeId> <intentId> <independently-checked-version> <independently-checked-pid> <operator-check-reference>';
 
 async function boundedLocalFile(filename: string, limit: number): Promise<string> {
     const file = await open(filename,constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -31,6 +32,10 @@ async function boundedLocalFile(filename: string, limit: number): Promise<string
 }
 
 async function main() {
+    // This opt-in must be present in the CLI's launch environment. A saved
+    // apps/server/.env setting must NOT silently enable future invocations.
+    const reconciliationEnabledAtLaunch =
+        process.env.ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED === '1';
     loadEnv({path:'apps/server/.env',quiet:true});
     const args = process.argv.slice(2);
     const action = args[0];
@@ -40,11 +45,19 @@ async function main() {
         (action === 'issue' && args.length !== 3) ||
         (action === 'reissue-expired' && args.length !== 3) ||
         (action === 'status' && args.length !== 3) ||
-        !['pin','verify','issue','reissue-expired','status'].includes(action ?? '') ||
+        (action === 'reconcile' && args.length !== 6) ||
+        !['pin','verify','issue','reissue-expired','status','reconcile'].includes(action ?? '') ||
         !UUID.test(args[1] ?? '') ||
         (action !== 'pin' && !UUID.test(args[2] ?? '')))
         throw new Error(help);
 
+    // Not even a deliberate administrator CLI invocation can close an
+    // update unless this NEW gate was explicitly enabled for a local,
+    // independently observed nonproduction drill. Separate from claims.
+    if (action === 'reconcile' && !reconciliationEnabledAtLaunch) {
+        console.error('Manual reconciliation disabled: explicitly opt in for this CLI invocation.');
+        throw new Error('Manual reconciliation is disabled unless explicitly enabled.');
+    }
     const nodeId = args[1]!;
     const pool = new Pool({
         connectionString:requireDatabaseUrl(),
@@ -86,6 +99,24 @@ async function main() {
                 ' to consume its challenge after verifying the pinned signature: ');
             if (typed !== 'VERIFY '+intentId) throw new Error('Operator declined verification.');
             result = await ledger.verify(nodeId,intentId,attestation);
+        } else if (action === 'reconcile') {
+            const intentId = args[2]!;
+            const checkedVersion = args[3]!;
+            const checkedPid = Number(args[4]);
+            const reference = args[5]!;
+            console.error('THIS ACTION WILL CLOSE A CLAIMED UPDATE AND ALLOW A FUTURE UPDATE REQUEST.');
+            console.error('Verify independently from a ROOT terminal on the ACTUAL host:');
+            console.error('  - root-owned activation receipt and target digest, current release pointer');
+            console.error('  - no pending recovery marker, service health and live systemd MainPID');
+            console.error('  - matching Node identity/version and a fresh root-signed evidence record');
+            console.error('This is an OPERATOR ASSERTION; Atlas does not independently measure host health.');
+            const exact = 'RECONCILE '+intentId+' '+checkedVersion+' '+String(checkedPid)+' '+reference;
+            const typed = await prompt.question('Type '+exact+' to acknowledge the independent checks: ');
+            if (typed !== exact) throw new Error('Operator declined manual reconciliation.');
+            result = await new NodeUpdateReconciliationLedger(pool).reconcile({
+                nodeId,intentId,independentlyCheckedVersion:checkedVersion,
+                independentlyCheckedPid:checkedPid,operatorCheckReference:reference,
+            });
         } else {
             result = await ledger.status(nodeId,args[2]!);
         }
@@ -94,6 +125,9 @@ async function main() {
 }
 void main().catch(() => {
     // No SQL errors, DB URLs, key material or untrusted paths in console logs.
-    console.error('Root-trust operator action refused or unavailable; no claim was cleared.');
+    // COMMIT may have succeeded even if the database acknowledgment was lost.
+    // Never promise that a reconciliation did not happen after an uncertain result.
+    console.error('Root-trust operator action failed or acknowledgment is uncertain.');
+    console.error('Read authoritative Node update intent and root trust status before any retry.');
     process.exitCode = 1;
 });

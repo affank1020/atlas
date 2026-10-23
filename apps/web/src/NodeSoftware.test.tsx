@@ -414,3 +414,34 @@ it('shows reported host outcome as unverified and keeps the claimed update fence
     expect(screen.queryByRole('button',{name:/Prepare update request/})).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:/Cancel update request/})).not.toBeInTheDocument();
 }, 12_000);
+
+it('shows manually reconciled closure without claiming Atlas has verified a successful update',async()=>{
+    const node={
+        id:'11111111-1111-4111-8111-111111111111',
+        name:'Linux host',platform:'linux',status:'online' as const,
+        credentialState:'active',credentialUpdatedAt:'2026-10-21T10:00:00.000Z',
+        version:'2.0.0+aaaaaaaaaaaa',capabilities:[],lastSeen:null,hostedWorkspaceCount:0,
+    };
+    const item:NodeUpdateIntent={
+        id:'22222222-2222-4222-8222-222222222222',nodeId:node.id,
+        installedVersion:'1.9.9+aaaaaaaaaaaa',targetVersion:'2.0.0',
+        targetCommit:'aaaaaaaaaaaa',status:'reconciled',
+        createdAt:new Date().toISOString(),expiresAt:new Date().toISOString(),
+        approved:false,executable:false,
+    };
+    vi.mocked(callTool).mockImplementation(async name=>{
+        if(name==='list_node_update_intents')return [item];
+        if(name==='list_node_releases')return {state:'ready',checkedAt:'',releases:[release]};
+        if(name==='plan_node_update')return {
+            nodeId:node.id,status:'current',reason:'Current release',candidate:null,
+            canInstall:false,canActivate:false,provenanceVerified:false,
+        };
+        throw new Error('Unexpected tool '+name);
+    });
+    render(<NodeSoftwareSummary node={node}/>);
+    expect(await screen.findByText('Update request: reconciled')).toBeInTheDocument();
+    expect(screen.getByText(/operator-acknowledged closure, not Atlas-measured health/)).toBeInTheDocument();
+    expect(screen.getByText('Not recorded')).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Cancel update request/})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Install|Activate|Update now/i})).not.toBeInTheDocument();
+});

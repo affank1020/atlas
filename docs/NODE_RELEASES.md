@@ -687,3 +687,90 @@ No API, MCP method or background worker can invoke this admin-only
 operation. Run the first complete drill on an isolated nonproduction
 host; do not provision production keys, run this against the VPS or
 enable the claim route without separate explicit approval.
+
+
+## Manually reconciling a claimed Linux Node update (operator-only; disabled by default)
+
+Atlas now has a narrowly scoped **administrator-acknowledged close-out** of a
+previously claimed Linux Node update. This is **not** automated proof of
+ongoing host health and must not be confused with an untrusted Node-reported
+`activated` observation or automatic installation. Only an administrator
+with independent access to the actual Linux host and the Server's PostgreSQL
+operator terminal can authorise this transition.
+
+The new command is **disabled by default**, separately from the Node claim
+feature. On a disposable **nonproduction** Server, an operator must deliberately
+set `ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED=1` in the **launch environment**
+of that individual root-trust CLI invocation. The opt-in is captured **before**
+the CLI loads persistent `apps/server/.env` configuration, so adding the flag
+to that file cannot enable reconciliation on later invocations. Do not store
+the opt-in in persistent deployment environment files. No API, Node credential,
+MCP tool, background job or Web UI can perform this action.
+
+**Prerequisites for a claimed intent:**
+
+- A host-root Ed25519 public key that was pinned independently, and a
+  consumed challenge with valid, persistent and *recent* (at most five-minute
+  old) signed root evidence bound to the exact intent, target release, archive
+  digest and systemd MainPID.
+- An active remote Linux Node credential that **has not rotated since the
+  intent was prepared**, an online Node reporting the exact signed target
+  release, and a Server-received heartbeat within 60 seconds. These
+  Node-reported fields are useful corroboration but are **not** independent
+  measurements of process health.
+- Independently check the actual host **as root**: the root-owned execution
+  receipt and target archive digest, the current release symlink, no pending
+  lifecycle recovery journal, `systemctl is-active atlas-node`, systemd
+  `MainPID`, Node identity and application health. Confirm the same
+  observed full release version and PID as the signed root evidence.
+  Preserve a separate operator inspection record or ticket reference.
+- No live recovery in progress. **The Server cannot independently prove this
+  just from a five-minute-old signature**. Perform the host inspection
+  immediately before authorising reconciliation.
+
+Example syntax for a **disposable nonproduction drill only**, after the
+operator has performed the separate host checks:
+
+```bash
+ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED=1 \
+node apps/server/dist/server/node-root-trust-cli.js reconcile \
+  <node-uuid> <claimed-intent-uuid> \
+  2.0.1+bbbbbbbbbbbb <independently-checked-systemd-pid> HOST-DRILL-TICKET-0001
+```
+
+The operator must type the exact `RECONCILE <intent> <version> <pid> <reference>`
+confirmation on a real terminal. The command first explains that this
+action **releases the claimed-intent fence**. After confirmation, the Server
+takes the Node row lock, then the intent row lock, then root proof and
+challenge locks. It checks the live database clock against the Node
+heartbeat and evidence verification times, re-verifies the original stored
+Ed25519 signature against the pinned key, and requires that the
+independently checked version and PID exactly match the proof.
+The close-out record and immutable audit are stored **in the same database
+transaction** as changing status to `reconciled`. Competing admin attempts,
+a credential rotation, missing or stale proof, an offline Node, tampered
+signature, wrong target or invalid prior challenge fail closed; none may
+partially release the update lock. **If the database connection fails while
+committing, the result is ambiguous:** the update might already be
+`reconciled`. Inspect the authoritative root-trust `status` command and
+the Server's update-intent history before considering another operator
+action. Never assume failure means that the claim remains locked or
+automatically repeat the operation.
+
+The status `reconciled` means **the operator acknowledges completion of
+their independent inspection and permits a future, separately prepared
+update request**. It is not labelled `verified successful update` by Atlas.
+The dashboard continues to show `Last successful update: Not recorded`,
+and displays operator-acknowledged reconciliation separately. The prior
+root proof, old claimed intent, unverified reports, update target and
+audit history are retained unchanged. Neither reconciliation nor any
+future preparation installs software automatically.
+
+**Production rollout is still blocked** pending an independent security
+review and nonproduction end-to-end install, verification, rollback,
+power-loss and recovery drill. Do not enable the reconciliation switch,
+provision keys, mutate the claim flag or run this command on the production
+VPS without explicit approval. Recovery from an actually failed or rolled
+back host execution needs a **separate** trusted operator disposition;
+this success-path close-out refuses a host that does not match the
+root-signed target.
