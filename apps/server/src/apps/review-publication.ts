@@ -15,7 +15,7 @@ type Proposal = { run: AtlasRecord; payload: PublishPayload; body: string; marke
 
 export class ReviewPublicationService {
     constructor(private readonly catalog: Catalogue,
-        private readonly github: Pick<GitHubReviewPublisher, 'checkHead' | 'inlineComments' | 'findPublished' | 'publish'>,
+        private readonly github: Pick<GitHubReviewPublisher, 'checkHead' | 'inlineComments' | 'findPublished' | 'prepareWrite' | 'publish'>,
         private readonly enabledRepositories: ReadonlySet<string> = new Set()) {}
 
     private async stores(): Promise<Stores> {
@@ -118,6 +118,9 @@ export class ReviewPublicationService {
             findingCount: proposal.payload.findings.length, inlineCount: comments.length,
             previewBody: proposal.body, status: 'ready', dryRun: !apply, event: 'COMMENT' };
         if (!apply) return preview;
+        // Check GitHub installation write permission before creating a durable claim.
+        // If scope is missing, fail without locking an unpublished review.
+        const writeToken = await this.github.prepareWrite(proposal.payload.repository);
         const claim: Claim = { state: 'claimed', claimId: randomUUID(), contentSha: proposal.contentSha,
             includeInline, claimedAt: new Date().toISOString() };
         await this.catalog.store.transaction(state => {
@@ -130,7 +133,7 @@ export class ReviewPublicationService {
         // Once the durable claim exists we NEVER automatically send another POST.
         // Any failed/ambiguous HTTP outcome remains claimed until remote reconciliation.
         await this.github.checkHead(proposal.payload);
-        const posted = await this.github.publish(proposal.payload, proposal.body, comments);
+        const posted = await this.github.publish(proposal.payload, proposal.body, comments, writeToken);
         await this.catalog.store.transaction(state => {
             const current = this.plan(state, stores, runId, caller, includeInline);
             if (current.status?.state !== 'claimed' || current.status.claimId !== claim.claimId)

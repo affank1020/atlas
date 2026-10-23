@@ -134,10 +134,11 @@ export class GitHubReviewPublisher {
                 '/reviews?per_page=100&page=' + page, bearer);
             if (!Array.isArray(data) || data.length > 100) throw new AtlasError('Incomplete GitHub review list.', 'GITHUB_REQUEST_FAILED');
             for (const item of data) {
-                if (!safeText(item?.body, 35_000) || !positive(item?.id) ||
+                if (!(item?.body === null || safeText(item?.body, 35_000)) || !positive(item?.id) ||
                     !safeText(item?.commit_id, 40) || !safeText(item?.html_url, 500))
                     throw new AtlasError('Malformed GitHub review list.', 'GITHUB_REQUEST_FAILED');
-                if (item.body.endsWith(marker) && item.commit_id.toLowerCase() === payload.headSha.toLowerCase()) {
+                if (typeof item.body === 'string' && item.body.endsWith(marker) &&
+                    item.commit_id.toLowerCase() === payload.headSha.toLowerCase()) {
                     if (item.state !== 'COMMENTED') throw new AtlasError('Unexpected GitHub review event.', 'CONFLICT');
                     matched.push(item);
                 }
@@ -150,9 +151,13 @@ export class GitHubReviewPublisher {
         throw new AtlasError('GitHub review list pagination bound exceeded.', 'CAPABILITY_UNAVAILABLE');
     }
 
+    async prepareWrite(repository: string) {
+        return this.broker.pullRequestPublishToken(repository);
+    }
+
     async publish(payload: PublishPayload, body: string,
-        comments: { path: string; line: number; side: 'RIGHT'; body: string }[]) {
-        const bearer = await this.broker.pullRequestPublishToken(payload.repository);
+        comments: { path: string; line: number; side: 'RIGHT'; body: string }[], preparedToken?: string) {
+        const bearer = preparedToken ?? await this.prepareWrite(payload.repository);
         const data: any = await this.request(payload.repository, '/pulls/' + payload.prNumber + '/reviews', bearer, {
             method: 'POST', data: { commit_id: payload.headSha, event: 'COMMENT', body, comments },
         });

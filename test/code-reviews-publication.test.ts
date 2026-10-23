@@ -56,6 +56,7 @@ function mock(overrides: Record<string, any> = {}) {
         checkHead: async () => { events.checked++; return 'scoped-read-token'; },
         inlineComments: async () => { events.diff++; return []; },
         findPublished: async () => { events.searched++; return undefined; },
+        prepareWrite: async () => 'scoped-write-token',
         publish: async () => { events.published++; return result; },
         ...overrides,
     };
