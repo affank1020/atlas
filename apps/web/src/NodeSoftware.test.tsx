@@ -547,3 +547,115 @@ it('isolates failed intent lookup and unknown release provenance without inventi
     expect(within(fleet).getByText(/Some Linux histories unavailable/)).toBeInTheDocument();
     expect(within(fleet).queryByText('Matches published release')).not.toBeInTheDocument();
 });
+
+
+it('fleet poll detects a Node claiming and an operator reconciling without manual Refresh', async () => {
+    const nodeId='11111111-1111-4111-8111-111111111111';
+    const node={id:nodeId,name:'Review host',platform:'linux',status:'online',
+        version:'1.9.9+aaaaaaaaaaaa',capabilities:[],lastSeen:null,hostedWorkspaceCount:0};
+    const prepared:NodeUpdateIntent={id:'22222222-2222-4222-8222-222222222222',
+        nodeId,installedVersion:node.version,targetVersion:'2.0.0',
+        targetCommit:'abc123abc123',status:'requested',approved:false,executable:false,
+        createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30_000).toISOString()};
+    let authoritative:NodeUpdateIntent=prepared;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if(name==='list_nodes')return [node];
+        if(name==='list_node_update_intents')return [authoritative];
+        if(name==='list_node_releases')return {state:'ready',checkedAt:'',releases:[release]};
+        throw new Error('Unexpected tool '+name);
+    });
+    const originalInterval=window.setInterval;
+    const ticks:Array<()=>void>=[];
+    const spy=vi.spyOn(window,'setInterval').mockImplementation((handler,timeout,...args)=>{
+        if(timeout===5_000 && typeof handler==='function')
+            ticks.push(()=>handler(...args));
+        return originalInterval(handler,timeout,...args);
+    });
+    try {
+        render(<NodeSoftware />);
+        const fleet=await screen.findByRole('region',{name:'Node software fleet'});
+        expect(await within(fleet).findAllByText('Request prepared')).not.toHaveLength(0);
+        // Both the display clock and intent request polling use this interval.
+        await act(async()=>{await Promise.resolve();});
+        expect(ticks.length).toBeGreaterThanOrEqual(2);
+        authoritative={...prepared,status:'claimed'};
+        await act(async()=>{for(const tick of [...ticks])tick();await Promise.resolve();});
+        await waitFor(()=>expect(within(fleet).getAllByText('Operator reconciliation needed').length)
+            .toBeGreaterThanOrEqual(1));
+        fireEvent.change(within(fleet).getByRole('combobox',{name:'Show Nodes'}),
+            {target:{value:'review'}});
+        expect(within(fleet).getByText('1 of 1 Nodes')).toBeInTheDocument();
+        authoritative={...prepared,status:'reconciled'};
+        await act(async()=>{for(const tick of [...ticks])tick();await Promise.resolve();});
+        await waitFor(()=>expect(within(fleet).getByText('0 of 1 Nodes')).toBeInTheDocument());
+        expect(within(fleet).queryByRole('button',{name:/Review host/})).not.toBeInTheDocument();
+        fireEvent.change(within(fleet).getByRole('combobox',{name:'Show Nodes'}),
+            {target:{value:'all'}});
+        expect(within(fleet).getAllByText('Operator acknowledged').length).toBeGreaterThanOrEqual(1);
+        expect(within(fleet).queryByText(/Operator reconciliation required/)).not.toBeInTheDocument();
+        expect(within(fleet).getByText('Not recorded')).toBeInTheDocument();
+        expect(vi.mocked(callTool).mock.calls.filter(([name])=>
+            name==='list_node_update_intents').length).toBeGreaterThanOrEqual(3);
+    } finally {
+        spy.mockRestore();
+    }
+});
+
+it('fleet expires prepared requests at the deadline without a network refresh or button click', async () => {
+    const nodeId='11111111-1111-4111-8111-111111111111';
+    const node={id:nodeId,name:'Expiring host',platform:'linux',status:'online',
+        version:'1.9.9',capabilities:[],lastSeen:null,hostedWorkspaceCount:0};
+    const request:NodeUpdateIntent={id:'22222222-2222-4222-8222-222222222222',
+        nodeId,installedVersion:'1.9.9',targetVersion:'2.0.0',
+        targetCommit:'abc123abc123',status:'requested',approved:false,executable:false,
+        createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+1_000).toISOString()};
+    vi.mocked(callTool).mockImplementation(async name => {
+        if(name==='list_nodes')return [node];
+        if(name==='list_node_update_intents')return [request];
+        if(name==='list_node_releases')return {state:'ready',checkedAt:'',releases:[release]};
+        throw new Error('Unexpected tool '+name);
+    });
+    render(<NodeSoftware />);
+    const fleet=await screen.findByRole('region',{name:'Node software fleet'});
+    expect((await within(fleet).findAllByText('Request prepared')).length).toBeGreaterThanOrEqual(1);
+    expect((await within(fleet).findAllByText('Request expired',{},{
+        timeout:2_500,
+    })).length).toBeGreaterThanOrEqual(1);
+    expect(vi.mocked(callTool).mock.calls.filter(([name])=>
+        name==='list_node_update_intents')).toHaveLength(1);
+},5_000);
+
+it('fleet inspector follows new node deep links while the software route remains mounted', async () => {
+    const first='11111111-1111-4111-8111-111111111111';
+    const second='22222222-2222-4222-8222-222222222222';
+    const nodes=[first,second].map((id,index)=>({id,name:index===0?'First host':'Second host',
+        platform:'darwin',status:'online',version:'2.0.0',capabilities:[],
+        lastSeen:null,hostedWorkspaceCount:0}));
+    const oldHash=window.location.hash;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if(name==='list_nodes')return nodes;
+        if(name==='list_node_releases')return {state:'ready',checkedAt:'',releases:[]};
+        throw new Error('Unexpected tool '+name);
+    });
+    try {
+        window.location.hash='#/nodes/software?node='+first;
+        render(<NodeSoftware />);
+        const detail=await screen.findByRole('region',{name:'Selected Node software details'});
+        expect(within(detail).getByRole('heading',{name:'First host'})).toBeInTheDocument();
+        await act(async()=>{
+            window.location.hash='#/nodes/software?node='+second;
+            window.dispatchEvent(new Event('hashchange'));
+        });
+        expect(within(detail).getByRole('heading',{name:'Second host'})).toBeInTheDocument();
+        expect(within(detail).getByRole('link',{name:/Open Node details/}))
+            .toHaveAttribute('href','#/nodes?node='+second);
+        await act(async()=>{
+            window.location.hash='#/nodes/software?node='+first;
+            window.dispatchEvent(new Event('hashchange'));
+        });
+        expect(within(detail).getByRole('heading',{name:'First host'})).toBeInTheDocument();
+    } finally {
+        window.location.hash=oldHash;
+        window.dispatchEvent(new Event('hashchange'));
+    }
+});
