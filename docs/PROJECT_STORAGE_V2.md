@@ -52,3 +52,39 @@ Folder `status` is a foundation field, not a complete lifecycle API. Archiving n
 - Back up all content, including variants and archived files, before deleting any legacy object; destruction, garbage collection and automatic retention remain out of scope.
 - Never put either R2 account's credentials in code, PRs, logs or chat. Production credentials need not be accessed for development.
 - Before any live physical migration, reconcile current object inventory and prove independent recoverability of source and destination material.
+
+## PR 2A: Project Folder API and integrity (reviewable backend slice)
+
+The private administrative `/api/files/*` API adds `folders-list`, `folders-create`,
+`folders-rename`, `folders-archive`, `folders-restore`, and `file-move`.
+All accept an explicitly validated Project owner. Newly uploaded files can
+specify a `folderId`; filtered listing accepts `folderId: null` for the
+Project root. Omitting the field on existing list callers retains historical
+whole-owner listing behaviour. Binary uploads optionally use `x-atlas-folder-id`.
+
+Folder IDs are immutable, as are parent-child links in the foundation schema.
+Creation supports arbitrary nesting, but moving an entire folder is deferred.
+Renaming is metadata-only. A folder can be archived only after all immediate
+active children and active files have been archived or relocated; archiving
+does not delete objects or metadata. Restoring requires an active parent and
+a conflict-free sibling name. File moves are metadata-only and strictly within
+the original Project. The new migration protects active file attachment and
+reactivation using shared row locks, preventing a race with folder archival
+through the admin service.
+
+Existing admin Files routes retain legacy Workspace/Application operations
+for compatibility with the still-deployed Files browser. Folder-specific routes
+and destinations **only** accept Project ownership. PR 2B must replace the
+browser's owner picker and enforce Project-only new uploads only after it can
+no longer issue Workspace/Application writes; legacy read paths must remain
+available through an explicit compatibility mechanism. The internal Node
+ingest path is not changed and its existing Workspace authorization, receipts,
+idempotency and default-off upload gate remain in effect; conversion of Node
+uploads to Project ownership needs its own reviewed migration. Portfolio
+media remains separate.
+
+**PR 2B (next):** update the Files web client to present Projects rather than
+three competing owner classes, add nested-folder navigation, folder actions,
+destination selection and in-Project file moves. Until 2B, the existing web
+browser does not yet expose the new folder endpoints. No R2 key migration,
+backup changes, production upload enablement or Cloudflare action occurs.
