@@ -493,15 +493,23 @@ the same 64-byte Ed25519 signature:
 
 The signer only considers a durable root-owned `activated` execution receipt,
 and refuses to sign if the current release differs from the receipt, a
-lifecycle recovery marker exists, the Node service is not active or the
-connected status PID is inconsistent. It takes **both the process-wide
-executor flock and the lifecycle's existing manual activation/rollback flock**
-in that order, preventing cooperating manual lifecycle commands from
-changing the release during signing. It requires a separate interactive
-`ATTEST <intent UUID>` confirmation. It never loads the Node credential or
-sends a network request. The connected status file is supplied by the Node
-process itself, so this check is **not** independent measurement of running
-JavaScript or a substitute for a recovery drill.
+lifecycle recovery marker exists, the Node service is not active, or the
+connected status PID is inconsistent. The Node-provided `updatedAt`
+heartbeat must be valid UTC and at most 35 seconds old (with up to 5 seconds
+of future clock skew); an old `connected` record is never live evidence.
+
+The interactive `ATTEST <intent UUID>` confirmation happens **before
+acquiring any execution, lifecycle or approval lock**, so a paused operator
+cannot prevent emergency recovery. After confirmation, the signer takes
+**both the process-wide executor flock and the lifecycle's existing manual
+activation/rollback flock** in that order, then reads and revalidates the
+root receipt, active release, recovery marker and live status and signs
+without further operator waits. Cooperating manual lifecycle commands
+cannot change the release while the evidence is collected. The signer
+never loads the Node credential or sends a network request. The connected
+status file is supplied by the Node process itself, so even a fresh heartbeat
+is **not** independent measurement of running JavaScript or a substitute
+for a recovery drill.
 
 The eventual Server must pin each Node's **Ed25519 public key by a trusted
 administrator**, not by the Node credential or the attestation itself.
