@@ -183,6 +183,7 @@ test('remote publisher sends COMMENT only and refuses non-added or duplicated in
     const comments=await publisher.inlineComments(payload,token,true);
     assert.equal(comments.length,1);
     assert.deepEqual(comments[0]?.path,'src/new.ts');
+    assert.equal(comments[0]?.originalPosition,2);
     const body=renderReview(payload).body;
     await publisher.publish(payload,body,comments);
     const write=requests.find(x=>x.method==='POST');
@@ -190,6 +191,8 @@ test('remote publisher sends COMMENT only and refuses non-added or duplicated in
     assert.equal(write?.body.commit_id,sha);
     assert.equal(write?.body.comments[0].side,'RIGHT');
     assert.equal(write?.body.comments[0].line,11);
+    assert.equal(write?.body.comments[0].originalPosition,undefined,
+        'Internal diff anchors must not leak into GitHub POST payload');
     await assert.rejects(publisher.inlineComments({...payload,findings:[{...payload.findings[0]!,line:10}]},token,true),
         /not on an added/);
     await assert.rejects(publisher.inlineComments({...payload,findings:[payload.findings[0]!,payload.findings[0]!]},token,true),
@@ -284,6 +287,117 @@ test('reconciliation rejects omitted or altered inline comments, then accepts ex
     await assert.rejects(publisher.findPublished(payload,body,expected),/content failed verification/);
     remoteInline=[{...expected[0],user:{id:998,type:'Bot'}}];
     assert.equal((await publisher.findPublished(payload,body,expected))?.id,1234);
+});
+
+
+test('batch inline comments with null line/side reconcile only via matching original diff position and SHA', async () => {
+    const payload = {runId: submission.submissionId, repository, prNumber:84,
+        headSha:sha, verdict:'non_blocking', findings:[]};
+    const body = renderReview(payload).body;
+    const expected = [{path:'src/new.ts', line:15, side:'RIGHT' as const,
+        originalPosition:2, body:'**SEV3 · Test**\n\nThis needs guarding'}];
+    let remoteInline:any[] = [];
+    const publisher = new GitHubReviewPublisher({
+        pullRequestReadToken:async()=> 'read-token',
+        pullRequestPublishToken:async()=> 'write-token',
+        reviewPublisherBot:async()=> ({id:998,login:'atlas-test[bot]'}),
+    }, (async (url:string) => {
+        if (url.includes('/reviews?')) return new Response(JSON.stringify([{
+            id:1234, body, state:'COMMENTED', commit_id:sha, html_url:result.url,
+            user:{id:998,type:'Bot'},
+        }]), {status:200});
+        if (url.includes('/reviews/1234/comments?'))
+            return new Response(JSON.stringify(remoteInline),{status:200});
+        throw Error('unexpected URL '+url);
+    }) as typeof fetch);
+    const batch = {
+        ...expected[0], id:44, pull_request_review_id:1234,
+        line:null, side:null, original_line:null, original_side:null,
+        original_position:null, position:2, original_commit_id:sha,
+        commit_id:sha, user:{id:998,type:'Bot'},
+    };
+    remoteInline = [batch];
+    assert.equal((await publisher.findPublished(payload,body,expected))?.id,1234);
+    // An outdated review must use its original position and original commit,
+    // not a shifted current position/current commit.
+    remoteInline = [{...batch, position:null, original_position:2,
+        commit_id:'b'.repeat(40)}];
+    assert.equal((await publisher.findPublished(payload,body,expected))?.id,1234);
+    remoteInline = [{...batch, original_line:15, original_side:'RIGHT',
+        position:null, original_position:null, commit_id:'b'.repeat(40)}];
+    assert.equal((await publisher.findPublished(payload,body,expected))?.id,1234);
+    for (const malformed of [
+        {...batch, original_commit_id:'c'.repeat(40)},
+        {...batch, position:1},
+        {...batch, position:null, original_position:null},
+        {...batch, original_position:1,position:null,commit_id:'b'.repeat(40)},
+        {...batch, position:2, commit_id:'b'.repeat(40),original_position:null},
+        {...batch, path:'src/wrong.ts'},
+        {...batch, body:'changed'},
+        {...batch, user:{id:111,type:'Bot'}},
+        {...batch, pull_request_review_id:111},
+    ]) {
+        remoteInline = [malformed];
+        await assert.rejects(publisher.findPublished(payload,body,expected),/content failed verification/);
+    }
+});
+
+test('real batch-shaped null inline positions reconcile an ambiguous POST without re-posting', async () => {
+    const {catalog, runs, runId} = await fixture();
+    let posts = 0, posted = false, outdated = false;
+    const broker = {
+        pullRequestReadToken:async()=> 'read-token',
+        pullRequestPublishToken:async()=> 'write-token',
+        reviewPublisherBot:async()=> ({id:998,login:'atlas-test[bot]'}),
+    };
+    const publisher = new GitHubReviewPublisher(broker, (async (url:string, options:RequestInit) => {
+        if (url.endsWith('/pulls/84'))
+            return new Response(JSON.stringify({number:84,state:'open',
+                head:{sha},base:{repo:{full_name:repository}}}),{status:200});
+        if (url.includes('/files?'))
+            return new Response(JSON.stringify([{filename:'src/new.ts',status:'modified',
+                patch:'@@ -14,2 +14,3 @@\n context\n+guard\n context'}]),{status:200});
+        if (url.includes('/reviews?'))
+            return new Response(JSON.stringify(posted ? [{
+                id:1234,body:renderReview({runId,repository,prNumber:84,headSha:sha,
+                    verdict:'non_blocking', summary:submission.summary,
+                    findings:[{key:'structured:'+submission.submissionId+':f1',
+                        severity:'sev3',title:'Check this branch',description:'The new line needs a guard.',
+                        path:'src/new.ts',line:15}]}).body,
+                commit_id:sha,state:'COMMENTED',html_url:result.url,user:{id:998,type:'Bot'},
+            }] : []),{status:200});
+        if (url.includes('/reviews/1234/comments?')) return new Response(JSON.stringify([{
+            id:4001,pull_request_review_id:1234,user:{id:998,type:'Bot'},
+            path:'src/new.ts',body:'**SEV3 · Check this branch**\n\nThe new line needs a guard.',
+            line:null,side:null,original_line:null,original_side:null,
+            original_commit_id:sha,commit_id:outdated ? 'b'.repeat(40):sha,
+            position:outdated ? null:2,original_position:outdated ? 2:null,
+        }]),{status:200});
+        if (url.endsWith('/reviews') && options.method === 'POST') {
+            posts++;
+            const sent = JSON.parse(String(options.body));
+            assert.equal(sent.event,'COMMENT');
+            assert.equal(sent.comments[0]?.originalPosition,undefined);
+            posted = true;
+            // An uncertain response after GitHub accepted the publication.
+            throw new Error('Connection lost after GitHub committed the review');
+        }
+        throw Error('unexpected URL '+url);
+    }) as typeof fetch);
+    const service = new ReviewPublicationService(catalog,publisher,new Set([repository]));
+    await assert.rejects(service.publishRun(runId,true,true,actor),/outcome is uncertain/);
+    assert.equal(posts,1);
+    const claim = await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id});
+    const status = (claim.items[0]!.data.coverage as any).githubPublication;
+    assert.equal(status.state,'claimed');
+    assert.equal(status.expectedInline[0].originalPosition,2);
+    outdated = true;
+    const confirmed = await service.publishRun(runId,true,true,actor);
+    assert.equal(confirmed.status,'published');
+    assert.equal(posts,1);
+    const retry = await service.publishRun(runId,true,true,actor);
+    assert.equal(retry.alreadyPublished,true);
+    assert.equal(posts,1);
 });
 
 test('verification failure after POST keeps the durable claim and never retries POST', async () => {

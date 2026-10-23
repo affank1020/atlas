@@ -295,7 +295,15 @@ App JWT, requires an exact body match, verifies that the review was a
 `COMMENT` on the reviewed commit, and checks the full set of expected
 inline comments (including author, text and RIGHT-side position).
 The expected inline comments are preserved in the durable claim before
-posting, so reconciliation does not depend on a later, changed PR diff.
+posting, including the exact added RIGHT-side diff position calculated
+from GitHub's current complete patch. Reconciliation first uses populated
+current line/side fields, then stable original-line/original-commit anchors
+for outdated threads. GitHub's batch-review API can return null
+`line`, `original_line` and `side`; in that case Atlas requires the
+previously verified diff position and exact original commit SHA.
+Neither a null position alone nor matching comment text alone can attest
+the source anchor. This also permits recovery after later commits make
+current lines outdated, without relying on a changed PR diff.
 Even an unrelated review with a copied marker or a very long body must
 not cause false publication. If the expected review is found, `apply:true`
 records its verified ID without reposting. If not found, the claim remains

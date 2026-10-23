@@ -10,7 +10,7 @@ export type InlineFinding = { key: string; path: string; line: number; body: str
 export type PublishFinding = { key: string; severity: string; title: string; description: string; path?: string; line?: number };
 export type PublishPayload = { runId: string; repository: string; prNumber: number; headSha: string; summary?: string; verdict: string; findings: PublishFinding[] };
 type RemoteReview = { id: number; body: string; commit_id: string; html_url: string; state: string };
-export type ExpectedInlineComment = { path: string; line: number; side: 'RIGHT'; body: string };
+export type ExpectedInlineComment = { path: string; line: number; side: 'RIGHT'; body: string; originalPosition?: number };
 
 function safeJson(response: Response): Promise<unknown> {
     return response.json().catch(() => {
@@ -26,20 +26,30 @@ function safeText(value: unknown, max: number): value is string {
 function escapeMarker(value: string) {
     return value.replaceAll('<!--', '&lt;!--');
 }
-function changedLines(patch: string): Set<number> {
-    const lines = new Set<number>();
-    let right = -1;
+/** GitHub's legacy diff position is counted from the first @@ line, starting at 1.
+ * Retain the exact added RIGHT-side position in the durable claim so GitHub's
+ * batch API null line/side responses (and later outdated threads) can reconcile.
+ */
+function addedPositions(patch: string): Map<number, number> {
+    const lines = new Map<number, number>();
+    let right = -1, position = 0, started = false;
     for (const row of patch.split('\n')) {
         const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(row);
-        if (hunk) { right = Number(hunk[1]); continue; }
-        if (right < 0) continue;
-        if (row.startsWith('+')) { lines.add(right); right++; }
-        else if (row.startsWith(' ')) right++;
-        else if (row.startsWith('-') || row.startsWith('\\')) { /* old-side only */ }
+        if (hunk) {
+            if (started) position++; // Subsequent hunk headers occupy diff positions.
+            started = true;
+            right = Number(hunk[1]);
+            continue;
+        }
+        if (right < 0 || row.startsWith('\\')) continue;
+        if (row.startsWith('+')) { position++; lines.set(right, position); right++; }
+        else if (row.startsWith(' ')) { position++; right++; }
+        else if (row.startsWith('-')) position++;
         else right = -1;
     }
     return lines;
 }
+
 export function renderReview(payload: PublishPayload) {
     if (!id.test(payload.runId) || !repoPattern.test(payload.repository) ||
         !positive(payload.prNumber) || !sha.test(payload.headSha) ||
@@ -98,7 +108,7 @@ export class GitHubReviewPublisher {
      * Only added RIGHT-side lines visible in GitHub's current diff are eligible.
      */
     async inlineComments(payload: PublishPayload, token: string, includeInline: boolean) {
-        if (!includeInline) return [] as { path: string; line: number; side: 'RIGHT'; body: string }[];
+        if (!includeInline) return [] as ExpectedInlineComment[];
         if (!payload.findings.length || payload.findings.length > 20 ||
             payload.findings.some(f => !f.path || !positive(f.line)))
             throw new AtlasError('Inline publication needs 1–20 findings, each with a new-side path and line.', 'INVALID_REQUEST');
@@ -107,20 +117,21 @@ export class GitHubReviewPublisher {
         if (!Array.isArray(response) || response.length >= 100 ||
             response.some(item => !safeText(item?.filename, 4096) || !['added','modified','renamed','copied','changed','removed'].includes(item.status)))
             throw new AtlasError('GitHub diff file list is incomplete or unsupported.', 'GITHUB_REQUEST_FAILED');
-        const diff = new Map<string, Set<number>>();
+        const diff = new Map<string, Map<number, number>>();
         for (const file of response) {
             if (typeof file.patch === 'string' && file.patch.length < 200_000)
-                diff.set(file.filename, changedLines(file.patch));
+                diff.set(file.filename, addedPositions(file.patch));
         }
         const used = new Set<string>();
         return payload.findings.map(item => {
-            if (!diff.get(item.path!)?.has(item.line!))
+            const originalPosition = diff.get(item.path!)?.get(item.line!);
+            if (!positive(originalPosition))
                 throw new AtlasError('Inline finding is not on an added RIGHT-side line of the current PR diff.', 'CONFLICT');
             const identity = item.path + ':' + item.line;
             if (used.has(identity)) throw new AtlasError('Duplicate inline file/line position.', 'INVALID_REQUEST');
             used.add(identity);
             return {
-                path: item.path!, line: item.line!, side: 'RIGHT' as const,
+                path: item.path!, line: item.line!, side: 'RIGHT' as const, originalPosition,
                 body: '**' + item.severity.toUpperCase() + ' · ' + escapeMarker(item.title) + '**\n\n' +
                     escapeMarker(item.description).slice(0, 6000),
             };
@@ -170,18 +181,37 @@ export class GitHubReviewPublisher {
         botId: number, expected: ExpectedInlineComment[]) {
         const comments: any = await this.request(payload.repository,
             '/pulls/' + payload.prNumber + '/reviews/' + reviewId + '/comments?per_page=100&page=1', token);
-        // More than 99 comments requires pagination. Fail closed rather than
-        // accepting a truncated inline comment set.
+        // A full page could have more results: never accept partial verification.
         if (!Array.isArray(comments) || comments.length >= 100 || comments.length !== expected.length)
             throw new AtlasError('GitHub review inline comments differ from the claimed publication.', 'CONFLICT');
         const used = new Set<number>();
         for (const want of expected) {
-            const match = comments.find((got: any, i: number) => !used.has(i) &&
-                got?.user?.id === botId && got?.user?.type === 'Bot' &&
-                got.path === want.path && got.line === want.line &&
-                got.side === want.side && got.body === want.body);
-            if (!match) throw new AtlasError('GitHub inline review content failed verification.', 'CONFLICT');
-            used.add(comments.indexOf(match));
+            const matchIndex = comments.findIndex((got: any, i: number) => {
+                if (used.has(i) || got?.user?.id !== botId || got?.user?.type !== 'Bot' ||
+                    got.path !== want.path || got.body !== want.body ||
+                    (got.pull_request_review_id != null && got.pull_request_review_id !== reviewId)) return false;
+                // Populated GitHub line fields can be used directly for a
+                // comment which has not become outdated.
+                if (got.line === want.line && got.side === want.side) return true;
+                // After rebase, the current line can be null; GitHub's
+                // original line and original commit remain stable anchors.
+                if (typeof got.original_commit_id === 'string' &&
+                    got.original_commit_id.toLowerCase() === payload.headSha.toLowerCase()) {
+                    if (got.original_line === want.line && got.original_side === want.side) return true;
+                    // Batch POST /reviews may report *both* original_line and
+                    // original_side as null. Diff position + original SHA is
+                    // an exact, previously validated added-line anchor.
+                    if (positive(want.originalPosition) &&
+                        (got.original_position === want.originalPosition ||
+                         (got.position === want.originalPosition &&
+                          got.commit_id?.toLowerCase() === payload.headSha.toLowerCase())))
+                        return true;
+                }
+                return false;
+            });
+            if (matchIndex < 0)
+                throw new AtlasError('GitHub inline review content failed verification.', 'CONFLICT');
+            used.add(matchIndex);
         }
     }
 
@@ -190,10 +220,11 @@ export class GitHubReviewPublisher {
     }
 
     async publish(payload: PublishPayload, body: string,
-        comments: { path: string; line: number; side: 'RIGHT'; body: string }[], preparedToken?: string) {
+        comments: ExpectedInlineComment[], preparedToken?: string) {
         const bearer = preparedToken ?? await this.prepareWrite(payload.repository);
         const data: any = await this.request(payload.repository, '/pulls/' + payload.prNumber + '/reviews', bearer, {
-            method: 'POST', data: { commit_id: payload.headSha, event: 'COMMENT', body, comments },
+            method: 'POST', data: { commit_id: payload.headSha, event: 'COMMENT', body,
+                comments: comments.map(({ originalPosition: _anchor, ...githubComment }) => githubComment) },
         });
         if (!positive(data?.id) || !safeText(data?.html_url, 500) ||
             typeof data?.commit_id !== 'string' || data.commit_id.toLowerCase() !== payload.headSha.toLowerCase())
