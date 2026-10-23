@@ -24,7 +24,7 @@ const saved = {
 
 vi.mock('./atlasApi', () => ({
     useListProjectsQuery: () => ({
-        data: [{ id: projectId, name: 'Research' }, { id: otherProject, name: 'Portfolio' }],
+        data: [{ id: projectId, name: 'Research' }, { id: otherProject, name: 'University' }],
         isLoading: false, error: null, isFetching: false, refetch: vi.fn(),
     }),
 }));
