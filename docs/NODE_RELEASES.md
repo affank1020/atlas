@@ -774,3 +774,46 @@ VPS without explicit approval. Recovery from an actually failed or rolled
 back host execution needs a **separate** trusted operator disposition;
 this success-path close-out refuses a host that does not match the
 root-signed target.
+
+
+## Node Software Management in Atlas Web (UI foundation)
+
+The **Nodes → Software** view now combines the existing signed-asset
+*verification guidance* with a fleet-level, **read-only software management
+overview**. It lists registered Nodes across Linux, macOS, Android and
+other platforms, exposes Node-reported installed versions, shows published
+archive comparisons where supported, and lets operators inspect each Node.
+
+For Linux, Atlas fetches existing durable update requests and displays
+request preparation, claimed/operator-reconciliation-needed, and
+operator-acknowledged reconciliation as distinct states. An `activated`
+observation originating from the Node credential is still **unverified**,
+even when the Node reports the expected version. A `reconciled` record
+represents **operator acknowledgment**, not independent Atlas process
+health verification. The view continues to say **Last Atlas-verified
+successful update: Not recorded**. Per-Node detail links lead back to the
+existing Nodes interface, where safe eligibility and request-preparation
+controls remain unchanged.
+
+Platform capabilities are declared explicitly in
+`apps/web/src/node-software-model.ts`, not inferred from whether a Node
+is online or announces particular capabilities. Linux supports
+**request-only** preparation and **external-operator** privileged
+execution; macOS continues to use manual installation; stable signed
+Android distribution and managed execution are not available. Unknown
+platforms fail closed as unsupported. The management view never offers
+an install/activate/rollback action that the Server cannot safely
+authorize.
+
+Fleet requests are read-only, limited to three parallel Linux history
+lookups, scoped to their matching Node ID and discarded on refresh
+or unmount. If a Node's request history or the release catalogue cannot
+be loaded, the view explicitly marks the information **unavailable or
+unknown** rather than assuming no pending review or a healthy installation.
+A partial operator-review count is annotated when any histories remain
+unknown. No new privileged routes, migrations, host commands, background
+update jobs or rollout flags are introduced by the UI foundation.
+
+The next phase must design separately authenticated Web operator
+approvals and corresponding host-root authorization. Merely displaying
+a pending update in the browser does not grant permission to execute it.
