@@ -96,7 +96,7 @@ export function Workspaces() {
     // cannot mount an Activity reader using another Workspace's open state.
     const activityOwnerId = selectedLogical?.id ?? selected?.id;
     const showActivity = !!activityOwnerId && activityPreview?.ownerId === activityOwnerId;
-    const activityScope = showActivity ? activityPreview.scope : 'logical';
+    const activityScope = showActivity && activityPreview?.scope === 'checkout' ? 'checkout' : 'logical';
     const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
     const availableProjects = projects.filter(project => !project.archivedAt && !linkedProjects.includes(project.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
