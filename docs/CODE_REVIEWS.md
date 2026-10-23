@@ -156,6 +156,30 @@ PRs per call bounds synchronous GitHub requests and database work, not the
 overall repository's history. A PR with zero matching Code Reviewer reviews
 is reported as zero new runs, **not** as evidence it was never reviewed.
 
+### Authenticated structured reviewer submission
+
+The `code_reviews_submit_structured` operation requires a **verified MCP OAuth
+session**. Atlas derives the permitted Auth0 subject and issuer from its
+configured and successfully verified OAuth token. This identity is passed
+through trusted transport/dispatch context, **not** request JSON, `client`,
+`x-atlas-client`, or arbitrary HTTP headers. Direct HTTP
+`/api/tools/code_reviews_submit_structured`, unauthenticated/local MCP,
+and internal calls lacking this context are denied. Read-only Code Reviews
+operations and historical import permissions are unchanged.
+
+The run's `coverage.authenticatedCaller` records
+`{ kind: "mcp-oauth", subject, issuer }`. Receipts can only be retrieved by
+the same authenticated subject/issuer, including an idempotent retry after a
+PR-head change. Previously created structured records without verified actor
+metadata cannot be replayed through the new gate; they remain readable through
+ordinary store history.
+
+Atlas currently authorizes one configured Auth0 subject for MCP. This is
+**account-level provenance only**, not proof of the particular AI client,
+model, Code Reviewer skill invocation, or independence from the PR author.
+GitHub publication is still disabled. A future reviewer-scoped credential and
+publisher policy must be evaluated before claiming independent authorship.
+
 ### Structured native review submission
 
 The `code_reviews_submit_structured` Application operation creates one

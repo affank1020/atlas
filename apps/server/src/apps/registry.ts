@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { AtlasError } from '../shared/errors.js';
 
+/** Authenticated identity is injected by the trusted MCP transport after OAuth verification,
+ * never accepted from Application arguments or HTTP headers. */
+export type ApplicationCaller = Readonly<{ kind: 'mcp-oauth'; subject: string; issuer: string }>;
+
 /** Code-defined first-party Applications, optionally associated with a Project.
  * These are not Views, independent servers or executable uploads.
  */
@@ -8,7 +12,7 @@ export type ApplicationTool = {
     name: string;
     description: string;
     inputSchema: Record<string, z.ZodType>;
-    invoke(input: any): Promise<unknown> | unknown;
+    invoke(input: any, caller?: ApplicationCaller): Promise<unknown> | unknown;
 };
 
 export type ApplicationDefinition = {
@@ -65,9 +69,9 @@ export class ApplicationRegistry {
 
     hasTool(name: string): boolean { return this.operations.has(name); }
 
-    async invoke(name: string, input: unknown): Promise<unknown> {
+    async invoke(name: string, input: unknown, caller?: ApplicationCaller): Promise<unknown> {
         const operation = this.operations.get(name);
         if (!operation) throw new AtlasError('Unknown Application operation.', 'NOT_FOUND');
-        return operation.invoke(z.object(operation.inputSchema).parse(input));
+        return operation.invoke(z.object(operation.inputSchema).parse(input), caller);
     }
 }

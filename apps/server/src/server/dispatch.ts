@@ -14,7 +14,7 @@ import type { PortfolioService, PortfolioMediaService } from '../portfolio/index
 import { fabricSearchSchema, fabricContextSchema } from '../retrieval/input.js';
 import { callCoreTool } from './core-dispatch.js';
 import { globalSearchInput, searchEverywhere } from './global-search.js';
-import type { ApplicationRegistry } from '../apps/registry.js';
+import type { ApplicationRegistry, ApplicationCaller } from '../apps/registry.js';
 import type { StorageUsageService } from './storage-usage.js';
 import type { ServerDiagnostics } from './diagnostics.js';
 import type { MonitoringHealthService } from './monitoring-health.js';
@@ -34,11 +34,11 @@ export interface ApplicationServices {
     media?: PortfolioMediaService;
     applications: ApplicationRegistry;
 }
-export type TransportServices = ApplicationServices & { dispatch(name: string, input?: any, caller?: ShareAuditClient): Promise<unknown> };
+export type TransportServices = ApplicationServices & { dispatch(name: string, input?: any, caller?: ShareAuditClient, authenticatedCaller?: ApplicationCaller): Promise<unknown> };
 /** One application dispatch path for HTTP, MCP and future internal job callers. */
 export function createDispatcher(services: ApplicationServices) {
     const { catalog, views, workspaces, retrieval, askAtlas, applications } = services;
-    return async (name: string, input: any = {}, caller: ShareAuditClient = 'atlas-server'): Promise<unknown> => {
+    return async (name: string, input: any = {}, caller: ShareAuditClient = 'atlas-server', authenticatedCaller?: ApplicationCaller): Promise<unknown> => {
         try {
             return await timed(`tool.${/^[a-z_]+$/.test(name) ? name : 'unknown'}`, async () => {
         if (Object.hasOwn(nodeSchemas, name)) {
@@ -88,7 +88,7 @@ export function createDispatcher(services: ApplicationServices) {
             if (input.projectId !== undefined && input.projectId !== null) await catalog.getProject(input.projectId);
             return applications.get(input.projectId ?? null, input.slug);
         }
-        if (applications.hasTool(name)) return applications.invoke(name, input);
+        if (applications.hasTool(name)) return applications.invoke(name, input, authenticatedCaller);
         return callCoreTool(catalog, views, workspaces, name, input);
             });
         } catch (error) {

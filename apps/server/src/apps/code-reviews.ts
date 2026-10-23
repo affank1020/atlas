@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { AtlasError } from '../shared/errors.js';
 import type { CoreService } from '../core/service.js';
-import type { ApplicationDefinition } from './registry.js';
+import type { ApplicationDefinition, ApplicationCaller } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
-import { structuredReviewSchema, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
+import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
@@ -41,12 +41,13 @@ export class CodeReviewsService {
     }
 
     /** Save an independently structured review; no GitHub review is published. */
-    async submitStructuredReview(untrusted: StructuredReview) {
+    async submitStructuredReview(untrusted: StructuredReview, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
         const input = structuredReviewSchema.parse(untrusted);
         const ids = await this.storeIds();
         // A lost response can be retried after the PR advances: return the
         // original immutable receipt rather than publishing/reviewing again.
-        const previous = existingStructuredReview(await this.catalog.store.snapshot(), ids, input);
+        const previous = existingStructuredReview(await this.catalog.store.snapshot(), ids, input, caller!);
         if (previous) return previous;
         if (!this.history?.currentHead)
             throw new AtlasError('GitHub PR head verification is unavailable.', 'CAPABILITY_UNAVAILABLE');
@@ -56,14 +57,14 @@ export class CodeReviewsService {
             // fetching GitHub. Serialize the fallback read with writers so that
             // a committed receipt wins, without relaxing validation for new IDs.
             return this.catalog.store.transaction(state => {
-                const committed = existingStructuredReview(state, ids, input);
+                const committed = existingStructuredReview(state, ids, input, caller!);
                 if (committed) return committed;
                 throw new AtlasError('Pull request is closed or its head has changed; review the current open head.', 'CONFLICT');
             });
         }
         const verifiedAt = new Date().toISOString();
         return this.catalog.store.transaction(state =>
-            saveStructuredReview(this.catalog, state, ids, input, remote.headSha, verifiedAt));
+            saveStructuredReview(this.catalog, state, ids, input, remote.headSha, verifiedAt, caller!));
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -189,8 +190,8 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                 name: 'code_reviews_submit_structured',
                 description: 'Persist an immutable, idempotent structured review run and findings. Requires current open GitHub PR head; never publishes to GitHub.',
                 inputSchema: { submission: structuredReviewSchema },
-                invoke: ({ submission }: { submission: StructuredReview }) =>
-                    service.submitStructuredReview(submission),
+                invoke: ({ submission }: { submission: StructuredReview }, caller?: ApplicationCaller) =>
+                    service.submitStructuredReview(submission, caller),
             },
             {
                 name: 'code_reviews_list_findings',
