@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApplicationRead } from './atlasApi';
 import type { AtlasRecord, Page } from './types';
 import './code-reviews.css';
@@ -74,10 +74,19 @@ function parsedFinding(record: AtlasRecord): ReviewFinding | undefined {
         line: typeof d.line === 'number' && Number.isSafeInteger(d.line) && d.line > 0 ? d.line : undefined };
 }
 
-function FindingDetails({ entry }: { entry: ReviewRun }) {
+function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVersion: number }) {
     const [offset, setOffset] = useState(0);
+    const lastRefresh = useRef(refreshVersion);
     const findings = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_findings',
         { reviewRunId: entry.id, limit: findingPageSize, offset }, true);
+    // Refresh must update the active detail query as well as its parent summary.
+    // Remember the initial version so expanding after Refresh does not fetch twice.
+    useEffect(() => {
+        if (lastRefresh.current !== refreshVersion) {
+            lastRefresh.current = refreshVersion;
+            void findings.refetch();
+        }
+    }, [refreshVersion, findings.refetch]);
     const rows = (findings.data?.items ?? []).map(parsedFinding)
         .filter((item): item is ReviewFinding => !!item);
     return <div className="code-reviews-detail" id={`code-reviews-detail-${entry.id}`}>
@@ -117,6 +126,7 @@ function FindingDetails({ entry }: { entry: ReviewRun }) {
 export function CodeReviews() {
     const [offset, setOffset] = useState(0);
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [refreshVersion, setRefreshVersion] = useState(0);
     // Revalidate on each entry: Store writes and imports may happen in other clients.
     const summary = useApplicationRead<Overview>('code_reviews_overview', {}, true);
     const runs = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_runs', { limit: pageSize, offset }, true);
@@ -127,7 +137,7 @@ export function CodeReviews() {
             <div><p className="eyebrow">Development quality</p><h1>Code Reviews</h1>
                 <p>PR review history and structured findings across repositories.</p></div>
             <button className="ghost" type="button" disabled={summary.isFetching || runs.isFetching}
-                onClick={() => { void summary.refetch(); void runs.refetch(); }}>Refresh</button>
+                onClick={() => { void summary.refetch(); void runs.refetch(); setRefreshVersion(v => v + 1); }}>Refresh</button>
         </header>
         <div className="code-reviews-metrics">
             <article><span>Review rounds recorded</span><strong>{summary.data?.reviewRuns ?? '—'}</strong></article>
@@ -172,7 +182,7 @@ export function CodeReviews() {
                             </div>
                         </div>
                     </div>
-                    {expandedId === entry.id && validUuid.test(entry.id) && <FindingDetails key={entry.id} entry={entry}/>}
+                    {expandedId === entry.id && validUuid.test(entry.id) && <FindingDetails key={entry.id} entry={entry} refreshVersion={refreshVersion}/>}
                 </article>)}
             </div>
             {runs.data && runs.data.total > pageSize && <div className="code-reviews-pagination">
