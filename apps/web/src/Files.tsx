@@ -96,7 +96,7 @@ export function Files() {
     const visibleFiles = entries.filter(item =>
         (item.fileName + ' ' + item.mimeType).toLocaleLowerCase().includes(searchText));
     const totalBytes = entries.reduce((sum, item) => sum + item.byteSize, 0);
-    const canWrite = !!owner && fileStatus === 'active' && !busy && !mutating && (!currentFolder || currentFolder.status === 'active');
+    const canWrite = !!owner && fileStatus === 'active' && !busy && !mutating && (folderId === null || currentFolder?.status === 'active');
 
     const selectProject = (id: string) => {
         setSelectedId(id); setFolderId(null); setSearch(''); setFileStatus('active');
