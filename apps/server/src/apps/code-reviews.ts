@@ -3,6 +3,7 @@ import { AtlasError } from '../shared/errors.js';
 import type { CoreService } from '../core/service.js';
 import type { ApplicationDefinition } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
+import { structuredReviewSchema, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
@@ -12,7 +13,7 @@ type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store'
 /** Project-scoped review history. Import is manually confirmed; publishing is a later capability. */
 export class CodeReviewsService {
     constructor(private readonly catalog: ReviewCatalogue,
-        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover'>>,
+        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead'>>,
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map()) {}
 
     private async storeIds() {
@@ -37,6 +38,32 @@ export class CodeReviewsService {
                 ids, repository, prNumber, snapshot, false, trustedIds);
         return this.catalog.store.transaction(state =>
             reconcileGitHubReviews(this.catalog, state, ids, repository, prNumber, snapshot, true, trustedIds));
+    }
+
+    /** Save an independently structured review; no GitHub review is published. */
+    async submitStructuredReview(untrusted: StructuredReview) {
+        const input = structuredReviewSchema.parse(untrusted);
+        const ids = await this.storeIds();
+        // A lost response can be retried after the PR advances: return the
+        // original immutable receipt rather than publishing/reviewing again.
+        const previous = existingStructuredReview(await this.catalog.store.snapshot(), ids, input);
+        if (previous) return previous;
+        if (!this.history?.currentHead)
+            throw new AtlasError('GitHub PR head verification is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        const remote = await this.history.currentHead(input.repository, input.prNumber);
+        if (!remote.open || remote.headSha !== input.headSha) {
+            // Another identical submission may have committed while this call was
+            // fetching GitHub. Serialize the fallback read with writers so that
+            // a committed receipt wins, without relaxing validation for new IDs.
+            return this.catalog.store.transaction(state => {
+                const committed = existingStructuredReview(state, ids, input);
+                if (committed) return committed;
+                throw new AtlasError('Pull request is closed or its head has changed; review the current open head.', 'CONFLICT');
+            });
+        }
+        const verifiedAt = new Date().toISOString();
+        return this.catalog.store.transaction(state =>
+            saveStructuredReview(this.catalog, state, ids, input, remote.headSha, verifiedAt));
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -157,6 +184,13 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     apply: z.boolean().default(false) },
                 invoke: ({ repository, prNumbers, apply }: { repository: string; prNumbers: number[]; apply: boolean }) =>
                     service.backfillPullRequests(repository, prNumbers, apply),
+            },
+            {
+                name: 'code_reviews_submit_structured',
+                description: 'Persist an immutable, idempotent structured review run and findings. Requires current open GitHub PR head; never publishes to GitHub.',
+                inputSchema: { submission: structuredReviewSchema },
+                invoke: ({ submission }: { submission: StructuredReview }) =>
+                    service.submitStructuredReview(submission),
             },
             {
                 name: 'code_reviews_list_findings',
