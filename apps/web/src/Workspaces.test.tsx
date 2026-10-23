@@ -632,7 +632,8 @@ test('Workspace inspector loads one on-demand preview and switches between logic
     }, expect.any(AbortSignal)));
     const firstSignal = vi.mocked(callTool).mock.calls.find(([name, input]) =>
         name === 'query_monitoring_activity' && input?.checkoutId === first.id)?.[2];
-    fireEvent.click(within(inspector).getByRole('button', { name: /Atlas.*Linux VPS/ }));
+    const checkoutSwitch = within(inspector).getByRole('group', { name: 'Choose Node checkout' });
+    fireEvent.click(within(checkoutSwitch).getAllByRole('button')[1]);
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
         checkoutId: second.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
     }, expect.any(AbortSignal)));
