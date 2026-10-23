@@ -83,19 +83,19 @@ test('Expanding a review loads only its findings and preserves its verified sour
     });
     render(<CodeReviews />);
     expect(screen.getAllByText(/SEV3: 1/)).toHaveLength(2);
-    expect(screen.queryByText('Finding 94')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Finding 94/)).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole('button', { name:'View findings' })[0]!);
-    expect(screen.getByText('Finding 94')).toBeInTheDocument();
+    expect(screen.getByText(/Finding 94/)).toBeInTheDocument();
     expect(screen.getByText('Submitted to Atlas')).toBeInTheDocument();
     expect(screen.getByRole('link', {name:/View review/}))
         .toHaveAttribute('href','https://github.com/affank1020/atlas/pull/94#pullrequestreview-12345');
     expect(vi.mocked(useApplicationRead)).toHaveBeenCalledWith('code_reviews_list_findings',
         {reviewRunId:runId,limit:50,offset:0},true);
     fireEvent.click(screen.getByRole('button', {name:'Hide findings'}));
-    expect(screen.queryByText('Finding 94')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Finding 94/)).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole('button', {name:'View findings'})[1]!);
-    expect(screen.getByText('Finding 95')).toBeInTheDocument();
-    expect(screen.queryByText('Finding 94')).not.toBeInTheDocument();
+    expect(screen.getByText(/Finding 95/)).toBeInTheDocument();
+    expect(screen.queryByText(/Finding 94/)).not.toBeInTheDocument();
 });
 
 test('Historical missing or unverified observations never imply a clean PR', () => {
@@ -131,7 +131,7 @@ test('Malformed finding records are omitted and errors are surfaced without hidi
     });
     const rendered=render(<CodeReviews/>);
     fireEvent.click(screen.getByRole('button',{name:'View findings'}));
-    expect(screen.getByText('Use safe values')).toBeInTheDocument();
+    expect(screen.getByText(/Use safe values/)).toBeInTheDocument();
     expect(screen.getByText('Unverified historical finding')).toBeInTheDocument();
     expect(screen.queryByText('Bad')).not.toBeInTheDocument();
     expect(screen.getByText(/Some finding records have invalid/)).toBeInTheDocument();
