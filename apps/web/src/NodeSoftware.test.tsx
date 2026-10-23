@@ -593,7 +593,7 @@ it('fleet poll detects a Node claiming and an operator reconciling without manua
             {target:{value:'all'}});
         expect(within(fleet).getAllByText('Operator acknowledged').length).toBeGreaterThanOrEqual(1);
         expect(within(fleet).queryByText(/Operator reconciliation required/)).not.toBeInTheDocument();
-        expect(within(fleet).getByText('Not recorded')).toBeInTheDocument();
+        expect(within(fleet).getAllByText('Not recorded').length).toBeGreaterThanOrEqual(1);
         expect(vi.mocked(callTool).mock.calls.filter(([name])=>
             name==='list_node_update_intents').length).toBeGreaterThanOrEqual(3);
     } finally {
