@@ -320,6 +320,40 @@ Atlas Store administrators can still mutate records, and GitHub may advance
 a head immediately after verification. Publication does not update the
 `Review Findings` lifecycle automatically.
 
+### Review-history details in the Atlas web UI
+
+Each saved Review Run can be expanded to read its linked findings through
+`code_reviews_list_findings` on demand. A review row shows the reviewed
+repository, PR, commit, verdict, review time, provenance and recorded severity
+counts where available. The details display the finding severity, title,
+description, location and recorded state; historical `unverified` observations
+are explicitly labelled as such. Native publication receipts may link to
+their GitHub review using a validated numeric review ID.
+
+The interface makes no inference that an empty finding Store proves a clean PR.
+It does not automatically update finding lifecycle after new commits, and it
+never infers publication from a stored summary. Review-run and finding pages
+are independently bounded to avoid fetching unrelated findings for collapsed
+rows. Missing Project/Store data, unsupported records and API failures have
+distinct error or empty states.
+
+### Code Reviewer plugin integration
+
+The separate private `Code Reviewer` plugin (from version `1.0.6`) has an
+optional Atlas integration workflow. When an authenticated Atlas MCP session
+actually exposes `code_reviews_submit_structured`, the skill can store a
+structured observation after its ordinary independent GitHub review.
+It must not call `code_reviews_publish_github` for the **same** review, since
+that would publish it twice. A review-only request remains read-only unless
+the user explicitly asks to store a receipt.
+
+Installing the plugin update does **not** automatically deploy the Code
+Reviews Application or reconfigure the connected Atlas MCP tool list.
+The application must exist in the target Atlas environment, and the
+authenticated structured operation must be available to the client.
+Account-level OAuth attribution does not prove the AI review was independently
+performed.
+
 ## Planned follow-ups
 
 1. Repository-level source completeness summaries, optional GitHub webhook reconciliation and guided operator backfill UI.
