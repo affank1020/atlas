@@ -134,7 +134,10 @@ test('a concurrent caller cannot claim or send a duplicate review', async () => 
     let started!: () => void;
     const entered = new Promise<void>(resolve => {started=resolve;});
     let posts=0;
+    let visible=false;
     const { github }=mock({
+        findPublished: async (payload: any, body: string) =>
+            visible ? {id:result.id,html_url:result.url,body,commit_id:payload.headSha,state:'COMMENTED'} : undefined,
         publish: async () => {
             posts++;
             started();
@@ -147,6 +150,7 @@ test('a concurrent caller cannot claim or send a duplicate review', async () => 
     const another = await pub.publishRun(runId,false,true,actor);
     assert.equal(another.status,'uncertain');
     assert.equal(posts,1);
+    visible=true;
     unblock(result);
     assert.equal((await first).status,'published');
 });
