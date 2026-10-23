@@ -8,7 +8,7 @@ Audit baseline: Atlas `main` (2026-10-21, commit `093d780`). This document recor
 | --- | --- | --- |
 | Core changes / store revisions | PostgreSQL `audit_events`; `get_audit_history`, `get_recent_activity` | Authoritative immutable structured changes; Monitoring Activity |
 | Workspace / git / dev requests and outcomes | Same audit table, attempt IDs in `after_state` | Keep request/result grouping; Monitoring Activity |
-| Project Overview and Activity | `ProjectOverview.tsx`, `ActivityFeed.tsx` | Duplicate large feeds; replace Overview with small scoped preview (phase 2) |
+| Project Overview and Activity | `ProjectOverview.tsx`, `ActivityPreview.tsx`, `ActivityFeed.tsx` | Overview uses an on-demand five-operation safe Monitoring preview with View all; the dedicated legacy Project Activity tab remains for later parity work |
 | Store audit history | `StoreAudit` in `App.tsx` | Keep revision evidence until scoped replacement has feature parity |
 | Node recent activity | `NodeIdentity.activity` queries `after_state.nodeId` | Not a separate audit database; metadata association differs from `workspace_id` |
 | macOS Node logs | `node-logs.ts`, approved `node.log` / `node-error.log` | Read-only 256 KiB scan, <=200 lines, <=48 KiB redacted output |
@@ -45,7 +45,7 @@ This is **an on-demand, point-in-time snapshot**, not a continuously monitored S
 ## Delivery sequence
 
 1. **Activity and navigation (first PR):** query `audit_events` with parameterised filters, total and offset/limit; preserve legacy audit tools; add Monitoring tabs, deep links and old Activity bookmark support. Basic macOS Node log reader remains read-only. Indexes cover principal read patterns.
-2. **Contextual previews (follow-up PR):** remove Project Overview's full scrolling feed; use a reusable 3–5 event card with View all. Add Node and Workspace/checkout previews and Store shortcut, preserving revision drill-down.
+2. **Contextual previews (follow-up PR):** Project Overview now uses a reusable five-operation Activity card with server-side Project scoping, `safeDetails: true`, grouped operation pagination, explicit refresh and a scoped **View all activity** link. It does not auto-poll the legacy 200-row audit feed. Node and Workspace/checkout previews, Store shortcut and eventual full Project Activity tab parity remain follow-ups; Store audit revision drill-down is unchanged.
 3. **Technical logs (follow-up PR):** Linux fixed-unit journal adapter reuses the existing Node log capability and Monitoring UI with bounded reads and redaction tests; Server-owned diagnostic signals now have a bounded read tool; historical Atlas Server container stdout/stderr still requires a separately reviewed fixed-source collector and authorization.
 4. **Operational quality (follow-up PRs):** correlation-aware paging and Server/Node health snapshots are shipped. The next increment adds opt-in safe Activity details and scoped navigation links. Activity opt-in live polling and logical Workspace filter/navigation across Node-bound and archived checkouts are now included; remaining work includes Node lifecycle/runtime audit attribution, health-provider expansion and observability measures.
 

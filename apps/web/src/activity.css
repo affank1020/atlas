@@ -30,3 +30,8 @@
 .monitoring-pagination { padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .monitoring-log-result { padding: 18px 22px; }
 .monitoring-log-result pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 620px; font-size: 12px; }
+
+/* Bounded Activity cards are short snapshots, not embedded scrolling feeds. */
+.activity-preview-rows .activity-item summary { padding: 11px 20px; }
+.activity-preview-rows .activity-details { padding: 0 20px 14px; }
+.activity-preview-note { margin: 0; padding: 14px 20px; font-size: 13px; }
