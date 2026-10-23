@@ -86,3 +86,17 @@ test('demo Linux Node reads empty update intents without permitting mutation', (
     expect(() => mockTool('prepare_node_update', { nodeId: node!.id })).toThrow(/unavailable in local mock mode/);
     expect(() => mockTool('cancel_node_update_intent', { nodeId: node!.id })).toThrow(/unavailable in local mock mode/);
 });
+
+test('mock Monitoring fails closed for unsupported logical Workspace scopes', () => {
+    const unfiltered = mockTool<{ total: number }>('query_monitoring_activity', {});
+    expect(unfiltered.total).toBeGreaterThan(0);
+    for (const logicalWorkspaceId of [
+        '11111111-1111-4111-8111-111111111111',
+        '00000000-0000-4000-8000-002100000001',
+    ]) {
+        expect(() => mockTool('query_monitoring_activity', { logicalWorkspaceId }))
+            .toThrow(/Logical Workspace activity is unavailable in local mock mode/);
+    }
+    expect(mockTool<{ total: number }>('query_monitoring_activity', {}).total)
+        .toBe(unfiltered.total, 'Unscoped demo history remains readable');
+});
