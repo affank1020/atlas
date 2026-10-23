@@ -11,7 +11,7 @@ const MAX_UPLOAD_BODY_BYTES = 35 * 1024 * 1024;
 // AtlasFilesService.upload, including its 255-character limit.
 const MAX_ENCODED_FILE_NAME_LENGTH = 255 * 9;
 const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive', 'restore',
-    'folders-list', 'folders-create', 'folders-rename', 'folders-archive', 'folders-restore', 'file-move']);
+    'folders-list', 'folders-create', 'folders-rename', 'folders-archive', 'folders-restore', 'file-move', 'portfolio-catalog']);
 const BINARY_HEADERS = 'content-type,x-atlas-owner-kind,x-atlas-owner-id,x-atlas-file-name,x-atlas-file-type,x-atlas-folder-id';
 
 function sendJson(response: ServerResponse, status: number, value: unknown) {
@@ -153,7 +153,10 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
         const isFolderAction = action.startsWith('folders-') || action === 'file-move';
         if (isFolderAction && owner.kind !== 'project')
             throw new AtlasError('Folders require Project ownership.');
-        if (action === 'folders-list') {
+        if (action === 'portfolio-catalog') {
+            if (owner.kind !== 'project') throw new AtlasError('Project ownership required.');
+            sendJson(response, 200, await services.files.portfolioCatalog(owner.id));
+        } else if (action === 'folders-list') {
             sendJson(response, 200, await services.files.folders.list(owner.id));
         } else if (action === 'folders-create') {
             sendJson(response, 201, await services.files.folders.create(
