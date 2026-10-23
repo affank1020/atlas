@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
 import { monitoringHash } from './monitoringLinks';
+import { ActivityPreview } from './ActivityPreview';
 import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
@@ -65,6 +66,8 @@ export function Workspaces() {
     const [prBody, setPrBody] = useState('');
     const [draftPR, setDraftPR] = useState<Draft>();
     const [retirement, setRetirement] = useState<RetirementState>();
+    const [showActivity, setShowActivity] = useState(false);
+    const [activityScope, setActivityScope] = useState<'logical' | 'checkout'>('logical');
 
     // Preserve existing ?workspace= deep links (logical or physical) while
     // public checkout operations explicitly select one Node-bound checkoutId.
@@ -178,6 +181,7 @@ export function Workspaces() {
     }, [selected?.id]);
     useEffect(() => { setRetirement(undefined); }, [selected?.id, revision]);
     useEffect(() => { setProjectToLink(''); }, [selectedLogical?.id]);
+    useEffect(() => { setShowActivity(false); setActivityScope('logical'); }, [selectedLogical?.id]);
 
     function choose(id: string) {
         setSelectedId(id);
@@ -452,6 +456,25 @@ export function Workspaces() {
                                 </button>;
                             })}
                         </div>)}
+                    <section className="wm-subsection wm-activity-preview" aria-label="Workspace activity preview">
+                        <div className="actions">
+                            <button type="button" className="ghost"
+                                aria-expanded={showActivity}
+                                onClick={() => setShowActivity(value => !value)}>
+                                {showActivity ? 'Hide recent activity' : 'Show recent activity'}
+                            </button>
+                            {showActivity && logical.length > 0 && selectedLogical && <label>Activity scope
+                                <select aria-label="Activity preview scope" value={activityScope}
+                                    onChange={event => setActivityScope(event.target.value as 'logical' | 'checkout')}>
+                                    <option value="logical">Whole Workspace</option>
+                                    <option value="checkout">Selected checkout</option>
+                                </select>
+                            </label>}
+                        </div>
+                        {showActivity && (activityScope === 'logical' && logical.length > 0 && selectedLogical
+                            ? <ActivityPreview logicalWorkspaceId={selectedLogical.id} refreshVersion={revision} title="Recent activity" />
+                            : <ActivityPreview checkoutId={selected.id} refreshVersion={revision} title="Recent activity" />)}
+                    </section>
                     <div className="wm-selected-checkout">
                         <p className="eyebrow">Selected checkout</p>
                         <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
