@@ -120,9 +120,17 @@ test("Project folder HTTP actions are scoped and legacy owner writes are denied"
         assert.equal((await post("file-move", { owner, fileId: file.id, folderId: null })).status, 200);
         assert.equal((await post("folders-archive", { owner, folderId: folder.id })).status, 200);
         assert.equal((await post("folders-restore", { owner, folderId: folder.id })).status, 200);
-        assert.equal((await post("upload", { owner: { kind: "application", id: "portfolio" },
-            fileName: "legacy.txt", mimeType: "text/plain", base64: bytes.toString("base64") })).status, 400);
-        assert.equal((await post("archive", { owner: { kind: "application", id: "portfolio" }, fileId: file.id })).status, 400);
+        // Old web clients can still manage legacy owner Files until the UI migration.
+        const legacyOwner = { kind: "application", id: "portfolio" };
+        const legacyUpload = await post("upload", { owner: legacyOwner,
+            fileName: "legacy.txt", mimeType: "text/plain", base64: bytes.toString("base64") });
+        assert.equal(legacyUpload.status, 201);
+        const legacyFile = await legacyUpload.json() as { id: string };
+        assert.equal((await post("folders-list", { owner: legacyOwner })).status, 400);
+        assert.equal((await post("upload", { owner: legacyOwner, folderId: folder.id,
+            fileName: "illegal.txt", mimeType: "text/plain", base64: bytes.toString("base64") })).status, 400);
+        assert.equal((await post("archive", { owner: legacyOwner, fileId: legacyFile.id })).status, 200);
+        assert.equal((await post("restore", { owner: legacyOwner, fileId: legacyFile.id })).status, 200);
         assert.deepEqual(Buffer.from(await (await post("download", { owner, fileId: file.id })).arrayBuffer()), bytes);
     } finally {
         server.closeAllConnections();
