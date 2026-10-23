@@ -167,3 +167,110 @@ test('invalid/noncanonical public keys and non-Linux Node cannot enrol trust',as
     await f.db.store.pool.query("UPDATE nodes SET platform='darwin' WHERE id=$1",[f.node.nodeId]);
     await assert.rejects(f.ledger.pin(f.node.nodeId,f.pem),fails('CONFLICT'));
 });
+
+test('explicit expired reissue retains history, invalidates old proof and verifies only the new nonce',async()=>{
+    const f=await fixture();
+    await f.ledger.pin(f.node.nodeId,f.pem);
+    await claim(f);
+    const first=await f.ledger.issue(f.node.nodeId,f.prepared.id);
+    const stale=signed(f,first.challenge);
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'),
+        'live challenge must never be replaceable');
+    await f.db.store.pool.query(`UPDATE node_update_root_challenges
+        SET issued_at=clock_timestamp()-interval '6 minutes',
+            expires_at=clock_timestamp()-interval '2 minutes'
+        WHERE id=$1`,[first.id]);
+    await assert.rejects(f.ledger.verify(f.node.nodeId,f.prepared.id,stale),fails('CONFLICT'));
+    const next=await f.ledger.reissueExpired(f.node.nodeId,f.prepared.id);
+    assert.notEqual(next.id,first.id);
+    assert.notEqual(next.challenge,first.challenge);
+    assert.equal(Date.parse(next.expiresAt)-Date.parse(next.issuedAt),300_000);
+    const history=await f.db.store.pool.query(`SELECT id,nonce,invalidated_at,consumed_at
+        FROM node_update_root_challenges WHERE intent_id=$1 ORDER BY issued_at`,[f.prepared.id]);
+    assert.equal(history.rowCount,2);
+    assert.equal(history.rows[0].nonce.trim(),first.challenge);
+    assert.ok(history.rows[0].invalidated_at,'retired challenge retained');
+    assert.equal(history.rows[0].consumed_at,null);
+    assert.equal(history.rows[1].id,next.id);
+    assert.equal(history.rows[1].invalidated_at,null);
+    assert.equal(history.rows[1].consumed_at,null);
+    const status=await f.ledger.status(f.node.nodeId,f.prepared.id);
+    assert.equal(status.intentStatus,'claimed');
+    assert.equal(status.clearsClaim,false);
+    assert.equal(status.challengeId,next.id);
+    assert.equal(status.challengeAttempts,2);
+    assert.equal(status.invalidatedAt,null);
+    assert.ok(!JSON.stringify(status).includes(first.challenge));
+    assert.ok(!JSON.stringify(status).includes(next.challenge));
+    await assert.rejects(f.ledger.verify(f.node.nodeId,f.prepared.id,stale),fails('CONFLICT'),
+        'retired signature must never verify even with a correct pinned key');
+    await assert.rejects(f.ledger.issue(f.node.nodeId,f.prepared.id),fails('CONFLICT'),
+        'normal issuance must not silently replace historical attempts');
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'),
+        'fresh reissued nonce must not be replaced');
+    const verified=await f.ledger.verify(f.node.nodeId,f.prepared.id,signed(f,next.challenge));
+    assert.equal(verified.clearsClaim,false);
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'),
+        'consumed challenge with verified evidence can never be reissued');
+    const audit=await f.db.store.pool.query(`SELECT after_state FROM audit_events
+        WHERE operation='node.root_challenge_reissued'`);
+    assert.equal(audit.rowCount,1);
+    assert.equal(audit.rows[0].after_state.supersededChallengeId,first.id);
+    assert.equal(audit.rows[0].after_state.challengeId,next.id);
+    assert.equal(audit.rows[0].after_state.clearsClaim,false);
+    assert.ok(!JSON.stringify(audit.rows[0].after_state).includes(next.challenge));
+    const intent=(await f.db.store.pool.query('SELECT status FROM node_update_intents WHERE id=$1',
+        [f.prepared.id])).rows[0];
+    assert.equal(intent.status,'claimed');
+});
+
+test('parallel reissues retire a nonce only once; failed attempts preserve the active challenge',async()=>{
+    const f=await fixture();
+    const other=await fixture();
+    await f.ledger.pin(f.node.nodeId,f.pem);
+    await claim(f);
+    const first=await f.ledger.issue(f.node.nodeId,f.prepared.id);
+    await assert.rejects(f.ledger.reissueExpired(other.node.nodeId,f.prepared.id),fails('NOT_FOUND'));
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,other.prepared.id),fails('NOT_FOUND'));
+    await f.db.store.pool.query(`UPDATE node_update_root_challenges
+        SET issued_at=clock_timestamp()-interval '6 minutes',
+            expires_at=clock_timestamp()-interval '2 minutes'
+        WHERE id=$1`,[first.id]);
+    const results=await Promise.allSettled([
+        f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),
+        f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),
+    ]);
+    assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
+    assert.equal(results.filter(x=>x.status==='rejected').length,1);
+    const fresh=(results.find(x=>x.status==='fulfilled') as PromiseFulfilledResult<
+        Awaited<ReturnType<typeof f.ledger.reissueExpired>>>).value;
+    const rows=await f.db.store.pool.query(`SELECT id,nonce,invalidated_at,consumed_at FROM
+        node_update_root_challenges WHERE intent_id=$1`,[f.prepared.id]);
+    assert.equal(rows.rowCount,2);
+    assert.equal(rows.rows.filter(x=>x.invalidated_at !== null).length,1);
+    assert.equal(rows.rows.filter(x=>x.invalidated_at === null && x.consumed_at === null).length,1);
+    assert.equal(rows.rows.find(x=>x.invalidated_at === null).nonce.trim(),fresh.challenge);
+    // The only live nonce remains valid even after a competing failed reissue.
+    await f.ledger.verify(f.node.nodeId,f.prepared.id,signed(f,fresh.challenge));
+    await f.identity.revoke(f.node.nodeId);
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'));
+});
+
+test('reissuing cannot turn an unclaimed, missing-key or non-Linux intent into verified evidence',async()=>{
+    const f=await fixture();
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'));
+    await claim(f);
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'));
+    await f.ledger.pin(f.node.nodeId,f.pem);
+    const first=await f.ledger.issue(f.node.nodeId,f.prepared.id);
+    await f.db.store.pool.query(`UPDATE node_update_root_challenges
+        SET issued_at=clock_timestamp()-interval '6 minutes',
+            expires_at=clock_timestamp()-interval '2 minutes'
+        WHERE id=$1`,[first.id]);
+    await f.db.store.pool.query("UPDATE nodes SET platform='darwin' WHERE id=$1",[f.node.nodeId]);
+    await assert.rejects(f.ledger.reissueExpired(f.node.nodeId,f.prepared.id),fails('CONFLICT'));
+    const status=await f.ledger.status(f.node.nodeId,f.prepared.id);
+    assert.equal(status.challengeId,first.id);
+    assert.equal(status.invalidatedAt,null);
+    assert.equal(status.challengeAttempts,1);
+});

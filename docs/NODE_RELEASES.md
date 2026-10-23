@@ -635,3 +635,55 @@ update-claims flag or operate on the VPS.
 The next step after independently reviewing this foundation is a scoped
 challenge/verification integration and an explicit, safe policy for resolving
 a previously claimed intent, tested first on a disposable host.
+
+
+## Expired root-evidence challenge recovery (manual operator only)
+
+A five-minute root-evidence challenge might expire while an administrator
+transfers the signed host evidence. In that case, the existing nonce must
+**not** be extended, reused, manually reset in SQL or accepted as proof.
+
+The Server-side operator CLI now permits an explicit, separate
+`reissue-expired` action against a **claimed** intent that already has an
+**expired and unconsumed** root challenge:
+
+```bash
+# Run on the separately authenticated Atlas Server admin terminal only:
+node apps/server/dist/server/node-root-trust-cli.js status \
+  <node-uuid> <claimed-intent-uuid>
+
+node apps/server/dist/server/node-root-trust-cli.js reissue-expired \
+  <node-uuid> <claimed-intent-uuid>
+# Confirmation: REISSUE-EXPIRED <claimed-intent-uuid>
+```
+
+The operator must provide the exact typed confirmation **before** any
+database locks are taken. Under a single transaction, Atlas validates
+Node scope, active credential, pinned root key and claimed intent, and
+checks that no root evidence was previously verified. Only an expired,
+unconsumed challenge can be retired. The original row is retained with a
+durable `invalidated_at` timestamp, then a new 32-byte nonce is created
+with a **new five-minute expiry**. If anything fails, the whole
+transaction rolls back: the old challenge remains as it was, without
+partially issued replacements. Concurrency and a database unique index
+permit at most one unresolved nonce for each intent.
+
+The `status` command shows only the newest challenge metadata and the
+total historical attempt count. It does not return historical or live
+nonce bytes, public key PEM or signatures. Audits contain only the
+old/new challenge IDs, Node ID and intent ID. Any signature bound to a
+retired nonce is **permanently rejected**, even when the pinned key is
+valid. The host must be given the newly issued challenge and run the
+interactive root-only signer again.
+
+**This does not reconcile updates.** A challenge cannot be reissued while
+still live, after consumption, after verified evidence, without a
+pinned key, for a different Node or for an unclaimed request. In
+particular, it does not change the `claimed` state, modify local
+approval receipts, install software, enable automatic retry or update
+the Node version. The older manual `issue` command remains
+first-issuance-only; it does not silently recover expired challenges.
+No API, MCP method or background worker can invoke this admin-only
+operation. Run the first complete drill on an isolated nonproduction
+host; do not provision production keys, run this against the VPS or
+enable the claim route without separate explicit approval.

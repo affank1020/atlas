@@ -10,7 +10,7 @@ import { fingerprintHostRootKey, NodeRootTrustLedger } from '../nodes/root-trust
 // Run only from a separately authenticated administrator's Server-side
 // terminal with explicit, scoped PostgreSQL privileges.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const help = 'Usage: node-root-trust-cli pin <nodeId> <public-pem-file> | issue <nodeId> <claimed-intent-id> | verify <nodeId> <intentId> <attestation-json-file> | status <nodeId> <intentId>';
+const help = 'Usage: node-root-trust-cli pin <nodeId> <public-pem-file> | issue <nodeId> <claimed-intent-id> | reissue-expired <nodeId> <claimed-intent-id> | verify <nodeId> <intentId> <attestation-json-file> | status <nodeId> <intentId>';
 
 async function boundedLocalFile(filename: string, limit: number): Promise<string> {
     const file = await open(filename,constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -38,8 +38,9 @@ async function main() {
         (action === 'pin' && args.length !== 3) ||
         (action === 'verify' && args.length !== 4) ||
         (action === 'issue' && args.length !== 3) ||
+        (action === 'reissue-expired' && args.length !== 3) ||
         (action === 'status' && args.length !== 3) ||
-        !['pin','verify','issue','status'].includes(action ?? '') ||
+        !['pin','verify','issue','reissue-expired','status'].includes(action ?? '') ||
         !UUID.test(args[1] ?? '') ||
         (action !== 'pin' && !UUID.test(args[2] ?? '')))
         throw new Error(help);
@@ -68,6 +69,15 @@ async function main() {
             const typed = await prompt.question('Type ISSUE '+intentId+' to create ONE 5-minute challenge: ');
             if (typed !== 'ISSUE '+intentId) throw new Error('Operator declined challenge issuance.');
             result = await ledger.issue(nodeId,intentId);
+        } else if (action === 'reissue-expired') {
+            const intentId = args[2]!;
+            console.error('Recovery: this invalidates one EXPIRED unconsumed nonce permanently.');
+            console.error('It does not reset the update claim, re-run installation, or clear evidence.');
+            const typed = await prompt.question('Type REISSUE-EXPIRED '+intentId+
+                ' to retire the old nonce and issue a new five-minute challenge: ');
+            if (typed !== 'REISSUE-EXPIRED '+intentId)
+                throw new Error('Operator declined expired challenge reissue.');
+            result = await ledger.reissueExpired(nodeId,intentId);
         } else if (action === 'verify') {
             const intentId = args[2]!;
             const raw = await boundedLocalFile(args[3]!,4096);

@@ -139,6 +139,63 @@ export class NodeRootTrustLedger {
     }
 
     /**
+     * Explicit operator-only recovery from an EXPIRED, never-consumed nonce.
+     *
+     * This cannot undo a consumed challenge, replace a live nonce, change
+     * any claimed intent or grant a new update. Retirement and creation
+     * commit atomically; every superseded nonce remains auditable forever.
+     */
+    async reissueExpired(nodeId: string, intentId: string): Promise<RootChallenge> {
+        if (!UUID.test(nodeId) || !UUID.test(intentId))
+            throw new AtlasError('Invalid challenge identity.', 'INVALID_INPUT');
+        return this.transaction(async client => {
+            await this.lockNode(client, nodeId);
+            const intent = await client.query(`SELECT id,status FROM node_update_intents
+                WHERE id=$1 AND node_id=$2 FOR UPDATE`, [intentId,nodeId]);
+            if (!intent.rowCount) throw new AtlasError('Update request not found for Node.', 'NOT_FOUND');
+            if (intent.rows[0].status !== 'claimed')
+                throw new AtlasError('Only claimed update requests may receive a new challenge.', 'CONFLICT');
+            const pinned = await client.query(`SELECT fingerprint FROM node_update_root_keys
+                WHERE node_id=$1`, [nodeId]);
+            if (!pinned.rowCount) throw new AtlasError('Host-root key is no longer pinned.', 'CONFLICT');
+            const evidence = await client.query(`SELECT intent_id FROM node_update_root_evidence
+                WHERE intent_id=$1`, [intentId]);
+            if (evidence.rowCount)
+                throw new AtlasError('Root evidence is already verified; cannot reissue.', 'CONFLICT');
+            const current = await client.query<{id:string;consumed_at:Date|null;invalidated_at:Date|null}>(`SELECT
+                id,consumed_at,invalidated_at FROM node_update_root_challenges
+                WHERE intent_id=$1 AND node_id=$2 AND consumed_at IS NULL AND invalidated_at IS NULL
+                FOR UPDATE`, [intentId,nodeId]);
+            if (current.rowCount !== 1)
+                throw new AtlasError('No single unresolved challenge can be safely retired.', 'CONFLICT');
+            const previous = current.rows[0]!;
+            // Do not rely on transaction timestamp: an operator may have
+            // waited on the Node or intent lock until the nonce expired.
+            const retired = await client.query(`UPDATE node_update_root_challenges
+                SET invalidated_at=clock_timestamp()
+                WHERE id=$1 AND node_id=$2 AND intent_id=$3
+                  AND consumed_at IS NULL AND invalidated_at IS NULL
+                  AND expires_at <= clock_timestamp() RETURNING id`,
+                [previous.id,nodeId,intentId]);
+            if (retired.rowCount !== 1)
+                throw new AtlasError('Challenge is still live or was already resolved.', 'CONFLICT');
+
+            const nonce = randomBytes(32).toString('hex');
+            const now = (await client.query<{created:Date}>('SELECT clock_timestamp() AS created')).rows[0]!.created;
+            const inserted = await client.query<{id:string;expires_at:Date}>(`INSERT INTO node_update_root_challenges
+                (intent_id,node_id,nonce,issued_at,expires_at)
+                VALUES($1,$2,$3,$4::timestamptz,$4::timestamptz+interval '5 minutes')
+                RETURNING id,expires_at`,[intentId,nodeId,nonce,now]);
+            await this.audit(client,'node.root_challenge_reissued',{
+                nodeId,intentId,supersededChallengeId:previous.id,
+                challengeId:inserted.rows[0]!.id,
+            });
+            return {id:inserted.rows[0]!.id,nodeId,intentId,challenge:nonce,
+                issuedAt:now.toISOString(),expiresAt:inserted.rows[0]!.expires_at.toISOString()};
+        });
+    }
+
+    /**
      * Consume a matching, live challenge once after verifying the signed
      * evidence against an independently pinned root public key.
      *
@@ -158,14 +215,16 @@ export class NodeRootTrustLedger {
                 throw new AtlasError('An unclaimed update cannot accept root evidence.', 'CONFLICT');
             const challenge = await client.query<{id:string;nonce:string;consumed_at:Date|null}>(`SELECT
                 id,nonce,consumed_at FROM node_update_root_challenges
-                WHERE intent_id=$1 AND node_id=$2 FOR UPDATE`, [intentId,nodeId]);
+                WHERE intent_id=$1 AND node_id=$2 AND invalidated_at IS NULL
+                FOR UPDATE`, [intentId,nodeId]);
             if (!challenge.rowCount) throw new AtlasError('No root evidence challenge was issued.', 'CONFLICT');
             const nonce = challenge.rows[0]!;
             if (nonce.consumed_at)
                 throw new AtlasError('Root evidence challenge already consumed.', 'CONFLICT');
             // Expiry must be checked with live wall time AFTER all lock waits.
             const valid = await client.query(`SELECT id FROM node_update_root_challenges
-                WHERE id=$1 AND consumed_at IS NULL AND expires_at > clock_timestamp()`,[nonce.id]);
+                WHERE id=$1 AND consumed_at IS NULL AND invalidated_at IS NULL
+                  AND expires_at > clock_timestamp()`,[nonce.id]);
             if (!valid.rowCount) throw new AtlasError('Root evidence challenge expired.', 'CONFLICT');
             const key = await client.query<{public_key_pem:string;fingerprint:string}>(`SELECT
                 public_key_pem,fingerprint FROM node_update_root_keys WHERE node_id=$1`,[nodeId]);
@@ -178,7 +237,7 @@ export class NodeRootTrustLedger {
             const evidence = attestation as RootUpdateAttestation;
             const consumed = await client.query(`UPDATE node_update_root_challenges
                 SET consumed_at=clock_timestamp() WHERE id=$1 AND consumed_at IS NULL
-                AND expires_at>clock_timestamp() RETURNING id`,[nonce.id]);
+                AND invalidated_at IS NULL AND expires_at>clock_timestamp() RETURNING id`,[nonce.id]);
             if (!consumed.rowCount) throw new AtlasError('Root evidence challenge expired or consumed.', 'CONFLICT');
             const inserted = await client.query<{verified_at:Date}>(`INSERT INTO node_update_root_evidence
                 (intent_id,challenge_id,node_id,key_fingerprint,active_version,target_sha256,observed_pid,signature)
@@ -203,10 +262,19 @@ export class NodeRootTrustLedger {
             throw new AtlasError('Invalid status identity.', 'INVALID_INPUT');
         const result = await this.pool.query(`SELECT
             k.fingerprint,k.pinned_at,c.id AS challenge_id,c.issued_at,c.expires_at,c.consumed_at,
+            c.invalidated_at,h.challenge_attempts,
             e.verified_at,e.active_version,i.status AS intent_status
             FROM node_update_intents i
             LEFT JOIN node_update_root_keys k ON k.node_id=i.node_id
-            LEFT JOIN node_update_root_challenges c ON c.intent_id=i.id
+            LEFT JOIN LATERAL (
+                SELECT id,issued_at,expires_at,consumed_at,invalidated_at
+                FROM node_update_root_challenges
+                WHERE intent_id=i.id ORDER BY issued_at DESC,id DESC LIMIT 1
+            ) c ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT count(*)::int AS challenge_attempts FROM node_update_root_challenges
+                WHERE intent_id=i.id
+            ) h ON TRUE
             LEFT JOIN node_update_root_evidence e ON e.intent_id=i.id
             WHERE i.id=$1 AND i.node_id=$2`,[intentId,nodeId]);
         if (!result.rowCount) throw new AtlasError('Update request not found.', 'NOT_FOUND');
@@ -217,6 +285,8 @@ export class NodeRootTrustLedger {
             challengeId:x.challenge_id ?? null, issuedAt:x.issued_at?.toISOString() ?? null,
             expiresAt:x.expires_at?.toISOString() ?? null,
             consumedAt:x.consumed_at?.toISOString() ?? null,
+            invalidatedAt:x.invalidated_at?.toISOString() ?? null,
+            challengeAttempts:x.challenge_attempts ?? 0,
             verifiedAt:x.verified_at?.toISOString() ?? null,
             activeVersion:x.active_version ?? null,
             clearsClaim:false as const };
