@@ -119,6 +119,9 @@ async function main() {
 }
 void main().catch(() => {
     // No SQL errors, DB URLs, key material or untrusted paths in console logs.
-    console.error('Root-trust operator action refused or unavailable; no claim was cleared.');
+    // COMMIT may have succeeded even if the database acknowledgment was lost.
+    // Never promise that a reconciliation did not happen after an uncertain result.
+    console.error('Root-trust operator action failed or acknowledgment is uncertain.');
+    console.error('Read authoritative Node update intent and root trust status before any retry.');
     process.exitCode = 1;
 });
