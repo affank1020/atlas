@@ -7,6 +7,8 @@ import { monitoringHash, parseMonitoringHash, type MonitoringFilters, type Monit
 import './activity.css';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
+type ProjectWorkspace = { id: string; name: string };
+type ProjectWorkspaceDirectory = { projectId: string; items: ProjectWorkspace[]; unavailable: boolean };
 const LIMIT = 30;
 const ACTIVITY_LIVE_POLL_MS = 30_000;
 export function localDateTimeValue(instant?: string) {
@@ -28,6 +30,27 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     const live = filters.live === '1';
     const [search, setSearch] = useState(filters.search ?? '');
     const [draft, setDraft] = useState<MonitoringFilters>(filters);
+    const [workspaceDirectory, setWorkspaceDirectory] = useState<ProjectWorkspaceDirectory>();
+    useEffect(() => {
+        if (!projectId) return;
+        const controller = new AbortController();
+        setWorkspaceDirectory(undefined);
+        // The Project-only name lookup is display metadata. Filtering remains server-side by workspaceId.
+        void callTool<ProjectWorkspace[]>('list_project_workspaces',
+            { projectId, includeArchived: true }, controller.signal)
+            .then(items => {
+                if (!controller.signal.aborted) setWorkspaceDirectory({ projectId,
+                    items: items.filter(item => typeof item.id === 'string' && typeof item.name === 'string'),
+                    unavailable: false });
+            })
+            .catch(() => {
+                if (!controller.signal.aborted) setWorkspaceDirectory({ projectId, items: [], unavailable: true });
+            });
+        return () => controller.abort();
+    }, [projectId, refreshVersion]);
+    const scopedWorkspaces = workspaceDirectory?.projectId === projectId ? workspaceDirectory : undefined;
+    const workspaceNames = Object.fromEntries(
+        (scopedWorkspaces?.items ?? []).map(({ id, name }) => [id, name]));
     const liveRef = useRef(live);
     liveRef.current = live;
     // The reader survives a live-mode toggle; only scope/manual refresh owns
@@ -134,6 +157,16 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
             <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
         </div></div>
         <div className="activity-filters monitoring-filters">
+            {projectId && <label>Workspace
+                <select aria-label="Workspace" value={filters.workspaceId ?? ''}
+                    onChange={e => setFilter('workspaceId', e.target.value)}>
+                    <option value="">All workspaces</option>
+                    {(scopedWorkspaces?.items ?? []).map(workspace =>
+                        <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.id.slice(0, 8)})</option>)}
+                    {filters.workspaceId && !scopedWorkspaces?.items.some(item => item.id === filters.workspaceId) &&
+                        <option value={filters.workspaceId}>Workspace {filters.workspaceId}</option>}
+                </select>
+            </label>}
             {([
                 ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
                 ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
@@ -145,9 +178,12 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
             <label>To<input aria-label="To" type="datetime-local" value={localDateTimeValue(filters.to)} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
             <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}><label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} /></label><button type="submit">Apply</button></form>
         </div>
+        {projectId && scopedWorkspaces?.unavailable && <p role="status" className="activity-footnote">
+            Workspace names unavailable. You can still filter by Workspace ID.
+        </p>}
         {loading && <p role="status" className="empty">Loading audit history…</p>}
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
-        {page && <><div className="activity-scroll"><ActivityRows events={page.items} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
+        {page && <><div className="activity-scroll"><ActivityRows events={page.items} names={workspaceNames} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
         <p className="activity-footnote" role="status">{live
             ? 'Live updates on · at most one read every 30 seconds after completion · paused in hidden tabs'
