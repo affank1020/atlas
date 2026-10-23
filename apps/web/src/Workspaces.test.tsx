@@ -663,7 +663,7 @@ test('legacy Workspace browser exposes a selected checkout Activity preview with
     }, expect.any(AbortSignal)));
 });
 
-test('switching logical Workspaces never fetches a newly selected preview until explicitly expanded', async () => {
+test('leaving a logical Workspace discards preview state on selection, close and hash navigation', async () => {
     const groupA = '11111111-1111-4111-8111-111111111111';
     const groupB = '22222222-2222-4222-8222-222222222222';
     const checkoutA = { ...repo, id: 'checkout-a' };
@@ -686,37 +686,71 @@ test('switching logical Workspaces never fetches a newly selected preview until 
     });
     render(<Workspaces />);
     const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    const preview = () => screen.getByRole('region', { name: 'Workspace activity preview' });
+    const activityCalls = () => vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity');
+    const assertCollapsed = () => {
+        expect(within(preview()).getByRole('button', { name: 'Show recent activity' }))
+            .toHaveAttribute('aria-expanded', 'false');
+        expect(within(preview()).queryByRole('combobox', { name: 'Activity preview scope' }))
+            .not.toBeInTheDocument();
+        expect(within(preview()).queryByRole('link', { name: 'View all activity →' }))
+            .not.toBeInTheDocument();
+    };
+
     fireEvent.click(await within(browser).findByRole('button', { name: 'Atlas repository' }));
-    const preview = screen.getByRole('region', { name: 'Workspace activity preview' });
-    fireEvent.click(within(preview).getByRole('button', { name: 'Show recent activity' }));
+    fireEvent.click(within(preview()).getByRole('button', { name: 'Show recent activity' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
         logicalWorkspaceId: groupA, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
     }, expect.any(AbortSignal)));
-    fireEvent.change(within(preview).getByRole('combobox', { name: 'Activity preview scope' }),
+    fireEvent.change(within(preview()).getByRole('combobox', { name: 'Activity preview scope' }),
         { target: { value: 'checkout' } });
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
         checkoutId: checkoutA.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
     }, expect.any(AbortSignal)));
+    expect(activityCalls()).toHaveLength(2);
 
+    // A (expanded in checkout mode) → B (never expanded) → A. Neither
+    // transition may automatically fetch or revive A's previous expansion.
     fireEvent.click(within(browser).getByRole('button', { name: 'Benchmark repository' }));
-    expect(within(preview).getByRole('button', { name: 'Show recent activity' }))
-        .toHaveAttribute('aria-expanded', 'false');
-    expect(within(preview).queryByRole('combobox', { name: 'Activity preview scope' })).not.toBeInTheDocument();
-    expect(vi.mocked(callTool).mock.calls.some(([name, input]) =>
-        name === 'query_monitoring_activity' && (input?.logicalWorkspaceId === groupB ||
-            input?.checkoutId === checkoutB.id))).toBe(false);
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(2);
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas repository' }));
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(2);
 
-    fireEvent.click(within(preview).getByRole('button', { name: 'Show recent activity' }));
+    // Reopening A is explicit and starts in its default logical scope.
+    fireEvent.click(within(preview()).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(activityCalls()).toHaveLength(3));
+    expect(within(preview()).getByRole('combobox', { name: 'Activity preview scope' }))
+        .toHaveValue('logical');
+    expect(activityCalls()[2]?.[1]).toMatchObject({ logicalWorkspaceId: groupA });
+
+    // Closing an inspector must also discard its preview state.
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Workspace details' }))
+        .getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('region', { name: 'Workspace activity preview' })).not.toBeInTheDocument();
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas repository' }));
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(3);
+
+    // Hash-driven navigation has the same unmount and reset semantics.
+    location.hash = '/workspaces?workspace=' + checkoutB.id;
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(within(screen.getByRole('complementary', { name: 'Workspace details' }))
+        .getByRole('heading', { name: 'Benchmark repository' })).toBeInTheDocument());
+    assertCollapsed();
+    location.hash = '/workspaces?workspace=' + checkoutA.id;
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(within(screen.getByRole('complementary', { name: 'Workspace details' }))
+        .getByRole('heading', { name: 'Atlas repository' })).toBeInTheDocument());
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(3);
+
+    // B only fetches when explicitly expanded.
+    fireEvent.click(within(browser).getByRole('button', { name: 'Benchmark repository' }));
+    fireEvent.click(within(preview()).getByRole('button', { name: 'Show recent activity' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
         logicalWorkspaceId: groupB, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
     }, expect.any(AbortSignal)));
-    expect(within(preview).getByRole('combobox', { name: 'Activity preview scope' })).toHaveValue('logical');
-
-    // Deep-link/hash navigation obeys the same identity gate as clicking the browser.
-    location.hash = '/workspaces?workspace=' + checkoutA.id;
-    fireEvent(window, new Event('hashchange'));
-    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Show recent activity' }))
-        .toHaveAttribute('aria-expanded', 'false'));
-    expect(vi.mocked(callTool).mock.calls.filter(([name, input]) =>
-        name === 'query_monitoring_activity' && input?.logicalWorkspaceId === groupA)).toHaveLength(1);
+    expect(activityCalls()).toHaveLength(4);
 });
