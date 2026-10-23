@@ -125,6 +125,19 @@ test('Switching away from server diagnostics discards late results', async () =>
     expect(screen.queryByText(/OLD_DIAGNOSTIC_SHOULD_NOT_RENDER/)).not.toBeInTheDocument();
 });
 
+test('Store Activity deep links retain both Store and Project filters in the safe server query', async () => {
+    location.hash = '#/monitoring?tab=activity&projectId=project-abc&storeId=store-def';
+    vi.mocked(callTool).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 30 } as never);
+    render(<MonitoringPage />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: 'project-abc', storeId: 'store-def',
+        offset: 0, limit: 30, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(screen.getByRole('textbox', { name: 'Store ID' })).toHaveValue('store-def');
+    expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveValue('project-abc');
+    expect(screen.getByText('No events match these filters.')).toBeInTheDocument();
+});
+
 test('activity uses correlated operation paging and counts attempts rather than audit rows', async () => {
     location.hash = '#/monitoring?tab=activity';
     const request = { id: 'request', occurredAt: '2026-10-22T08:00:00Z',
