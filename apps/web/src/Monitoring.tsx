@@ -48,7 +48,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     };
     const setFilter = (key: keyof MonitoringFilters, value: string) => {
         const next = { ...filters, [key]: value || undefined, offset: undefined };
-        navigate( next);
+        navigate(next);
     };
     const scopeInput = Object.fromEntries(Object.entries(filters)
         .filter(([key, value]) => key !== 'offset' && key !== 'live' && value));
@@ -121,14 +121,14 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
         return event.operation.startsWith('workspace.') && attempt
             ? `attempt:${event.projectId ?? ''}:${event.workspaceId ?? ''}:${attempt}` : event.id;
     })).size : 0;
-    const changePage = (next: number) => { navigate( {
+    const changePage = (next: number) => { navigate({
         ...filters, offset: String(next), live: next > 0 ? undefined : filters.live,
     }); };
     return <section className="panel activity-panel" aria-label={projectId ? 'Project activity' : 'Monitoring activity'}>
         <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>{projectId ? 'Project activity' : 'Activity'}</h2></div><div className="actions">
-            {projectId && <a href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
+            {projectId && <a className="monitoring-project-link" href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
             <button type="button" className="ghost" aria-pressed={live}
-                onClick={() => navigate( {
+                onClick={() => navigate({
                     ...filters, live: live ? undefined : '1', offset: undefined,
                 })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
             <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
@@ -138,7 +138,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
                 ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
                 ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
             ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} readOnly={key === 'projectId' && !!projectId} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
-            <button type="button" className="ghost" onClick={() => { navigate( { ...draft, offset: undefined }); }}>Apply filters</button>
+            <button type="button" className="ghost" onClick={() => { navigate({ ...draft, offset: undefined }); }}>Apply filters</button>
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
             <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
