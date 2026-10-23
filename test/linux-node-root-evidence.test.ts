@@ -103,28 +103,50 @@ with tempfile.TemporaryDirectory() as td:
 
 test('host evidence refuses unhealthy PID and pending recovery before signing', { skip: !available }, () => {
     const result = pythonScript(String.raw`
-import importlib.util,json,pathlib,sys,tempfile
+import datetime as dt,importlib.util,json,pathlib,sys,tempfile
 class Result:
     def __init__(self,stdout=""):self.stdout=stdout
 spec=importlib.util.spec_from_file_location("s",sys.argv[1])
 s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
+now=dt.datetime(2026,10,23,9,30,0,tzinfo=dt.timezone.utc)
+iso=lambda when:when.isoformat(timespec="milliseconds").replace("+00:00","Z")
 with tempfile.TemporaryDirectory() as td:
     path=pathlib.Path(td)/"status.json"
-    path.write_text(json.dumps({"state":"connected","pid":4242}))
+    valid={"state":"connected","pid":4242,"updatedAt":iso(now-dt.timedelta(seconds=10))}
+    path.write_text(json.dumps(valid))
     def runner(args,**kwargs):
         if args[1]=="is-active":return Result()
         return Result("4242\n")
-    assert s.live_pid(status_path=path,runner=runner)==4242
-    for state,pid in [("reconnecting",4242),("connected",4040),("connected","4242")]:
-        path.write_text(json.dumps({"state":state,"pid":pid}))
-        try:s.live_pid(status_path=path,runner=runner)
+    assert s.live_pid(status_path=path,runner=runner,now=now)==4242
+    for modified in [
+        {**valid,"state":"reconnecting"},
+        {**valid,"pid":4040},
+        {**valid,"pid":"4242"},
+        {**valid,"updatedAt":None},
+        {**valid,"updatedAt":"not-a-date"},
+        {**valid,"updatedAt":iso(now-dt.timedelta(minutes=2))},
+        {**valid,"updatedAt":iso(now+dt.timedelta(seconds=10))},
+        {**valid,"updatedAt":"2026-13-23T09:30:00.000Z"},
+        {**valid,"updatedAt":"2026-10-23T09:30:00+00:00"},
+        {**valid,"updatedAt":"2026-10-23T09:30:00Z"},
+        {**valid,"updatedAt":"2026-10-23T09:30:00.000+01:00"},
+    ]:
+        path.write_text(json.dumps(modified))
+        try:s.live_pid(status_path=path,runner=runner,now=now)
         except s.Refused:pass
-        else:raise AssertionError("unhealthy or untrusted Node PID accepted")
+        else:raise AssertionError("unhealthy, stale or malformed Node status accepted: "+str(modified))
+    # Exactly at the freshness limit is acceptable; older is not.
+    path.write_text(json.dumps({**valid,"updatedAt":iso(now-dt.timedelta(seconds=35))}))
+    assert s.live_pid(status_path=path,runner=runner,now=now)==4242
+    path.write_text(json.dumps({**valid,"updatedAt":iso(now-dt.timedelta(seconds=35,milliseconds=1))}))
+    try:s.live_pid(status_path=path,runner=runner,now=now)
+    except s.Refused:pass
+    else:raise AssertionError("heartbeat past freshness window accepted")
     path.write_bytes(b"x"*32769)
-    try:s.live_pid(status_path=path,runner=runner)
+    try:s.live_pid(status_path=path,runner=runner,now=now)
     except s.Refused:pass
     else:raise AssertionError("oversized status file accepted")
-print("root host PID consistency checks passed")
+print("heartbeat freshness, PID consistency and bounded status checks passed")
 `);
     assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
 });
