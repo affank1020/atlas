@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
 import { monitoringHash } from './monitoringLinks';
+import { ActivityPreview } from './ActivityPreview';
 import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
@@ -26,6 +27,33 @@ const reclaimed = (bytes: number) => bytes >= 1024 * 1024
 function suggestTarget(path: string, branch: string) {
     const slash = path.lastIndexOf('/');
     return slash > 0 ? path.slice(0, slash + 1) + path.slice(slash + 1) + '-' + branch.replace(/^atlas\//, '').replaceAll('/', '-') : '';
+}
+
+/** Keyed to one logical Workspace so leaving it discards expansion state
+ * before a different Workspace can render, including hash navigation. */
+function WorkspaceActivityPreview({ logicalWorkspaceId, checkoutId, refreshVersion }: {
+    logicalWorkspaceId?: string; checkoutId: string; refreshVersion: number;
+}) {
+    const [expanded, setExpanded] = useState(false);
+    const [scope, setScope] = useState<'logical' | 'checkout'>('logical');
+    return <section className="wm-subsection wm-activity-preview" aria-label="Workspace activity preview">
+        <div className="actions">
+            <button type="button" className="ghost" aria-expanded={expanded}
+                onClick={() => setExpanded(value => !value)}>
+                {expanded ? 'Hide recent activity' : 'Show recent activity'}
+            </button>
+            {expanded && logicalWorkspaceId && <label>Activity scope
+                <select aria-label="Activity preview scope" value={scope}
+                    onChange={event => setScope(event.target.value as 'logical' | 'checkout')}>
+                    <option value="logical">Whole Workspace</option>
+                    <option value="checkout">Selected checkout</option>
+                </select>
+            </label>}
+        </div>
+        {expanded && (scope === 'logical' && logicalWorkspaceId
+            ? <ActivityPreview logicalWorkspaceId={logicalWorkspaceId} refreshVersion={refreshVersion} title="Recent activity" />
+            : <ActivityPreview checkoutId={checkoutId} refreshVersion={refreshVersion} title="Recent activity" />)}
+    </section>;
 }
 
 export function Workspaces() {
@@ -452,6 +480,10 @@ export function Workspaces() {
                                 </button>;
                             })}
                         </div>)}
+                    <WorkspaceActivityPreview
+                        key={logical.length > 0 && selectedLogical ? selectedLogical.id : selected.id}
+                        logicalWorkspaceId={logical.length > 0 ? selectedLogical?.id : undefined}
+                        checkoutId={selected.id} refreshVersion={revision} />
                     <div className="wm-selected-checkout">
                         <p className="eyebrow">Selected checkout</p>
                         <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />

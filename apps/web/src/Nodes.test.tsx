@@ -7,7 +7,7 @@ vi.mock('./api', () => ({ callTool: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const node = { id: 'node', name: 'Development machine', status: 'online', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], hostedWorkspaceCount: 1, lastSeen: '2026-10-07T09:00:00Z', workspaces: [{ id: 'workspace', projectId: 'project', name: 'Football' }] };
 it('shows node health before selection and keeps the map compact', async () => {
-    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : node);
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : name === 'query_monitoring_activity' ? { items: [], total: 0, limit: 5, offset: 0 } : node);
     const { container } = render(<Nodes />);
     expect(screen.getByRole('heading', { name: 'Nodes', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Map' })).toBeInTheDocument();
@@ -28,7 +28,7 @@ it('shows node health before selection and keeps the map compact', async () => {
 });
 
 it('shows node details below the map and refreshes selected presence', async () => {
-    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : node);
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : name === 'query_monitoring_activity' ? { items: [], total: 0, limit: 5, offset: 0 } : node);
     render(<Nodes />);
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect Development machine' }));
     const summary = await screen.findByRole('complementary', { name: 'Selected node' });
@@ -52,12 +52,18 @@ it('shows node details below the map and refreshes selected presence', async () 
     expect(within(details).queryByRole('button', { name: /Move|Assign/ })).not.toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'assign_workspace_node')).toBe(false);
     expect(within(details).queryByRole('heading', { name: 'Overview' })).not.toBeInTheDocument();
+    expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        nodeId: node.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal));
+    expect(within(details).getByRole('link', { name: 'View all activity →' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&nodeId=' + node.id);
+    expect(within(details).queryByRole('list', { name: 'Legacy recent activity' })).not.toBeInTheDocument();
     for (const title of ['Hosted workspaces', 'Recent activity', 'Technical details']) {
         expect(within(details).getByRole('heading', { name: new RegExp(title) })).toBeInTheDocument();
     }
     expect(within(details).queryByText('Changes here affect this runtime and its assigned workspaces.')).not.toBeInTheDocument();
     expect(within(details).queryByRole('region', { name: 'Manage node' })).not.toBeInTheDocument();
-    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [{ ...node, status: 'offline' }] : { ...node, status: 'offline' });
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [{ ...node, status: 'offline' }] : name === 'query_monitoring_activity' ? { items: [], total: 0, limit: 5, offset: 0 } : { ...node, status: 'offline' });
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(await within(summary).findByText('Offline')).toBeInTheDocument();
     fireEvent.click(within(summary).getByRole('button', { name: 'Clear node selection' }));
@@ -65,7 +71,7 @@ it('shows node details below the map and refreshes selected presence', async () 
     expect(screen.queryByRole('region', { name: 'Selected node details' })).not.toBeInTheDocument();
 });
 it('keeps node management actions functional in the selected node panel', async () => {
-    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : node);
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes' ? [node] : name === 'query_monitoring_activity' ? { items: [], total: 0, limit: 5, offset: 0 } : node);
     render(<Nodes />);
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect Development machine' }));
     const manage = await within(screen.getByRole('complementary', { name: 'Selected node' })).findByRole('region', { name: 'Manage node' });
@@ -132,6 +138,7 @@ it('shows installed/latest software and update state inside the selected Node in
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'list_nodes') return [installed];
         if (name === 'get_node') return installed;
+        if (name === 'query_monitoring_activity') return { items: [], total: 0, limit: 5, offset: 0 };
         if (name === 'list_node_releases') return {
             state: 'ready',
             checkedAt: '2026-10-21T19:00:00Z',

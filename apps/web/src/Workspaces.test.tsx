@@ -593,3 +593,164 @@ test('logical Workspace navigation offers group-wide and selected-checkout Activ
     expect(within(inspector).getByRole('link', { name: 'Selected checkout activity' }))
         .toHaveAttribute('href', '#/monitoring?tab=activity&checkoutId=first-checkout');
 });
+
+test('Workspace inspector loads one on-demand preview and switches between logical and checkout scopes', async () => {
+    const groupId = '11111111-1111-4111-8111-111111111111';
+    const first = { ...repo, id: 'first-checkout' };
+    const second = { ...repo, id: 'second-checkout', rootPath: '/srv/atlas/workspaces/atlas-feature' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [manager, first, second];
+        if (name === 'list_logical_workspaces') return [{
+            id: groupId, name: 'Atlas repository', repository: 'example/atlas',
+            kind: 'git', projectIds: [], checkouts: [first, second],
+        }];
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'query_monitoring_activity') return { items: [], total: 0, offset: 0, limit: 5 };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas repository/ }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    const preview = within(inspector).getByRole('region', { name: 'Workspace activity preview' });
+    expect(within(preview).getByRole('button', { name: 'Show recent activity' })).toHaveAttribute('aria-expanded', 'false');
+    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'query_monitoring_activity')).toBe(false);
+
+    fireEvent.click(within(preview).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        logicalWorkspaceId: groupId, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(within(preview).getByRole('link', { name: 'View all activity →' })).toHaveAttribute('href',
+        '#/monitoring?tab=activity&logicalWorkspaceId=' + groupId);
+    fireEvent.change(within(preview).getByRole('combobox', { name: 'Activity preview scope' }),
+        { target: { value: 'checkout' } });
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        checkoutId: first.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    const firstSignal = vi.mocked(callTool).mock.calls.find(([name, input]) =>
+        name === 'query_monitoring_activity' && input?.checkoutId === first.id)?.[2];
+    const checkoutSwitch = within(inspector).getByRole('group', { name: 'Choose Node checkout' });
+    fireEvent.click(within(checkoutSwitch).getAllByRole('button')[1]);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        checkoutId: second.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(firstSignal?.aborted).toBe(true);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Hide recent activity' }));
+    expect(within(preview).queryByRole('link', { name: 'View all activity →' })).not.toBeInTheDocument();
+});
+
+test('legacy Workspace browser exposes a selected checkout Activity preview without logical IDs', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [manager, repo];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'query_monitoring_activity') return { items: [], total: 0, offset: 0, limit: 5 };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas/ }));
+    const preview = screen.getByRole('region', { name: 'Workspace activity preview' });
+    fireEvent.click(within(preview).getByRole('button', { name: 'Show recent activity' }));
+    expect(within(preview).queryByRole('combobox', { name: 'Activity preview scope' })).not.toBeInTheDocument();
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        checkoutId: repo.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+});
+
+test('leaving a logical Workspace discards preview state on selection, close and hash navigation', async () => {
+    const groupA = '11111111-1111-4111-8111-111111111111';
+    const groupB = '22222222-2222-4222-8222-222222222222';
+    const checkoutA = { ...repo, id: 'checkout-a' };
+    const checkoutB = { ...repo, id: 'checkout-b', name: 'Benchmark',
+        rootPath: '/srv/atlas/workspaces/benchmark' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [checkoutA, checkoutB];
+        if (name === 'list_logical_workspaces') return [
+            { id: groupA, name: 'Atlas repository', repository: 'example/atlas',
+                kind: 'git', projectIds: [], checkouts: [checkoutA] },
+            { id: groupB, name: 'Benchmark repository', repository: 'example/benchmark',
+                kind: 'git', projectIds: [], checkouts: [checkoutB] },
+        ];
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'query_monitoring_activity') return { items: [], total: 0, offset: 0, limit: 5 };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    const preview = () => screen.getByRole('region', { name: 'Workspace activity preview' });
+    const activityCalls = () => vi.mocked(callTool).mock.calls.filter(([name]) => name === 'query_monitoring_activity');
+    const assertCollapsed = () => {
+        expect(within(preview()).getByRole('button', { name: 'Show recent activity' }))
+            .toHaveAttribute('aria-expanded', 'false');
+        expect(within(preview()).queryByRole('combobox', { name: 'Activity preview scope' }))
+            .not.toBeInTheDocument();
+        expect(within(preview()).queryByRole('link', { name: 'View all activity →' }))
+            .not.toBeInTheDocument();
+    };
+
+    fireEvent.click(await within(browser).findByRole('button', { name: 'Atlas repository' }));
+    fireEvent.click(within(preview()).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        logicalWorkspaceId: groupA, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    fireEvent.change(within(preview()).getByRole('combobox', { name: 'Activity preview scope' }),
+        { target: { value: 'checkout' } });
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        checkoutId: checkoutA.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(activityCalls()).toHaveLength(2);
+
+    // A (expanded in checkout mode) → B (never expanded) → A. Neither
+    // transition may automatically fetch or revive A's previous expansion.
+    fireEvent.click(within(browser).getByRole('button', { name: 'Benchmark repository' }));
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(2);
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas repository' }));
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(2);
+
+    // Reopening A is explicit and starts in its default logical scope.
+    fireEvent.click(within(preview()).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(activityCalls()).toHaveLength(3));
+    expect(within(preview()).getByRole('combobox', { name: 'Activity preview scope' }))
+        .toHaveValue('logical');
+    expect(activityCalls()[2]?.[1]).toMatchObject({ logicalWorkspaceId: groupA });
+
+    // Closing an inspector must also discard its preview state.
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Workspace details' }))
+        .getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('region', { name: 'Workspace activity preview' })).not.toBeInTheDocument();
+    fireEvent.click(within(browser).getByRole('button', { name: 'Atlas repository' }));
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(3);
+
+    // Hash-driven navigation has the same unmount and reset semantics.
+    location.hash = '/workspaces?workspace=' + checkoutB.id;
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(within(screen.getByRole('complementary', { name: 'Workspace details' }))
+        .getByRole('heading', { name: 'Benchmark repository' })).toBeInTheDocument());
+    assertCollapsed();
+    location.hash = '/workspaces?workspace=' + checkoutA.id;
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(within(screen.getByRole('complementary', { name: 'Workspace details' }))
+        .getByRole('heading', { name: 'Atlas repository' })).toBeInTheDocument());
+    assertCollapsed();
+    expect(activityCalls()).toHaveLength(3);
+
+    // B only fetches when explicitly expanded.
+    fireEvent.click(within(browser).getByRole('button', { name: 'Benchmark repository' }));
+    fireEvent.click(within(preview()).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        logicalWorkspaceId: groupB, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(activityCalls()).toHaveLength(4);
+});
