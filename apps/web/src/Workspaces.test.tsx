@@ -662,3 +662,61 @@ test('legacy Workspace browser exposes a selected checkout Activity preview with
         checkoutId: repo.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
     }, expect.any(AbortSignal)));
 });
+
+test('switching logical Workspaces never fetches a newly selected preview until explicitly expanded', async () => {
+    const groupA = '11111111-1111-4111-8111-111111111111';
+    const groupB = '22222222-2222-4222-8222-222222222222';
+    const checkoutA = { ...repo, id: 'checkout-a' };
+    const checkoutB = { ...repo, id: 'checkout-b', name: 'Benchmark',
+        rootPath: '/srv/atlas/workspaces/benchmark' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [checkoutA, checkoutB];
+        if (name === 'list_logical_workspaces') return [
+            { id: groupA, name: 'Atlas repository', repository: 'example/atlas',
+                kind: 'git', projectIds: [], checkouts: [checkoutA] },
+            { id: groupB, name: 'Benchmark repository', repository: 'example/benchmark',
+                kind: 'git', projectIds: [], checkouts: [checkoutB] },
+        ];
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'query_monitoring_activity') return { items: [], total: 0, offset: 0, limit: 5 };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    fireEvent.click(await within(browser).findByRole('button', { name: 'Atlas repository' }));
+    const preview = screen.getByRole('region', { name: 'Workspace activity preview' });
+    fireEvent.click(within(preview).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        logicalWorkspaceId: groupA, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    fireEvent.change(within(preview).getByRole('combobox', { name: 'Activity preview scope' }),
+        { target: { value: 'checkout' } });
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        checkoutId: checkoutA.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+
+    fireEvent.click(within(browser).getByRole('button', { name: 'Benchmark repository' }));
+    expect(within(preview).getByRole('button', { name: 'Show recent activity' }))
+        .toHaveAttribute('aria-expanded', 'false');
+    expect(within(preview).queryByRole('combobox', { name: 'Activity preview scope' })).not.toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.some(([name, input]) =>
+        name === 'query_monitoring_activity' && (input?.logicalWorkspaceId === groupB ||
+            input?.checkoutId === checkoutB.id))).toBe(false);
+
+    fireEvent.click(within(preview).getByRole('button', { name: 'Show recent activity' }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        logicalWorkspaceId: groupB, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(within(preview).getByRole('combobox', { name: 'Activity preview scope' })).toHaveValue('logical');
+
+    // Deep-link/hash navigation obeys the same identity gate as clicking the browser.
+    location.hash = '/workspaces?workspace=' + checkoutA.id;
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Show recent activity' }))
+        .toHaveAttribute('aria-expanded', 'false'));
+    expect(vi.mocked(callTool).mock.calls.filter(([name, input]) =>
+        name === 'query_monitoring_activity' && input?.logicalWorkspaceId === groupA)).toHaveLength(1);
+});
