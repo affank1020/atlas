@@ -25,3 +25,56 @@
 .node-update-intent { border:1px solid var(--border); border-radius:9px; padding:10px 12px; margin-top:10px; }
 .node-update-intent strong { font-size:.78rem; }
 .node-update-intent p { margin:7px 0 11px; font-size:.76rem; color:var(--text-secondary); overflow-wrap:anywhere; }
+
+
+/* Management surface shares the Atlas dark surface, spacing and status tokens. */
+.node-software-fleet { display:grid; gap:18px; margin:8px 0 32px; }
+.node-software-section-heading { display:flex; justify-content:space-between; align-items:start; gap:20px; }
+.node-software-section-heading h2 { font-size:1.2rem; margin:4px 0 6px; }
+.node-software-section-heading .eyebrow { margin:0; }
+.node-software-section-heading p { margin:0; }
+.node-software-section-heading > a { flex-shrink:0; text-decoration:none; }
+.node-software-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.node-software-metrics > div { display:flex; flex-direction:column; gap:6px; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--surface); min-width:0; }
+.node-software-metrics span { font-size:.74rem; line-height:1.4; color:var(--text-secondary); }
+.node-software-metrics strong { font-size:1.6rem; font-weight:650; font-variant-numeric:tabular-nums; }
+.node-software-metrics small { font-size:.7rem; color:var(--warning); line-height:1.35; }
+.node-software-fleet-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.node-software-fleet-controls label { font-size:.82rem; color:var(--text-secondary); }
+.node-software-fleet-controls select { background:var(--surface); color:var(--text-primary); border:1px solid var(--border-strong); border-radius:8px; padding:9px 12px; min-width:190px; max-width:100%; }
+.node-software-fleet-controls > span { color:var(--text-secondary); font-size:.76rem; }
+.node-software-fleet-layout { display:grid; grid-template-columns:minmax(230px,.8fr) minmax(0,1.5fr); gap:16px; align-items:start; }
+.node-software-nodes { min-width:0; max-height:580px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+.node-software-node { display:flex; flex-direction:column; align-items:stretch; gap:8px; width:100%; padding:15px; border:1px solid var(--border); border-radius:11px; text-align:left; cursor:pointer; color:var(--text-primary); background:var(--surface); transition:border-color var(--transition),background var(--transition); }
+.node-software-node:hover { background:var(--surface-hover); }
+.node-software-node:focus-visible, .node-software-fleet-controls select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.node-software-node.is-selected { border-color:var(--accent); background:var(--accent-soft); }
+.node-software-node-head { display:flex; align-items:start; justify-content:space-between; gap:10px; }
+.node-software-node-head strong { font-size:.91rem; line-height:1.4; overflow-wrap:anywhere; }
+.node-software-node-head .badge { flex-shrink:0; }
+.node-software-node-state, .node-software-node-lifecycle { font-size:.75rem; line-height:1.45; color:var(--text-secondary); }
+.node-software-node-lifecycle { padding:6px 9px; border-radius:6px; background:var(--surface-elevated); }
+.node-software-node-lifecycle.needs-review { color:var(--warning); background:var(--warning-soft); }
+.node-software-inspector { min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; display:grid; gap:18px; }
+.node-software-inspector-head { display:flex; flex-wrap:wrap; gap:14px; align-items:start; justify-content:space-between; }
+.node-software-inspector-head h3 { margin:4px 0 3px; font-size:1.18rem; overflow-wrap:anywhere; }
+.node-software-inspector-head .eyebrow { margin:0; }
+.node-software-inspector-head p { margin:0; }
+.node-software-inspector-head a { font-size:.78rem; text-decoration:none; }
+.node-software-inspector-facts { margin:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 18px; }
+.node-software-inspector-facts > div { display:flex; flex-direction:column; gap:6px; padding:12px 0; border-bottom:1px solid var(--border); min-width:0; }
+.node-software-inspector-facts dt { font-size:.75rem; color:var(--text-secondary); }
+.node-software-inspector-facts dd { margin:0; font-size:.83rem; overflow-wrap:anywhere; }
+.node-software-inspector-note { color:var(--text-secondary); font-size:.8rem; line-height:1.6; margin:0; }
+.node-software-history { border-top:1px solid var(--border); padding-top:16px; }
+.node-software-history h4 { margin:0 0 12px; font-size:.93rem; }
+.node-software-history > p { font-size:.8rem; line-height:1.55; color:var(--text-secondary); margin:8px 0; }
+.node-software-history .node-software-review-note { border:1px solid var(--warning); background:var(--warning-soft); color:var(--text-primary); padding:12px; border-radius:8px; }
+.node-software-history-list { display:grid; gap:0; padding:0; margin:0; list-style:none; }
+.node-software-history-list li { padding:12px 0; border-bottom:1px solid var(--border); display:grid; gap:6px; font-size:.79rem; }
+.node-software-history-list li > div { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.node-software-history-list li span, .node-software-history-list small { color:var(--text-secondary); }
+.node-software-empty { padding:20px; color:var(--text-secondary); background:var(--surface); border:1px dashed var(--border); border-radius:10px; font-size:.82rem; }
+.node-software-downloads { display:grid; gap:18px; padding-top:24px; border-top:1px solid var(--border); margin-top:12px; }
+@media (max-width:940px) { .node-software-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .node-software-fleet-layout { grid-template-columns:minmax(0,1fr); } .node-software-nodes { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); max-height:none; } }
+@media (max-width:600px) { .node-software-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .node-software-section-heading { flex-wrap:wrap; } .node-software-inspector { padding:16px; } .node-software-inspector-facts { grid-template-columns:1fr; } .node-software-fleet-controls select { flex:1; } }
