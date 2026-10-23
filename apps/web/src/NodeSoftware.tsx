@@ -283,7 +283,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             </div>}
             {currentIntent?.error && <p role="alert">Update request error: {currentIntent.error} <button type="button" className="ghost" onClick={() => refreshIntents(node.id)}>Reload requests</button></p>}
         </div>}
-        <a href="#/nodes/software">View downloads and release notes →</a>
+        <a href={'#/nodes/software?node='+encodeURIComponent(node.id)}>Open software management and downloads →</a>
     </section>;
 }
 
