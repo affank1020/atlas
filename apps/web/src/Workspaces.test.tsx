@@ -567,3 +567,29 @@ test('Git inspection has skeletons and refresh keeps existing checkout details v
     refreshTrees.resolve({ worktrees: [{ rootPath: repo.rootPath, head: sha, branch: 'atlas/feature' }] });
     await waitFor(() => expect(inspector).toHaveAttribute('aria-busy', 'false'));
 });
+
+test('logical Workspace navigation offers group-wide and selected-checkout Activity scopes', async () => {
+    const logicalWorkspaceId = '11111111-1111-4111-8111-111111111111';
+    const source = { ...repo, id: 'first-checkout' };
+    const sibling = { ...repo, id: 'second-checkout', rootPath: '/srv/atlas/workspaces/atlas-feature' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node];
+        if (name === 'list_workspaces') return [manager, source, sibling];
+        if (name === 'list_logical_workspaces') return [{ id: logicalWorkspaceId,
+            name: 'Atlas repository', repository: 'example/atlas', kind: 'git',
+            projectIds: [], checkouts: [source, sibling] }];
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha,
+            dirty: false, originRepository: 'example/atlas' };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        if (name === 'list_github_repositories') return { repositories: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas repository/ }));
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    expect(await within(inspector).findByRole('link', { name: 'All Workspace activity' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&logicalWorkspaceId=' + logicalWorkspaceId);
+    expect(within(inspector).getByRole('link', { name: 'Selected checkout activity' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&checkoutId=first-checkout');
+});

@@ -125,7 +125,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         </div></div>
         <div className="activity-filters monitoring-filters">
             {([
-                ['projectId', 'Project ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
+                ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
                 ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
             ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
             <button type="button" className="ghost" onClick={() => { location.hash = monitoringHash('activity', { ...draft, offset: undefined }); }}>Apply filters</button>

@@ -121,3 +121,10 @@ test('snapshot grouped operation filter matches validated wrapper names and reta
     assert.equal((await audit.monitoring({ ...options, operation: 'view.updated' })).total, 0);
     assert.equal((await audit.monitoring({ ...options, operation: 'workspace.git_committed;invalid' })).total, 0);
 });
+
+test('snapshot Monitoring explicitly refuses logical Workspace filters without authoritative memberships', async () => {
+    const repository = { snapshot: async () => ({ auditEvents: [] }) } as unknown as AtlasRepository;
+    await assert.rejects(new AuditService(repository).monitoring({
+        logicalWorkspaceId: '11111111-1111-4111-8111-111111111111', groupOperations: true,
+    }), /requires PostgreSQL checkout associations/);
+});

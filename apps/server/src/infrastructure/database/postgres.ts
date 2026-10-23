@@ -83,9 +83,19 @@ export class PostgresRepository implements AtlasRepository {
             const value = input[key as keyof MonitoringActivityQuery];
             if (value) where.push(column + '=' + param(uuid(String(value))));
         }
+        if (input.logicalWorkspaceId) {
+            const logicalId = param(uuid(input.logicalWorkspaceId));
+            // Resolve historical audit checkout IDs through the *current*
+            // registered physical checkout membership. Include archived rows.
+            where.push('EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.logical_workspace_id=' + logicalId + '::uuid)');
+        }
         if (input.nodeId) {
+            // JSON comparisons take text; checkout ownership uses the UUID column.
+            // Keep separate bind parameters to avoid PostgreSQL text/uuid coercion.
             const id = param(uuid(input.nodeId)?.toLowerCase());
-            where.push("(a.after_state->>'nodeId'=" + id +
+            const checkoutNodeId = param(uuid(input.nodeId));
+            where.push("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + checkoutNodeId + "::uuid)" +
+                " OR a.after_state->>'nodeId'=" + id +
                 " OR a.after_state->>'previousNodeId'=" + id +
                 " OR (a.operation IN ('node.share.approved','node.share.revoked') AND " +
                 "(a.after_state->>'sourceNodeId'=" + id + " OR a.after_state->>'targetNodeId'=" + id + ")))");
@@ -140,6 +150,10 @@ export class PostgresRepository implements AtlasRepository {
         if (input.projectId) scope.push('a.project_id=' + param(uuid(input.projectId)));
         if (input.workspaceId) scope.push('a.workspace_id=' + param(uuid(input.workspaceId)));
         if (input.checkoutId) scope.push('a.workspace_id=' + param(uuid(input.checkoutId)));
+        if (input.logicalWorkspaceId) {
+            const logicalId = param(uuid(input.logicalWorkspaceId));
+            scope.push('EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.logical_workspace_id=' + logicalId + '::uuid)');
+        }
         if (input.client) scope.push('lower(a.client)=lower(' + param(input.client) + ')');
 
         const projections: string[] = [];
@@ -155,7 +169,9 @@ export class PostgresRepository implements AtlasRepository {
         if (input.recordId) matchAny('a.record_id=' + param(uuid(input.recordId)));
         if (input.nodeId) {
             const id = param(uuid(input.nodeId)?.toLowerCase());
-            matchAny("(a.after_state->>'nodeId'=" + id
+            const checkoutNodeId = param(uuid(input.nodeId));
+            matchAny("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + checkoutNodeId + "::uuid)"
+                + " OR a.after_state->>'nodeId'=" + id
                 + " OR a.after_state->>'previousNodeId'=" + id
                 + " OR (a.operation IN ('node.share.approved','node.share.revoked') AND "
                 + "(a.after_state->>'sourceNodeId'=" + id

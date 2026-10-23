@@ -3,7 +3,7 @@ export type CatalogueRead = { projectId?: string; includeArchived?: boolean; sto
 export type AuditRead = { workspaceId?: string; projectId?: string; storeId?: string; recordId?: string; viewId?: string; operation?: string; viewOperations?: boolean; limit?: number };
 /** Filtered read model over immutable audit rows; never a second event store. */
 export type MonitoringActivityQuery = {
-    projectId?: string; workspaceId?: string; checkoutId?: string; storeId?: string; recordId?: string;
+    projectId?: string; workspaceId?: string; checkoutId?: string; logicalWorkspaceId?: string; storeId?: string; recordId?: string;
     nodeId?: string; operation?: string; category?: string; client?: string;
     outcome?: 'failed' | 'pending' | 'completed'; search?: string; from?: string; to?: string;
     limit?: number; offset?: number;

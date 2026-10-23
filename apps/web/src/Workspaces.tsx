@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
+import { monitoringHash } from './monitoringLinks';
 import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
@@ -401,6 +402,11 @@ export function Workspaces() {
                 </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
                     <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
                     <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
+                    <div className="actions">
+                        {logical.length > 0 && selectedLogical &&
+                            <a className="wm-link" href={monitoringHash('activity', { logicalWorkspaceId: selectedLogical.id })}>All Workspace activity</a>}
+                        <a className="wm-link" href={monitoringHash('activity', { checkoutId: selected.id })}>Selected checkout activity</a>
+                    </div>
                     {logical.length > 0 && selectedLogical && <section className="wm-project-links" aria-label="Workspace Projects">
                         <h3>Projects <span>Shared by every checkout</span></h3>
                         <div className="wm-project-chips">

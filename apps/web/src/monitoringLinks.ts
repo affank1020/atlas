@@ -1,12 +1,12 @@
 /** Hash URLs are part of Atlas' shareable operational state. */
 export type MonitoringTab = 'overview' | 'activity' | 'logs';
 export type MonitoringFilters = {
-    projectId?: string; workspaceId?: string; checkoutId?: string; storeId?: string; nodeId?: string;
+    projectId?: string; workspaceId?: string; checkoutId?: string; logicalWorkspaceId?: string; storeId?: string; nodeId?: string;
     operation?: string; category?: string; client?: string; outcome?: string; search?: string;
     from?: string; to?: string; offset?: string; live?: '1'; source?: 'stdout' | 'stderr' | 'journal'; lines?: string; target?: 'server' | 'node';
 };
 export type MonitoringRoute = { tab: MonitoringTab; filters: MonitoringFilters };
-const keys: (keyof MonitoringFilters)[] = ['projectId','workspaceId','checkoutId','storeId','nodeId','operation','category','client','outcome','search','from','to','offset','live','source','lines','target'];
+const keys: (keyof MonitoringFilters)[] = ['projectId','workspaceId','checkoutId','logicalWorkspaceId','storeId','nodeId','operation','category','client','outcome','search','from','to','offset','live','source','lines','target'];
 export function monitoringHash(tab: MonitoringTab, filters: MonitoringFilters = {}) {
     const params = new URLSearchParams({ tab });
     for (const key of keys) if (filters[key]) params.set(key, filters[key]!);

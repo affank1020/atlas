@@ -281,3 +281,15 @@ test('share audit navigation deduplicates equal source and target Node IDs', asy
     expect(screen.queryByRole('link', { name: 'Target Node activity' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /Node activity/i })).toHaveLength(1);
 });
+
+test('logical Workspace Activity deep links send server-side logical scope without widening it', async () => {
+    const logicalWorkspaceId = '11111111-1111-4111-8111-111111111111';
+    location.hash = '#/monitoring?tab=activity&logicalWorkspaceId=' + logicalWorkspaceId;
+    vi.mocked(callTool).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 30 } as never);
+    render(<MonitoringPage />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity',
+        { logicalWorkspaceId, offset: 0, limit: 30, groupOperations: true, safeDetails: true },
+        expect.any(AbortSignal)));
+    expect(screen.getByRole('textbox', { name: 'Logical Workspace ID' })).toHaveValue(logicalWorkspaceId);
+    expect(await screen.findByText(/0 operations · Filtered on the server/)).toBeInTheDocument();
+});
