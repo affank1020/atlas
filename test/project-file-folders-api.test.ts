@@ -21,7 +21,7 @@ test("Project folders isolate nested metadata, guard archival, and move Files wi
     const files = new AtlasFilesService(fixture.databaseUrl, root);
     try {
         const a = randomUUID(), b = randomUUID();
-        await files.pool.query("INSERT INTO projects(id,name) VALUES($1,'Folder A'),($2,'Folder B')", [a, b]);
+        await files.pool.query("INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Folder A',now(),now()),($2,'Folder B',now(),now())", [a, b]);
         const parent = await files.folders.create(a, null, "Coursework");
         const child = await files.folders.create(a, parent.id, "Week 4");
         await assert.rejects(files.folders.create(a, null, "coursework"), /already exists/);
@@ -78,7 +78,7 @@ test("Project folder HTTP actions are scoped and legacy owner writes are denied"
     const files = new AtlasFilesService(fixture.databaseUrl, root);
     const a = randomUUID(), b = randomUUID();
     const origin = "https://atlas.example.test";
-    await files.pool.query("INSERT INTO projects(id,name) VALUES($1,'Folder HTTP A'),($2,'Folder HTTP B')", [a, b]);
+    await files.pool.query("INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Folder HTTP A',now(),now()),($2,'Folder HTTP B',now(),now())", [a, b]);
     const services = {
         files, config: { workspace: { origins: [origin] } },
         catalog: { getProject: async (id: string) => {
