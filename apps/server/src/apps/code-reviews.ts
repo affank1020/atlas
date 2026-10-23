@@ -51,8 +51,16 @@ export class CodeReviewsService {
         if (!this.history?.currentHead)
             throw new AtlasError('GitHub PR head verification is unavailable.', 'CAPABILITY_UNAVAILABLE');
         const remote = await this.history.currentHead(input.repository, input.prNumber);
-        if (!remote.open || remote.headSha !== input.headSha)
-            throw new AtlasError('Pull request is closed or its head has changed; review the current open head.', 'CONFLICT');
+        if (!remote.open || remote.headSha !== input.headSha) {
+            // Another identical submission may have committed while this call was
+            // fetching GitHub. Serialize the fallback read with writers so that
+            // a committed receipt wins, without relaxing validation for new IDs.
+            return this.catalog.store.transaction(state => {
+                const committed = existingStructuredReview(state, ids, input);
+                if (committed) return committed;
+                throw new AtlasError('Pull request is closed or its head has changed; review the current open head.', 'CONFLICT');
+            });
+        }
         const verifiedAt = new Date().toISOString();
         return this.catalog.store.transaction(state =>
             saveStructuredReview(this.catalog, state, ids, input, remote.headSha, verifiedAt));

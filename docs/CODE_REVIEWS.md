@@ -202,13 +202,20 @@ race between remote verification and committing locally; the recorded
 head never changed afterward. The server issues the review timestamp instead
 of trusting caller-supplied dates.
 
+The response returns `findingIds` **in the original submitted finding-key order**
+and `findingReceipts: [{ key, id }]` explicitly mapping each client key to
+its persisted record ID. The initial response and identical retries preserve
+this mapping even when PostgreSQL reorders equal-timestamp rows by UUID.
+
 The ID and a payload SHA-256 fingerprint are stored as receipt metadata.
 The submission operation has no update/delete pathway, but Atlas's generic
 Store administration APIs can still edit or archive records; strict
 immutability across *all* administrator operations is not yet guaranteed. A
 retry with the **same ID and identical normalized payload** returns the
 original run/finding IDs without another GitHub fetch, even if the PR has
-advanced. Reusing that ID for different content fails with a conflict.
+advanced. If an identical concurrent retry observes a changed or closed GitHub
+head, the server rechecks for a committed matching receipt under the database
+transaction lock; a new or altered submission still fails head validation. Reusing that ID for different content fails with a conflict.
 Concurrent submissions with the same ID serialize through the database.
 Different submission IDs can represent independent review rounds, including
 multiple reviews of the same commit. A failure to save any finding rolls back

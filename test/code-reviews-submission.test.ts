@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import { CodeReviewsService, codeReviewsApplication } from '../apps/server/src/apps/code-reviews.js';
 import { GitHubReviewHistoryReader } from '../apps/server/src/apps/github-review-history.js';
-import { structuredReviewSchema } from '../apps/server/src/apps/review-submission.js';
+import { structuredReviewSchema, existingStructuredReview } from '../apps/server/src/apps/review-submission.js';
 import { CODE_REVIEWS_PROJECT_ID } from '../apps/server/src/apps/review-import.js';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
 import { databaseFixture, cleanupDatabases } from './database.js';
@@ -185,4 +185,85 @@ test('GitHub head verifier uses scoped read permission and rejects incorrect PR 
     await assert.rejects(makeReader({}, 403).currentHead(repository,84), /HTTP 403/);
     await assert.rejects(makeReader({}).currentHead(repository,0), /Invalid GitHub pull request identity/);
     assert.equal(requests, 6);
+});
+
+
+test('multi-finding receipts preserve key-to-ID order across tied PostgreSQL timestamps and replay', async () => {
+    const { catalog, store, runs, findings } = await fixture();
+    const payload = {
+        ...request,
+        findings: [
+            { key: 'first', severity: 'sev3' as const, title: 'First', description: 'First issue' },
+            { key: 'second', severity: 'sev4' as const, title: 'Second', description: 'Second issue' },
+            { key: 'third', severity: 'sev2' as const, title: 'Third', description: 'Third issue' },
+        ],
+    };
+    const service = new CodeReviewsService(catalog, openHead());
+    const first = await service.submitStructuredReview(payload);
+    assert.equal(first.created, true);
+    assert.deepEqual(first.findingReceipts.map((item: any) => item.key), ['first', 'second', 'third']);
+    assert.deepEqual(first.findingIds, first.findingReceipts.map((item: any) => item.id));
+
+    // Simulate a database reload where all creation timestamps tie and the
+    // Postgres ordering by UUID differs from the insertion/submission order.
+    await store.pool.query('UPDATE records SET created_at = $1 WHERE store_id = $2 AND data->>\'reviewRunId\' = $3',
+        ['2026-10-22T12:00:00.000Z', findings.id, first.runId]);
+    const snapshot = await catalog.store.snapshot();
+    const ids = { runs: runs.id, findings: findings.id };
+    const normalized = structuredReviewSchema.parse(payload);
+    const reversed = { ...snapshot, records: [...snapshot.records].reverse() };
+    const reorderedReceipt = existingStructuredReview(reversed, ids, normalized);
+    assert.deepEqual(reorderedReceipt?.findingReceipts, first.findingReceipts);
+    assert.deepEqual(reorderedReceipt?.findingIds, first.findingIds);
+
+    const replay = await service.submitStructuredReview(payload);
+    assert.equal(replay.created, false);
+    assert.deepEqual(replay.findingReceipts, first.findingReceipts);
+    assert.deepEqual(replay.findingIds, first.findingIds);
+    const stored = await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: findings.id });
+    assert.equal(stored.total, 3);
+    for (const mapping of first.findingReceipts)
+        assert.equal(stored.items.find(record => record.id === mapping.id)?.data.findingKey,
+            `structured:${payload.submissionId}:${mapping.key}`);
+});
+
+test('a concurrent retry returns a committed receipt after the PR head closes or advances', async () => {
+    const { catalog, runs, findings } = await fixture();
+    type Head = { repository: string; prNumber: number; headSha: string; open: boolean };
+    let firstHead!: (result: Head) => void;
+    let secondHead!: (result: Head) => void;
+    let secondEntered!: () => void;
+    const secondAtGitHub = new Promise<void>(resolve => { secondEntered = resolve; });
+    let checks = 0;
+    const service = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => {
+            checks++;
+            if (checks === 1) return new Promise<Head>(resolve => { firstHead = resolve; });
+            if (checks === 2) {
+                secondEntered();
+                return new Promise<Head>(resolve => { secondHead = resolve; });
+            }
+            return { repository, prNumber: 84, headSha: 'b'.repeat(40), open: false };
+        },
+    });
+    // Both calls reach GitHub while neither has written a run.
+    const firstPending = service.submitStructuredReview(request);
+    const retryPending = service.submitStructuredReview(request);
+    await secondAtGitHub;
+    firstHead({ repository, prNumber: 84, headSha: sha, open: true });
+    const first = await firstPending;
+    secondHead({ repository, prNumber: 84, headSha: 'b'.repeat(40), open: false });
+    const retry = await retryPending;
+    assert.equal(first.created, true);
+    assert.equal(retry.created, false);
+    assert.deepEqual({ ...retry, created: true }, first);
+    assert.equal(checks, 2);
+    assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 1);
+    assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: findings.id })).total, 1);
+    // This fallback only permits an identical *persisted* receipt, never
+    // an unmatched new submission on an outdated/closed PR.
+    await assert.rejects(service.submitStructuredReview({
+        ...request, submissionId: 'df56ae1c-81b6-4334-aa53-205861494d84',
+    }), /head has changed|closed/i);
 });

@@ -56,20 +56,30 @@ function locate(state: AtlasData, stores: StoreIds, submissionId: string): Atlas
     return matches[0];
 }
 
-function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, digest: string, created: boolean) {
+function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, input: StructuredReview, created: boolean) {
     const metadata = run.data.coverage as RecordData | undefined;
-    if (run.archivedAt || !metadata || metadata.payloadSha256 !== digest)
+    if (run.archivedAt || !metadata || metadata.payloadSha256 !== fingerprint(input))
         throw new AtlasError('Structured review submission ID already belongs to another payload or an archived run.', 'CONFLICT');
     const findings = state.records.filter(record => record.storeId === stores.findings &&
         record.data.reviewRunId === run.id);
+    const byKey = new Map(findings.map(record => [record.data.findingKey, record]));
     if (findings.some(item => item.archivedAt) ||
+        findings.length !== input.findings.length ||
         findings.length !== metadata.findingCount ||
-        new Set(findings.map(item => item.data.findingKey)).size !== findings.length)
+        byKey.size !== findings.length)
         throw new AtlasError('Previously submitted structured review has missing or altered findings.', 'CONFLICT');
+    // PostgreSQL reloads rows by created_at then UUID. For tied timestamps that
+    // can differ from input order; always reconstruct the exact original mapping.
+    const findingReceipts = input.findings.map(item => {
+        const record = byKey.get(`structured:${input.submissionId}:${item.key}`);
+        if (!record) throw new AtlasError('Previously submitted structured review has missing or altered findings.', 'CONFLICT');
+        return { key: item.key, id: record.id };
+    });
     return {
         submissionId: metadata.submissionId,
         runId: run.id,
-        findingIds: findings.map(record => record.id),
+        findingIds: findingReceipts.map(item => item.id),
+        findingReceipts,
         repository: run.data.repository,
         prNumber: run.data.prNumber,
         headSha: run.data.headSha,
@@ -84,7 +94,7 @@ function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, digest: s
  */
 export function existingStructuredReview(state: AtlasData, stores: StoreIds, input: StructuredReview) {
     const run = locate(state, stores, input.submissionId);
-    return run ? receipt(state, stores, run, fingerprint(input), false) : undefined;
+    return run ? receipt(state, stores, run, input, false) : undefined;
 }
 
 export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasData,
@@ -134,5 +144,5 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
             },
         });
     }
-    return receipt(state, stores, run, digest, true);
+    return receipt(state, stores, run, input, true);
 }
