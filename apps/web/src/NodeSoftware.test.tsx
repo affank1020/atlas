@@ -61,6 +61,8 @@ it('per-node Linux preflight remains explicit, read-only and reports unverified 
     expect(callTool).toHaveBeenCalledWith('plan_node_update', { nodeId: node.id });
     expect(await screen.findByText(/Candidate identified/)).toBeInTheDocument();
     expect(screen.getByText(/Update execution is not enabled/)).toBeInTheDocument();
+    expect(screen.getByRole('link',{name:/Open software management and downloads/}))
+        .toHaveAttribute('href','#/nodes/software?node='+node.id);
     expect(screen.queryByRole('button', { name: /^Install|^Activate|^Update now/i })).not.toBeInTheDocument();
 });
 
@@ -511,7 +513,7 @@ it('shows only the selected Linux claim and marks Node-credential outcomes as un
     expect((await within(fleet).findAllByText('Operator reconciliation needed')).length).toBeGreaterThanOrEqual(1);
     expect(within(fleet).getByText(/A claimed update blocks another request/)).toBeInTheDocument();
     expect(within(fleet).getByText(/Node-credential report: activated/)).toBeInTheDocument();
-    expect(within(fleet).getByText('Not recorded')).toBeInTheDocument();
+    expect(within(fleet).getAllByText('Not recorded').length).toBeGreaterThanOrEqual(1);
     fireEvent.change(within(fleet).getByRole('combobox',{name:'Show Nodes'}),{target:{value:'review'}});
     expect(within(fleet).getByText('1 of 2 Nodes')).toBeInTheDocument();
     expect(within(fleet).queryByRole('button',{name:/Second Linux/})).not.toBeInTheDocument();
