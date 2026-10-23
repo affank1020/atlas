@@ -32,6 +32,10 @@ async function boundedLocalFile(filename: string, limit: number): Promise<string
 }
 
 async function main() {
+    // This opt-in must be present in the CLI's launch environment. A saved
+    // apps/server/.env setting must NOT silently enable future invocations.
+    const reconciliationEnabledAtLaunch =
+        process.env.ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED === '1';
     loadEnv({path:'apps/server/.env',quiet:true});
     const args = process.argv.slice(2);
     const action = args[0];
@@ -50,8 +54,10 @@ async function main() {
     // Not even a deliberate administrator CLI invocation can close an
     // update unless this NEW gate was explicitly enabled for a local,
     // independently observed nonproduction drill. Separate from claims.
-    if (action === 'reconcile' && process.env.ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED !== '1')
+    if (action === 'reconcile' && !reconciliationEnabledAtLaunch) {
+        console.error('Manual reconciliation disabled: explicitly opt in for this CLI invocation.');
         throw new Error('Manual reconciliation is disabled unless explicitly enabled.');
+    }
     const nodeId = args[1]!;
     const pool = new Pool({
         connectionString:requireDatabaseUrl(),
