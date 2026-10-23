@@ -155,6 +155,10 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'workspace_read_file': result = { path: input.path, text: '# Demo workspace\nThis is an illustrative local fixture, not a real repository.' }; break;
         case 'unity_list_commands': result = { available: true, state: 'ready', commands: [] }; break;
         case 'query_monitoring_activity': {
+            // Demo fixtures do not model authoritative logical Workspace membership.
+            // Fail closed rather than presenting unrelated activity as server-scoped.
+            if (input.logicalWorkspaceId) throw new Error(
+                'Logical Workspace activity is unavailable in local mock mode.');
             const filtered = activity.filter(event => {
                 const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
                 const category = event.operation.startsWith('workspace.git_') ? 'git' : event.operation.startsWith('workspace.file_') ? 'files'
