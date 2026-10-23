@@ -66,8 +66,7 @@ export function Workspaces() {
     const [prBody, setPrBody] = useState('');
     const [draftPR, setDraftPR] = useState<Draft>();
     const [retirement, setRetirement] = useState<RetirementState>();
-    const [showActivity, setShowActivity] = useState(false);
-    const [activityScope, setActivityScope] = useState<'logical' | 'checkout'>('logical');
+    const [activityPreview, setActivityPreview] = useState<{ ownerId: string; scope: 'logical' | 'checkout' }>();
 
     // Preserve existing ?workspace= deep links (logical or physical) while
     // public checkout operations explicitly select one Node-bound checkoutId.
@@ -93,6 +92,11 @@ export function Workspaces() {
             .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
     const selectedLogical = (logical.length ? logical : groups)
         .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
+    // Ownership is checked during render: a newly selected logical Workspace
+    // cannot mount an Activity reader using another Workspace's open state.
+    const activityOwnerId = selectedLogical?.id ?? selected?.id;
+    const showActivity = !!activityOwnerId && activityPreview?.ownerId === activityOwnerId;
+    const activityScope = showActivity ? activityPreview.scope : 'logical';
     const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
     const availableProjects = projects.filter(project => !project.archivedAt && !linkedProjects.includes(project.id));
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
@@ -181,7 +185,6 @@ export function Workspaces() {
     }, [selected?.id]);
     useEffect(() => { setRetirement(undefined); }, [selected?.id, revision]);
     useEffect(() => { setProjectToLink(''); }, [selectedLogical?.id]);
-    useEffect(() => { setShowActivity(false); setActivityScope('logical'); }, [selectedLogical?.id]);
 
     function choose(id: string) {
         setSelectedId(id);
@@ -460,12 +463,14 @@ export function Workspaces() {
                         <div className="actions">
                             <button type="button" className="ghost"
                                 aria-expanded={showActivity}
-                                onClick={() => setShowActivity(value => !value)}>
+                                onClick={() => setActivityPreview(current => current?.ownerId === activityOwnerId
+                                    ? undefined : activityOwnerId ? { ownerId: activityOwnerId, scope: 'logical' } : undefined)}>
                                 {showActivity ? 'Hide recent activity' : 'Show recent activity'}
                             </button>
                             {showActivity && logical.length > 0 && selectedLogical && <label>Activity scope
                                 <select aria-label="Activity preview scope" value={activityScope}
-                                    onChange={event => setActivityScope(event.target.value as 'logical' | 'checkout')}>
+                                    onChange={event => setActivityPreview(current => current?.ownerId === activityOwnerId
+                                        ? { ...current, scope: event.target.value as 'logical' | 'checkout' } : current)}>
                                     <option value="logical">Whole Workspace</option>
                                     <option value="checkout">Selected checkout</option>
                                 </select>
