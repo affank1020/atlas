@@ -98,5 +98,5 @@ test('mock Monitoring fails closed for unsupported logical Workspace scopes', ()
             .toThrow(/Logical Workspace activity is unavailable in local mock mode/);
     }
     expect(mockTool<{ total: number }>('query_monitoring_activity', {}).total)
-        .toBe(unfiltered.total, 'Unscoped demo history remains readable');
+        .toBe(unfiltered.total);
 });
