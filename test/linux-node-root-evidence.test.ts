@@ -188,7 +188,7 @@ print("manual lifecycle and root attestation share exclusive flock")
 
 test('unanswered operator prompt holds no approval, executor or lifecycle lock; snapshot is rechecked after consent',
     { skip: !available }, () => {
-    const result = pythonScript(String.raw\`
+    const result = pythonScript(String.raw`
 import contextlib,fcntl,importlib.util,os,pathlib,stat,sys,tempfile,types
 from unittest import mock
 spec=importlib.util.spec_from_file_location("signer",sys.argv[1])
@@ -264,6 +264,6 @@ with tempfile.TemporaryDirectory() as td:
             assert s.attest(ident,"c"*64,executor=Executor())=={"ok":True}
         assert try_emergency_lock(), "completed signer leaked executor lock"
 print("input never holds host locks; fresh snapshot required after consent")
-\`);
+`);
     assert.equal(result.status, 0, result.stderr + '\n' + result.stdout);
 });
