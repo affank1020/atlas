@@ -328,6 +328,9 @@ test('batch inline comments with null line/side reconcile only via matching orig
     assert.equal((await publisher.findPublished(payload,body,expected))?.id,1234);
     for (const malformed of [
         {...batch, original_commit_id:'c'.repeat(40)},
+        {...batch, original_side:'LEFT'},
+        {...batch, side:'LEFT'},
+        {...batch, original_line:16},
         {...batch, position:1},
         {...batch, position:null, original_position:null},
         {...batch, original_position:1,position:null,commit_id:'b'.repeat(40)},

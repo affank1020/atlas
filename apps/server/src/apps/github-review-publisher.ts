@@ -190,6 +190,14 @@ export class GitHubReviewPublisher {
                 if (used.has(i) || got?.user?.id !== botId || got?.user?.type !== 'Bot' ||
                     got.path !== want.path || got.body !== want.body ||
                     (got.pull_request_review_id != null && got.pull_request_review_id !== reviewId)) return false;
+                // Explicit original anchors must not contradict the saved
+                // target, even when legacy position metadata also matches.
+                if ((got.side != null && got.side !== want.side) ||
+                    (got.original_side != null && got.original_side !== want.side) ||
+                    (got.original_line != null && got.original_line !== want.line) ||
+                    (typeof got.original_commit_id === 'string' &&
+                     got.original_commit_id.toLowerCase() !== payload.headSha.toLowerCase()))
+                    return false;
                 // Populated GitHub line fields can be used directly for a
                 // comment which has not become outdated.
                 if (got.line === want.line && got.side === want.side) return true;
