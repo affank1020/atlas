@@ -488,6 +488,8 @@ it('software fleet shows real Node versions and platform-specific capabilities w
     expect(within(fleet).getByText('1 of 4 Nodes')).toBeInTheDocument();
     expect(within(fleet).queryByRole('button',{name:/Android tablet/})).not.toBeInTheDocument();
     expect(within(fleet).getByRole('button',{name:/Linux VPS/})).toBeInTheDocument();
+    expect(within(detail).getByRole('heading',{name:'Linux VPS'})).toBeInTheDocument();
+    expect(within(detail).queryByRole('heading',{name:'Android tablet'})).not.toBeInTheDocument();
 });
 
 it('shows only the selected Linux claim and marks Node-credential outcomes as unverified', async () => {
