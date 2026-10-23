@@ -127,7 +127,7 @@ test('expiry, revoked Node and parallel same-proof requests fail closed',async()
     const att=signed(f,challenge.challenge);
     await f.db.store.pool.query(`UPDATE node_update_root_challenges
         SET issued_at=clock_timestamp()-interval '6 minutes',
-            expires_at=clock_timestamp()-interval '1 minute'
+            expires_at=clock_timestamp()-interval '2 minutes'
         WHERE id=$1`,[challenge.id]);
     await assert.rejects(f.ledger.verify(f.node.nodeId,f.prepared.id,att),fails('CONFLICT'));
     assert.equal((await f.ledger.status(f.node.nodeId,f.prepared.id)).consumedAt,null);
