@@ -14,8 +14,8 @@ CREATE TABLE node_update_root_challenges (
     intent_id uuid NOT NULL UNIQUE REFERENCES node_update_intents(id),
     node_id uuid NOT NULL REFERENCES nodes(id),
     nonce char(64) NOT NULL UNIQUE CHECK (nonce ~ '^[0-9a-f]{64}$'),
-    issued_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    expires_at timestamptz NOT NULL DEFAULT (clock_timestamp() + interval '5 minutes'),
+    issued_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL DEFAULT (now() + interval '5 minutes'),
     consumed_at timestamptz,
     CHECK (expires_at > issued_at AND expires_at <= issued_at + interval '5 minutes'),
     CHECK (consumed_at IS NULL OR consumed_at >= issued_at)
