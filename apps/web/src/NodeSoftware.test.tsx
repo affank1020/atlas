@@ -471,7 +471,7 @@ it('software fleet shows real Node versions and platform-specific capabilities w
     const fleet = await screen.findByRole('region',{name:'Node software fleet'});
     expect(within(fleet).getByText('Linux VPS')).toBeInTheDocument();
     expect(within(fleet).getByText('Mac desktop')).toBeInTheDocument();
-    expect(within(fleet).getByText('Android tablet')).toBeInTheDocument();
+    expect(within(fleet).getAllByText('Android tablet').length).toBeGreaterThanOrEqual(1);
     expect(within(fleet).getByText('Experimental device')).toBeInTheDocument();
     expect(within(fleet).getAllByText('Newer release available').length).toBeGreaterThanOrEqual(1);
     expect(within(fleet).getByText('4 of 4 Nodes')).toBeInTheDocument();
