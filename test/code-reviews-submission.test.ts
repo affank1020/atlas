@@ -232,14 +232,19 @@ test('a concurrent retry returns a committed receipt after the PR head closes or
     type Head = { repository: string; prNumber: number; headSha: string; open: boolean };
     let firstHead!: (result: Head) => void;
     let secondHead!: (result: Head) => void;
+    let firstEntered!: () => void;
     let secondEntered!: () => void;
+    const firstAtGitHub = new Promise<void>(resolve => { firstEntered = resolve; });
     const secondAtGitHub = new Promise<void>(resolve => { secondEntered = resolve; });
     let checks = 0;
     const service = new CodeReviewsService(catalog, {
         read: async () => ({ reviews: [], comments: [] }),
         currentHead: async () => {
             checks++;
-            if (checks === 1) return new Promise<Head>(resolve => { firstHead = resolve; });
+            if (checks === 1) {
+                firstEntered();
+                return new Promise<Head>(resolve => { firstHead = resolve; });
+            }
             if (checks === 2) {
                 secondEntered();
                 return new Promise<Head>(resolve => { secondHead = resolve; });
@@ -249,6 +254,7 @@ test('a concurrent retry returns a committed receipt after the PR head closes or
     });
     // Both calls reach GitHub while neither has written a run.
     const firstPending = service.submitStructuredReview(request);
+    await firstAtGitHub;
     const retryPending = service.submitStructuredReview(request);
     await secondAtGitHub;
     firstHead({ repository, prNumber: 84, headSha: sha, open: true });
