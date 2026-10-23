@@ -37,7 +37,8 @@
     "workspace:register-atlas": "node scripts/register-atlas-workspace.mjs",
     "verify:remote-node": "node --import tsx scripts/verify-remote-node.mjs",
     "build:views": "npm run build -w @atlas/view-runtime",
-    "verify:workspace": "node --import tsx scripts/workspace-live-verify.mjs"
+    "verify:workspace": "node --import tsx scripts/workspace-live-verify.mjs",
+    "test:benchmark": "node scripts/benchmark-ci.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
