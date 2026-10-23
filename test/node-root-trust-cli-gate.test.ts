@@ -23,8 +23,8 @@ test('reconcile CLI ignores persistent .env opt-in; explicit launch env enables 
             // The dummy DB URL is intentionally unreachable, but the test
             // declines the operation BEFORE making any database connection.
             writeFileSync(join(root, 'apps/server/.env'),
-                'ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED=1\\n' +
-                'DATABASE_URL=postgres://nobody:nobody@127.0.0.1:1/not-used\\n');
+                'ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED=1\n' +
+                'DATABASE_URL=postgres://nobody:nobody@127.0.0.1:1/not-used\n');
             const { ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED: _flag,
                 DATABASE_URL: _db, ...cleanEnv } = process.env;
             const cmd = [
@@ -35,7 +35,7 @@ test('reconcile CLI ignores persistent .env opt-in; explicit launch env enables 
 
             const launch = (flag: string | undefined) => spawnSync(
                 'script', ['-q', '-e', '-c', cmd, '/dev/null'], {
-                    cwd: root, input: 'DECLINE\\n', encoding: 'utf8', timeout: 20_000,
+                    cwd: root, input: 'DECLINE\n', encoding: 'utf8', timeout: 20_000,
                     env: { ...cleanEnv, ...(flag === undefined
                         ? {} : { ATLAS_NODE_UPDATE_RECONCILIATION_ENABLED: flag }) },
                 });
