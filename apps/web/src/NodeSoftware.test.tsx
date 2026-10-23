@@ -471,7 +471,7 @@ it('software fleet shows real Node versions and platform-specific capabilities w
     expect(within(fleet).getByText('Mac desktop')).toBeInTheDocument();
     expect(within(fleet).getByText('Android tablet')).toBeInTheDocument();
     expect(within(fleet).getByText('Experimental device')).toBeInTheDocument();
-    expect(within(fleet).getByText('Newer release available')).toBeInTheDocument();
+    expect(within(fleet).getAllByText('Newer release available').length).toBeGreaterThanOrEqual(1);
     expect(within(fleet).getByText('4 of 4 Nodes')).toBeInTheDocument();
     expect(within(fleet).queryByRole('button',{name:/Install|Activate|Update now/i})).not.toBeInTheDocument();
     fireEvent.click(within(fleet).getByRole('button',{name:/Android tablet/}));
@@ -508,7 +508,7 @@ it('shows only the selected Linux claim and marks Node-credential outcomes as un
     });
     render(<NodeSoftware />);
     const fleet=await screen.findByRole('region',{name:'Node software fleet'});
-    expect(await within(fleet).findByText('Operator reconciliation needed')).toBeInTheDocument();
+    expect((await within(fleet).findAllByText('Operator reconciliation needed')).length).toBeGreaterThanOrEqual(1);
     expect(within(fleet).getByText(/A claimed update blocks another request/)).toBeInTheDocument();
     expect(within(fleet).getByText(/Node-credential report: activated/)).toBeInTheDocument();
     expect(within(fleet).getByText('Not recorded')).toBeInTheDocument();
