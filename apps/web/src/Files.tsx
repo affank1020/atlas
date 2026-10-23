@@ -89,6 +89,17 @@ export function Files() {
         cursor = folders.find(item => item.id === cursor?.parentId);
     }
     const activeFolders = folders.filter(item => item.status === 'active');
+    const folderPath = (folder: ProjectFolder): string => {
+        const names = [folder.name];
+        const seen = new Set([folder.id]);
+        let parent = folders.find(item => item.id === folder.parentId);
+        while (parent && !seen.has(parent.id) && names.length < 100) {
+            names.unshift(parent.name);
+            seen.add(parent.id);
+            parent = folders.find(item => item.id === parent?.parentId);
+        }
+        return names.join(' / ');
+    };
     const searchText = search.trim().toLocaleLowerCase();
     const visibleFolders = folders.filter(item => item.parentId === folderId &&
         (fileStatus === 'archived' || item.status === 'active') &&
@@ -270,7 +281,7 @@ export function Files() {
                     <label>Move to<select aria-label={'Destination for ' + file.fileName} value={moveTarget} disabled={mutating}
                         onChange={event => setMoveTarget(event.target.value)}>
                         <option value="">Project root</option>
-                        {activeFolders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                        {activeFolders.map(folder => <option key={folder.id} value={folder.id}>{folderPath(folder)}</option>)}
                     </select></label>
                     <button type="button" disabled={mutating} onClick={() => onMove(file)}>Confirm move</button>
                     <button type="button" className="ghost" disabled={mutating} onClick={() => setMovingId(null)}>Cancel</button>
