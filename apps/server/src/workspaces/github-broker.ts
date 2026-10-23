@@ -64,9 +64,9 @@ export class GitHubBroker {
         return result as Installation[];
     }
 
-    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'reviews' | 'pr' | 'push' = 'read') {
+    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'reviews' | 'publication' | 'pr' | 'push' = 'read') {
         const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
-            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : purpose === 'reviews' ? { pull_requests: 'read' } : { contents: 'read' };
+            : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : purpose === 'publication' ? { pull_requests: 'write' } : purpose === 'reviews' ? { pull_requests: 'read' } : { contents: 'read' };
         const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
         // HTTP 403 and 422 also cover throttling and validation failures. Do
         // not infer missing permission from status alone or echo GitHub bodies.
@@ -76,6 +76,8 @@ export class GitHubBroker {
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
         // Never publish with a token unless GitHub explicitly confirms the requested scope.
+        if (purpose === 'publication' && result.permissions?.pull_requests !== 'write')
+            throw new AtlasError('GitHub installation token lacks pull-request write permission.', 'GITHUB_REQUEST_FAILED');
         if (purpose === 'reviews' && !['read', 'write'].includes(result.permissions?.pull_requests ?? ''))
             throw new AtlasError('GitHub installation token lacks pull-request read permission.', 'GITHUB_REQUEST_FAILED');
         if (purpose === 'push' && result.permissions?.workflows !== 'write')
@@ -87,7 +89,28 @@ export class GitHubBroker {
     async gitPublishToken(repository: string) { return this.scopedToken(repository, 'push'); }
     async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
     async pullRequestReadToken(repository: string) { return this.scopedToken(repository, 'reviews'); }
-    private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'pr' | 'push') {
+    async pullRequestPublishToken(repository: string) { return this.scopedToken(repository, 'publication'); }
+    /** Resolve the immutable GitHub Bot user ID from the authenticated App itself,
+     * never from a caller-controlled login or a review marker.
+     */
+    async reviewPublisherBot(repository: string) {
+        const app = await this.request('/app', 'GET', this.jwt()) as { id?: unknown; slug?: unknown };
+        if (app.id !== Number(this.env.ATLAS_GITHUB_APP_ID) ||
+            typeof app.slug !== 'string' || !/^[a-z0-9-]{1,100}$/i.test(app.slug))
+            throw new AtlasError('GitHub App identity could not be verified.', 'GITHUB_REQUEST_FAILED');
+        const login = `${app.slug}[bot]`;
+        const user = await this.request('/users/' + encodeURIComponent(login), 'GET',
+            await this.pullRequestReadToken(repository)) as {
+            id?: unknown; login?: unknown; type?: unknown;
+        };
+        if (!Number.isSafeInteger(user.id) || (user.id as number) < 1 ||
+            user.type !== 'Bot' || typeof user.login !== 'string' ||
+            user.login.toLowerCase() !== login.toLowerCase())
+            throw new AtlasError('GitHub App bot identity could not be verified.', 'GITHUB_REQUEST_FAILED');
+        return { id: user.id as number, login: user.login };
+    }
+
+    private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'publication' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();

@@ -229,3 +229,49 @@ test('GitHub review imports request only scoped pull-request read, rejecting mis
     allowed = false;
     await assert.rejects(broker.pullRequestReadToken(repo), /lacks pull-request read permission/);
 });
+
+test('GitHub review publisher requests only PR-write and validates returned scope', async () => {
+    const tokens: object[] = [];
+    let granted = true;
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        tokens.push(JSON.parse(String(init?.body)));
+        return response(201, { ...tokenBody,
+            permissions: granted ? { pull_requests: 'write' } : { pull_requests: 'read' } });
+    }) as typeof fetch);
+    assert.equal(await broker.pullRequestPublishToken(repo), tokenBody.token);
+    assert.deepEqual(tokens, [{ repositories: ['portfolio-site'], permissions: { pull_requests: 'write' } }]);
+    granted = false;
+    await assert.rejects(broker.pullRequestPublishToken(repo), /lacks pull-request write permission/);
+});
+
+test('GitHub App bot identity comes from verified App slug and scoped read token', async () => {
+    const bot = new GitHubBroker(env, (async (url, options) => {
+        if (String(url) === 'https://api.github.com/app') {
+            assert.match(String((options?.headers as Record<string,string>).Authorization), /^Bearer ey/);
+            return response(200, { id:123456, slug:'atlas-reviewer' });
+        }
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        if (String(url).endsWith('/access_tokens')) {
+            assert.deepEqual(JSON.parse(String(options?.body)), {
+                repositories: ['portfolio-site'], permissions: {pull_requests:'read'},
+            });
+            return response(201, {...tokenBody, permissions:{pull_requests:'read'}});
+        }
+        if (String(url) === 'https://api.github.com/users/atlas-reviewer%5Bbot%5D') {
+            assert.equal((options?.headers as Record<string,string>).Authorization,
+                'Bearer ' + tokenBody.token);
+            return response(200, { id:987654, login:'atlas-reviewer[bot]', type:'Bot' });
+        }
+        throw Error('Unexpected GitHub URL '+url);
+    }) as typeof fetch);
+    assert.deepEqual(await bot.reviewPublisherBot(repo), {id:987654,login:'atlas-reviewer[bot]'});
+    const mismatched = new GitHubBroker(env, (async (url) => {
+        if (String(url).endsWith('/app')) return response(200,{id:123456,slug:'atlas-reviewer'});
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        if (String(url).endsWith('/access_tokens'))
+            return response(201,{...tokenBody,permissions:{pull_requests:'read'}});
+        return response(200,{id:987654,login:'someone-else[bot]',type:'Bot'});
+    }) as typeof fetch);
+    await assert.rejects(mismatched.reviewPublisherBot(repo), /bot identity could not be verified/);
+});

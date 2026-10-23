@@ -76,6 +76,17 @@ export function loadReviewPublisherTrust(env: NodeJS.ProcessEnv = process.env): 
     return trusted;
 }
 
+/** Explicit allowlist for GitHub review publication; empty means disabled. */
+export function loadCodeReviewPublishRepositories(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const raw = env.ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES?.trim() || '';
+    if (!raw) return new Set();
+    const values = raw.split(',').map(v => v.trim().toLowerCase());
+    if (values.length > 30 || values.some(v => !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(v)) ||
+        new Set(values).size !== values.length)
+        throw new Error('ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES must list distinct owner/repo pairs.');
+    return new Set(values);
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -114,7 +125,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         deviceShares: loadDeviceShareConfig(env),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
-        codeReviews: { trustedPublishers: loadReviewPublisherTrust(env) },
+        codeReviews: { trustedPublishers: loadReviewPublisherTrust(env), publishRepositories: loadCodeReviewPublishRepositories(env) },
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }

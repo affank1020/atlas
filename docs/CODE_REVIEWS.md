@@ -255,6 +255,71 @@ GitHub review publication are a separate later milestone. Findings are saved
 with state `new`; their lifecycle is not inferred from subsequent GitHub
 commits. Existing historical imports stay unchanged.
 
+### Native GitHub publication (explicit opt-in)
+
+The `code_reviews_publish_github` Application operation can publish an
+existing **authenticated structured** Atlas review as a GitHub **COMMENT**
+review. It never requests approval, `REQUEST_CHANGES`, merges, or posts from
+historical Markdown imports.
+
+Publication is **disabled by default**. After deploying and independently
+reviewing the publisher, explicitly add permitted repositories to the Atlas
+Server's `ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES` (comma-separated full
+`owner/repo` names) and recreate the production server container. The
+GitHub App must grant `pull_requests:write` for those repositories; Atlas
+requests an installation token scoped to just that repository and permission.
+Do **not** configure publication on a Node or expose the App key to a client.
+
+1. Preview: `code_reviews_publish_github({runId:"<Review Runs UUID>"})`. The
+   authenticated MCP user must match the original submission account.
+   Preview verifies the current open PR head and shows the exact COMMENT
+   body, without mutating GitHub or Atlas.
+2. Apply deliberately: same `runId` plus `apply:true`. The server checks
+   current GitHub head, reviews, and optionally the diff, then durably
+   records an exclusive `claimed` publication intent in the Atlas run
+   **before** the one GitHub POST. It finally records `published` and
+   the verified GitHub review URL/ID on success.
+3. Optional inline comments: `includeInline:true` during both preview and
+   apply requires **all** 1–20 findings to contain a path and line
+   corresponding to an **added RIGHT-side line** in GitHub's current,
+   complete (fewer than 100 files) PR diff. Missing/truncated patches,
+   invalid or duplicate positions and old-side-only lines fail closed.
+   The default is a safer summary-only GitHub COMMENT review.
+
+Once claimed, Atlas **never automatically issues another POST**. If the
+network times out, GitHub returns ambiguous data, the process crashes,
+or database confirmation fails, retrying this operation performs **remote
+reconciliation only**. A marker by itself is **not** trusted: Atlas
+authenticates the actual GitHub App bot's numeric user ID using the GitHub
+App JWT, requires an exact body match, verifies that the review was a
+`COMMENT` on the reviewed commit, and checks the full set of expected
+inline comments (including author, text and RIGHT-side position).
+The expected inline comments are preserved in the durable claim before
+posting, including the exact added RIGHT-side diff position calculated
+from GitHub's current complete patch. Reconciliation first uses populated
+current line/side fields, then stable original-line/original-commit anchors
+for outdated threads. GitHub's batch-review API can return null
+`line`, `original_line` and `side`; in that case Atlas requires the
+previously verified diff position and exact original commit SHA.
+Neither a null position alone nor matching comment text alone can attest
+the source anchor. This also permits recovery after later commits make
+current lines outdated, without relying on a changed PR diff.
+Even an unrelated review with a copied marker or a very long body must
+not cause false publication. If the expected review is found, `apply:true`
+records its verified ID without reposting. If not found, the claim remains
+`uncertain` and **manual investigation is required**: Atlas will not
+interpret absence in a bounded review list as proof that a POST did not
+succeed. Review pagination beyond 500 items is refused. A normal POST
+response is also reverified before recording a `published` receipt.
+
+A published review is durable publication metadata in `coverage.githubPublication`
+inside the Atlas Review Runs Store, not proof of independent reviewer
+authorship. The existing MCP OAuth subject identifies the authorized
+account; no proof of independent skill invocation is claimed. General
+Atlas Store administrators can still mutate records, and GitHub may advance
+a head immediately after verification. Publication does not update the
+`Review Findings` lifecycle automatically.
+
 ## Planned follow-ups
 
 1. Repository-level source completeness summaries, optional GitHub webhook reconciliation and guided operator backfill UI.
