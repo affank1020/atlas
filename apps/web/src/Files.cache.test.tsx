@@ -14,7 +14,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 test('Project browser refresh updates Project choices without fetching old owner catalogues', async () => {
     let projects = [{ id: projectId, name: 'Research' }];
     const calls: string[] = [];
-    const fetcher = vi.fn(async (url: string) => {
+    const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
         const action = url.split('/').pop()!;
         calls.push(action);
         if (action === 'list_projects') return response(projects.map(project => ({ ...project })));
