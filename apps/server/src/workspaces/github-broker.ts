@@ -93,13 +93,14 @@ export class GitHubBroker {
     /** Resolve the immutable GitHub Bot user ID from the authenticated App itself,
      * never from a caller-controlled login or a review marker.
      */
-    async reviewPublisherBot() {
+    async reviewPublisherBot(repository: string) {
         const app = await this.request('/app', 'GET', this.jwt()) as { id?: unknown; slug?: unknown };
         if (app.id !== Number(this.env.ATLAS_GITHUB_APP_ID) ||
             typeof app.slug !== 'string' || !/^[a-z0-9-]{1,100}$/i.test(app.slug))
             throw new AtlasError('GitHub App identity could not be verified.', 'GITHUB_REQUEST_FAILED');
         const login = `${app.slug}[bot]`;
-        const user = await this.request('/users/' + encodeURIComponent(login), 'GET', this.jwt()) as {
+        const user = await this.request('/users/' + encodeURIComponent(login), 'GET',
+            await this.pullRequestReadToken(repository)) as {
             id?: unknown; login?: unknown; type?: unknown;
         };
         if (!Number.isSafeInteger(user.id) || (user.id as number) < 1 ||

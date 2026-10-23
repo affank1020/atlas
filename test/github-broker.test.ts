@@ -245,22 +245,33 @@ test('GitHub review publisher requests only PR-write and validates returned scop
     await assert.rejects(broker.pullRequestPublishToken(repo), /lacks pull-request write permission/);
 });
 
-test('GitHub App bot identity comes from JWT-authenticated App and durable user ID', async () => {
-    const bot=new GitHubBroker(env,(async (url,options)=>{
-        if(String(url)==='https://api.github.com/app'){
-            assert.match(String((options?.headers as Record<string,string>).Authorization),/^Bearer ey/);
-            return response(200,{id:123456,slug:'atlas-reviewer'});
+test('GitHub App bot identity comes from verified App slug and scoped read token', async () => {
+    const bot = new GitHubBroker(env, (async (url, options) => {
+        if (String(url) === 'https://api.github.com/app') {
+            assert.match(String((options?.headers as Record<string,string>).Authorization), /^Bearer ey/);
+            return response(200, { id:123456, slug:'atlas-reviewer' });
         }
-        if(String(url)==='https://api.github.com/users/atlas-reviewer%5Bbot%5D'){
-            assert.match(String((options?.headers as Record<string,string>).Authorization),/^Bearer ey/);
-            return response(200,{id:987654,login:'atlas-reviewer[bot]',type:'Bot'});
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        if (String(url).endsWith('/access_tokens')) {
+            assert.deepEqual(JSON.parse(String(options?.body)), {
+                repositories: ['portfolio-site'], permissions: {pull_requests:'read'},
+            });
+            return response(201, {...tokenBody, permissions:{pull_requests:'read'}});
+        }
+        if (String(url) === 'https://api.github.com/users/atlas-reviewer%5Bbot%5D') {
+            assert.equal((options?.headers as Record<string,string>).Authorization,
+                'Bearer ' + tokenBody.token);
+            return response(200, { id:987654, login:'atlas-reviewer[bot]', type:'Bot' });
         }
         throw Error('Unexpected GitHub URL '+url);
     }) as typeof fetch);
-    assert.deepEqual(await bot.reviewPublisherBot(),{id:987654,login:'atlas-reviewer[bot]'});
-    const mismatched=new GitHubBroker(env,(async (url)=>{
-        if(String(url).endsWith('/app'))return response(200,{id:123456,slug:'atlas-reviewer'});
+    assert.deepEqual(await bot.reviewPublisherBot(repo), {id:987654,login:'atlas-reviewer[bot]'});
+    const mismatched = new GitHubBroker(env, (async (url) => {
+        if (String(url).endsWith('/app')) return response(200,{id:123456,slug:'atlas-reviewer'});
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        if (String(url).endsWith('/access_tokens'))
+            return response(201,{...tokenBody,permissions:{pull_requests:'read'}});
         return response(200,{id:987654,login:'someone-else[bot]',type:'Bot'});
     }) as typeof fetch);
-    await assert.rejects(mismatched.reviewPublisherBot(),/bot identity could not be verified/);
+    await assert.rejects(mismatched.reviewPublisherBot(repo), /bot identity could not be verified/);
 });

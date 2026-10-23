@@ -136,7 +136,7 @@ export class GitHubReviewPublisher {
         if (!expectedBody.endsWith(marker))
             throw new AtlasError('Expected publication body lacks its source marker.', 'CONFLICT');
         const bearer = token ?? await this.broker.pullRequestReadToken(payload.repository);
-        const bot = await this.broker.reviewPublisherBot();
+        const bot = await this.broker.reviewPublisherBot(payload.repository);
         const matched: RemoteReview[] = [];
         for (let page = 1; page <= 5; page++) {
             const data: any = await this.request(payload.repository, '/pulls/' + payload.prNumber +
