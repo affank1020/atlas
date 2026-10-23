@@ -319,6 +319,8 @@ test('Project Activity uses the bounded safe Monitoring query instead of the leg
     expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveAttribute('readonly');
     expect(screen.getByRole('link', { name: 'Open in Monitoring →' }))
         .toHaveAttribute('href', '#/monitoring?tab=activity&projectId=project-abc');
+    expect(screen.getByRole('link', { name: 'Open in Monitoring →' }))
+        .toHaveClass('monitoring-project-link');
     expect(callTool).not.toHaveBeenCalledWith('get_recent_activity', expect.anything(), expect.anything());
 });
 
