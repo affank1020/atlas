@@ -92,7 +92,6 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
     const [selectedId, setSelectedId] = useState<string | null>(() =>
         new URLSearchParams(window.location.hash.split('?')[1] || '').get('node'));
     const now = Date.now();
-    const selected = selectedId ? nodes.find(node => node.id === selectedId) : nodes[0];
     const visible = nodes.filter(node => {
         if (filter === 'all') return true;
         if (filter === 'review') {
@@ -101,6 +100,9 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
         }
         return platformFilter(node) === filter;
     });
+    // A filter may hide the previously selected Node. Always inspect one
+    // of the currently visible Nodes rather than showing a mismatched panel.
+    const selected = visible.find(node => node.id === selectedId) ?? visible[0];
     const activeReviews = nodes.filter(node => {
         const latest = latestStatus(node,intents,now);
         return latest ? effectiveIntentStatus(latest,now) === 'claimed' : false;
@@ -219,7 +221,7 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
                                         </>}
                         </section>}
                         <a href="#node-software-downloads">View release downloads and verification guidance ↓</a>
-                    </> : <p className="node-software-empty">Selected Node is no longer in the registry.</p>}
+                    </> : <p className="node-software-empty">{visible.length ? 'Select a Node to inspect.' : 'No Nodes match this filter.'}</p>}
                 </section>
             </div>
         </>}
