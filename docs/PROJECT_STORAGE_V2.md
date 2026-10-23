@@ -1,0 +1,54 @@
+# Project Storage V2 — architecture and staged delivery
+
+## Ownership contract
+
+Atlas **Projects** are the sole owners of persistent user- and application-managed files. A Project ID is an immutable UUID; display names never enter object keys. Applications operate against their parent Project's file namespace, and Workspaces or Nodes may upload only through an explicitly authorised Project destination. Workspace checkouts and system artifacts are not automatically replicated to R2.
+
+PostgreSQL is authoritative for file and folder metadata. R2 stores opaque bytes in the live `atlas-files` bucket. Recovery backups are independently held in the separate `atlas-recovery-private` account and are **not** another user-files namespace. System artifacts can continue using releases and package/container distribution.
+
+Conceptual future object keys (not yet activated):
+
+```text
+projects/<immutable-project-uuid>/objects/<immutable-file-uuid>/v1
+projects/<immutable-project-uuid>/objects/<immutable-file-uuid>/variants/<stable-variant>/v1
+```
+
+File versions use an explicit `vN` component; variants are stable subordinate objects, not extra file owners. Folder names, folder hierarchy and file display names exist only in PostgreSQL. Renaming or moving within a Project does not move object bytes. Authorization must be checked by Atlas; R2 prefixes alone grant no access.
+
+The existing shared object adapter **currently accepts only legacy flat object keys**. Its allowlist, local-path safety, signed R2 URL semantics, listing and recovery contracts must be extended and tested together before writing keys with slashes. Do not enable the new format merely by broadening a regex.
+
+## Current audit and migration hazards
+
+- `atlas_files` stores `owner_kind` = `project | workspace | application`, with `owner_id` as text. Its uploads currently use opaque `files-<uuid-without-dashes>-<sha256>` keys. It remains the source for private Files download/restore and legacy recovery tools.
+- `media_assets` and `media_variants` are a separate Portfolio catalog, using flat content-addressed object keys and public `/api/media/:id/:variant` delivery. Portfolio references, archived originals and generated variants need a reversible mapping, not a destructive in-place rewrite.
+- `/api/files/*` uses private admin HTTP access and validates the requested owner. Moving owner authorization to Projects requires updating both the API and its callers, not only a UI change.
+- `node-file-ingest.ts` authenticates enrolled Nodes and actively assigned Workspaces; retries, upload receipts, quota locks, resumable checkpoints and the default-off `ATLAS_NODE_FILES_ENABLED` gate depend on Workspace identity. Do not map a Workspace to an arbitrary Project without rechecking membership and rights under the same transaction.
+- Independent R2 recovery seeding and verification currently scan `atlas_files`, not Portfolio media; backups must eventually cover both catalogs and all variants (including archived assets) during the transition. A restored PostgreSQL snapshot alone does not prove a matching object-recovery set.
+- The operator-reported inventory before this project was 0 `atlas_files` rows, 31 Portfolio originals and around 87 total live objects. Treat those as a **historical observation**, not a replacement for fresh object-by-object integrity verification before migration.
+
+## PR 1: additive metadata foundation (this change)
+
+Migration `032_project_storage_foundation.sql` adds `atlas_file_folders` with stable folder UUIDs, a Project UUID foreign key, nullable parent, status and timestamps. Its composite parent FK prevents cross-Project nesting; separate case-insensitive partial unique indexes handle active root and sibling names. Folder identifiers and parents are immutable; an ancestry trigger prevents cycles. Invalid path segments are rejected.
+
+A nullable `atlas_files.folder_id` represents the Project root when absent. An explicit trigger rejects any non-null folder reference unless the file is Project-owned **and** the folder belongs to that same Project. Current Workspace/Application Files keep `folder_id = NULL`; no owner or storage key is rewritten. A restrictive FK prevents deleting a referenced folder. There is no HTTP folder API, new user-facing upload destination, physical key change, data backfill or live R2 operation in PR 1.
+
+Folder `status` is a foundation field, not a complete lifecycle API. Archiving nonempty folders, restoration conflicts, descendant visibility, folder moves and metadata-only file moves must be implemented and tested before exposing corresponding actions. Legacy `owner_kind` remains accepted only for compatibility until the Node and application migration paths are safe.
+
+**Acceptance:** migration applies on clean PostgreSQL; tests prove root/sibling uniqueness, cross-Project isolation, invalid-segment rejection, cycle prevention, and legacy Files compatibility; existing Files/Node/Portfolio tests and builds remain green.
+
+## Planned bounded PR sequence
+
+1. **Project Storage foundation:** this additive migration, compatibility/physical-key contract, SQL-level scope tests and delivery plan; no production data writes or object migration.
+2. **Project Files API and browser:** Project-only destinations for new admin uploads, folder create/rename/archive/restore, folder navigation, file relocation within the same Project, and server-side authorization plus lifecycle tests. Preserve read-only access to legacy Workspace/Application records through a deliberate compatibility path until migrated. Never list Workspaces or Applications as competing owners in the new Project browser.
+3. **Portfolio catalog integration:** add a reversible mapping from existing Portfolio assets/variants to Project-owned shared metadata, retaining public media URLs, publication references, originals and variant byte identity; no automatic deletion.
+4. **Physical key migration:** dry-run-first, resumable, create-only copy to versioned Project keys, source and destination SHA-256/size verification, recorded checkpoints, old-key reads during transition and protected rollback. Do not activate until the adapter supports both formats safely.
+5. **Unified independent R2 backup:** full paginated catalog inventory of Project Files plus Portfolio originals/variants and archived assets; append-only recovery writes, SHA-256 checks, fail-closed missing/corrupt object handling and legacy/new key support.
+6. **Isolated end-to-end recovery test:** restore matching PostgreSQL metadata plus complete object set from independent recovery credentials **without** access to the live bucket. Document catalog/snapshot consistency boundary, failure modes and acceptance evidence; only after success consider scheduled backup/retention/cleanup.
+
+## Rollout and security gates
+
+- Review and merge PRs individually; do not auto-merge or make live changes as part of code implementation.
+- Schema first, dual-read compatibility next, carefully gated new writes after that, physical migration and finally retirement of old paths. No silent ownership reassignment.
+- Back up all content, including variants and archived files, before deleting any legacy object; destruction, garbage collection and automatic retention remain out of scope.
+- Never put either R2 account's credentials in code, PRs, logs or chat. Production credentials need not be accessed for development.
+- Before any live physical migration, reconcile current object inventory and prove independent recoverability of source and destination material.
