@@ -747,7 +747,12 @@ The close-out record and immutable audit are stored **in the same database
 transaction** as changing status to `reconciled`. Competing admin attempts,
 a credential rotation, missing or stale proof, an offline Node, tampered
 signature, wrong target or invalid prior challenge fail closed; none may
-partially release the update lock.
+partially release the update lock. **If the database connection fails while
+committing, the result is ambiguous:** the update might already be
+`reconciled`. Inspect the authoritative root-trust `status` command and
+the Server's update-intent history before considering another operator
+action. Never assume failure means that the claim remains locked or
+automatically repeat the operation.
 
 The status `reconciled` means **the operator acknowledges completion of
 their independent inspection and permits a future, separately prepared
