@@ -564,8 +564,10 @@ or clear a claimed intent.
 A newly reviewed SQL migration `030_node_update_root_trust.sql` stores
 (1) an immutable per-Node pinned public key, (2) a single 5-minute,
 cryptographically random challenge bound to one **claimed** update intent,
-and (3) a one-time verified-evidence row. All operations are serialized on
-the Node, update intent and challenge, with live-clock expiry checks after
+and (3) a one-time verified-evidence row containing the canonical signed
+proof for later independent re-verification. The operator's status view and
+central audit event omit the signature and challenge. All operations are
+serialized on the Node, update intent and challenge, with live-clock expiry checks after
 locks; the successful verification consumes the nonce atomically. Failed
 verification does not consume the nonce. Duplicate enrolment, a second
 challenge, expired challenge or replayed evidence are refused.
