@@ -17,7 +17,9 @@ export function localDateTimeValue(instant?: string) {
     return [date.getFullYear(), two(date.getMonth() + 1), two(date.getDate())].join('-') + 'T' + [two(date.getHours()), two(date.getMinutes())].join(':');
 }
 const CATEGORIES = ['','core','view','node','workspace','files','git','dev','unity'];
-function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
+function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
+    filters: MonitoringFilters; projectId?: string; refreshVersion?: number;
+}) {
     const [page, setPage] = useState<ActivityPage>();
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
@@ -37,9 +39,16 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
     useEffect(() => setSearch(filters.search ?? ''), [filters.search]);
     useEffect(() => setDraft(filters), [JSON.stringify(filters)]);
     const offset = Math.max(0, Math.min(10000, Number(filters.offset) || 0));
+    const navigate = (next: MonitoringFilters) => {
+        // Project Activity is an immutable Project scope; URL filters may refine but not replace it.
+        const href = monitoringHash('activity', projectId ? { ...next, projectId } : next);
+        location.hash = projectId
+            ? href.replace('#/monitoring?', `#/projects/${encodeURIComponent(projectId)}/activity?`)
+            : href;
+    };
     const setFilter = (key: keyof MonitoringFilters, value: string) => {
         const next = { ...filters, [key]: value || undefined, offset: undefined };
-        location.hash = monitoringHash('activity', next);
+        navigate( next);
     };
     const scopeInput = Object.fromEntries(Object.entries(filters)
         .filter(([key, value]) => key !== 'offset' && key !== 'live' && value));
@@ -76,7 +85,7 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
             controller.abort();
             if (activeReader.current === reader) activeReader.current = null;
         };
-    }, [scopeKey, offset, refresh]);
+    }, [scopeKey, offset, refresh, refreshVersion]);
 
     useEffect(() => {
         // Starting or stopping live mode never clears the settled page, aborts
@@ -105,20 +114,21 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
             document.removeEventListener('visibilitychange', schedule);
             if (schedulePoll.current === schedule) schedulePoll.current = () => {};
         };
-    }, [live, scopeKey, offset, refresh]);
+    }, [live, scopeKey, offset, refresh, refreshVersion]);
     const operationCount = page ? new Set(page.items.map(event => {
         const details = event.resulting && typeof event.resulting === 'object' ? event.resulting as Record<string, unknown> : {};
         const attempt = typeof details.attemptId === 'string' ? details.attemptId : '';
         return event.operation.startsWith('workspace.') && attempt
             ? `attempt:${event.projectId ?? ''}:${event.workspaceId ?? ''}:${attempt}` : event.id;
     })).size : 0;
-    const changePage = (next: number) => { location.hash = monitoringHash('activity', {
+    const changePage = (next: number) => { navigate( {
         ...filters, offset: String(next), live: next > 0 ? undefined : filters.live,
     }); };
-    return <section className="panel activity-panel" aria-label="Monitoring activity">
-        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>Activity</h2></div><div className="actions">
+    return <section className="panel activity-panel" aria-label={projectId ? 'Project activity' : 'Monitoring activity'}>
+        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>{projectId ? 'Project activity' : 'Activity'}</h2></div><div className="actions">
+            {projectId && <a href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
             <button type="button" className="ghost" aria-pressed={live}
-                onClick={() => location.hash = monitoringHash('activity', {
+                onClick={() => navigate( {
                     ...filters, live: live ? undefined : '1', offset: undefined,
                 })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
             <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
@@ -127,8 +137,8 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
             {([
                 ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
                 ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
-            ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
-            <button type="button" className="ghost" onClick={() => { location.hash = monitoringHash('activity', { ...draft, offset: undefined }); }}>Apply filters</button>
+            ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} readOnly={key === 'projectId' && !!projectId} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
+            <button type="button" className="ghost" onClick={() => { navigate( { ...draft, offset: undefined }); }}>Apply filters</button>
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
             <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
@@ -145,6 +155,12 @@ function ActivityPanel({ filters }: { filters: MonitoringFilters }) {
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
 }
+/** Project Activity reuses the full server-filtered Monitoring reader, never the legacy polling feed. */
+export function ProjectActivityPanel({ projectId, refreshVersion = 0 }: { projectId: string; refreshVersion?: number }) {
+    const filters = { ...parseMonitoringHash(location.hash).filters, projectId };
+    return <ActivityPanel filters={filters} projectId={projectId} refreshVersion={refreshVersion} />;
+}
+
 type NodeLog = { source: string; available: boolean; lines: string[]; truncated: boolean };
 type LogNode = { id: string; name: string; platform?: string; status: string; capabilities: string[] };
 type ScopedLog = { nodeId: string; source: 'stdout' | 'stderr' | 'journal'; count: number; output: NodeLog };
