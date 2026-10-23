@@ -35,6 +35,19 @@ async function addFile(pool: Pool, kind: string, ownerId: string, folderId: stri
     return id;
 }
 
+async function addHistoricalFile(pool: Pool, kind: string, ownerId: string): Promise<string> {
+    // A database at migration 031 does not yet have atlas_files.folder_id.
+    const id = randomUUID();
+    const checksum = "a".repeat(64);
+    const key = "files-" + id.replaceAll("-", "") + "-" + checksum;
+    await pool.query(
+        `INSERT INTO atlas_files
+            (id,owner_kind,owner_id,storage_key,checksum,file_name,mime_type,byte_size,created_by)
+          VALUES($1,$2,$3,$4,$5,'notes.txt','text/plain',3,'test')`,
+        [id, kind, ownerId, key, checksum]);
+    return id;
+}
+
 test("Project folders enforce nested scope, safe names and active sibling uniqueness", async () => {
     const { store } = await databaseFixture();
     const db = store.pool;
@@ -102,8 +115,8 @@ test("Additive migration preserves pre-existing Project, legacy and Portfolio me
     const { store } = await databaseFixture("031_node_root_challenge_reissue.sql");
     const db = store.pool;
     const projectId = await addProject(db, "Existing project");
-    const projectFile = await addFile(db, "project", projectId, null);
-    const legacyFile = await addFile(db, "workspace", randomUUID(), null);
+    const projectFile = await addHistoricalFile(db, "project", projectId);
+    const legacyFile = await addHistoricalFile(db, "workspace", randomUUID());
     const originalId = randomUUID();
     const key = "b".repeat(64) + ".jpg";
     await db.query(
