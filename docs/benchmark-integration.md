@@ -45,6 +45,19 @@ separate `Atlas Deploy` workflow is not modified.
 - Fork-originated PR identity and permissions are designed to fail closed,
   but have not been proven by a live Atlas fork PR.
 
+## Live acceptance of the released integration
+
+To verify a new Benchmark installation without disturbing application code:
+
+1. Confirm that **Atlas CI on the installation's merge commit** succeeded on `main` and uploaded distinct `benchmark-junit` and `benchmark-lcov` artifacts.
+2. Create a **fresh pull request based on that exact merge commit**. An already-running CI job that started before installation may not emit these artifacts, even if the newly installed lifecycle creates a Waiting comment.
+3. Check that Benchmark creates or reuses **one** bot-owned PR comment with the exact current head SHA and CI run attempt, then updates it to Ready after the PR's CI finishes. Faster CI may skip an intermediate Waiting or Processing state.
+4. Confirm that the trusted reporter downloads the current JUnit and LCOV artifacts by **different, verified artifact IDs**, and that the coverage baseline comes from the successful `main` push CI for the PR's **exact base SHA**. If that baseline is absent, Benchmark must show it as unavailable rather than inventing a percentage-point comparison.
+5. Confirm test counts and Node-scoped line/function/branch coverage in the comment; compare the source scope across the current PR and baseline. A passing build with a missing/malformed reporter artifact is **not** full acceptance.
+6. Confirm CI and Docker build behavior stayed unchanged: PR jobs remain read-only, image publishing remains main-only, and `.github/workflows/deploy.yml` was not modified.
+
+Record the exact CI, reporter and lifecycle run links, artifact IDs, final comment ID, and unresolved limitations in the validation PR description. A real fork-originated PR remains a separate optional acceptance exercise; a same-repository PR does not prove it.
+
 ## Rollback and installer direction
 
 To roll back, revert the two Benchmark workflow files and CI reporting
