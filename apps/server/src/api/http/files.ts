@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ServerServices } from '../../server/composition.js';
 import type { FileOwner } from '../../server/atlas-files.js';
+import { folderId as parseFolderId } from '../../server/project-file-folders.js';
 import { AtlasError } from '../../shared/errors.js';
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -9,8 +10,9 @@ const MAX_UPLOAD_BODY_BYTES = 35 * 1024 * 1024;
 // code unit (e.g. CJK characters). The decoded name is still validated by
 // AtlasFilesService.upload, including its 255-character limit.
 const MAX_ENCODED_FILE_NAME_LENGTH = 255 * 9;
-const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive', 'restore']);
-const BINARY_HEADERS = 'content-type,x-atlas-owner-kind,x-atlas-owner-id,x-atlas-file-name,x-atlas-file-type';
+const fileActions = new Set(['list', 'upload', 'upload-binary', 'download', 'archive', 'restore',
+    'folders-list', 'folders-create', 'folders-rename', 'folders-archive', 'folders-restore', 'file-move']);
+const BINARY_HEADERS = 'content-type,x-atlas-owner-kind,x-atlas-owner-id,x-atlas-file-name,x-atlas-file-type,x-atlas-folder-id';
 
 function sendJson(response: ServerResponse, status: number, value: unknown) {
     response.writeHead(status, {
@@ -39,7 +41,7 @@ async function parseJson(request: IncomingMessage, maxBytes: number): Promise<Re
     return parsed as Record<string, unknown>;
 }
 
-async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer }> {
+async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer; folderId: string | null }> {
     if (request.headers['content-type'] !== 'application/octet-stream')
         throw new AtlasError('Binary uploads must use application/octet-stream.');
     const header = (name: string, maxLength: number) => {
@@ -53,6 +55,8 @@ async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: File
     try { fileName = decodeURIComponent(header('x-atlas-file-name', MAX_ENCODED_FILE_NAME_LENGTH)); }
     catch { throw new AtlasError('Invalid binary upload file name.'); }
     const mimeType = header('x-atlas-file-type', 120);
+    const folderHeader = request.headers['x-atlas-folder-id'];
+    const folderId = folderHeader === undefined ? null : parseFolderId(folderHeader);
     const length = request.headers['content-length'];
     if (length && (!/^\d+$/.test(length) || Number(length) > MAX_FILE_BYTES))
         throw new AtlasError('Files request exceeds the upload limit.');
@@ -64,7 +68,7 @@ async function readBinaryUpload(request: IncomingMessage): Promise<{ owner: File
         chunks.push(Buffer.from(chunk));
     }
     if (!size) throw new AtlasError('Binary upload cannot be empty.');
-    return { owner, fileName, mimeType, bytes: Buffer.concat(chunks, size) };
+    return { owner, fileName, mimeType, bytes: Buffer.concat(chunks, size), folderId };
 }
 
 function readOwner(input: unknown): FileOwner {
@@ -139,6 +143,7 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
         if (action === 'upload-binary') {
             const input = await readBinaryUpload(request);
             await requireActiveOwner(input.owner, services);
+            if (input.owner.kind !== 'project') throw new AtlasError('New browser uploads require a Project.');
             sendJson(response, 201, await services.files.upload({ ...input, visibility: 'private', client: 'Atlas Web' }));
             return true;
         }
@@ -146,12 +151,36 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
         const owner = readOwner(body.owner);
         // Validate the owner exists before any storage lookup or upload.
         await requireActiveOwner(owner, services);
-        if (action === 'list') {
+        const isFolderAction = action.startsWith('folders-') || action === 'file-move';
+        if (isFolderAction && owner.kind !== 'project')
+            throw new AtlasError('Folders require Project ownership.');
+        if (action === 'folders-list') {
+            sendJson(response, 200, await services.files.folders.list(owner.id));
+        } else if (action === 'folders-create') {
+            sendJson(response, 201, await services.files.folders.create(
+                owner.id, parseFolderId(body.parentId), body.name as string));
+        } else if (action === 'folders-rename') {
+            sendJson(response, 200, await services.files.folders.rename(
+                owner.id, parseFolderId(body.folderId)!, body.name as string));
+        } else if (action === 'folders-archive') {
+            sendJson(response, 200, await services.files.folders.archive(
+                owner.id, parseFolderId(body.folderId)!));
+        } else if (action === 'folders-restore') {
+            sendJson(response, 200, await services.files.folders.restore(
+                owner.id, parseFolderId(body.folderId)!));
+        } else if (action === 'file-move') {
+            await services.files.folders.moveFile(
+                owner.id, safeFileId(body.fileId), parseFolderId(body.folderId));
+            sendJson(response, 200, { moved: true });
+        } else if (action === 'list') {
             const status = body.status ?? 'active';
             if (status !== 'active' && status !== 'archived')
                 throw new AtlasError('Invalid Files listing status.');
-            sendJson(response, 200, await services.files.list(owner, status));
+            const destination = body.folderId === undefined ? undefined : parseFolderId(body.folderId);
+            sendJson(response, 200, await services.files.list(owner, status, destination));
         } else if (action === 'upload') {
+            if (owner.kind !== 'project') throw new AtlasError('New browser uploads require a Project.');
+            const destination = body.folderId === undefined ? null : parseFolderId(body.folderId);
             const encoded = body.base64;
             if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4 ||
                 !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))
@@ -165,7 +194,7 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
             // separately reviewed publishing workflow.
             sendJson(response, 201, await services.files.upload({
                 owner, fileName: body.fileName, mimeType: body.mimeType, bytes, visibility: 'private',
-                client: 'Atlas Web',
+                client: 'Atlas Web', folderId: destination,
             }));
         } else if (action === 'download') {
             const { file, bytes } = await services.files.download(owner, safeFileId(body.fileId));
@@ -183,9 +212,11 @@ export async function serveFilesRequest(request: IncomingMessage, response: Serv
             });
             response.end(bytes);
         } else if (action === 'archive') {
+            if (owner.kind !== 'project') throw new AtlasError('Legacy owner files are read-only via this API.');
             await services.files.archive(owner, safeFileId(body.fileId));
             sendJson(response, 200, { archived: true });
         } else {
+            if (owner.kind !== 'project') throw new AtlasError('Legacy owner files are read-only via this API.');
             sendJson(response, 200, await services.files.restore(owner, safeFileId(body.fileId)));
         }
     } catch (error) {
