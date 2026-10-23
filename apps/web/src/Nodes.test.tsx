@@ -159,6 +159,6 @@ it('shows installed/latest software and update state inside the selected Node in
     expect(await within(software).findByText('2.0.0+abc123abc123')).toBeInTheDocument();
     expect(within(software).getByText('Newer release available')).toBeInTheDocument();
     expect(within(software).getByText('Not enabled for this Node')).toBeInTheDocument();
-    expect(within(software).getByRole('link', { name: /View downloads and release notes/ }))
-        .toHaveAttribute('href', '#/nodes/software');
+    expect(within(software).getByRole('link', { name: /Open software management and downloads/ }))
+        .toHaveAttribute('href', '#/nodes/software?node=' + encodeURIComponent(installed.id));
 });
