@@ -72,12 +72,16 @@ the original Project. The new migration protects active file attachment and
 reactivation using shared row locks, preventing a race with folder archival
 through the admin service.
 
-The old private API retains listing and downloading Workspace/Application
-Files for compatibility. New **admin** uploads, archives, and restores require
-Projects. The internal Node ingest path is not changed and its existing
-Workspace authorization, receipts, idempotency and default-off upload gate
-remain in effect; conversion of Node uploads to Project ownership needs its
-own reviewed migration. The Portfolio media catalogue remains separate.
+Existing admin Files routes retain legacy Workspace/Application operations
+for compatibility with the still-deployed Files browser. Folder-specific routes
+and destinations **only** accept Project ownership. PR 2B must replace the
+browser's owner picker and enforce Project-only new uploads only after it can
+no longer issue Workspace/Application writes; legacy read paths must remain
+available through an explicit compatibility mechanism. The internal Node
+ingest path is not changed and its existing Workspace authorization, receipts,
+idempotency and default-off upload gate remain in effect; conversion of Node
+uploads to Project ownership needs its own reviewed migration. Portfolio
+media remains separate.
 
 **PR 2B (next):** update the Files web client to present Projects rather than
 three competing owner classes, add nested-folder navigation, folder actions,
