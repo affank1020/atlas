@@ -88,8 +88,10 @@ test('Folder creation, rename, archive and restore use Project-scoped actions', 
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
     await waitFor(() => expect(createProjectFolder).toHaveBeenCalledWith(projectId, null, 'New folder'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Rename folder Modules' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Rename folder Modules' }));
     await waitFor(() => expect(renameProjectFolder).toHaveBeenCalledWith(projectId, folderId, 'Renamed'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Archive folder Modules' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Archive folder Modules' }));
     await waitFor(() => expect(archiveProjectFolder).toHaveBeenCalledWith(projectId, folderId));
     prompt.mockRestore(); confirm.mockRestore();
@@ -133,6 +135,7 @@ test('Uploads explicitly select the current Project folder, not a Workspace or A
     render(<Files />);
     fireEvent.click(await screen.findByRole('button', { name: 'Modules' }));
     await waitFor(() => expect(listFiles).toHaveBeenCalledWith(owner, 'active', folderId));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled());
     const file = new File(['test'], 'week.pdf', { type: 'application/pdf' });
     fireEvent.change(screen.getByLabelText('Choose files to upload'), { target: { files: [file] } });
     await waitFor(() => expect(uploadFile).toHaveBeenCalledWith(owner, file, folderId));
