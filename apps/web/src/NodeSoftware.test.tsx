@@ -659,3 +659,58 @@ it('fleet inspector follows new node deep links while the software route remains
         window.dispatchEvent(new Event('hashchange'));
     }
 });
+
+
+it('cancels obsolete Linux history reads across Refresh and unmount without exceeding three active requests', async () => {
+    const nodes = Array.from({length:5},(_,index)=>({
+        id:'11111111-1111-4111-8111-'+String(index+1).padStart(12,'0'),
+        name:'Slow Linux '+index,platform:'linux',status:'online',version:'2.0.0',
+        capabilities:[],lastSeen:null,hostedWorkspaceCount:0,
+    }));
+    const signals: AbortSignal[]=[];
+    let active=0;
+    let peak=0;
+    let aborted=0;
+    vi.mocked(callTool).mockImplementation(async (name,_args,signal)=>{
+        if(name==='list_nodes')return nodes;
+        if(name==='list_node_releases')return {state:'ready',releases:[release],checkedAt:''};
+        if(name==='list_node_update_intents'){
+            if(!signal)throw new Error('History reads must have a cancellation signal.');
+            if(signal.aborted)throw new DOMException('Aborted','AbortError');
+            signals.push(signal);
+            return await new Promise<never>((_resolve,reject)=>{
+                active++;
+                peak=Math.max(peak,active);
+                signal.addEventListener('abort',()=>{
+                    active--;
+                    aborted++;
+                    reject(new DOMException('Aborted','AbortError'));
+                },{once:true});
+            });
+        }
+        throw new Error('Unexpected tool '+name);
+    });
+    const view=render(<NodeSoftware />);
+    try {
+        await waitFor(()=>expect(signals).toHaveLength(3));
+        expect(active).toBe(3);
+        const old=signals.slice();
+        fireEvent.click(screen.getByRole('button',{name:'Refresh'}));
+        await waitFor(()=>expect(signals).toHaveLength(6));
+        expect(old.every(signal=>signal.aborted)).toBe(true);
+        expect(aborted).toBe(3);
+        expect(active).toBe(3);
+        expect(peak).toBe(3);
+        await waitFor(()=>expect(screen.getByRole('button',{name:'Refresh'})).toBeEnabled());
+        fireEvent.click(screen.getByRole('button',{name:'Refresh'}));
+        await waitFor(()=>expect(signals).toHaveLength(9));
+        expect(signals.slice(3,6).every(signal=>signal.aborted)).toBe(true);
+        expect(peak).toBe(3);
+        expect(active).toBe(3);
+    } finally {
+        view.unmount();
+    }
+    expect(signals.every(signal=>signal.aborted)).toBe(true);
+    expect(active).toBe(0);
+    expect(aborted).toBe(9);
+});
