@@ -90,8 +90,11 @@ export class PostgresRepository implements AtlasRepository {
             where.push('EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.logical_workspace_id=' + logicalId + '::uuid)');
         }
         if (input.nodeId) {
+            // JSON comparisons take text; checkout ownership uses the UUID column.
+            // Keep separate bind parameters to avoid PostgreSQL text/uuid coercion.
             const id = param(uuid(input.nodeId)?.toLowerCase());
-            where.push("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + id + "::uuid)" +
+            const checkoutNodeId = param(uuid(input.nodeId));
+            where.push("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + checkoutNodeId + "::uuid)" +
                 " OR a.after_state->>'nodeId'=" + id +
                 " OR a.after_state->>'previousNodeId'=" + id +
                 " OR (a.operation IN ('node.share.approved','node.share.revoked') AND " +
@@ -166,7 +169,8 @@ export class PostgresRepository implements AtlasRepository {
         if (input.recordId) matchAny('a.record_id=' + param(uuid(input.recordId)));
         if (input.nodeId) {
             const id = param(uuid(input.nodeId)?.toLowerCase());
-            matchAny("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + id + "::uuid)"
+            const checkoutNodeId = param(uuid(input.nodeId));
+            matchAny("(EXISTS (SELECT 1 FROM workspaces w WHERE w.id=a.workspace_id AND w.node_id=" + checkoutNodeId + "::uuid)"
                 + " OR a.after_state->>'nodeId'=" + id
                 + " OR a.after_state->>'previousNodeId'=" + id
                 + " OR (a.operation IN ('node.share.approved','node.share.revoked') AND "
