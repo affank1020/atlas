@@ -181,10 +181,10 @@ export class NodeRootTrustLedger {
                 AND expires_at>clock_timestamp() RETURNING id`,[nonce.id]);
             if (!consumed.rowCount) throw new AtlasError('Root evidence challenge expired or consumed.', 'CONFLICT');
             const inserted = await client.query<{verified_at:Date}>(`INSERT INTO node_update_root_evidence
-                (intent_id,challenge_id,node_id,key_fingerprint,active_version,target_sha256,observed_pid)
-                VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING verified_at`,
+                (intent_id,challenge_id,node_id,key_fingerprint,active_version,target_sha256,observed_pid,signature)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING verified_at`,
                 [intentId,nonce.id,nodeId,key.rows[0]!.fingerprint.trim(),expected.activeVersion,
-                    expected.targetSha256,evidence.observedPid]);
+                    expected.targetSha256,evidence.observedPid,evidence.signature]);
             await this.audit(client,'node.root_evidence_verified',{
                 nodeId,intentId,challengeId:nonce.id,observedPid:evidence.observedPid,
                 fingerprint:key.rows[0]!.fingerprint.trim(),
