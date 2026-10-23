@@ -88,3 +88,29 @@ three competing owner classes, add nested-folder navigation, folder actions,
 destination selection and in-Project file moves. Until 2B, the existing web
 browser does not yet expose the new folder endpoints. No R2 key migration,
 backup changes, production upload enablement or Cloudflare action occurs.
+
+## PR 2B — Project-first Files browser
+
+The Files UI now shows **Projects only**, reflecting Project ownership of
+managed storage. Workspaces and Applications are not storage-owner choices.
+Within each Project, folder navigation uses immutable folder IDs and a
+breadcrumb trail. The private API provides folder lists, nested creation,
+renaming, archive/restore, root- or folder-scoped file listings, binary uploads
+to the selected folder and metadata-only relocation of active files within
+that same Project.
+
+The active and archived views expose file lifecycle independently. Archived
+folders are accessible in the Archived view and can be restored subject to
+the server's active-parent and uniqueness guards. In an archived folder the
+UI disables uploads and folder creation. A file whose containing folder has
+been archived must have that folder restored before the file can be restored.
+Folder archival requires immediate active contents to be moved or archived,
+and **never** deletes stored bytes. Existing API and Node integrations may
+still read legacy Workspace/Application records during future migration;
+the Project-first UI does not silently reassign them.
+
+The web demo client mirrors Project folder metadata operations for UI
+development without R2. The browser does not expose physical keys, perform
+cross-Project moves or enable the default-off Node upload pipeline. Portfolio
+media remains in its specialised application until the separately reviewed
+catalog unification phase.
