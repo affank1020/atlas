@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { MonitoringPage, localDateTimeValue } from './Monitoring';
+import { MonitoringPage, ProjectActivityPanel, localDateTimeValue } from './Monitoring';
 import { callTool } from './api';
 
 vi.mock('./api', () => ({ callTool: vi.fn(), IS_MOCK_MODE: false }));
@@ -305,4 +305,37 @@ test('logical Workspace Activity deep links send server-side logical scope witho
         expect.any(AbortSignal)));
     expect(screen.getByRole('textbox', { name: 'Logical Workspace ID' })).toHaveValue(logicalWorkspaceId);
     expect(await screen.findByText(/0 operations · Filtered on the server/)).toBeInTheDocument();
+});
+
+test('Project Activity uses the bounded safe Monitoring query instead of the legacy auto-refresh feed', async () => {
+    location.hash = '#/projects/project-abc/activity';
+    vi.mocked(callTool).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 30 } as never);
+    render(<ProjectActivityPanel projectId="project-abc" />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: 'project-abc', offset: 0, limit: 30, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(screen.getByRole('region', { name: 'Project activity' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveValue('project-abc');
+    expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveAttribute('readonly');
+    expect(screen.getByRole('link', { name: 'Open in Monitoring →' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&projectId=project-abc');
+    expect(callTool).not.toHaveBeenCalledWith('get_recent_activity', expect.anything(), expect.anything());
+});
+
+test('Project Activity ignores a forged URL project and keeps the scope through paging and search', async () => {
+    location.hash = '#/projects/project-a/activity?tab=activity&projectId=project-b&offset=30';
+    vi.mocked(callTool).mockResolvedValue({ items: [], total: 90, offset: 30, limit: 30 } as never);
+    render(<ProjectActivityPanel projectId="project-a" />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: 'project-a', offset: 30, limit: 30, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(location.hash).toContain('#/projects/project-a/activity?tab=activity&projectId=project-a');
+    expect(location.hash).toContain('offset=60');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search activity' }), { target: { value: 'failed task' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(location.hash).toContain('projectId=project-a');
+    expect(location.hash).toContain('search=failed+task');
+    expect(location.hash).not.toContain('offset=');
 });
