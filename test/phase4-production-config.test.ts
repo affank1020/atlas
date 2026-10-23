@@ -35,3 +35,14 @@ test('Code Reviews trusted publisher configuration is forwarded only to the prod
     assert.match(envExample, /^ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON=$/m,
         'Production env template should document an explicit empty default');
 });
+
+test('Code Reviews GitHub publication opt-in reaches only the Server and defaults off', () => {
+    const compose = readFileSync('infra/docker-compose.production.yml', 'utf8');
+    const server = compose.split('  server:\n')[1]?.split('  ingress:\n')[0];
+    assert.ok(server);
+    assert.match(server!, /^      ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: \$\{ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES:-\}$/m);
+    const others = compose.split('  server:\n')[0] + (compose.split('  ingress:\n')[1] ?? '');
+    assert.doesNotMatch(others, /^      ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES:/m);
+    assert.match(readFileSync('infra/production.env.example','utf8'),
+        /^ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=$/m);
+});

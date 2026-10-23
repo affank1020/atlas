@@ -5,6 +5,7 @@ import type { ApplicationDefinition, ApplicationCaller } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
+import type { ReviewPublicationService } from './review-publication.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -14,7 +15,8 @@ type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store'
 export class CodeReviewsService {
     constructor(private readonly catalog: ReviewCatalogue,
         private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead'>>,
-        private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map()) {}
+        private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
+        private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -65,6 +67,13 @@ export class CodeReviewsService {
         const verifiedAt = new Date().toISOString();
         return this.catalog.store.transaction(state =>
             saveStructuredReview(this.catalog, state, ids, input, remote.headSha, verifiedAt, caller!));
+    }
+
+    /** Preview by default; explicit apply sends one comment-only GitHub review. */
+    async publishReview(runId: string, includeInline: boolean, apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.publisher) throw new AtlasError('GitHub review publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.publisher.publishRun(runId, includeInline, apply, caller);
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -192,6 +201,14 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                 inputSchema: { submission: structuredReviewSchema },
                 invoke: ({ submission }: { submission: StructuredReview }, caller?: ApplicationCaller) =>
                     service.submitStructuredReview(submission, caller),
+            },
+            {
+                name: 'code_reviews_publish_github',
+                description: 'Preview structured review GitHub COMMENT publication. Requires verified OAuth, apply=true and repository opt-in. Durable claim prevents duplicate posts; never approves.',
+                inputSchema: { runId: z.string().uuid(), includeInline: z.boolean().default(false),
+                    apply: z.boolean().default(false) },
+                invoke: ({ runId, includeInline, apply }: { runId: string; includeInline: boolean; apply: boolean },
+                    caller?: ApplicationCaller) => service.publishReview(runId, includeInline, apply, caller),
             },
             {
                 name: 'code_reviews_list_findings',

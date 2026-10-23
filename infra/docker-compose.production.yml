@@ -47,6 +47,8 @@ services:
       ATLAS_GITHUB_WORKSPACE_REPOSITORIES: ${ATLAS_GITHUB_WORKSPACE_REPOSITORIES:-}
       # Opt-in, repository-specific Code Reviewer import provenance allowlist.
       ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON: ${ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON:-}
+      # Disabled by default; enables explicit GitHub COMMENT reviews only.
+      ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: ${ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES:-}
       ATLAS_WORKSPACE_ORIGINS: ${ATLAS_WORKSPACE_ORIGINS:?Set ATLAS_WORKSPACE_ORIGINS in infra/production.env}
       ATLAS_MEDIA_DIR: /var/lib/atlas/media
       ATLAS_R2_ENDPOINT: ${ATLAS_R2_ENDPOINT:-}

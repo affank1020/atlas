@@ -229,3 +229,18 @@ test('GitHub review imports request only scoped pull-request read, rejecting mis
     allowed = false;
     await assert.rejects(broker.pullRequestReadToken(repo), /lacks pull-request read permission/);
 });
+
+test('GitHub review publisher requests only PR-write and validates returned scope', async () => {
+    const tokens: object[] = [];
+    let granted = true;
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        tokens.push(JSON.parse(String(init?.body)));
+        return response(201, { ...tokenBody,
+            permissions: granted ? { pull_requests: 'write' } : { pull_requests: 'read' } });
+    }) as typeof fetch);
+    assert.equal(await broker.pullRequestPublishToken(repo), tokenBody.token);
+    assert.deepEqual(tokens, [{ repositories: ['portfolio-site'], permissions: { pull_requests: 'write' } }]);
+    granted = false;
+    await assert.rejects(broker.pullRequestPublishToken(repo), /lacks pull-request write permission/);
+});
