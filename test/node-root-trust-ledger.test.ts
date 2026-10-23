@@ -76,6 +76,15 @@ test('operator pins a single administrator key, issues one live challenge and ve
     assert.equal(state.clearsClaim,false);
     assert.ok(state.consumedAt);
     assert.ok(state.verifiedAt);
+    const storedProof = await f.db.store.pool.query(
+        'SELECT signature,observed_pid,key_fingerprint FROM node_update_root_evidence WHERE intent_id=$1',
+        [f.prepared.id]);
+    assert.equal(storedProof.rowCount,1);
+    assert.equal(storedProof.rows[0].signature.trim(),signed(f,challenge.challenge).signature);
+    assert.equal(storedProof.rows[0].key_fingerprint.trim(),fp);
+    assert.equal(storedProof.rows[0].observed_pid,4242);
+    assert.ok(!JSON.stringify(state).includes(storedProof.rows[0].signature.trim()),
+        'operator status must not expose the stored signature');
     assert.ok(!JSON.stringify(state).includes(challenge.challenge),'status must not leak nonce');
     await assert.rejects(f.ledger.verify(f.node.nodeId,f.prepared.id,signed(f,challenge.challenge)),fails('CONFLICT'));
     await assert.rejects(f.intents.prepare(f.node.nodeId,f.prepared.installedVersion,
