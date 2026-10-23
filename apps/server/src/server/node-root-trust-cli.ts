@@ -45,11 +45,11 @@ async function main() {
         throw new Error(help);
 
     const nodeId = args[1]!;
-    const ledger = new NodeRootTrustLedger(new Pool({
+    const pool = new Pool({
         connectionString:requireDatabaseUrl(),
         max:2,connectionTimeoutMillis:5000,
-    }));
-    const pool = (ledger as unknown as { pool:Pool }).pool;
+    });
+    const ledger = new NodeRootTrustLedger(pool);
     // Avoid asking for confirmation while a database connection/lock is held.
     const prompt = createInterface({ input:process.stdin, output:process.stderr });
     try {
