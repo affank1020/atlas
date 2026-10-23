@@ -5,12 +5,13 @@ import type { CoreService } from '../core/service.js';
 import type { ApplicationCaller } from './registry.js';
 import { assertStructuredCaller } from './review-submission.js';
 import { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
-import { GitHubReviewPublisher, renderReview, type PublishPayload } from './github-review-publisher.js';
+import { GitHubReviewPublisher, renderReview, type PublishPayload, type ExpectedInlineComment } from './github-review-publisher.js';
 
 type Catalogue = Pick<CoreService, 'store' | 'listStores' | 'updateRecordInState'>;
 type Stores = { runs: string; findings: string };
 type Claim = { state: 'claimed' | 'published'; claimId: string; contentSha: string;
-    includeInline: boolean; claimedAt: string; githubReviewId?: string; githubReviewUrl?: string };
+    includeInline: boolean; claimedAt: string; expectedInline: ExpectedInlineComment[];
+    githubReviewId?: string; githubReviewUrl?: string };
 type Proposal = { run: AtlasRecord; payload: PublishPayload; body: string; marker: string; contentSha: string; status?: Claim };
 
 export class ReviewPublicationService {
@@ -97,7 +98,10 @@ export class ReviewPublicationService {
         // A durable claim prevents duplicate POSTs after crashes or timeouts.
         // Reconciliation is read-only and safe even when GitHub head advances.
         if (proposal.status?.state === 'claimed') {
-            const found = await this.github.findPublished(proposal.payload, proposal.marker);
+            if (!Array.isArray(proposal.status.expectedInline))
+                throw new AtlasError('Publication claim lacks verified inline content.', 'CONFLICT');
+            const found = await this.github.findPublished(proposal.payload, proposal.body,
+                proposal.status.expectedInline);
             if (!found) return { runId, status: 'uncertain', postedAgain: false,
                 message: 'Claim exists without a confirmed GitHub review. Manual investigation required; no retry POST.' };
             if (apply) await this.catalog.store.transaction(state => {
@@ -111,7 +115,7 @@ export class ReviewPublicationService {
         }
         const token = await this.github.checkHead(proposal.payload);
         const comments = await this.github.inlineComments(proposal.payload, token, includeInline);
-        const seen = await this.github.findPublished(proposal.payload, proposal.marker, token);
+        const seen = await this.github.findPublished(proposal.payload, proposal.body, comments, token);
         if (seen) throw new AtlasError('Review marker already exists on GitHub without a recorded claim.', 'CONFLICT');
         const preview = { runId, repository: proposal.payload.repository, prNumber: proposal.payload.prNumber,
             headSha: proposal.payload.headSha, verdict: proposal.payload.verdict,
@@ -122,7 +126,7 @@ export class ReviewPublicationService {
         // If scope is missing, fail without locking an unpublished review.
         const writeToken = await this.github.prepareWrite(proposal.payload.repository);
         const claim: Claim = { state: 'claimed', claimId: randomUUID(), contentSha: proposal.contentSha,
-            includeInline, claimedAt: new Date().toISOString() };
+            includeInline, claimedAt: new Date().toISOString(), expectedInline: comments };
         await this.catalog.store.transaction(state => {
             const current = this.plan(state, stores, runId, caller, includeInline);
             if (current.status) throw new AtlasError('Review publication already claimed.', 'CONFLICT');
@@ -134,12 +138,17 @@ export class ReviewPublicationService {
         // Any failed/ambiguous HTTP outcome remains claimed until remote reconciliation.
         await this.github.checkHead(proposal.payload);
         const posted = await this.github.publish(proposal.payload, proposal.body, comments, writeToken);
+        // GitHub's POST response alone does not attest author or inline content.
+        // A failed verification leaves the durable claim uncertain, never re-posted.
+        const verified = await this.github.findPublished(proposal.payload, proposal.body, comments);
+        if (!verified || verified.id !== posted.id)
+            throw new AtlasError('GitHub publication could not be independently reconciled.', 'CONFLICT');
         await this.catalog.store.transaction(state => {
             const current = this.plan(state, stores, runId, caller, includeInline);
             if (current.status?.state !== 'claimed' || current.status.claimId !== claim.claimId)
                 throw new AtlasError('Publication claim changed before receipt confirmation.', 'CONFLICT');
             this.persist(state, stores, current, { ...claim, state: 'published',
-                githubReviewId: String(posted.id), githubReviewUrl: posted.url });
+                githubReviewId: String(verified.id), githubReviewUrl: verified.html_url });
         });
         return { ...preview, status: 'published', dryRun: false,
             githubReviewId: String(posted.id), githubReviewUrl: posted.url };

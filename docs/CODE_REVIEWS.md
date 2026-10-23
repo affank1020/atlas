@@ -289,12 +289,20 @@ Do **not** configure publication on a Node or expose the App key to a client.
 Once claimed, Atlas **never automatically issues another POST**. If the
 network times out, GitHub returns ambiguous data, the process crashes,
 or database confirmation fails, retrying this operation performs **remote
-reconciliation only** by looking for the unique Atlas run marker on a
-matching-commit GitHub review. If found, `apply:true` records its
-GitHub review ID without reposting. If not found, the claim remains
+reconciliation only**. A marker by itself is **not** trusted: Atlas
+authenticates the actual GitHub App bot's numeric user ID using the GitHub
+App JWT, requires an exact body match, verifies that the review was a
+`COMMENT` on the reviewed commit, and checks the full set of expected
+inline comments (including author, text and RIGHT-side position).
+The expected inline comments are preserved in the durable claim before
+posting, so reconciliation does not depend on a later, changed PR diff.
+Even an unrelated review with a copied marker or a very long body must
+not cause false publication. If the expected review is found, `apply:true`
+records its verified ID without reposting. If not found, the claim remains
 `uncertain` and **manual investigation is required**: Atlas will not
 interpret absence in a bounded review list as proof that a POST did not
-succeed. Review pagination beyond 500 items is refused.
+succeed. Review pagination beyond 500 items is refused. A normal POST
+response is also reverified before recording a `published` receipt.
 
 A published review is durable publication metadata in `coverage.githubPublication`
 inside the Atlas Review Runs Store, not proof of independent reviewer

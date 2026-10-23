@@ -90,6 +90,25 @@ export class GitHubBroker {
     async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
     async pullRequestReadToken(repository: string) { return this.scopedToken(repository, 'reviews'); }
     async pullRequestPublishToken(repository: string) { return this.scopedToken(repository, 'publication'); }
+    /** Resolve the immutable GitHub Bot user ID from the authenticated App itself,
+     * never from a caller-controlled login or a review marker.
+     */
+    async reviewPublisherBot() {
+        const app = await this.request('/app', 'GET', this.jwt()) as { id?: unknown; slug?: unknown };
+        if (app.id !== Number(this.env.ATLAS_GITHUB_APP_ID) ||
+            typeof app.slug !== 'string' || !/^[a-z0-9-]{1,100}$/i.test(app.slug))
+            throw new AtlasError('GitHub App identity could not be verified.', 'GITHUB_REQUEST_FAILED');
+        const login = `${app.slug}[bot]`;
+        const user = await this.request('/users/' + encodeURIComponent(login), 'GET', this.jwt()) as {
+            id?: unknown; login?: unknown; type?: unknown;
+        };
+        if (!Number.isSafeInteger(user.id) || (user.id as number) < 1 ||
+            user.type !== 'Bot' || typeof user.login !== 'string' ||
+            user.login.toLowerCase() !== login.toLowerCase())
+            throw new AtlasError('GitHub App bot identity could not be verified.', 'GITHUB_REQUEST_FAILED');
+        return { id: user.id as number, login: user.login };
+    }
+
     private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'publication' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();

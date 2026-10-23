@@ -55,7 +55,11 @@ function mock(overrides: Record<string, any> = {}) {
     const github = {
         checkHead: async () => { events.checked++; return 'scoped-read-token'; },
         inlineComments: async () => { events.diff++; return []; },
-        findPublished: async () => { events.searched++; return undefined; },
+        findPublished: async (payload: any, body: string) => {
+            events.searched++;
+            return events.published ? { id: result.id, html_url: result.url,
+                body, commit_id: payload.headSha, state: 'COMMENTED' } : undefined;
+        },
         prepareWrite: async () => 'scoped-write-token',
         publish: async () => { events.published++; return result; },
         ...overrides,
@@ -198,4 +202,99 @@ test('render marker is tied to Atlas run and publish config is strict and opt-in
         repository,prNumber:84,headSha:sha,verdict:'no_findings',findings:[]});
     assert.match(body.marker,/^<!-- atlas-code-review-run:[a-f0-9-]{36} -->$/);
     assert.ok(body.body.endsWith(body.marker));
+});
+
+
+test('GitHub marker spoof from another reviewer is ignored, even with matching body', async () => {
+    const runId = submission.submissionId;
+    const payload = { runId, repository, prNumber:84, headSha:sha,
+        verdict:'non_blocking', summary:'Source review', findings:[] };
+    const body = renderReview(payload).body;
+    let remoteReview: any = { id:1234, html_url:result.url, body, commit_id:sha,
+        state:'COMMENTED', user:{id:333,type:'User'} };
+    const bot = { id: 998, login: 'atlas-test[bot]' };
+    const publisher = new GitHubReviewPublisher({
+        pullRequestReadToken: async () => 'read-token',
+        pullRequestPublishToken: async () => 'write-token',
+        reviewPublisherBot: async () => bot,
+    }, (async (url: string) => {
+        if (url.includes('/reviews?')) return new Response(JSON.stringify([remoteReview]),{status:200});
+        if (url.includes('/reviews/1234/comments?'))
+            return new Response(JSON.stringify([]),{status:200});
+        throw Error('unexpected URL');
+    }) as typeof fetch);
+    assert.equal(await publisher.findPublished(payload,body,[]),undefined);
+    // Even exact-marker and exact-body spoofing from a different Bot is ignored.
+    remoteReview = {...remoteReview,user:{id:333,type:'Bot'}};
+    assert.equal(await publisher.findPublished(payload,body,[]),undefined);
+    remoteReview = {...remoteReview,user:{id:998,type:'Bot'},body:body.replace('Source review','Altered')};
+    await assert.rejects(publisher.findPublished(payload,body,[]),/inconsistent content/);
+    remoteReview = {...remoteReview,body};
+    assert.equal((await publisher.findPublished(payload,body,[]))?.id,1234);
+});
+
+test('long unrelated reviews do not interfere with verifying a genuine Atlas publication', async () => {
+    const payload = { runId:submission.submissionId, repository, prNumber:84,
+        headSha:sha, verdict:'no_findings', findings:[] };
+    const body = renderReview(payload).body;
+    const reviews = [
+        {id:99,body:'other unrelated review'.repeat(15_000),state:'COMMENTED',
+            commit_id:sha,html_url:result.url,user:{id:200,type:'User'}},
+        {id:1234,body,state:'COMMENTED',
+            commit_id:sha,html_url:result.url,user:{id:998,type:'Bot'}},
+    ];
+    const publisher=new GitHubReviewPublisher({
+        pullRequestReadToken:async()=> 'read-token',
+        pullRequestPublishToken:async()=> 'write-token',
+        reviewPublisherBot:async()=>({id:998,login:'atlas-test[bot]'}),
+    }, (async (url:string)=>{
+        if(url.includes('/reviews?'))return new Response(JSON.stringify(reviews),{status:200});
+        if(url.includes('/reviews/1234/comments?'))return new Response('[]',{status:200});
+        throw Error('unexpected URL');
+    }) as typeof fetch);
+    assert.equal((await publisher.findPublished(payload,body,[]))?.id,1234);
+});
+
+test('reconciliation rejects omitted or altered inline comments, then accepts exact match', async () => {
+    const payload={runId:submission.submissionId,repository,prNumber:84,
+        headSha:sha,verdict:'non_blocking',findings:[]};
+    const body=renderReview(payload).body;
+    const expected=[{path:'src/new.ts',line:15,side:'RIGHT' as const,body:'**SEV3 · Test**\n\nThis needs guarding'}];
+    let remoteInline:any[]=[];
+    const publisher=new GitHubReviewPublisher({
+        pullRequestReadToken:async()=> 'read-token',
+        pullRequestPublishToken:async()=> 'write-token',
+        reviewPublisherBot:async()=>({id:998,login:'atlas-test[bot]'}),
+    }, (async (url:string)=>{
+        if(url.includes('/reviews?'))return new Response(JSON.stringify([{
+            id:1234,body,state:'COMMENTED',commit_id:sha,html_url:result.url,user:{id:998,type:'Bot'},
+        }]),{status:200});
+        if(url.includes('/reviews/1234/comments?'))
+            return new Response(JSON.stringify(remoteInline),{status:200});
+        throw Error('unexpected URL');
+    }) as typeof fetch);
+    await assert.rejects(publisher.findPublished(payload,body,expected),/inline comments differ/);
+    remoteInline=[{...expected[0],body:'altered',user:{id:998,type:'Bot'}}];
+    await assert.rejects(publisher.findPublished(payload,body,expected),/content failed verification/);
+    remoteInline=[{...expected[0],user:{id:333,type:'User'}}];
+    await assert.rejects(publisher.findPublished(payload,body,expected),/content failed verification/);
+    remoteInline=[{...expected[0],user:{id:998,type:'Bot'}}];
+    assert.equal((await publisher.findPublished(payload,body,expected))?.id,1234);
+});
+
+test('verification failure after POST keeps the durable claim and never retries POST', async () => {
+    const {catalog,runs,runId}=await fixture();
+    let posts=0;
+    const {github}=mock({
+        publish:async()=>{posts++;return result;},
+        findPublished:async()=>undefined,
+    });
+    const publisher=new ReviewPublicationService(catalog,github,new Set([repository]));
+    await assert.rejects(publisher.publishRun(runId,false,true,actor),/could not be independently reconciled/);
+    assert.equal(posts,1);
+    const saved=await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id});
+    assert.equal((saved.items[0]!.data.coverage as any).githubPublication.state,'claimed');
+    const retry=await publisher.publishRun(runId,false,true,actor);
+    assert.equal(retry.status,'uncertain');
+    assert.equal(posts,1);
 });

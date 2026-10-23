@@ -4,12 +4,13 @@ import type { GitHubBroker } from '../workspaces/github-broker.js';
 const sha = /^[0-9a-f]{40}$/i;
 const repoPattern = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const id = /^[0-9a-f-]{36}$/i;
-type Access = Pick<GitHubBroker, 'pullRequestReadToken' | 'pullRequestPublishToken'>;
+type Access = Pick<GitHubBroker, 'pullRequestReadToken' | 'pullRequestPublishToken' | 'reviewPublisherBot'>;
 
 export type InlineFinding = { key: string; path: string; line: number; body: string };
 export type PublishFinding = { key: string; severity: string; title: string; description: string; path?: string; line?: number };
 export type PublishPayload = { runId: string; repository: string; prNumber: number; headSha: string; summary?: string; verdict: string; findings: PublishFinding[] };
 type RemoteReview = { id: number; body: string; commit_id: string; html_url: string; state: string };
+export type ExpectedInlineComment = { path: string; line: number; side: 'RIGHT'; body: string };
 
 function safeJson(response: Response): Promise<unknown> {
     return response.json().catch(() => {
@@ -126,29 +127,62 @@ export class GitHubReviewPublisher {
         });
     }
 
-    async findPublished(payload: PublishPayload, marker: string, token?: string): Promise<RemoteReview | undefined> {
+    /** Reconciliation is provenance-aware. A visible marker is NOT a credential:
+     * unrelated authors may copy it into any other review on the same commit.
+     */
+    async findPublished(payload: PublishPayload, expectedBody: string,
+        expectedInline: ExpectedInlineComment[], token?: string): Promise<RemoteReview | undefined> {
+        const marker = renderReview(payload).marker;
+        if (!expectedBody.endsWith(marker))
+            throw new AtlasError('Expected publication body lacks its source marker.', 'CONFLICT');
         const bearer = token ?? await this.broker.pullRequestReadToken(payload.repository);
+        const bot = await this.broker.reviewPublisherBot();
         const matched: RemoteReview[] = [];
         for (let page = 1; page <= 5; page++) {
             const data: any = await this.request(payload.repository, '/pulls/' + payload.prNumber +
                 '/reviews?per_page=100&page=' + page, bearer);
-            if (!Array.isArray(data) || data.length > 100) throw new AtlasError('Incomplete GitHub review list.', 'GITHUB_REQUEST_FAILED');
+            if (!Array.isArray(data) || data.length > 100)
+                throw new AtlasError('Incomplete GitHub review list.', 'GITHUB_REQUEST_FAILED');
             for (const item of data) {
-                if (!(item?.body === null || safeText(item?.body, 35_000)) || !positive(item?.id) ||
-                    !safeText(item?.commit_id, 40) || !safeText(item?.html_url, 500))
-                    throw new AtlasError('Malformed GitHub review list.', 'GITHUB_REQUEST_FAILED');
-                if (typeof item.body === 'string' && item.body.endsWith(marker) &&
-                    item.commit_id.toLowerCase() === payload.headSha.toLowerCase()) {
-                    if (item.state !== 'COMMENTED') throw new AtlasError('Unexpected GitHub review event.', 'CONFLICT');
-                    matched.push(item);
-                }
+                // A large unrelated review is not invalid: only inspect marker-bearing
+                // candidates. Do not let arbitrary reviewers block publication.
+                if (typeof item?.body !== 'string' || !item.body.endsWith(marker)) continue;
+                if (item?.user?.id !== bot.id || item?.user?.type !== 'Bot') continue;
+                if (!positive(item.id) || !safeText(item.commit_id, 40) ||
+                    !safeText(item.html_url, 500) || !sha.test(item.commit_id))
+                    throw new AtlasError('Malformed matching GitHub review.', 'GITHUB_REQUEST_FAILED');
+                if (item.commit_id.toLowerCase() !== payload.headSha.toLowerCase()) continue;
+                if (item.state !== 'COMMENTED' || item.body !== expectedBody)
+                    throw new AtlasError('Atlas App review marker has inconsistent content or state.', 'CONFLICT');
+                await this.verifyInline(payload, item.id, bearer, bot.id, expectedInline);
+                matched.push(item as RemoteReview);
             }
             if (data.length < 100) {
-                if (matched.length > 1) throw new AtlasError('Multiple GitHub reviews with this Atlas run ID.', 'CONFLICT');
+                if (matched.length > 1)
+                    throw new AtlasError('Multiple verified GitHub reviews with this Atlas run ID.', 'CONFLICT');
                 return matched[0];
             }
         }
         throw new AtlasError('GitHub review list pagination bound exceeded.', 'CAPABILITY_UNAVAILABLE');
+    }
+
+    private async verifyInline(payload: PublishPayload, reviewId: number, token: string,
+        botId: number, expected: ExpectedInlineComment[]) {
+        const comments: any = await this.request(payload.repository,
+            '/pulls/' + payload.prNumber + '/reviews/' + reviewId + '/comments?per_page=100&page=1', token);
+        // More than 99 comments requires pagination. Fail closed rather than
+        // accepting a truncated inline comment set.
+        if (!Array.isArray(comments) || comments.length >= 100 || comments.length !== expected.length)
+            throw new AtlasError('GitHub review inline comments differ from the claimed publication.', 'CONFLICT');
+        const used = new Set<number>();
+        for (const want of expected) {
+            const match = comments.find((got: any, i: number) => !used.has(i) &&
+                got?.user?.id === botId && got?.user?.type === 'Bot' &&
+                got.path === want.path && got.line === want.line &&
+                got.side === want.side && got.body === want.body);
+            if (!match) throw new AtlasError('GitHub inline review content failed verification.', 'CONFLICT');
+            used.add(comments.indexOf(match));
+        }
     }
 
     async prepareWrite(repository: string) {

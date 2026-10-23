@@ -244,3 +244,23 @@ test('GitHub review publisher requests only PR-write and validates returned scop
     granted = false;
     await assert.rejects(broker.pullRequestPublishToken(repo), /lacks pull-request write permission/);
 });
+
+test('GitHub App bot identity comes from JWT-authenticated App and durable user ID', async () => {
+    const bot=new GitHubBroker(env,(async (url,options)=>{
+        if(String(url)==='https://api.github.com/app'){
+            assert.match(String((options?.headers as Record<string,string>).Authorization),/^Bearer ey/);
+            return response(200,{id:123456,slug:'atlas-reviewer'});
+        }
+        if(String(url)==='https://api.github.com/users/atlas-reviewer%5Bbot%5D'){
+            assert.match(String((options?.headers as Record<string,string>).Authorization),/^Bearer ey/);
+            return response(200,{id:987654,login:'atlas-reviewer[bot]',type:'Bot'});
+        }
+        throw Error('Unexpected GitHub URL '+url);
+    }) as typeof fetch);
+    assert.deepEqual(await bot.reviewPublisherBot(),{id:987654,login:'atlas-reviewer[bot]'});
+    const mismatched=new GitHubBroker(env,(async (url)=>{
+        if(String(url).endsWith('/app'))return response(200,{id:123456,slug:'atlas-reviewer'});
+        return response(200,{id:987654,login:'someone-else[bot]',type:'Bot'});
+    }) as typeof fetch);
+    await assert.rejects(mismatched.reviewPublisherBot(),/bot identity could not be verified/);
+});
