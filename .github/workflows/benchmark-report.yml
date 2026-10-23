@@ -1,0 +1,28 @@
+# Copy to .github/workflows/benchmark-report.yml in the consuming repository.
+# Replace [CI] with the exact name of your pull_request CI workflow.
+# Pinned to reviewed Benchmark v0.1.0 release. Deliberately upgrade only
+# after reviewing the new immutable release SHA.
+# Never use @main for a workflow receiving an issues/pull-requests write token.
+name: Benchmark PR Report
+
+on:
+  workflow_run:
+    workflows: [Atlas CI]
+    types: [completed]
+
+# The workflow that runs on PR code should use a READ-ONLY token.
+# Only this trusted post-CI workflow needs issues:write.
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  report:
+    if: github.event.workflow_run.event == 'pull_request'
+    uses: affank1020/benchmark/.github/workflows/reusable-report.yml@bff973c94597897c095f76e0538ec145d7ecdc45
+    with:
+      artifact_name: benchmark-junit
+      tests_artifact_name: benchmark-junit
+      coverage_artifact_name: benchmark-lcov

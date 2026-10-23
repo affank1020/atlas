@@ -1,0 +1,129 @@
+# Copy to .github/workflows/benchmark-lifecycle.yml in a consuming repo.
+# Match workflows: [CI] to the existing read-only PR CI workflow name.
+name: Benchmark PR Lifecycle
+
+on:
+  workflow_run:
+    workflows: [Atlas CI]
+    types: [requested, in_progress]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+# Same source identity as the completed-workflow publisher; serialize writes.
+concurrency:
+  group: benchmark-report-${{ github.repository_id }}-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  waiting:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pinned trusted Benchmark matcher
+        uses: actions/checkout@v4
+        with:
+          repository: affank1020/benchmark
+          ref: bff973c94597897c095f76e0538ec145d7ecdc45 # Reviewed Benchmark v0.1.0 release
+          path: benchmark
+          persist-credentials: false
+      - name: Create or refresh waiting comment for current CI attempt
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Trusted workflow_run status: CI is read-only, this job executes no PR code.
+            const { pathToFileURL } = require('url');
+            const policy = await import(pathToFileURL(
+              process.env.GITHUB_WORKSPACE + '/benchmark/src/publish-policy.mjs'
+            ).href);
+            const run = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+            if (run?.event !== 'pull_request' ||
+                !Number.isSafeInteger(run.id) ||
+                !Number.isSafeInteger(run.workflow_id) ||
+                !Number.isSafeInteger(run.run_number) ||
+                !Number.isSafeInteger(run.run_attempt)) {
+              core.notice('Not a valid PR CI run; no waiting comment.');
+              return;
+            }
+            const pr = await policy.resolveRunPr(run, github, context.repo);
+            if (!pr) {
+              core.notice('No uniquely verified open PR for this CI run.');
+              return;
+            }
+            const issue_number = pr.number;
+            const { data: current } = await github.rest.pulls.get({
+              owner, repo, pull_number: issue_number
+            });
+            if (current.base?.repo?.id !== context.payload.repository?.id ||
+                current.base?.repo?.full_name !== owner + '/' + repo ||
+                !policy.matchesRunToPr(run, current)) {
+              core.notice('PR changed before status publication.');
+              return;
+            }
+            // Requested/in_progress events may arrive after CI has already finished
+            // or after a rerun has superseded the triggering attempt.
+            const { data: liveRun } = await github.rest.actions.getWorkflowRun({
+              owner, repo, run_id: run.id
+            });
+            if (liveRun.id !== run.id ||
+                liveRun.workflow_id !== run.workflow_id ||
+                liveRun.event !== 'pull_request' ||
+                liveRun.run_attempt !== run.run_attempt ||
+                liveRun.head_sha !== run.head_sha ||
+                liveRun.head_branch !== run.head_branch ||
+                liveRun.head_repository?.id !== run.head_repository?.id ||
+                liveRun.status === 'completed') {
+              core.notice('CI already finished or has changed; let the completed reporter publish.');
+              return;
+            }
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner, repo, workflow_id: run.workflow_id,
+              head_sha: run.head_sha, event: 'pull_request', per_page: 100
+            });
+            if (!runs.some(candidate =>
+                  candidate.id === run.id &&
+                  candidate.run_attempt === run.run_attempt &&
+                  candidate.workflow_id === run.workflow_id) ||
+                runs.some(candidate =>
+                  candidate.workflow_id === run.workflow_id &&
+                  candidate.head_sha === run.head_sha &&
+                  candidate.event === 'pull_request' &&
+                  (candidate.run_number > run.run_number ||
+                    (candidate.run_number === run.run_number &&
+                     candidate.run_attempt > run.run_attempt)))) {
+              core.notice('A newer PR CI run exists or this CI run was not verified.');
+              return;
+            }
+            const marker = '<!-- benchmark-pr-quality-report -->';
+            const metadata = '<!-- benchmark-head-sha:' + current.head.sha + ' -->';
+            const runMarker = '<!-- benchmark-ci-run:' + run.id + ':' + run.run_attempt + ' -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100
+            });
+            const previous = policy.findOwnedReportComment(comments, marker);
+            // Requested and in_progress can both fire for the same run. A late
+            // event cannot downgrade an already-processing or completed report.
+            if (previous?.body?.includes(metadata) &&
+                previous?.body?.includes(runMarker)) {
+              core.notice('This CI attempt already owns the current comment.');
+              return;
+            }
+            const body = [
+              marker, metadata, runMarker, '<!-- benchmark-state:waiting -->',
+              '## Benchmark · Preparing PR Quality Report',
+              '⏳ **Waiting for CI results**',
+              'CI has been requested or started. Benchmark will update this same comment when results are available.',
+              '[View PR checks](https://github.com/' + owner + '/' + repo + '/pull/' + issue_number + '/checks)'
+            ].join('\n\n');
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: previous.id, body
+              });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

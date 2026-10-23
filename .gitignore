@@ -23,3 +23,6 @@ apps/server/data/media/
 infra/production.env
 
 /apps/server/data/*.json
+
+# Generated Benchmark JUnit and scoped Node-side LCOV artifacts
+/.benchmark/
