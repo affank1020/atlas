@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import datetime as dt
 import fcntl
 import importlib.machinery
 import importlib.util
@@ -31,6 +32,11 @@ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 SHA = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+[.][0-9]+[.][0-9]+[+][0-9a-f]{12}$")
 SAFE_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/nonexistent", "LC_ALL": "C"}
+# Node publishes status every 10 seconds. Allow delayed scheduling, but never
+# sign an arbitrarily old "connected" record or one far in the future.
+HEARTBEAT_MAX_AGE = dt.timedelta(seconds=35)
+HEARTBEAT_FUTURE_SKEW = dt.timedelta(seconds=5)
+UTC_STATUS_TIME = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$")
 
 
 class Refused(RuntimeError):
@@ -119,7 +125,8 @@ def hold_lifecycle_lock(path: Path = LIFECYCLE_LOCK, *, owner_uid: int = 0):
         os.close(fd)
 
 
-def live_pid(status_path: Path = NODE_STATUS, runner=subprocess.run) -> int:
+def live_pid(status_path: Path = NODE_STATUS, runner=subprocess.run,
+             *, now: dt.datetime | None = None) -> int:
     runner(["/usr/bin/systemctl", "is-active", "--quiet", "atlas-node.service"],
            check=True, env=SAFE_ENV)
     result = runner(["/usr/bin/systemctl", "show", "atlas-node.service",
@@ -139,6 +146,19 @@ def live_pid(status_path: Path = NODE_STATUS, runner=subprocess.run) -> int:
     status = json.loads(raw_status)
     if not isinstance(status, dict) or status.get("state") != "connected" or status.get("pid") != pid:
         raise Refused("Live Node PID and connected status are inconsistent.")
+    heartbeat = status.get("updatedAt")
+    if not isinstance(heartbeat, str) or not UTC_STATUS_TIME.fullmatch(heartbeat):
+        raise Refused("Node status has no canonical UTC heartbeat timestamp.")
+    try:
+        updated_at = dt.datetime.strptime(heartbeat, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        raise Refused("Node heartbeat timestamp is invalid.") from None
+    observed_at = now if now is not None else dt.datetime.now(dt.timezone.utc)
+    if observed_at.tzinfo is None:
+        raise Refused("Cannot assess heartbeat freshness without a timezone.")
+    age = observed_at - updated_at
+    if age > HEARTBEAT_MAX_AGE or age < -HEARTBEAT_FUTURE_SKEW:
+        raise Refused("Node connected heartbeat is stale or from the future.")
     return pid
 
 
@@ -209,14 +229,14 @@ def _attest(intent_id: str, challenge: str, *, executor,
             "targetSha256": receipt["targetSha256"],
             "observedPid": pid,
         }
-        if input("Type 'ATTEST " + intent_id +
-                 "' to sign this host snapshot (NOT reconciliation): ") != "ATTEST " + intent_id:
-            raise Refused("Operator declined root evidence signing.")
-        # Recheck local state following interactive confirmation. A later,
-        # Server-issued challenge will also need an expiry/nonce fence.
+        # The operator already confirmed OUTSIDE every lock in attest().
+        # Do not introduce a human-controlled wait in this critical section:
+        # the lifecycle recovery timer and emergency rollback need the flock.
+        # Re-sample immediately before signing, under both exclusive locks.
         if approval.read_installed_version() != expected or pending.exists() or pending.is_symlink():
             raise Refused("Host release or recovery state changed before signing.")
-        fields["observedPid"] = live_pid(runner=runner)
+        if live_pid(runner=runner) != pid:
+            raise Refused("Host Node process changed during root evidence collection.")
         return {**fields, "signature": base64.b64encode(
             signer(signed_bytes(fields), key)).decode("ascii")}
 
@@ -225,6 +245,14 @@ def attest(intent_id: str, challenge: str, *, executor=None,
            key: Path = HOST_KEY, signer=openssl_sign, runner=subprocess.run) -> dict:
     if sys.platform != "linux" or os.geteuid() != 0 or not os.isatty(0):
         raise Refused("Interactive Linux root terminal required.")
+    if not UUID.fullmatch(intent_id) or not SHA.fullmatch(challenge):
+        raise Refused("Canonical intent UUID and 64-character nonce are required.")
+    # A stalled/abandoned operator must NEVER monopolize the lifecycle,
+    # executor or approval ledger locks. Take a fresh, complete host snapshot
+    # only AFTER confirmation, while holding all three locks.
+    if input("Type 'ATTEST " + intent_id +
+             "' to verify and sign host evidence (NOT reconciliation): ") != "ATTEST " + intent_id:
+        raise Refused("Operator declined root evidence signing.")
     executor = executor or import_executor()
     approval = executor.load_approval_module()
     store = approval.ApprovalStore(executor.STATE)
@@ -243,9 +271,9 @@ def attest(intent_id: str, challenge: str, *, executor=None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Refused("Another root-managed update is in progress.") from None
-        # Legacy/manual lifecycle uses this *different* flock, so pin the
-        # active symlink/rollback source for the entire verification and
-        # signing window, including interactive operator confirmation.
+        # Legacy/manual lifecycle uses this different flock. The unbounded
+        # operator prompt has already completed: protect ONLY verification and
+        # signing, so rollback/recover never waits for human confirmation.
         with hold_lifecycle_lock():
             return _attest(intent_id, challenge, executor=executor,
                            key=key, signer=signer, runner=runner)
