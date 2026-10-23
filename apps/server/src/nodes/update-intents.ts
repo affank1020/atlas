@@ -11,7 +11,7 @@ export type NodeUpdateIntent = {
     id: string; nodeId: string;
     installedVersion: string; targetVersion: string;
     targetCommit: string; targetSourceCommit: string; targetSha256: string;
-    status: 'requested' | 'cancelled' | 'expired' | 'claimed';
+    status: 'requested' | 'cancelled' | 'expired' | 'claimed' | 'reconciled';
     createdAt: string; expiresAt: string; resolvedAt: string | null;
     approved: false; executable: false;
     reportedOutcome?: NodeUpdateOutcomeReport;
@@ -26,7 +26,7 @@ export type NodeUpdateOutcomeReport = {
 type Row = {
     id: string; node_id: string; installed_version: string;
     target_version: string; target_commit: string; target_source_commit: string;
-    target_sha256: string; status: 'requested' | 'cancelled' | 'expired' | 'claimed';
+    target_sha256: string; status: 'requested' | 'cancelled' | 'expired' | 'claimed' | 'reconciled';
     created_at: Date; expires_at: Date; resolved_at: Date | null;
     reported_state?: 'activated' | 'requires_reconciliation' | null;
     reported_at?: Date | null;
