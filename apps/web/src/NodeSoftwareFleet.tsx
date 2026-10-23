@@ -177,6 +177,8 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
                         </div>
                         <dl className="node-software-inspector-facts">
                             <div><dt>Installed (Node-reported)</dt><dd>{selected.version || 'Not reported'}</dd></div>
+                            <div><dt>Last Node heartbeat</dt><dd>{selected.lastSeen && Number.isFinite(Date.parse(selected.lastSeen))
+                                ? new Date(selected.lastSeen).toLocaleString() : 'Not recorded'}</dd></div>
                             <div><dt>Latest compatible archive</dt><dd>{catalogueLoading ? 'Checking…' :
                                 selectedRelease ? selectedRelease.version+'+'+selectedRelease.commit : 'Not available'}</dd></div>
                             <div><dt>Release assessment</dt><dd>{versionStatus(selected,catalogue)}</dd></div>
