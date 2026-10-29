@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
 import { CodeReviewsService, codeReviewsApplication, CODE_REVIEWS_PROJECT_ID } from '../apps/server/src/apps/code-reviews.js';
+import { createMcpTransport } from '../apps/server/src/api/mcp/index.js';
+import { footballTrainingApplication } from '../apps/server/src/apps/football-training.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { TransportServices } from '../apps/server/src/server/dispatch.js';
 
 const runsId = '0140b619-4f75-454e-92a3-c8b595c9dee5';
 const findingsId = '17fb7f1e-fd26-415b-a70a-f1ae786b19c6';
@@ -75,4 +80,66 @@ test('Store misconfiguration is reported instead of silently returning zeros', a
         queryRecords: async () => { throw new Error('must not query partial installation'); },
     } as any);
     await assert.rejects(service.overview(), /requires the Review Runs and Review Findings Stores/);
+});
+
+test('Code Reviews operations are visible early in bounded MCP catalogues without a second dispatch path', async () => {
+    const { service, app } = fixture();
+    // Mirror the production registry ordering: the Code Reviews operation
+    // definitions would otherwise appear near the very end of the tool list.
+    const applications = new ApplicationRegistry([
+        footballTrainingApplication({ call: async () => null } as any),
+        codeReviewsApplication(service),
+    ]);
+    const invoked: string[] = [];
+    const server = createMcpTransport({
+        applications,
+        dispatch: async (name: string, input: unknown, _transport: unknown, caller: unknown) => {
+            invoked.push(name);
+            return app.invoke(name, input, caller as any);
+        },
+    } as unknown as TransportServices);
+    const client = new Client({ name: 'code-reviews-mcp-prefix', version: '1' });
+    const [serverConnection, clientConnection] = InMemoryTransport.createLinkedPair();
+    try {
+        await server.connect(serverConnection);
+        await client.connect(clientConnection);
+        const { tools } = await client.listTools();
+        assert.deepEqual(tools.slice(6, 14).map(tool => tool.name), [
+            'code_reviews_overview',
+            'code_reviews_list_runs',
+            'code_reviews_list_findings',
+            'code_reviews_submit_structured',
+            'code_reviews_import_pull_request',
+            'code_reviews_discover_pull_requests',
+            'code_reviews_backfill_pull_requests',
+            'code_reviews_publish_github',
+        ]);
+        assert.equal(new Set(tools.map(tool => tool.name)).size, tools.length,
+            'prioritized tools must not also be registered at the end');
+        const write = tools.find(tool => tool.name === 'code_reviews_submit_structured');
+        assert.ok(write?.inputSchema.properties?.submission,
+            'MCP should retain the structured submission schema');
+        const response = await client.callTool({ name: 'code_reviews_overview', arguments: {} });
+        assert.equal(response.isError, undefined);
+        assert.deepEqual(response.structuredContent?.result, {
+            projectId: CODE_REVIEWS_PROJECT_ID, reviewRuns: 3, findingObservations: 5,
+        });
+        assert.deepEqual(invoked, ['code_reviews_overview'],
+            'the advertised operation must use the existing authenticated dispatch path');
+    } finally {
+        await client.close();
+        await server.close();
+    }
+});
+
+test('MCP fails fast when a partially registered Code Reviews app omits required operations', () => {
+    const applications = new ApplicationRegistry([
+        footballTrainingApplication({ call: async () => null } as any),
+        { type: 'code-reviews', slug: 'code-reviews', name: 'Code Reviews',
+            description: '', tools: [{ name: 'code_reviews_overview', description: '',
+                inputSchema: {}, invoke: async () => ({}) }] },
+    ]);
+    assert.throws(() => createMcpTransport({
+        applications, dispatch: async () => null,
+    } as unknown as TransportServices), /Required Code Reviews MCP tool missing.*code_reviews_list_runs/);
 });
