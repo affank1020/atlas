@@ -25,11 +25,10 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
       async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
 
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
-    // Register the active generalist evaluation flow first, without bypassing the
-    // existing Application input validation, project/Node routing or audit trail.
-    // These are the SAME registry tools, not a second execution path.
+    // Prioritize active Application workflows while retaining the same registry
+    // dispatch path, input validation and authenticated caller context.
     const appTools = services.applications.tools();
-    const priorityNames = [
+    const generalistPriorityNames = [
         'football_generalist_evaluate',
         'football_generalist_baseline',
         'football_generalist_status',
@@ -37,11 +36,31 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         'football_generalist_policies',
         'football_generalist_assessments',
     ];
-    const prioritized = new Set(priorityNames);
-    for (const name of priorityNames) {
+    const codeReviewPriorityNames = [
+        'code_reviews_overview',
+        'code_reviews_list_runs',
+        'code_reviews_list_findings',
+        'code_reviews_submit_structured',
+        'code_reviews_import_pull_request',
+        'code_reviews_discover_pull_requests',
+        'code_reviews_backfill_pull_requests',
+        'code_reviews_publish_github',
+    ];
+    const prioritized = new Set([...generalistPriorityNames, ...codeReviewPriorityNames]);
+    for (const name of generalistPriorityNames) {
         const definition = appTools.find(candidate => candidate.name === name);
         if (!definition) throw new Error(`Required generalist MCP tool missing from Application registry: ${name}`);
         tool(definition.name, definition.description, definition.inputSchema);
+    }
+    // Optional in unit-test and partial Application registries, but complete
+    // when the Code Reviews Application is installed. Fail fast on a partial
+    // installation instead of hiding a missing operation.
+    if (codeReviewPriorityNames.some(name => appTools.some(candidate => candidate.name === name))) {
+        for (const name of codeReviewPriorityNames) {
+            const definition = appTools.find(candidate => candidate.name === name);
+            if (!definition) throw new Error(`Required Code Reviews MCP tool missing from Application registry: ${name}`);
+            tool(definition.name, definition.description, definition.inputSchema);
+        }
     }
 
     for (const name of Object.keys(workspaceSchemas) as WorkspaceToolName[]) tool(name, workspaceDescriptions[name], workspaceSchemas[name].shape);
