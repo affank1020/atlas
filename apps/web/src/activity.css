@@ -35,3 +35,16 @@
 .activity-preview-rows .activity-item summary { padding: 11px 20px; }
 .activity-preview-rows .activity-details { padding: 0 20px 14px; }
 .activity-preview-note { margin: 0; padding: 14px 20px; font-size: 13px; }
+
+/* Project Activity's shortcut needs the same mobile hit area as adjacent buttons. */
+.monitoring-project-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    max-width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    text-align: center;
+}

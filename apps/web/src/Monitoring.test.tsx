@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { MonitoringPage, localDateTimeValue } from './Monitoring';
+import { MonitoringPage, ProjectActivityPanel, localDateTimeValue } from './Monitoring';
 import { callTool } from './api';
 
 vi.mock('./api', () => ({ callTool: vi.fn(), IS_MOCK_MODE: false }));
@@ -305,4 +305,89 @@ test('logical Workspace Activity deep links send server-side logical scope witho
         expect.any(AbortSignal)));
     expect(screen.getByRole('textbox', { name: 'Logical Workspace ID' })).toHaveValue(logicalWorkspaceId);
     expect(await screen.findByText(/0 operations · Filtered on the server/)).toBeInTheDocument();
+});
+
+test('Project Activity uses the bounded safe Monitoring query instead of the legacy auto-refresh feed', async () => {
+    location.hash = '#/projects/project-abc/activity';
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_project_workspaces'
+        ? [] as never : { items: [], total: 0, offset: 0, limit: 30 } as never);
+    render(<ProjectActivityPanel projectId="project-abc" />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: 'project-abc', offset: 0, limit: 30, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    expect(screen.getByRole('region', { name: 'Project activity' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveValue('project-abc');
+    expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveAttribute('readonly');
+    expect(screen.getByRole('link', { name: 'Open in Monitoring →' }))
+        .toHaveAttribute('href', '#/monitoring?tab=activity&projectId=project-abc');
+    expect(screen.getByRole('link', { name: 'Open in Monitoring →' }))
+        .toHaveClass('monitoring-project-link');
+    expect(callTool).not.toHaveBeenCalledWith('get_recent_activity', expect.anything(), expect.anything());
+});
+
+test('Project Activity ignores a forged URL project and keeps the scope through paging and search', async () => {
+    location.hash = '#/projects/project-a/activity?tab=activity&projectId=project-b&offset=30';
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_project_workspaces'
+        ? [] as never : { items: [], total: 90, offset: 30, limit: 30 } as never);
+    render(<ProjectActivityPanel projectId="project-a" />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: 'project-a', offset: 30, limit: 30, groupOperations: true, safeDetails: true,
+    }, expect.any(AbortSignal)));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(location.hash).toContain('#/projects/project-a/activity?tab=activity&projectId=project-a');
+    expect(location.hash).toContain('offset=60');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search activity' }), { target: { value: 'failed task' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(location.hash).toContain('projectId=project-a');
+    expect(location.hash).toContain('search=failed+task');
+    expect(location.hash).not.toContain('offset=');
+});
+
+test('Project Activity restores named Workspace selection and labels safe events without embedded names', async () => {
+    const workspaceId = '11111111-1111-4111-8111-111111111111';
+    const event = { id: 'audit-1', occurredAt: '2026-10-23T11:00:00Z',
+        operation: 'workspace.git_status', projectId: 'project-abc', workspaceId,
+        client: 'chatgpt', resulting: { operation: 'git_status' } };
+    location.hash = '#/projects/project-abc/activity';
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_project_workspaces'
+        ? [{ id: workspaceId, name: 'Research Sandbox' }] as never
+        : { items: [event], total: 1, offset: 0, limit: 30 } as never);
+    const view = render(<ProjectActivityPanel projectId="project-abc" />);
+    expect(await screen.findByRole('option', { name: 'Research Sandbox (11111111)' })).toHaveValue(workspaceId);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('list_project_workspaces',
+        { projectId: 'project-abc', includeArchived: true }, expect.any(AbortSignal)));
+    expect(screen.getByText('ChatGPT · Git · Research Sandbox')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Workspace' }), { target: { value: workspaceId } });
+    expect(location.hash).toContain('workspaceId=11111111-1111-4111-8111-111111111111');
+    expect(location.hash).toContain('projectId=project-abc');
+    view.rerender(<ProjectActivityPanel projectId="project-abc" />);
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
+        projectId: 'project-abc', workspaceId, offset: 0, limit: 30, groupOperations: true,
+        safeDetails: true,
+    }, expect.any(AbortSignal)));
+});
+
+test('Project Activity retains an unknown archived Workspace deep-link when directory names are missing', async () => {
+    const workspaceId = '22222222-2222-4222-8222-222222222222';
+    location.hash = '#/projects/project-abc/activity?tab=activity&workspaceId=' + workspaceId;
+    vi.mocked(callTool).mockImplementation(async name => name === 'list_project_workspaces'
+        ? [] as never : { items: [], total: 0, offset: 0, limit: 30 } as never);
+    render(<ProjectActivityPanel projectId="project-abc" />);
+    expect(await screen.findByRole('option', { name: 'Workspace ' + workspaceId })).toHaveValue(workspaceId);
+    expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveValue(workspaceId);
+    expect(screen.getByRole('textbox', { name: 'Workspace ID' })).toHaveValue(workspaceId);
+});
+
+test('Project Activity keeps ID filtering usable if its Workspace directory lookup fails', async () => {
+    location.hash = '#/projects/project-abc/activity';
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_project_workspaces') throw new Error('Not available');
+        return { items: [], total: 0, offset: 0, limit: 30 } as never;
+    });
+    render(<ProjectActivityPanel projectId="project-abc" />);
+    expect(await screen.findByText('Workspace names unavailable. You can still filter by Workspace ID.'))
+        .toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Workspace ID' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Workspace' })).toBeInTheDocument();
 });
