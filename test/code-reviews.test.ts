@@ -124,8 +124,20 @@ test('Code Reviews operations are visible early in bounded MCP catalogues withou
         assert.deepEqual(response.structuredContent?.result, {
             projectId: CODE_REVIEWS_PROJECT_ID, reviewRuns: 3, findingObservations: 5,
         });
-        assert.deepEqual(invoked, ['code_reviews_overview'],
-            'the advertised operation must use the existing authenticated dispatch path');
+        // Early tool discovery must not turn the authenticated write path
+        // into an unauthenticated operation. No OAuth identity is installed.
+        const rejected = await client.callTool({
+            name: 'code_reviews_submit_structured',
+            arguments: { submission: {
+                submissionId: 'def9bc8e-5c7e-468e-9c3d-ecb886962f83',
+                repository: 'affank1020/atlas', prNumber: 114,
+                headSha: 'a'.repeat(40), verdict: 'inconclusive', findings: [],
+            } },
+        });
+        assert.equal(rejected.isError, true);
+        assert.match(JSON.stringify(rejected.content), /authenticated MCP OAuth caller/);
+        assert.deepEqual(invoked, ['code_reviews_overview', 'code_reviews_submit_structured'],
+            'the advertised operations must use the existing authenticated dispatch path');
     } finally {
         await client.close();
         await server.close();
