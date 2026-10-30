@@ -667,11 +667,46 @@ milestones. Full production acceptance requires checking the connected
 MCP catalogue, current deployed revision, reviewer identity, App permissions,
 initial POST, update PATCH and manual uncertain-response recovery.
 
+### Read-only inline thread anchor preflight
+
+`code_reviews_inline_thread_preflight({repository,prNumber})` analyzes the
+latest saved Code Reviews round to prepare for a **future, separately
+approved** inline discussion publisher. It never sends GitHub review
+comments, replies, thread-resolution mutations or publication claims.
+
+The operation reads the Code Reviews Stores with the existing bounded,
+legacy-case-aware latest-round timeline. When a round exists, it uses a
+repository-scoped GitHub App **read** token to obtain the PR and its changed
+files (one page, fewer than 100 files), then reads the PR again. A closed
+PR or reviewed-head mismatch cannot yield an eligible new thread location;
+a head change *during* inspection fails the entire preview instead.
+
+GitHub's file metadata must be structurally valid. Only `added` or
+`modified` files with complete, parseable unified diff hunks and exact
+`additions`/`deletions` totals can produce an added `RIGHT`-side line
+candidate. Renames, copies, deletions, missing/truncated patches, unchanged
+context lines, unknown locations and collisions where multiple findings
+name the same path/line stay **summary-only**. A full 100-file page is
+treated as incomplete rather than silently ignoring subsequent pages.
+
+The output labels each finding either `candidate` (a structurally
+verified new-side location for the latest current structured review) or
+`summary_only` with a specific reason. Persisting/unverified
+observations and reviewer-asserted resolutions require an existing
+GitHub thread identity and evidence before any reply or resolution action;
+historical imported Markdown never authorizes a new thread. The service
+does **not** match GitHub discussions across commits, claim thread
+ownership, establish the independent reviewer identity, or validate an
+already-published thread inventory. Even a `candidate` is **not permission
+to post**: the future publisher must separately verify author, existing
+GitHub thread IDs/markers, changed head and one-shot durable claims before
+the very first mutating HTTP request. This stage is diagnostic only.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
 ChatGPT connector clients surface only an initial portion of a large MCP tool
-list. Atlas registers Code Reviews' ten operations near the beginning
+list. Atlas registers Code Reviews' application operations near the beginning
 of that list, after the existing priority football generalist tools. This does
 **not** introduce an alternate API, relax authenticated MCP OAuth requirements,
 enable native GitHub publication, or imply that this ChatGPT connection already
