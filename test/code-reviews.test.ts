@@ -7,6 +7,7 @@ import { footballTrainingApplication } from '../apps/server/src/apps/football-tr
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { TransportServices } from '../apps/server/src/server/dispatch.js';
+import { AtlasError } from '../apps/server/src/shared/errors.js';
 
 const runsId = '0140b619-4f75-454e-92a3-c8b595c9dee5';
 const findingsId = '17fb7f1e-fd26-415b-a70a-f1ae786b19c6';
@@ -104,8 +105,9 @@ test('Code Reviews operations are visible early in bounded MCP catalogues withou
         await server.connect(serverConnection);
         await client.connect(clientConnection);
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.slice(6, 14).map(tool => tool.name), [
+        assert.deepEqual(tools.slice(6, 15).map(tool => tool.name), [
             'code_reviews_overview',
+            'code_reviews_pr_summary',
             'code_reviews_list_runs',
             'code_reviews_list_findings',
             'code_reviews_submit_structured',
@@ -154,4 +156,97 @@ test('MCP fails fast when a partially registered Code Reviews app omits required
     assert.throws(() => createMcpTransport({
         applications, dispatch: async () => null,
     } as unknown as TransportServices), /Required Code Reviews MCP tool missing.*code_reviews_list_runs/);
+});
+
+test('PR summary reports latest saved round, exact GitHub head and recorded counts without conflating commits', async () => {
+    const queries: any[] = [];
+    const latestSha = 'a'.repeat(40);
+    const newerSha = 'b'.repeat(40);
+    let head = newerSha;
+    let open = true;
+    const latest = { id: runId, data: {
+        repository: 'affank1020/atlas', prNumber: 114, headSha: latestSha,
+        reviewedAt: '2026-10-30T12:00:00.000Z', verdict: 'non_blocking',
+        counts: { sev1: 0, sev2: 0, sev3: 1, sev4: 0 },
+        coverage: { source: 'atlas_structured_submission' },
+    } };
+    const service = new CodeReviewsService({
+        listStores: async () => [{ id: runsId, name: 'Review Runs' }, { id: findingsId, name: 'Review Findings' }],
+        queryRecords: async (input: any) => {
+            queries.push(input);
+            return { items: [latest], total: 3, limit: 1, offset: 0 };
+        },
+    } as any, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => ({ repository: 'affank1020/atlas', prNumber: 114, headSha: head, open }),
+    });
+    const app = new ApplicationRegistry([codeReviewsApplication(service)]);
+    const outdated = await app.invoke('code_reviews_pr_summary',
+        { repository: 'affank1020/atlas', prNumber: 114 }) as any;
+    assert.equal(outdated.recordedRounds, 3, 'these are rounds, not distinct reviewed commits');
+    assert.equal(outdated.latestReviewHead, 'outdated');
+    assert.equal(outdated.currentHead.state, 'open');
+    assert.equal(outdated.currentHead.sha, newerSha);
+    assert.ok(!Number.isNaN(Date.parse(outdated.currentHead.checkedAt)));
+    assert.deepEqual(outdated.latest, {
+        runId, headSha: latestSha, reviewedAt: latest.data.reviewedAt,
+        verdict: 'non_blocking', source: 'structured',
+        severityCounts: { sev1: 0, sev2: 0, sev3: 1, sev4: 0 },
+    });
+    assert.deepEqual(queries[0], {
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runsId,
+        filters: [
+            { field: 'repository', operator: 'eq', value: 'affank1020/atlas' },
+            { field: 'prNumber', operator: 'eq', value: 114 },
+        ],
+        sort: [{ field: 'reviewedAt', direction: 'desc' }], limit: 1, offset: 0,
+    });
+    head = latestSha;
+    open = false;
+    const closed = await app.invoke('code_reviews_pr_summary', {
+        repository: 'affank1020/atlas', prNumber: 114,
+    }) as any;
+    assert.equal(closed.latestReviewHead, 'current');
+    assert.equal(closed.currentHead.state, 'closed');
+    await assert.rejects(app.invoke('code_reviews_pr_summary',
+        { repository: 'evil/repo?x=1', prNumber: 114 }), /Invalid|regex|match/i);
+    await assert.rejects(app.invoke('code_reviews_pr_summary',
+        { repository: 'affank1020/atlas', prNumber: 0 }), /Invalid|number|greater/i);
+});
+
+test('PR summary retains explicit unknown status for missing, incomplete or unavailable evidence', async () => {
+    const run = { id: runId, data: {
+        headSha: 'a'.repeat(40), reviewedAt: '2026-10-30T12:00:00.000Z',
+        verdict: 'no_findings', coverage: { source: 'github_pull_request_review' },
+    } };
+    let items: any[] = [];
+    let total = 0;
+    let failGitHub = true;
+    const service = new CodeReviewsService({
+        listStores: async () => [{ id: runsId, name: 'Review Runs' }, { id: findingsId, name: 'Review Findings' }],
+        queryRecords: async () => ({ items, total, limit: 1, offset: 0 }),
+    } as any, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => {
+            if (failGitHub) throw new AtlasError('GitHub unavailable', 'GITHUB_UNAVAILABLE');
+            return { repository: 'affank1020/atlas', prNumber: 114, headSha: 'b'.repeat(40), open: true };
+        },
+    });
+    const noRun = await service.prSummary('affank1020/atlas', 114);
+    assert.equal(noRun.latest, null);
+    assert.equal(noRun.latestReviewHead, 'no_stored_review');
+    assert.deepEqual(noRun.currentHead, { state: 'unavailable' });
+    total = 1; items = [run];
+    const historical = await service.prSummary('affank1020/atlas', 114);
+    assert.equal(historical.latest?.source, 'historical');
+    assert.equal(historical.latest?.severityCounts, null, 'inline-only imports are not complete zero-finding verdicts');
+    assert.equal(historical.latestReviewHead, 'unknown');
+    failGitHub = false;
+    assert.equal((await service.prSummary('affank1020/atlas', 114)).latestReviewHead, 'outdated');
+    items = [];
+    await assert.rejects(service.prSummary('affank1020/atlas', 114),
+        /could not be loaded/);
+    items = [{ id: runId, data: { ...run.data, headSha: 'broken' } }];
+    await assert.rejects(service.prSummary('affank1020/atlas', 114),
+        /unsupported fields/);
 });
