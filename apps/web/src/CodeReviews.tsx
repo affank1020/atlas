@@ -21,6 +21,21 @@ type PrSummary = {
     currentHead: { state: 'open' | 'closed' | 'unavailable'; sha?: string; checkedAt?: string };
 };
 
+type PrTimeline = {
+    repository: string; prNumber: number; recordedRounds: number; limit: number; offset: number;
+    hasMore: boolean; storedWindowComplete: boolean; resolutionInferred: false; unlinkedObservations: number;
+    lineages: { key: string; observationsInPage: number; recurrence: string;
+        observations: { runId: string; findingId: string; headSha: string; reviewedAt: string;
+            title: string; severity: string; state: string }[] }[];
+    rounds: { runId: string; headSha: string; reviewedAt: string; verdict: string;
+        source: 'structured' | 'historical' | 'unknown';
+        findingCoverage: 'structured' | 'historical_partial' | 'unknown';
+        totalFindingObservations: number; findingsTruncated: boolean;
+        findings: { id: string; lineageKey: string | null; title: string;
+            severity: string; description: string; state: string; filePath?: string; line?: number }[];
+    }[];
+};
+
 type ReviewFinding = {
     id: string; key: string; severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
     title: string; description: string; state: string; filePath?: string; line?: number;
@@ -86,14 +101,18 @@ function parsedFinding(record: AtlasRecord): ReviewFinding | undefined {
 /** Fetch GitHub head state only after the user opens one PR status panel. */
 function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVersion: number }) {
     const lastRefresh = useRef(refreshVersion);
+    const [timelineOffset, setTimelineOffset] = useState(0);
+    const timeline = useApplicationRead<PrTimeline>('code_reviews_pr_timeline',
+        { repository: entry.repository, prNumber: entry.prNumber, limit: 5, offset: timelineOffset }, true);
     const status = useApplicationRead<PrSummary>('code_reviews_pr_summary',
         { repository: entry.repository, prNumber: entry.prNumber }, true);
     useEffect(() => {
         if (lastRefresh.current !== refreshVersion) {
             lastRefresh.current = refreshVersion;
             void status.refetch();
+            void timeline.refetch();
         }
-    }, [refreshVersion, status.refetch]);
+    }, [refreshVersion, status.refetch, timeline.refetch]);
     const data = status.data;
     return <div className="code-reviews-detail" id={`code-reviews-pr-status-${entry.id}`}>
         <div className="code-reviews-detail-header">
@@ -126,6 +145,76 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                     : ' Full severity totals unavailable.'}
             </p>}
         </>}
+        <div className="code-reviews-timeline" aria-label="Saved PR review timeline">
+            <h4>Saved review timeline</h4>
+            {(timeline.isLoading || timeline.isFetching && !timeline.data) &&
+                <p role="status">Loading saved PR rounds…</p>}
+            {timeline.error && <p className="notice error" role="alert">Unable to load PR timeline: {timeline.error.message}</p>}
+            {timeline.data && !timeline.error && <>
+                <p className="code-reviews-subtitle">
+                    Showing saved rounds {timeline.data.rounds.length ? timelineOffset + 1 : 0}–
+                    {timelineOffset + timeline.data.rounds.length} of {timeline.data.recordedRounds}.
+                    {' '}Lineage counts refer only to this page, not all GitHub reviews.
+                </p>
+                {timeline.data.rounds.length === 0 &&
+                    <p>No rounds saved for this PR on this page. Missing records do not establish a clean review.</p>}
+                {timeline.data.rounds.some(round => round.findingCoverage !== 'structured' || round.findingsTruncated) &&
+                    <p role="status">Some review evidence is partial or truncated. Missing findings cannot be interpreted as fixes.</p>}
+                {timeline.data.lineages.length > 0 && <div className="code-reviews-lineages">
+                    <h5>Explicit finding lineages in this page</h5>
+                    {timeline.data.lineages.map(lineage => <div key={lineage.key} className="code-reviews-lineage">
+                        <strong>{lineage.observations[0]?.title ?? lineage.key}</strong>
+                        <span>{lineage.observationsInPage} observed round{lineage.observationsInPage === 1 ? '' : 's'}
+                            {' '}· {lineage.observationsInPage > 1 ? 'Repeated root-cause identity' : 'No prior match in this page'}
+                        </span>
+                        <div className="code-reviews-subtitle">Key: <code>{lineage.key}</code></div>
+                    </div>)}
+                </div>}
+                {timeline.data.unlinkedObservations > 0 &&
+                    <p>{timeline.data.unlinkedObservations} observation{timeline.data.unlinkedObservations === 1 ? '' : 's'}
+                        {' '}have no explicit cross-round lineage assertion in this page.</p>}
+                <div className="code-reviews-rounds">
+                    {timeline.data.rounds.map((round, index) => <details className="code-reviews-round" key={round.runId}>
+                        <summary>
+                            <strong>Round {timelineOffset + index + 1}</strong>
+                            {' '}· <code>{round.headSha.slice(0, 7)}</code>
+                            {' '}· {Object.hasOwn(verdicts, round.verdict) ? verdicts[round.verdict] : 'Unknown verdict'}
+                            {' '}· {round.totalFindingObservations} saved finding{round.totalFindingObservations === 1 ? '' : 's'}
+                        </summary>
+                        <p className="code-reviews-subtitle">
+                            {new Date(round.reviewedAt).toLocaleString()} ·
+                            {' '}{round.findingCoverage === 'structured' ? 'Atlas structured submission'
+                                : round.findingCoverage === 'historical_partial' ? 'Historical Markdown (partial)'
+                                    : 'Unknown evidence completeness'}
+                            {round.findingsTruncated ? ' · Only first 100 findings shown' : ''}
+                        </p>
+                        {round.findings.length === 0 && <p>No finding observations saved for this round; this is not proof of a fix.</p>}
+                        {round.findings.map(finding => <article key={finding.id} className="code-reviews-finding">
+                            <div className="code-reviews-finding-title">
+                                <strong>{finding.severity.toUpperCase()} · {finding.title}</strong>
+                                <span>Stored label: {finding.state}</span>
+                            </div>
+                            {finding.filePath && <div className="code-reviews-subtitle">
+                                {finding.filePath}{finding.line ? `:${finding.line}` : ''}
+                            </div>}
+                            {finding.lineageKey && <div className="code-reviews-subtitle">
+                                Root-cause key: <code>{finding.lineageKey}</code>
+                            </div>}
+                            <p>{finding.description}</p>
+                        </article>)}
+                    </details>)}
+                </div>
+                <p className="code-reviews-subtitle">No resolution is inferred from an absent finding,
+                    a changed commit or an outdated GitHub discussion. Stored state labels require independent evidence.</p>
+                {timeline.data.recordedRounds > 5 && <div className="code-reviews-pagination">
+                    <button type="button" className="ghost" disabled={timelineOffset === 0 || timeline.isFetching}
+                        onClick={() => setTimelineOffset(Math.max(0, timelineOffset - 5))}>Previous PR rounds</button>
+                    <button type="button" className="ghost"
+                        disabled={!timeline.data.hasMore || timeline.isFetching}
+                        onClick={() => setTimelineOffset(timelineOffset + 5)}>Next PR rounds</button>
+                </div>}
+            </>}
+        </div>
     </div>;
 }
 
