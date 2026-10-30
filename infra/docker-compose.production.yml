@@ -96,10 +96,18 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    # Retain the Atlas application network; add a shared bridge solely for
+    # the future standalone public ingress. No changes to auth/routes here.
+    networks:
+      default: {}
+      vps_ingress:
+        aliases: [atlas-ingress]
+    # Defaults preserve today's public ports. During an explicit migration,
+    # set loopback-only binds in private production.env so vps-infra owns 80/443.
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${ATLAS_INGRESS_HTTP_BIND:-80}:80"
+      - "${ATLAS_INGRESS_HTTPS_BIND:-443}:443"
+      - "${ATLAS_INGRESS_HTTPS_BIND:-443}:443/udp"
     volumes:
       - caddy_data:/data
       - caddy_config:/config
@@ -129,3 +137,8 @@ volumes:
   atlas_media:
   caddy_data:
   caddy_config:
+
+networks:
+  vps_ingress:
+    external: true
+    name: vps_ingress
