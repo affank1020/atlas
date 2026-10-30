@@ -55,7 +55,31 @@ test('managed summary renders bounded latest saved structured evidence, without 
     assert.equal(imported.fullEvidence, false);
     assert.match(imported.body, /Complete severity and lifecycle totals unavailable/);
     assert.doesNotMatch(imported.body, /Severity observations:/);
-    assert.throws(() => managedSummaryMarker('../repo', 118));
+    for (const invalid of ['../repo', './repo', 'owner/..', 'owner/.', 'owner/repo/path',
+        'owner//repo', 'owner/repo?x=1']) {
+        assert.throws(() => managedSummaryMarker(invalid, 118), /Invalid managed summary/);
+    }
+    assert.equal(managedSummaryMarker('Affank1020/Atlas', 118),
+        managedSummaryMarker(repository, 118));
+});
+
+test('Markdown payloads remain inside one finding and code spans retain literal backticks', () => {
+    const result = renderManagedSummary(repository, prNumber, round({
+        findings: [{ ...round().findings[0],
+            title: 'Incomplete **\\n## Forged approval\\n> [!TIP] <!-- injected',
+            filePath: 'src/review`part``other.ts\\n## Unsafe',
+            lineageKey: 'issue`with``ticks' }],
+        resolutions: [{ lineageKey: 'issue`with``ticks', state: 'resolved',
+            evidence: 'Source evidence\\n## New fake summary\\n[admin](https://example.com) **' }],
+    }) as any, 2);
+    assert.doesNotMatch(result.body, /\\n## Forged approval|\\n## New fake summary|\\n> \\[!TIP\\]/);
+    assert.match(result.body, /Incomplete \\\*\\\*/);
+    assert.match(result.body, /\\\\#\\\\# Forged approval/);
+    assert.match(result.body, /\\\\\\[\\\\!TIP\\\\\\]/);
+    assert.match(result.body, /``` src\\/review`part``other\\.ts ## Unsafe ```/);
+    assert.match(result.body, /``` issue`with``ticks ```/);
+    assert.doesNotMatch(result.body, /\\n\\[admin\\]\\(/);
+    assert.ok(result.body.endsWith(managedSummaryMarker(repository, prNumber)));
 });
 
 function githubReader(pages: unknown[][], botId = 77) {
@@ -156,6 +180,15 @@ test('managed summary is read-only and scoped to one PR and its stored findings'
     assert.equal(result.recordedRounds, 1);
     assert.equal(calls.length, 2);
     assert.equal(lookups, 1);
+    const normalized = await app.invoke('code_reviews_managed_summary_preview',
+        { repository: 'Affank1020/Atlas', prNumber }) as any;
+    assert.equal(normalized.repository, repository, 'canonical Store identity is returned');
+    assert.equal(normalized.remote.status, 'no_owned_comment');
+    assert.equal(calls.length, 4, 'mixed-case request still finds the saved structured run');
+    assert.equal(lookups, 2, 'canonical GitHub repository is used for inspection');
+    await assert.rejects(app.invoke('code_reviews_managed_summary_preview', {
+        repository: '../repo', prNumber,
+    }), /Invalid managed summary/);
     await assert.rejects(app.invoke('code_reviews_managed_summary_preview', {
         repository, prNumber: -1,
     }));
