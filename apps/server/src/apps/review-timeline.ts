@@ -102,9 +102,18 @@ export async function readPrTimeline(catalog: Reader, ids: StoreIds,
         });
         if (page.items.length > 100 || page.items.length < Math.min(100, page.total))
             throw new AtlasError('PR timeline returned an incomplete finding page.', 'CAPABILITY_UNAVAILABLE');
+        const coverage = object(record.data.coverage) ? record.data.coverage : {};
+        // Generic Store administration may archive a submitted finding, but
+        // active-only queries then hide it. The immutable submission's count
+        // is the expected cardinality, not the remaining active row count.
+        if (round.source === 'structured' &&
+            (!Number.isSafeInteger(coverage.findingCount) ||
+                (coverage.findingCount as number) < 0 ||
+                (coverage.findingCount as number) > 30 ||
+                coverage.findingCount !== page.total))
+            throw new AtlasError('PR timeline structured review findings are incomplete or have invalid count metadata.', 'CONFLICT');
         round.totalFindingObservations = page.total;
         round.findingsTruncated = page.total > 100;
-        const coverage = object(record.data.coverage) ? record.data.coverage : {};
         round.findings = page.items.map(item => parseFinding(item, round, coverage.submissionId));
         const withinRound = new Set<string>();
         for (const finding of round.findings) {
