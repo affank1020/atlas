@@ -236,7 +236,7 @@ test('old claim can reconcile after a newer structured review is saved',async()=
             verdict:'no_findings',reviewedAt:'2026-10-30T22:00:00.000Z',
             coverage:{source:'atlas_structured_submission',
                 submissionId:'f23e2f50-b72e-4d4d-9050-c57f927bd341',
-                payloadSha256:'c'.repeat(64),findingCount:0,authenticatedCaller:actor}}},
+                payloadSha256:'c'.repeat(64),findingCount:0,authenticatedCaller:actor}}
     });
     assert.equal((await f.publish(true)).status,'published');
     assert.equal(f.events.posts,1);
