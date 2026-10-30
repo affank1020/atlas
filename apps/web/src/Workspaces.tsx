@@ -426,8 +426,8 @@ export function Workspaces() {
                                 <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
                             </button>}
                         </div>
-                        {expanded && <div className="wm-group-checkouts" id={'wm-checkouts-' + group.id}>
-                            {Array.from(checkoutsByNode.entries()).map(([hostId, nodeCheckouts]) => {
+                        {expandable && <div className="wm-group-checkouts" id={'wm-checkouts-' + group.id} hidden={!expanded}>
+                            {expanded && Array.from(checkoutsByNode.entries()).map(([hostId, nodeCheckouts]) => {
                                 const host = nodes.find(node => node.id === hostId);
                                 return <div className="wm-node-group" key={hostId}>
                                     <div className="wm-node-heading">
@@ -448,6 +448,7 @@ export function Workspaces() {
                                     })}</div>
                             </div>;
                         })}
+                        </div>}
                     </div>;
                 })}</div>
                 {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
