@@ -5,6 +5,7 @@ import type { ApplicationDefinition, ApplicationCaller } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
+import { readPrTimeline } from './review-timeline.js';
 import type { ReviewPublicationService } from './review-publication.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
@@ -195,6 +196,12 @@ export class CodeReviewsService {
         };
     }
 
+    /** Bounded saved review rounds and explicitly asserted root-cause continuity, no inference from omissions. */
+    async prTimeline(repository: string, prNumber: number, limit: number, offset: number) {
+        const ids = await this.storeIds();
+        return readPrTimeline(this.catalog, ids, repository, prNumber, limit, offset);
+    }
+
     async overview() {
         const ids = await this.storeIds();
         const [runs, findings] = await Promise.all([
@@ -242,6 +249,19 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     prNumber: z.number().int().min(1).max(1_000_000) },
                 invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
                     service.prSummary(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_pr_timeline',
+                description: 'Read bounded saved PR review rounds and explicitly asserted finding lineage. Missing history and resolutions remain unknown.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    limit: z.number().int().min(1).max(10).default(5),
+                    offset,
+                },
+                invoke: ({ repository, prNumber, limit, offset }: {
+                    repository: string; prNumber: number; limit: number; offset: number;
+                }) => service.prTimeline(repository, prNumber, limit, offset),
             },
             {
                 name: 'code_reviews_list_runs',
