@@ -123,6 +123,22 @@ export class ManagedSummaryPublicationService {
         });
     }
 
+    /** A confirmed pre-write failure cannot have produced a GitHub comment.
+     * Release only this exact claim under the serialized Store transaction.
+     * Never call this after starting POST/PATCH, whose outcome may be ambiguous.
+     */
+    private releaseUnsentClaim(state: AtlasData, id: Identity, runId: string, claimId: string) {
+        const row = this.rows(state, id).find(candidate => candidate.run.id === runId);
+        if (!row || row.status?.state !== 'claimed' || row.status.claimId !== claimId ||
+            !obj(row.run.data.coverage))
+            throw new AtlasError('Pre-write publication claim changed before release.', 'CONFLICT');
+        const { githubManagedSummary: _removed, ...coverage } = row.run.data.coverage;
+        this.catalog.updateRecordInState(state, {
+            projectId: CODE_REVIEWS_PROJECT_ID, storeId: id.runs, recordId: runId,
+            data: { coverage }, client: 'atlas-managed-review-summary',
+        });
+    }
+
     async publish(repository: string, prNumber: number, apply: boolean, caller?: ApplicationCaller) {
         assertStructuredCaller(caller);
         repository = canonicalRepository(repository);
@@ -220,10 +236,26 @@ export class ManagedSummaryPublicationService {
                 throw new AtlasError('Another managed summary publication claimed this PR.', 'CONFLICT');
             this.persist(state, id, inState.first.run, claim);
         });
-        // A claim can NEVER be automatically retransmitted, even if the process
-        // dies, GitHub times out or responds with malformed JSON.
+        // The post-claim head read is still BEFORE any GitHub write attempt.
+        // If it fails, no remote side effect is possible: conditionally release
+        // only this claim so a newly reviewed head is not permanently blocked.
+        // A failed release stays claimed and explicitly requires investigation.
         try {
             await this.github.checkHead(repository, prNumber, proposed.reviewedHeadSha);
+        } catch (headError) {
+            try {
+                await this.catalog.store.transaction(state =>
+                    this.releaseUnsentClaim(state, id, current.run.id, claim.claimId));
+            } catch {
+                return { ...result, status: 'prewrite_recovery_required', dryRun: false,
+                    postedAgain: false,
+                    message: 'No GitHub write was attempted, but its claim could not be released safely.' };
+            }
+            throw headError;
+        }
+        // From here onward a GitHub write MAY have been sent. Never release
+        // or automatically retransmit its claim after any ambiguous outcome.
+        try {
             const sentId = mode === 'create'
                 ? await this.github.post(repository, prNumber, body, token)
                 : await this.github.patch(repository, prior!.commentId!, body, token);
