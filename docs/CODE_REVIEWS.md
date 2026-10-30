@@ -404,8 +404,13 @@ Each returned review round has its reviewed SHA, timestamp, verdict, source
 (`structured`, `historical` or `unknown`), finding completeness
 (`structured`, `historical_partial`, `unknown`), and saved finding
 observations. The result rejects invalid/mismatched Store records instead of
-silently hiding them. Historical Markdown text and missing inline comments
-remain partial source evidence.
+silently hiding them. For structured submissions, the reader also requires
+a well-formed original `coverage.findingCount` (0–30) matching the total of
+active saved findings. Generic Store administration can archive records;
+a missing or changed count therefore fails closed rather than advertising
+complete structured evidence. Historical imports do not carry this
+structured-count guarantee: Markdown and missing inline comments remain
+partial source evidence.
 
 An observation enters a lineage **only** when a structured review explicitly
 submitted a valid `lineageKey` and its stored evidence matches that review's
