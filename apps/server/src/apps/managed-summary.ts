@@ -1,0 +1,174 @@
+import { AtlasError } from '../shared/errors.js';
+import type { CoreService } from '../core/service.js';
+import type { GitHubBroker } from '../workspaces/github-broker.js';
+import { CODE_REVIEWS_PROJECT_ID, REVIEW_FINDINGS_STORE, REVIEW_RUNS_STORE } from './review-import.js';
+import { readPrTimeline } from './review-timeline.js';
+
+const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const sha = /^[a-f0-9]{40}$/i;
+const safeNumber = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+const safeText = (value: unknown, max: number): value is string =>
+    typeof value === 'string' && value.length <= max;
+const clean = (value: string, max: number) =>
+    value.replaceAll('<!--', '&lt;!--').replaceAll('\r', ' ').slice(0, max);
+const record = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+
+type Reader = Pick<CoreService, 'listStores' | 'queryRecords'>;
+type Bot = Pick<GitHubBroker, 'pullRequestReadToken' | 'reviewPublisherBot'>;
+type Round = Awaited<ReturnType<typeof readPrTimeline>>['rounds'][number];
+
+/** Stable identity for the PR-level comment, distinct from the legacy per-run review marker. */
+export function managedSummaryMarker(repository: string, prNumber: number) {
+    if (!repositoryPattern.test(repository) || !Number.isSafeInteger(prNumber) ||
+        prNumber < 1 || prNumber > 1_000_000)
+        throw new AtlasError('Invalid managed summary PR identity.', 'INVALID_REQUEST');
+    return `<!-- atlas-code-reviews-managed-summary:v1:${repository.toLowerCase()}#${prNumber} -->`;
+}
+
+/** The latest *saved* round, not a claim of exhaustive GitHub review history.
+ * Explicit round-level lifecycle outcomes are reviewer assertions, not verified fixes.
+ */
+export function renderManagedSummary(repository: string, prNumber: number, round: Round, savedRounds: number) {
+    const marker = managedSummaryMarker(repository, prNumber);
+    if (!sha.test(round.headSha) || !Number.isFinite(Date.parse(round.reviewedAt)))
+        throw new AtlasError('Invalid stored review for managed summary.', 'CONFLICT');
+    const full = round.source === 'structured' && !round.findingsTruncated;
+    const counts = { sev1: 0, sev2: 0, sev3: 0, sev4: 0, new: 0, persisting: 0, unverified: 0 };
+    for (const finding of round.findings) {
+        counts[finding.severity]++;
+        if (finding.state === 'new' || finding.state === 'persisting' || finding.state === 'unverified')
+            counts[finding.state]++;
+    }
+    const resolved = round.resolutions.length;
+    const lines = [
+        '## Atlas Code Reviews · PR #' + prNumber,
+        '',
+        '**Latest saved round:** `' + round.headSha.slice(0, 12) + '` · ' +
+            clean(round.verdict, 64) + ' · ' + clean(round.reviewedAt, 50),
+        '**Stored history:** ' + savedRounds + ' round' + (savedRounds === 1 ? '' : 's') +
+            ' recorded in Atlas (not an exhaustive GitHub history).',
+        '**Evidence:** ' + (full ? 'Structured Atlas submission' :
+            round.source === 'historical' ? 'Historical import — partial/unverified' : 'Unknown or partial evidence'),
+        '',
+        '### Latest recorded round',
+        ...(full ? [
+            'Severity observations: Sev1 ' + counts.sev1 + ' · Sev2 ' + counts.sev2 +
+                ' · Sev3 ' + counts.sev3 + ' · Sev4 ' + counts.sev4,
+            'Finding labels: new ' + counts.new + ' · persisting ' + counts.persisting +
+                ' · unverified ' + counts.unverified + ' · reviewer-asserted resolved ' + resolved,
+        ] : ['Complete severity and lifecycle totals unavailable for this round.']),
+        '',
+        '#### Observations',
+        ...(round.findings.length ? round.findings.slice(0, 30).map(finding =>
+            '- **' + finding.severity.toUpperCase() + ' · ' + clean(finding.title, 200) + '**' +
+            ' (' + clean(finding.state, 20) + ')' +
+            (finding.filePath ? ' — `' + clean(finding.filePath, 1_024).replaceAll('`', '\\`') + '`' : '') +
+            (finding.line ? ':' + finding.line : '') +
+            (finding.lineageKey ? ' · lineage `' + clean(finding.lineageKey, 128) + '`' : '')) :
+            ['No saved observations in this round; absence is not evidence of a fix.']),
+        ...(round.resolutions.length ? [
+            '', '#### Reviewer-asserted resolutions',
+            ...round.resolutions.map(item => '- `' + clean(item.lineageKey, 128) + '`: ' + clean(item.evidence, 900)),
+        ] : []),
+        '',
+        '_This is a read-only preview of saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
+        '',
+        marker,
+    ];
+    const body = lines.join('\n');
+    if (body.length > 26_000) throw new AtlasError('Managed summary exceeds safe GitHub body size.', 'CAPABILITY_UNAVAILABLE');
+    return { body, marker, fullEvidence: full, reviewedHeadSha: round.headSha,
+        runId: round.runId, recordedRounds: savedRounds };
+}
+
+type MatchingComment = { id: number; body: string; url: string };
+/** Read only. A marker is not ownership: verify the actual App Bot user ID.
+ * Never accept a partial list as proof that a managed summary does not exist.
+ */
+export class GitHubManagedSummaryReader {
+    constructor(private readonly broker: Bot, private readonly http: typeof fetch = fetch) {}
+
+    async inspect(repository: string, prNumber: number, expectedBody: string) {
+        const marker = managedSummaryMarker(repository, prNumber);
+        if (!expectedBody.endsWith(marker) || expectedBody.split(marker).length !== 2)
+            throw new AtlasError('Managed summary preview has an invalid identity marker.', 'CONFLICT');
+        const token = await this.broker.pullRequestReadToken(repository);
+        const bot = await this.broker.reviewPublisherBot(repository);
+        if (!safeNumber(bot.id))
+            throw new AtlasError('GitHub App bot identity could not be verified.', 'GITHUB_REQUEST_FAILED');
+
+        const matched: MatchingComment[] = [];
+        for (let page = 1; page <= 5; page++) {
+            let response: Response;
+            try {
+                response = await this.http('https://api.github.com/repos/' + repository +
+                    '/issues/' + prNumber + '/comments?per_page=100&page=' + page, {
+                    method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000),
+                    headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json',
+                        'X-GitHub-Api-Version': '2022-11-28' },
+                });
+            } catch {
+                throw new AtlasError('GitHub managed comment lookup is unavailable.', 'GITHUB_UNAVAILABLE');
+            }
+            if (!response.ok)
+                throw new AtlasError('GitHub managed comment lookup returned HTTP ' +
+                    response.status + '.', 'GITHUB_REQUEST_FAILED');
+            let data: unknown;
+            try { data = await response.json(); }
+            catch { throw new AtlasError('GitHub managed comment lookup returned invalid JSON.', 'GITHUB_REQUEST_FAILED'); }
+            if (!Array.isArray(data) || data.length > 100)
+                throw new AtlasError('Incomplete GitHub PR comment list.', 'GITHUB_REQUEST_FAILED');
+
+            for (const value of data) {
+                if (!record(value) || typeof value.body !== 'string' || !value.body.includes(marker))
+                    continue;
+                // Another GitHub user copying this marker is not proof of ownership.
+                const author = record(value.user) ? value.user : {};
+                if (author.id !== bot.id || author.type !== 'Bot') continue;
+                if (!safeNumber(value.id) || !safeText(value.body, 65_000) ||
+                    !value.body.endsWith(marker) || value.body.split(marker).length !== 2)
+                    throw new AtlasError('App-owned managed summary has invalid identity or content.', 'CONFLICT');
+                matched.push({ id: value.id, body: value.body,
+                    url: `https://github.com/${repository}/pull/${prNumber}#issuecomment-${value.id}` });
+            }
+            if (data.length < 100) {
+                if (matched.length > 1)
+                    throw new AtlasError('Multiple App-owned managed PR summaries exist.', 'CONFLICT');
+                const found = matched[0];
+                return found ? { status: found.body === expectedBody ? 'current' : 'needs_update',
+                    commentId: found.id, commentUrl: found.url } :
+                    { status: 'no_owned_comment' };
+            }
+        }
+        throw new AtlasError('GitHub PR comments exceed safe inspection window.', 'CAPABILITY_UNAVAILABLE');
+    }
+}
+
+/** Read-only preflight for a future one-comment-per-PR publisher. Does not create
+ * durable claims, upload anything or enable the existing per-run publisher.
+ */
+export class ManagedSummaryPreviewService {
+    constructor(private readonly catalog: Reader,
+        private readonly github: Pick<GitHubManagedSummaryReader, 'inspect'>) {}
+    async preview(repository: string, prNumber: number) {
+        managedSummaryMarker(repository, prNumber);
+        const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
+        const runs = stores.find(s => s.name === REVIEW_RUNS_STORE);
+        const findings = stores.find(s => s.name === REVIEW_FINDINGS_STORE);
+        if (!runs || !findings)
+            throw new AtlasError('Code Reviews Stores unavailable.', 'CAPABILITY_UNAVAILABLE');
+        const saved = await readPrTimeline(this.catalog, { runs: runs.id, findings: findings.id },
+            repository, prNumber, 1, 0);
+        const latest = saved.rounds[0];
+        if (!latest) return { repository, prNumber, recordedRounds: saved.recordedRounds,
+            status: 'no_saved_review', publishSupported: false, dryRun: true };
+        const rendered = renderManagedSummary(repository, prNumber, latest, saved.recordedRounds);
+        const remote = await this.github.inspect(repository, prNumber, rendered.body);
+        return { repository, prNumber, dryRun: true, publishSupported: false,
+            ...rendered, remote, source: latest.source, previewBody: rendered.body,
+            // Even a current owned comment is not proof of a durable publish receipt.
+            publicationVerified: false };
+    }
+}
