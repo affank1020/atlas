@@ -134,9 +134,7 @@ export class InlineRootPublicationService {
         if (!target || !match || !('lineageKey' in target) || !target.lineageKey ||
             !('lineageKey' in match) || match.lineageKey !== target.lineageKey ||
             typeof finding.data.filePath !== 'string' || !positive(finding.data.line) ||
-            target.classification !== 'candidate' ||
-            target.path !== finding.data.filePath || target.line !== finding.data.line ||
-            match.state !== 'no_owned_thread')
+            target.path !== finding.data.filePath || target.line !== finding.data.line)
             throw new AtlasError('Finding has no verified new inline root target or already has a thread.', 'CONFLICT');
         const evidence = finding.data.evidence;
         if (!obj(evidence) || evidence.source !== 'atlas_structured_submission' ||
@@ -155,6 +153,9 @@ export class InlineRootPublicationService {
             throw new AtlasError('Multiple inline publication claims share one lineage.', 'CONFLICT');
         if (claimed[0]?.claim?.marker !== undefined && claimed[0].claim.marker !== marker)
             throw new AtlasError('Inline root publication claim has mismatched lineage.', 'CONFLICT');
+        if (!claimed.length && (target.classification !== 'candidate' ||
+            match.state !== 'no_owned_thread'))
+            throw new AtlasError('New inline root requires a current unoccupied diff anchor.', 'CONFLICT');
         const body = render(finding, marker);
         return { run, finding, marker, body, bodySha256: sha(body),
             prior: claimed[0]?.claim, priorFinding: claimed[0]?.item };
