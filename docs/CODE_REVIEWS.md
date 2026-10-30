@@ -333,7 +333,13 @@ Every persisted assessment records its supplied evidence, the verified
 reviewed SHA and the server timestamp. This is an **account-attributed reviewer
 claim**, not independent proof that the code is fixed, and it does not close
 or resolve GitHub threads, publish a review, modify PR permissions, or
-automatically reclassify the previous observation.
+automatically reclassify the previous observation. The existing
+`code_reviews_publish_github` single-review COMMENT publisher explicitly
+**rejects** structured runs containing these new lifecycle assertions,
+including preview: it cannot render resolution evidence or safely reply
+inside existing GitHub inline threads. Wait for the separately reviewed
+managed-summary/thread publisher; do not double-publish through the old
+plugin or Atlas's legacy publisher.
 
 The PR timeline now returns explicit `round.resolutions`, optional
 `finding.lifecycleAssessment` and page-scoped lineage
