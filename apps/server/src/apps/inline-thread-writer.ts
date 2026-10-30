@@ -12,6 +12,17 @@ export type InlineRootTarget = {
     headSha: string; path: string; line: number;
 };
 
+/** An explicit GitHub client rejection of an initial POST, not a timeout or
+ * server error. Even this is insufficient to clear a durable claim until a
+ * separate, complete Bot-owned thread inventory confirms no matching root.
+ */
+export class GitHubInlineRootRejectedError extends AtlasError {
+    constructor(readonly httpStatus: 403 | 422) {
+        super('GitHub explicitly rejected initial inline root POST (HTTP ' +
+            httpStatus + ').', 'GITHUB_REQUEST_FAILED');
+    }
+}
+
 /** A scoped GitHub REST writer. Its response is NEVER a durable receipt:
  * the caller independently re-reads the verified Bot-owned root inventory.
  */
@@ -36,8 +47,15 @@ export class GitHubInlineRootWriter {
         } catch {
             throw new AtlasError('GitHub inline write request outcome is uncertain.', 'GITHUB_UNAVAILABLE');
         }
-        if (!response.ok)
-            throw new AtlasError('GitHub inline endpoint returned HTTP ' + response.status + '.', 'GITHUB_REQUEST_FAILED');
+        if (!response.ok) {
+            // Strict status allowlist: do not assume a 5xx response, network
+            // timeout, malformed response or unexpected status means no write.
+            // Only the initial POST can produce this typed rejection.
+            if (method === 'POST' && (response.status === 403 || response.status === 422))
+                throw new GitHubInlineRootRejectedError(response.status);
+            throw new AtlasError('GitHub inline endpoint returned HTTP ' +
+                response.status + '.', 'GITHUB_REQUEST_FAILED');
+        }
         let data: unknown;
         try { data = await response.json(); }
         catch { throw new AtlasError('GitHub inline endpoint returned malformed JSON.', 'GITHUB_REQUEST_FAILED'); }
