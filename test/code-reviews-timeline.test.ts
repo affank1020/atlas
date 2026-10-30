@@ -186,7 +186,8 @@ test('malformed, mismatched and duplicate lineage observations fail closed', asy
     await assert.rejects(duplicate.app.invoke('code_reviews_pr_timeline',
         { repository: repo, prNumber: 116 }), /duplicate lineage/i);
     const crossRun = fixture({ rounds: [rounds[0]], findings: {
-        [ids[0]]: [observation(ids[1], submissionB, '1', 'same-root')],
+        [ids[0]]: [observation(ids[1], submissionB, '1', 'same-root'),
+            observation(ids[0], submissionB, '2')],
     } });
     await assert.rejects(crossRun.app.invoke('code_reviews_pr_timeline',
         { repository: repo, prNumber: 116 }), /mismatched finding/i);
