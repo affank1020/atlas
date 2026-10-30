@@ -25,7 +25,6 @@ const positive = (x: unknown): x is number =>
     typeof x === 'number' && Number.isSafeInteger(x) && x > 0;
 const digest = (x: unknown) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const hash = (x: string) => createHash('sha256').update(x).digest('hex');
-const markerPattern = /^<!-- atlas-code-reviews-(?:thread|reply):v1:[0-9a-f]{64} -->$/;
 const escapeMarkdown = (x: string, max: number) => x.slice(0, max)
     .replace(/[\r\n\t\u2028\u2029]/g, ' ')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
