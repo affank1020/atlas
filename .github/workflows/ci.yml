@@ -46,6 +46,29 @@ jobs:
             echo "::error::Local Atlas data snapshots must never be committed."
             exit 1
           fi
+      - name: Validate both Atlas ingress Caddy modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext ci-test-password)"
+          for site in atlas.affankhan.dev :8080; do
+            docker run --rm \
+              -e ATLAS_SITE_ADDRESS="$site" \
+              -e ATLAS_ADMIN_USER=ci-user \
+              -e ATLAS_ADMIN_PASSWORD_HASH="$hash" \
+              -v "$PWD/infra/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
+              caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+          done
+      - name: Validate production Compose structure
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+          DATABASE_URL: postgresql://atlas:ci-postgres@postgres:5432/atlas
+          ATLAS_SITE_ADDRESS: atlas.affankhan.dev
+          ATLAS_ADMIN_USER: ci-user
+          ATLAS_ADMIN_PASSWORD_HASH: ci-password-hash
+          ATLAS_WORKSPACE_ORIGINS: https://atlas.affankhan.dev
+        run: docker compose -f infra/docker-compose.production.yml config --quiet
       - name: Install dependencies
         run: npm ci
       - name: Test server, node, and web
