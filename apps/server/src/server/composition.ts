@@ -36,6 +36,7 @@ import { GitHubManagedSummaryReader, ManagedSummaryPreviewService } from '../app
 import { GitHubManagedSummaryWriter } from '../apps/managed-summary-github.js';
 import { ManagedSummaryPublicationService } from '../apps/managed-summary-publication.js';
 import { GitHubInlineDiffReader, InlineThreadPreflightService } from '../apps/inline-thread-preflight.js';
+import { GitHubInlineThreadReader, InlineThreadInventoryService } from '../apps/inline-thread-inventory.js';
 import { GitHubBroker } from '../workspaces/github-broker.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
@@ -79,8 +80,9 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const managedPublisher = new ManagedSummaryPublicationService(catalog, managedSummary,
         new GitHubManagedSummaryWriter(githubBroker), config.codeReviews.managedSummaryRepositories);
     const inlinePreflight = new InlineThreadPreflightService(catalog, new GitHubInlineDiffReader(githubBroker));
+    const inlineInventory = new InlineThreadInventoryService(catalog, new GitHubInlineThreadReader(githubBroker));
     const codeReviews = new CodeReviewsService(catalog, new GitHubReviewHistoryReader(githubBroker),
-        config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher, inlinePreflight);
+        config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher, inlinePreflight, inlineInventory);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
     const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
