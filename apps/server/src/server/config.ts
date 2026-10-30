@@ -116,6 +116,21 @@ export function loadInlineRootRepositories(env: NodeJS.ProcessEnv = process.env)
     return new Set(values);
 }
 
+/** Separate deny-by-default reply allowlist. Initial root opt-in alone
+ * must never authorize follow-up mutations.
+ */
+export function loadInlineReplyRepositories(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const raw = env.ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES?.trim() ?? '';
+    if (!raw) return new Set();
+    const values = raw.split(',').map(value => value.trim().toLowerCase());
+    if (values.length > 30 || values.some(value =>
+        !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(value) ||
+        value.split('/').some(segment => segment === '.' || segment === '..')) ||
+        new Set(values).size !== values.length)
+        throw new Error('ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES requires distinct owner/repo pairs.');
+    return new Set(values);
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -157,7 +172,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         codeReviews: { trustedPublishers: loadReviewPublisherTrust(env),
             publishRepositories: loadCodeReviewPublishRepositories(env),
             managedSummaryRepositories: loadManagedSummaryRepositories(env),
-            inlineRootRepositories: loadInlineRootRepositories(env) },
+            inlineRootRepositories: loadInlineRootRepositories(env),
+            inlineReplyRepositories: loadInlineReplyRepositories(env) },
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }
