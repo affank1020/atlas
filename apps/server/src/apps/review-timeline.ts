@@ -6,8 +6,15 @@ import { CODE_REVIEWS_PROJECT_ID } from './review-import.js';
 type Reader = Pick<CoreService, 'queryRecords'>;
 type StoreIds = { runs: string; findings: string };
 type Origin = 'structured' | 'historical' | 'unknown';
+type LifecycleAssessment = {
+    state: 'persisting' | 'unverified'; evidence: string; assertedAt: string; assessedHeadSha: string;
+};
+type Resolution = {
+    lineageKey: string; state: 'resolved'; evidence: string; assertedAt: string; assessedHeadSha: string;
+};
 type Observation = {
     id: string; runId: string; findingKey: string; lineageKey: string | null;
+    lifecycleAssessment?: LifecycleAssessment;
     severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
     title: string; description: string; state: 'new' | 'persisting' | 'resolved' | 'unverified';
     filePath?: string; line?: number;
@@ -16,6 +23,7 @@ type Round = {
     runId: string; headSha: string; reviewedAt: string; verdict: string; source: Origin;
     findingCoverage: 'structured' | 'historical_partial' | 'unknown';
     totalFindingObservations: number; findingsTruncated: boolean; findings: Observation[];
+    resolutions: Resolution[];
 };
 const sha = /^[a-f0-9]{40}$/i;
 const key = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
@@ -24,6 +32,8 @@ const severities = new Set(['sev1', 'sev2', 'sev3', 'sev4']);
 const states = new Set(['new', 'persisting', 'resolved', 'unverified']);
 const object = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
+const validEvidence = (v: unknown): v is string =>
+    typeof v === 'string' && v.length >= 20 && v.length <= 4_000 && !!v.trim();
 
 function parseRound(record: AtlasRecord, repository: string, prNumber: number): Round {
     const data = record.data;
@@ -35,12 +45,30 @@ function parseRound(record: AtlasRecord, repository: string, prNumber: number): 
     const coverage = object(data.coverage) ? data.coverage : {};
     const source: Origin = coverage.source === 'atlas_structured_submission' ? 'structured'
         : coverage.source === 'github_pull_request_review' ? 'historical' : 'unknown';
+    const rawResolutions = coverage.lifecycleResolutions;
+    if (rawResolutions !== undefined &&
+        (source !== 'structured' || !Array.isArray(rawResolutions) || rawResolutions.length > 30))
+        throw new AtlasError('PR timeline contains unsupported resolution assertions.', 'CONFLICT');
+    const resolutionKeys = new Set<string>();
+    const resolutions = (rawResolutions ?? []).map((value: unknown) => {
+        if (!object(value) || value.state !== 'resolved' ||
+            typeof value.lineageKey !== 'string' || !key.test(value.lineageKey) ||
+            !validEvidence(value.evidence) ||
+            value.assessmentSource !== 'authenticated_structured_submission' ||
+            value.assessedHeadSha !== data.headSha || value.assertedAt !== data.reviewedAt ||
+            resolutionKeys.has(value.lineageKey))
+            throw new AtlasError('PR timeline contains invalid or duplicate resolution assertions.', 'CONFLICT');
+        resolutionKeys.add(value.lineageKey);
+        return { state: 'resolved' as const, lineageKey: value.lineageKey,
+            evidence: value.evidence, assertedAt: value.assertedAt,
+            assessedHeadSha: value.assessedHeadSha };
+    });
     return {
         runId: record.id, headSha: data.headSha.toLowerCase(),
         reviewedAt: data.reviewedAt, verdict: String(data.verdict), source,
         findingCoverage: source === 'structured' ? 'structured'
             : source === 'historical' ? 'historical_partial' : 'unknown',
-        totalFindingObservations: 0, findingsTruncated: false, findings: [],
+        totalFindingObservations: 0, findingsTruncated: false, findings: [], resolutions,
     };
 }
 
@@ -66,11 +94,30 @@ function parseFinding(record: AtlasRecord, round: Round, submissionId: unknown):
         evidence.source === 'atlas_structured_submission';
     if (explicit !== undefined && (!trustedNamespace || typeof explicit !== 'string' || !key.test(explicit)))
         throw new AtlasError('PR timeline contains an unsupported lineage assertion.', 'CAPABILITY_UNAVAILABLE');
+    const assessment = evidence.lifecycleAssessment;
+    // Stored state is not evidence of an actual re-review. Explicit structured
+    // outcomes require a signed-in-submission evidence assertion at this SHA.
+    if (round.source === 'structured' &&
+        (d.state === 'persisting' || d.state === 'unverified' || assessment !== undefined) &&
+        (!trustedNamespace || typeof explicit !== 'string' || !key.test(explicit) ||
+         !object(assessment) || assessment.state !== d.state ||
+         !validEvidence(assessment.evidence) ||
+         assessment.assessmentSource !== 'authenticated_structured_submission' ||
+         assessment.assessedHeadSha !== round.headSha ||
+         assessment.assertedAt !== round.reviewedAt))
+        throw new AtlasError('PR timeline contains an unsupported finding lifecycle assessment.', 'CONFLICT');
     return {
         id: record.id, runId: round.runId, findingKey: d.findingKey,
         lineageKey: trustedNamespace && typeof explicit === 'string' ? explicit : null,
         severity: d.severity as Observation['severity'], title: d.title,
         description: d.description, state: d.state as Observation['state'],
+        ...(assessment && object(assessment) && {
+            lifecycleAssessment: {
+                state: assessment.state as LifecycleAssessment['state'],
+                evidence: assessment.evidence as string, assertedAt: assessment.assertedAt as string,
+                assessedHeadSha: assessment.assessedHeadSha as string,
+            },
+        }),
         ...(typeof d.filePath === 'string' && { filePath: d.filePath }),
         ...(typeof d.line === 'number' && { line: d.line }),
     };
@@ -123,23 +170,41 @@ export async function readPrTimeline(catalog: Reader, ids: StoreIds,
                 withinRound.add(finding.lineageKey);
             }
         }
+        if (round.resolutions.some(item => withinRound.has(item.lineageKey)))
+            throw new AtlasError('PR timeline cannot resolve an issue observed in the same round.', 'CONFLICT');
         return round;
     }));
 
+    type Outcome = { runId: string; headSha: string; assertedAt: string;
+        state: 'resolved' | 'persisting' | 'unverified'; evidence: string };
     const grouped = new Map<string, { key: string; observations: {
         runId: string; findingId: string; headSha: string; reviewedAt: string;
         severity: string; title: string; state: string;
-    }[] }>();
+    }[]; assessments: Outcome[] }>();
+    const entry = (lineage: string) => {
+        if (!grouped.has(lineage))
+            grouped.set(lineage, { key: lineage, observations: [], assessments: [] });
+        return grouped.get(lineage)!;
+    };
     let unlinkedObservations = 0;
     for (const round of rounds) for (const finding of round.findings) {
         if (!finding.lineageKey) { unlinkedObservations++; continue; }
-        if (!grouped.has(finding.lineageKey))
-            grouped.set(finding.lineageKey, { key: finding.lineageKey, observations: [] });
-        grouped.get(finding.lineageKey)!.observations.push({
+        const group = entry(finding.lineageKey);
+        group.observations.push({
             runId: round.runId, findingId: finding.id, headSha: round.headSha,
             reviewedAt: round.reviewedAt, severity: finding.severity,
             title: finding.title, state: finding.state,
         });
+        if (finding.lifecycleAssessment) {
+            group.assessments.push({ runId: round.runId, headSha: round.headSha,
+                assertedAt: finding.lifecycleAssessment.assertedAt,
+                state: finding.lifecycleAssessment.state,
+                evidence: finding.lifecycleAssessment.evidence });
+        }
+    }
+    for (const round of rounds) for (const event of round.resolutions) {
+        entry(event.lineageKey).assessments.push({ runId: round.runId, headSha: round.headSha,
+            assertedAt: event.assertedAt, state: 'resolved', evidence: event.evidence });
     }
     const more = offset + rounds.length < saved.total;
     return {
@@ -149,8 +214,12 @@ export async function readPrTimeline(catalog: Reader, ids: StoreIds,
         rounds, unlinkedObservations,
         lineages: [...grouped.values()].map(item => ({
             ...item, observationsInPage: item.observations.length,
+            // Outcomes are reviewer assertions, not server-verified code fixes.
+            latestAssessmentInPage: item.assessments.length
+                ? [...item.assessments].sort((a, b) =>
+                    b.assertedAt.localeCompare(a.assertedAt))[0] : null,
             recurrence: item.observations.length > 1 ? 'observed_multiple_times_in_page'
-                : 'observed_once_in_page',
+                : item.observations.length ? 'observed_once_in_page' : 'no_observation_in_page',
         })),
         // Missing observations never prove a fix, and imported Markdown is partial.
         resolutionInferred: false,
