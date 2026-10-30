@@ -847,7 +847,10 @@ Enabling initial inline-root publication or managed summaries does not
 enable replies. Before preparing any reply, Atlas requires the latest
 complete native structured review, a new reviewed commit, an explicitly
 trusted shared lineage, and a `persisting` observation carrying its
-reviewer-submitted assessment/evidence for that commit. The root must
+reviewer-submitted assessment/evidence for that commit. A fresh submission
+ID on the same reviewed commit does **not** permit another reply for
+that lineage when a reply has already been claimed for the same SHA.
+The root must
 have a saved `published` first-thread claim in an *older* review and
 be independently verified in the fully paginated GitHub review-comment
 inventory: Bot account, root ID, marker, original SHA, path, line and exact
