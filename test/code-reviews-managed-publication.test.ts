@@ -48,10 +48,10 @@ async function fixture() {
             { name: 'evidence', type: 'object' },
         ],
     });
-    async function addRound(timestamp: string, identity = repository) {
+    async function addRound(timestamp: string, identity = repository, reviewedHead = head) {
         return catalog.createRecord({ projectId: CODE_REVIEWS_PROJECT_ID,
             storeId: runs.id, data: {
-                repository: identity, prNumber, headSha: head,
+                repository: identity, prNumber, headSha: reviewedHead,
                 reviewer: 'Code Reviewer', verdict: 'no_findings',
                 reviewedAt: timestamp,
                 coverage: {
@@ -68,6 +68,8 @@ async function fixture() {
     let postMode: 'normal' | 'throw_before' | 'throw_after' = 'normal';
     let patchMode: 'normal' | 'throw_before' | 'throw_after' = 'normal';
     let staleHead = false;
+    let currentHead = head;
+    let failCheckAt: number | null = null;
     const preview = new ManagedSummaryPreviewService(catalog, {
         inspect: async (repo: string, number: number, body: string) => {
             events.inspect++;
@@ -83,9 +85,14 @@ async function fixture() {
         },
     } as any);
     const writer = {
-        checkHead: async () => {
+        checkHead: async (_repo: string, _pr: number, reviewedHead: string) => {
             events.head++;
-            if (staleHead) throw Error('PR head advanced');
+            if (failCheckAt === events.head) {
+                currentHead = 'b'.repeat(40);
+                throw Error('PR head advanced between preflight and publication');
+            }
+            if (staleHead || reviewedHead !== currentHead)
+                throw Error('PR head advanced');
         },
         prepareWrite: async () => { events.token++; return 'scoped-write-token'; },
         post: async (_repo: string, number: number, body: string, token: string) => {
@@ -117,7 +124,9 @@ async function fixture() {
         publish, getRemote: () => remote, setRemote: (value: null | {id: number; body: string}) => { remote = value; },
         setPostMode: (mode: typeof postMode) => { postMode = mode; },
         setPatchMode: (mode: typeof patchMode) => { patchMode = mode; },
-        setStaleHead: (value: boolean) => { staleHead = value; } };
+        setStaleHead: (value: boolean) => { staleHead = value; },
+        setHeadFailureAt: (number: number | null) => { failCheckAt = number; },
+        setCurrentHead: (sha: string) => { currentHead = sha; } };
 }
 
 test('managed publication is separately disabled, requires OAuth and preflights without GitHub writes', async () => {
@@ -229,6 +238,44 @@ test('new review after ambiguous older create reconciles the older claim first',
     assert.equal(f.events.patch, 0);
     assert.equal((await f.invoke(true)).status, 'published');
     assert.equal(f.events.patch, 1);
+});
+
+test('head changes only on second check: unsent claim is released and a new reviewed head can publish', async () => {
+    const f = await fixture();
+    f.setHeadFailureAt(2);
+    await assert.rejects(f.invoke(true), /PR head advanced between preflight and publication/);
+    assert.equal(f.events.head, 2, 'pre-claim head check passes and post-claim read fails');
+    assert.equal(f.events.token, 1, 'the write token was prepared');
+    assert.equal(f.events.post, 0, 'no POST was attempted');
+    assert.equal(f.events.patch, 0, 'no PATCH was attempted');
+
+    const old = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID, f.runs.id, f.first.id);
+    assert.equal((old.data.coverage as any).githubManagedSummary, undefined,
+        'failed read-only head check transactionally releases its own claim');
+
+    await assert.rejects(f.invoke(true), /PR head advanced/,
+        'old reviewed SHA cannot be published after the PR head advances');
+    assert.equal(f.events.post, 0);
+    const newRun = await f.addRound('2026-10-30T12:00:00.000Z',
+        repository, 'b'.repeat(40));
+    const fresh = await f.invoke(true);
+    assert.equal(fresh.status, 'published');
+    assert.equal(fresh.runId, newRun.id);
+    assert.equal(f.events.post, 1, 'new reviewed head can create the one managed comment');
+    const previous = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID, f.runs.id, f.first.id);
+    assert.equal((previous.data.coverage as any).githubManagedSummary, undefined);
+});
+
+test('transient second head-read failure releases unsent claim so the same round can retry', async () => {
+    const f = await fixture();
+    f.setHeadFailureAt(2);
+    await assert.rejects(f.invoke(true), /between preflight and publication/);
+    assert.equal(f.events.post, 0);
+    f.setCurrentHead(head);
+    f.setHeadFailureAt(null);
+    const retried = await f.invoke(true);
+    assert.equal(retried.status, 'published');
+    assert.equal(f.events.post, 1);
 });
 
 test('unverified remote owner and stale PR heads fail before durable publication', async () => {
