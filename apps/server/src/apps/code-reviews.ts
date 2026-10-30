@@ -8,6 +8,7 @@ import type { AtlasData } from '../types.js';
 import { readPrTimeline } from './review-timeline.js';
 import type { ReviewPublicationService } from './review-publication.js';
 import type { ManagedSummaryPreviewService } from './managed-summary.js';
+import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -19,7 +20,8 @@ export class CodeReviewsService {
         private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead'>>,
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
         private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>,
-        private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>) {}
+        private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>,
+        private readonly managedPublisher?: Pick<ManagedSummaryPublicationService, 'publish'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -86,6 +88,15 @@ export class CodeReviewsService {
         if (!this.managedSummary)
             throw new AtlasError('Managed PR summary preview is unavailable.', 'CAPABILITY_UNAVAILABLE');
         return this.managedSummary.preview(repository, prNumber);
+    }
+
+    /** Durable, opt-in GitHub PR comment create/update. Never approves a PR. */
+    async publishManagedSummary(repository: string, prNumber: number, apply: boolean,
+        caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.managedPublisher)
+            throw new AtlasError('Managed summary publication is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.managedPublisher.publish(repository, prNumber, apply, caller);
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -281,6 +292,19 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     prNumber: z.number().int().min(1).max(1_000_000) },
                 invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
                     service.previewManagedSummary(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_managed_summary_publish',
+                description: 'Explicit, opt-in create/update of one bot-owned PR summary comment; dry-run by default, durable claims block uncertain retries. Never approves or replies.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, apply }: {
+                    repository: string; prNumber: number; apply: boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishManagedSummary(repository, prNumber, apply, caller),
             },
             {
                 name: 'code_reviews_list_runs',
