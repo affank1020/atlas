@@ -530,8 +530,11 @@ queries and managed GitHub bot/thread publication remain later work.
 summary using only the *latest saved Atlas round* and its linked findings.
 It is not yet the write-enabled managed summary publisher. No GitHub POST,
 PATCH, claim, approval or thread resolution occurs, even if an owned comment
-already exists. It requires the exact Code Reviews Project/Stores, only reads
-one saved round with the strict cardinality and lineage integrity checks, and
+already exists. It rejects invalid owner/repository path segments (including
+`.` and `..`) and canonicalizes valid repository names to lowercase
+**before** querying the exact Code Reviews Project/Stores or inspecting
+GitHub, matching native structured-submission storage. It only reads one
+saved round with the strict cardinality and lineage integrity checks, and
 never equates missing history with a clean review.
 
 The preview distinguishes structured source coverage from partial historical
@@ -540,7 +543,12 @@ causes or all GitHub review history. It includes latest reviewed SHA, verdict,
 recorded round count, severity observations, explicit finding-state labels
 and *reviewer-asserted* resolutions with limited supporting text. No lifecycle
 outcome is inferred from disappeared observations or outdated comments. Body
-length and untrusted Markdown/HTML marker handling are bounded.
+length and untrusted Markdown/HTML marker handling are bounded:
+inline title/evidence strings flatten line breaks and escape Markdown
+metacharacters, while file paths and lineage keys use safely delimited
+code spans (including embedded backticks). This prevents embedded headings,
+GitHub alerts and false status banners from being rendered as trusted
+summary structure.
 
 The proposed summary uses a **PR-scoped marker**, distinct from the legacy
 one-comment-per-review publisher:
