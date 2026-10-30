@@ -73,6 +73,9 @@ export function Workspaces() {
     const [revision, setRevision] = useState(0);
     const [search, setSearch] = useState('');
     const [nodeFilter, setNodeFilter] = useState('');
+    const [kindFilter, setKindFilter] = useState<'all' | 'git' | 'local'>('all');
+    const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+    const [showManagement, setShowManagement] = useState(false);
     const [selectedId, setSelectedId] = useState(() => new URLSearchParams(location.hash.split('?')[1] || '').get('workspace') || '');
     const [rawStatus, setStatus] = useState<GitStatus>();
     const [rawWorktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -112,10 +115,13 @@ export function Workspaces() {
         ...group,
         checkouts: group.checkouts.filter(checkout => !nodeFilter || checkout.nodeId === nodeFilter),
     })).filter(group => group.checkouts.length > 0 &&
+        (kindFilter === 'all' || group.kind === kindFilter) &&
         (group.name + ' ' + (group.repository || '') + ' ' + group.checkouts.map(checkout =>
             checkout.name + ' ' + checkout.rootPath + ' ' +
             (nodes.find(node => node.id === checkout.nodeId)?.name || '')).join(' '))
-            .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
+            .toLowerCase().includes(search.trim().toLowerCase()))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)),
+    [groups, nodes, search, nodeFilter, kindFilter]);
     const selectedLogical = (logical.length ? logical : groups)
         .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
     const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
@@ -210,6 +216,9 @@ export function Workspaces() {
     function choose(id: string) {
         setSelectedId(id);
         location.hash = id ? '/workspaces?workspace=' + encodeURIComponent(id) : '/workspaces';
+    }
+    function toggleGroup(id: string) {
+        setExpandedGroups(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
     }
     async function mutate<T>(action: () => Promise<T>, done: string | ((result: T) => string), after?: (value: T) => void) {
         if (IS_MOCK_MODE) return;
@@ -328,9 +337,17 @@ export function Workspaces() {
 
     return <div className="workspaces-manager">
         <header className="page-head">
-            <div><p className="eyebrow">Development / across Nodes</p><h1>Workspaces</h1><p>One workspace, multiple checkouts. Choose a Node to inspect and work on its files.</p></div>
+            <h1>Workspaces</h1>
             <div className="actions"><button className="ghost" onClick={() => setRevision(r => r + 1)} disabled={loading || working}>{loading && hasLoaded ? 'Refreshing…' : 'Refresh'}</button>
-                <button className="ghost" onClick={reconcile} disabled={loading || working || IS_MOCK_MODE || !online.length} title="Group existing checkouts only after checking each Node's Git origin">Recognise repositories</button>
+                <div className="wm-management">
+                    <button className="ghost" type="button" aria-expanded={showManagement}
+                        aria-controls="wm-management-actions" onClick={() => setShowManagement(open => !open)}>Manage</button>
+                    {showManagement && <div className="wm-management-popover" id="wm-management-actions">
+                        <button className="ghost" type="button" onClick={() => { setShowManagement(false); void reconcile(); }}
+                            disabled={loading || working || IS_MOCK_MODE || !online.length}>Recognise repositories</button>
+                        <p>Verify Git origins and group existing checkouts. Unlike Refresh, this updates Workspace associations.</p>
+                    </div>}
+                </div>
                 <button disabled={IS_MOCK_MODE || !online.length} onClick={() => setProvision(!provision)}>{provision ? 'Close' : '+ Add repository'}</button></div>
         </header>
         {IS_MOCK_MODE && <p className="wm-notice" role="status">Mock preview · write operations are disabled.</p>}
@@ -363,9 +380,12 @@ export function Workspaces() {
         </section>}
         <div className="wm-layout">
             <section className="wm-panel wm-browser" aria-label="Workspace browser" aria-busy={initialLoading}>
-                <div className="wm-fields"><label>Search<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Repository, workspace, checkout, Node…" /></label>
+                <div className="wm-fields wm-browser-filters"><label>Search<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Find a repository or checkout…" /></label>
                     <label>Node<select value={nodeFilter} onChange={e => setNodeFilter(e.target.value)}><option value="">All Nodes</option>
-                        {nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label></div>
+                        {nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
+                    <label>Type<select value={kindFilter} onChange={e => setKindFilter(e.target.value as 'all' | 'git' | 'local')}>
+                        <option value="all">All Workspaces</option><option value="git">Repositories</option><option value="local">Local directories</option>
+                    </select></label></div>
                 <div className="wm-title"><h2>{initialLoading ? <span className="wm-skeleton wm-skeleton-count" aria-hidden="true" /> : `${entries.length} ${entries.length === 1 ? 'Workspace' : 'Workspaces'}`}</h2><small>{initialLoading ? <span className="wm-skeleton wm-skeleton-meta" aria-hidden="true" /> : `${nodes.filter(n => n.status === 'online').length} Nodes online`}</small></div>
                 <div className="wm-list" aria-busy={initialLoading}>{initialLoading ? Array.from({ length: 4 }, (_, index) =>
                     <div className="wm-row wm-row-skeleton" key={index} aria-hidden="true">
@@ -385,71 +405,52 @@ export function Workspaces() {
                         checkoutsByNode.set(checkout.nodeId, siblings);
                     }
                     const nodeCount = checkoutsByNode.size;
+                    const isSelected = group.checkouts.some(checkout => checkout.id === selected?.id);
+                    const expandable = group.checkouts.length > 1;
+                    const expanded = expandable && (expandedGroups.includes(group.id) || !!search.trim());
                     return <div className="wm-group" key={group.id}>
-                        <button className="wm-row wm-group-heading"
-                            aria-label={group.name}
-                            aria-pressed={group.checkouts.some(checkout => checkout.id === selected?.id)}
-                            onClick={() => choose(group.id)}>
-                            <span className="wm-glyph" aria-hidden="true">⌁</span>
-                            <span className="wm-row-main"><strong>{group.name}</strong>
-                                <small title={group.repository || undefined}>{group.repository || 'Local Workspace'}</small>
-                                <small>{group.checkouts.length} {group.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {nodeCount} {nodeCount === 1 ? 'Node' : 'Nodes'}</small>
-                            </span>
-                        </button>
-                        {Array.from(checkoutsByNode.entries()).map(([hostId, nodeCheckouts]) => {
-                            const host = nodes.find(node => node.id === hostId);
-                            return <div className="wm-node-group" key={hostId}>
-                                <div className="wm-node-heading">
-                                    <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true" />
-                                    <strong>{host?.name || 'Unknown Node'}</strong>
-                                    <small>{nodeCheckouts.length} {nodeCheckouts.length === 1 ? 'checkout' : 'checkouts'}</small>
-                                </div>
-                                <div className="wm-checkout-list">{nodeCheckouts.map(checkout => {
-                                    const isSelected = selected?.id === checkout.id;
-                                    return <button className={'wm-checkout-row' + (isSelected ? ' selected' : '')}
-                                        key={checkout.id} aria-pressed={isSelected}
-                                        aria-label={'Checkout on ' + (host?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
-                                        onClick={() => choose(checkout.id)}>
-                                        <span className="wm-checkout-glyph" aria-hidden="true">↳</span>
-                                        <span><strong>{checkout.name === group.name ? checkout.name + ' checkout' : checkout.name}{isSelected && status?.branch ? ' · ' + status.branch : ''}</strong>
-                                            <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
-                                    </button>;
-                                })}</div>
-                            </div>;
-                        })}
-                    </div>;
-                })}</div>
-                {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
-            </section>
-            <aside className="wm-panel wm-inspector" aria-label="Workspace details" aria-busy={!!(inspecting || inspectorPending || (initialLoading && selectedId))}>
-                {!selected && initialLoading && selectedId ? <div className="wm-inspector-skeleton" aria-hidden="true">
-                    <span className="wm-skeleton wm-skeleton-meta" />
-                    <span className="wm-skeleton wm-skeleton-heading" />
-                    <span className="wm-skeleton wm-skeleton-path-wide" />
-                    <span className="wm-skeleton wm-skeleton-path-wide" />
-                </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
-                    <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
-                    <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
-                    <div className="actions">
-                        {logical.length > 0 && selectedLogical &&
-                            <a className="wm-link" href={monitoringHash('activity', { logicalWorkspaceId: selectedLogical.id })}>All Workspace activity</a>}
-                        <a className="wm-link" href={monitoringHash('activity', { checkoutId: selected.id })}>Selected checkout activity</a>
-                    </div>
-                    {logical.length > 0 && selectedLogical && <section className="wm-project-links" aria-label="Workspace Projects">
-                        <h3>Projects <span>Shared by every checkout</span></h3>
-                        <div className="wm-project-chips">
-                            {linkedProjects.length ? linkedProjects.map(projectId => {
-                                const project = projects.find(item => item.id === projectId);
-                                const projectName = project?.name || projectId;
-                                return <span className="wm-project-chip" key={projectId}>
-                                    <span title={projectId}>{projectName}{project?.archivedAt ? ' (archived)' : ''}</span>
-                                    <button type="button" className="wm-project-remove" aria-label={'Detach ' + projectName}
-                                        disabled={working || IS_MOCK_MODE} onClick={() => unlinkProject(projectId)}>×</button>
-                                </span>;
-                            }) : <span className="wm-hint">No Projects associated</span>}
+                        <div className="wm-group-top">
+                            <button className={'wm-row wm-group-heading' + (isSelected ? ' selected' : '')}
+                                aria-label={group.name} aria-pressed={isSelected}
+                                onClick={() => choose(group.id)}>
+                                <span className="wm-glyph" aria-hidden="true">{group.kind === 'git' ? '⌘' : '⌁'}</span>
+                                <span className="wm-row-main"><strong>{group.name}</strong>
+                                    <small title={group.repository || undefined}>{group.repository || 'Local directory'}</small>
+                                    <small>{group.checkouts.length} {group.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {nodeCount} {nodeCount === 1 ? 'Node' : 'Nodes'}</small>
+                                </span>
+                            </button>
+                            {expandable && <button className="wm-expand" type="button"
+                                aria-label={(expanded ? 'Hide' : 'Show') + ' checkouts for ' + group.name}
+                                aria-expanded={expanded} aria-controls={'wm-checkouts-' + group.id}
+                                onClick={() => toggleGroup(group.id)}>
+                                <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
+                            </button>}
                         </div>
-                        {!!availableProjects.length && <div className="wm-project-add">
-                            <select aria-label="Project to associate" value={projectToLink} disabled={working || IS_MOCK_MODE}
+                        {expanded && <div className="wm-group-checkouts" id={'wm-checkouts-' + group.id}>
+                            {Array.from(checkoutsByNode.entries()).map(([hostId, nodeCheckouts]) => {
+                                const host = nodes.find(node => node.id === hostId);
+                                return <div className="wm-node-group" key={hostId}>
+                                    <div className="wm-node-heading">
+                                        <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true" />
+                                        <strong>{host?.name || 'Unknown Node'}</strong>
+                                        <small>{nodeCheckouts.length} {nodeCheckouts.length === 1 ? 'checkout' : 'checkouts'}</small>
+                                    </div>
+                                    <div className="wm-checkout-list">{nodeCheckouts.map(checkout => {
+                                        const checkoutSelected = selected?.id === checkout.id;
+                                        return <button className={'wm-checkout-row' + (checkoutSelected ? ' selected' : '')}
+                                            key={checkout.id} aria-pressed={checkoutSelected}
+                                            aria-label={'Checkout on ' + (host?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
+                                            onClick={() => choose(checkout.id)}>
+                                            <span className="wm-checkout-glyph" aria-hidden="true">↳</span>
+                                            <span><strong>{checkout.name === group.name ? checkout.name + ' checkout' : checkout.name}{checkoutSelected && status?.branch ? ' · ' + status.branch : ''}</strong>
+                                                <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
+                                        </button>;
+                                    })}</div>
+                                </div>;
+                            })}
+                        </div>}
+                    </div>;
+                })}</div>                     <select aria-label="Project to associate" value={projectToLink} disabled={working || IS_MOCK_MODE}
                                 onChange={event => setProjectToLink(event.target.value)}>
                                 <option value="">Choose a Project</option>
                                 {availableProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
