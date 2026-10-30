@@ -10,8 +10,34 @@ const safeNumber = (value: unknown): value is number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const safeText = (value: unknown, max: number): value is string =>
     typeof value === 'string' && value.length <= max;
-const clean = (value: string, max: number) =>
-    value.replaceAll('<!--', '&lt;!--').replaceAll('\r', ' ').slice(0, max);
+/** Safe inline Markdown for fields taken from submitted review text.
+ * Never allow a line break to escape into a new heading, quote or alert.
+ */
+const inlineText = (value: string, max: number) =>
+    value.slice(0, max)
+        .replace(/[\r\n\t\u2028\u2029]/g, ' ')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/([\\`*_{}\[\]()#+.!|~\\-])/g, '\\$1');
+
+/** A backslash does not escape a backtick inside a Markdown code span.
+ * Delimit each value with a fence longer than its longest backtick run.
+ */
+function inlineCode(value: string, max: number) {
+    const safe = value.slice(0, max).replace(/[\r\n\t\u2028\u2029]/g, ' ');
+    const longest = Math.max(0, ...(safe.match(/`+/g) ?? []).map(run => run.length));
+    const fence = '`'.repeat(longest + 1);
+    return fence + ' ' + safe + ' ' + fence;
+}
+
+/** Stored structured reviews use lowercase owner/repository names. Validate
+ * both path segments before canonicalization so "." and ".." never pass.
+ */
+export function canonicalRepository(repository: string) {
+    if (!repositoryPattern.test(repository) ||
+        repository.split('/').some(segment => segment === '.' || segment === '..'))
+        throw new AtlasError('Invalid managed summary repository identity.', 'INVALID_REQUEST');
+    return repository.toLowerCase();
+}
 const record = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -21,10 +47,10 @@ type Round = Awaited<ReturnType<typeof readPrTimeline>>['rounds'][number];
 
 /** Stable identity for the PR-level comment, distinct from the legacy per-run review marker. */
 export function managedSummaryMarker(repository: string, prNumber: number) {
-    if (!repositoryPattern.test(repository) || !Number.isSafeInteger(prNumber) ||
-        prNumber < 1 || prNumber > 1_000_000)
+    const canonical = canonicalRepository(repository);
+    if (!Number.isSafeInteger(prNumber) || prNumber < 1 || prNumber > 1_000_000)
         throw new AtlasError('Invalid managed summary PR identity.', 'INVALID_REQUEST');
-    return `<!-- atlas-code-reviews-managed-summary:v1:${repository.toLowerCase()}#${prNumber} -->`;
+    return `<!-- atlas-code-reviews-managed-summary:v1:${canonical}#${prNumber} -->`;
 }
 
 /** The latest *saved* round, not a claim of exhaustive GitHub review history.
@@ -46,7 +72,7 @@ export function renderManagedSummary(repository: string, prNumber: number, round
         '## Atlas Code Reviews · PR #' + prNumber,
         '',
         '**Latest saved round:** `' + round.headSha.slice(0, 12) + '` · ' +
-            clean(round.verdict, 64) + ' · ' + clean(round.reviewedAt, 50),
+            inlineText(round.verdict, 64) + ' · ' + inlineText(round.reviewedAt, 50),
         '**Stored history:** ' + savedRounds + ' round' + (savedRounds === 1 ? '' : 's') +
             ' recorded in Atlas (not an exhaustive GitHub history).',
         '**Evidence:** ' + (full ? 'Structured Atlas submission' :
@@ -62,15 +88,16 @@ export function renderManagedSummary(repository: string, prNumber: number, round
         '',
         '#### Observations',
         ...(round.findings.length ? round.findings.slice(0, 30).map(finding =>
-            '- **' + finding.severity.toUpperCase() + ' · ' + clean(finding.title, 200) + '**' +
-            ' (' + clean(finding.state, 20) + ')' +
-            (finding.filePath ? ' — `' + clean(finding.filePath, 1_024).replaceAll('`', '\\`') + '`' : '') +
+            '- **' + finding.severity.toUpperCase() + ' · ' + inlineText(finding.title, 200) + '**' +
+            ' (' + inlineText(finding.state, 20) + ')' +
+            (finding.filePath ? ' — ' + inlineCode(finding.filePath, 1_024) : '') +
             (finding.line ? ':' + finding.line : '') +
-            (finding.lineageKey ? ' · lineage `' + clean(finding.lineageKey, 128) + '`' : '')) :
+            (finding.lineageKey ? ' · lineage ' + inlineCode(finding.lineageKey, 128) : '')) :
             ['No saved observations in this round; absence is not evidence of a fix.']),
         ...(round.resolutions.length ? [
             '', '#### Reviewer-asserted resolutions',
-            ...round.resolutions.map(item => '- `' + clean(item.lineageKey, 128) + '`: ' + clean(item.evidence, 900)),
+            ...round.resolutions.map(item => '- ' + inlineCode(item.lineageKey, 128) + ': ' +
+                inlineText(item.evidence, 900)),
         ] : []),
         '',
         '_This is a read-only preview of saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
@@ -92,6 +119,7 @@ export class GitHubManagedSummaryReader {
 
     async inspect(repository: string, prNumber: number, expectedBody: string) {
         const marker = managedSummaryMarker(repository, prNumber);
+        repository = canonicalRepository(repository);
         if (!expectedBody.endsWith(marker) || expectedBody.split(marker).length !== 2)
             throw new AtlasError('Managed summary preview has an invalid identity marker.', 'CONFLICT');
         const token = await this.broker.pullRequestReadToken(repository);
@@ -154,6 +182,7 @@ export class ManagedSummaryPreviewService {
         private readonly github: Pick<GitHubManagedSummaryReader, 'inspect'>) {}
     async preview(repository: string, prNumber: number) {
         managedSummaryMarker(repository, prNumber);
+        repository = canonicalRepository(repository);
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
         const runs = stores.find(s => s.name === REVIEW_RUNS_STORE);
         const findings = stores.find(s => s.name === REVIEW_FINDINGS_STORE);
