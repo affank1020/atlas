@@ -151,7 +151,11 @@ test('separate inline reply allowlist defaults disabled and rejects duplicate re
     await assert.rejects(new InlineReplyPublicationService(f.catalog,{} as any,{} as any)
         .publish(repository,prNumber,f.finding.id,false,actor),/disabled/);
     await assert.rejects(f.publish(false,{...actor,subject:'someone-else'}),/authenticated reviewer/);
-    await assert.rejects(f.publish(true,undefined),/authenticated MCP OAuth/);
+    // Call the service directly: the fixture helper defaults an undefined
+    // caller to actor, which would silently authenticate this negative test.
+    await assert.rejects(
+        f.service.publish(repository,prNumber,f.finding.id,true,undefined),
+        /authenticated MCP OAuth/);
     assert.equal(f.events.posts,0);
 });
 
