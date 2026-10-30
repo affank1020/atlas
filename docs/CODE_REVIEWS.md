@@ -227,9 +227,9 @@ Atlas stores the optional key in the existing Review Findings
 `evidence.lineageKey` object without changing Store schemas or the immutable
 `findingKey: structured:<submissionId>:<key>` observation identity.
 Existing/historical imports have no asserted lineage keys; source GitHub
-comment IDs and similar descriptions must not be auto-matched. The lifecycle
-state remains `new`; explicit, evidence-backed transition handling and
-PR-level lineage reads are separate follow-up slices.
+comment IDs and similar descriptions must not be auto-matched. Without an explicit lifecycle
+assessment, the finding remains `new`; see the reviewer-asserted
+lifecycle protocol below.
 
 Accepted verdicts are `changes_requested`, `concerns_to_verify`, `non_blocking`,
 `no_findings` and `inconclusive`. A `no_findings` verdict cannot include
@@ -272,6 +272,78 @@ yet be cryptographically established. Publisher identity verification and
 GitHub review publication are a separate later milestone. Findings are saved
 with state `new`; their lifecycle is not inferred from subsequent GitHub
 commits. Existing historical imports stay unchanged.
+
+### Explicit review-round lifecycle assessments
+
+A structured review may now include **reviewer-supplied lifecycle assertions**
+for a previously observed root cause, without editing the older Review Runs or
+Review Findings. This is **not automatic resolution detection**, and Atlas does
+not independently execute or verify the claimed tests/fix. All assertions
+are attributed only to the authenticated MCP OAuth account and the particular
+GitHub PR head verified at submission.
+
+For a finding still observable at the new head, include an explicit
+`lineageKey` and, optionally, an `assessment`:
+
+```json
+{
+  "key": "still-reproducible",
+  "lineageKey": "root-cause-input-validation",
+  "severity": "sev3",
+  "title": "Input validation still fails",
+  "description": "Malformed values still reach the handler.",
+  "assessment": {
+    "state": "persisting",
+    "evidence": "Reproduced with the named input-validation regression case at this commit."
+  }
+}
+```
+
+Allowed observed assessments are `persisting` and `unverified`. The
+`evidence` must be a non-blank string between 20 and 4,000 characters.
+Without an assessment, an observation remains `new` and matching
+`lineageKey` values do **not** automatically mark it persisting.
+
+To explicitly assert a fix without submitting a new finding observation,
+include a `resolutions` array on the same authenticated structured review:
+
+```json
+{
+  "resolutions": [{
+    "lineageKey": "root-cause-input-validation",
+    "evidence": "Verified the fix at this reviewed head with a focused regression test."
+  }]
+}
+```
+
+A resolution is a **new immutable-through-the-review-operation assertion**
+stored on the new Review Run as `coverage.lifecycleResolutions`, not a
+destructive update to the prior finding. A `no_findings` review may include
+these assertions while its `findings` list remains empty. Every assertion
+must reference an **existing active, complete structured finding with the
+same lineage key in the exact same repository and PR**, checked inside the
+write transaction. Untrusted historical Markdown, other PRs, missing archived
+findings, same-round findings or invented keys cannot justify transitions.
+Each root cause may appear once per outcome collection and cannot be both
+observed and resolved in the same review. No implicit actions occur for
+unmentioned keys. Retries remain idempotent under the original submission UUID
+and fingerprint.
+
+Every persisted assessment records its supplied evidence, the verified
+reviewed SHA and the server timestamp. This is an **account-attributed reviewer
+claim**, not independent proof that the code is fixed, and it does not close
+or resolve GitHub threads, publish a review, modify PR permissions, or
+automatically reclassify the previous observation.
+
+The PR timeline now returns explicit `round.resolutions`, optional
+`finding.lifecycleAssessment` and page-scoped lineage
+`assessments`/`latestAssessmentInPage`. The web PR-status expansion shows
+these assertions and their evidence. Historical reviews remain partial, and
+the newest assertion **in the loaded Atlas page** is not necessarily the
+globally latest GitHub status. No lifecycle outcome is inferred from a missing
+finding, changed commit or manually resolved GitHub conversation. Generic
+Store admin APIs can still mutate historical data, so these records are not
+a cryptographically immutable audit ledger.
 
 ### Native GitHub publication (explicit opt-in)
 
