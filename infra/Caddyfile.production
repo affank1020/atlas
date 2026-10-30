@@ -38,7 +38,7 @@
 
         # Temporary private human UI/API boundary, independent of MCP OAuth.
         basic_auth {
-            {$ATLAS_ADMIN_USER} {$ATLAS_ADMIN_PASSWORD_HASH}
+            {$VPS_ADMIN_USER} {$VPS_ADMIN_PASSWORD_HASH}
         }
 
         @backend path /api/* /mcp /projects/* /health
