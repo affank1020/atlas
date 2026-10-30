@@ -56,6 +56,9 @@ test('Surfaces read failures instead of claiming an empty review history', () =>
 
 const runId = 'a4d0a616-361e-4bb2-b9ba-3a870085d107';
 const anotherRunId = '26dfa81b-53e3-46e0-9e6d-e433a804abc0';
+const emptyTimeline = { repository: 'affank1020/atlas', prNumber: 114, recordedRounds: 0,
+    limit: 5, offset: 0, hasMore: false, storedWindowComplete: true,
+    rounds: [], lineages: [], unlinkedObservations: 0, resolutionInferred: false };
 const makeRun = (id: string, n: number) => ({ id, data: {
     repository: 'affank1020/atlas', prNumber: n, headSha: 'a'.repeat(40),
     reviewer: 'Code Reviewer', reviewedAt: '2026-10-23T10:30:00.000Z',
@@ -149,6 +152,8 @@ test('PR status is lazy, distinguishes an outdated review and does not infer com
             isLoading: false, isFetching: false, refetch } as never;
         if (name === 'code_reviews_list_runs') return { data: { total: 1,
             items: [makeRun(runId, 114)] }, isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_timeline') return {
+            data: emptyTimeline, isLoading: false, isFetching: false, refetch } as never;
         if (name === 'code_reviews_pr_summary') return { data: {
             repository: 'affank1020/atlas', prNumber: 114, recordedRounds: 3,
             latestReviewHead: 'outdated',
@@ -181,6 +186,8 @@ test('PR status treats unavailable GitHub and empty stored history as unknown ra
         if (name === 'code_reviews_list_runs') return { data: { total: 1,
             items: [makeRun(runId, 114)] }, isLoading: false,
             isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_timeline') return {
+            data: emptyTimeline, isLoading: false, isFetching: false, refetch } as never;
         if (name === 'code_reviews_pr_summary') return { data: {
             recordedRounds: 0, latestReviewHead: 'no_stored_review',
             latest: null, currentHead: { state: 'unavailable' },
@@ -191,4 +198,51 @@ test('PR status treats unavailable GitHub and empty stored history as unknown ra
     fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
     expect(screen.getByText(/Current GitHub head unavailable/)).toBeInTheDocument();
     expect(screen.getByText(/does not mean it has never been reviewed or has no issues/)).toBeInTheDocument();
+});
+
+test('PR status lazily loads paginated saved rounds and explicit lineages without claiming fixes', () => {
+    const timelineCalls: number[] = [];
+    vi.mocked(useApplicationRead).mockImplementation((name: string, input: Record<string, unknown> = {}) => {
+        if (name === 'code_reviews_overview') return { data: { reviewRuns: 6, findingObservations: 3 },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_runs') return { data: { total: 1, items: [makeRun(runId, 116)] },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_summary') return { data: { recordedRounds: 6,
+            latestReviewHead: 'outdated', latest: null, currentHead: { state: 'unavailable' } },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_timeline') {
+            const offset = Number(input.offset);
+            timelineCalls.push(offset);
+            return { data: { ...emptyTimeline, recordedRounds: 6, offset,
+                hasMore: offset === 0, storedWindowComplete: false,
+                rounds: [{ runId: offset === 0 ? runId : anotherRunId, headSha: 'a'.repeat(40),
+                    reviewedAt: '2026-10-30T12:00:00.000Z', verdict: 'non_blocking',
+                    source: 'historical', findingCoverage: 'historical_partial',
+                    totalFindingObservations: offset === 0 ? 1 : 0, findingsTruncated: false,
+                    findings: offset === 0 ? [{ id: 'finding-one', lineageKey: 'root-issue',
+                        title: 'Persistent input issue', severity: 'sev3', description: 'Still fails',
+                        state: 'new' }] : [] }],
+                lineages: offset === 0 ? [{ key: 'root-issue', observationsInPage: 1,
+                    recurrence: 'observed_once_in_page', observations: [{
+                        runId, findingId: 'finding-one', headSha: 'a'.repeat(40),
+                        reviewedAt: '2026-10-30T12:00:00.000Z', title: 'Persistent input issue',
+                        severity: 'sev3', state: 'new',
+                    }] }] : [], unlinkedObservations: 0,
+            }, isLoading: false, isFetching: false, refetch } as never;
+        }
+        throw Error('Unexpected call: ' + name);
+    });
+    render(<CodeReviews />);
+    expect(timelineCalls).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
+    expect(timelineCalls).toEqual([0]);
+    expect(screen.getByRole('heading', { name: 'Saved review timeline' })).toBeInTheDocument();
+    expect(screen.getByText(/Repeated root-cause identity|No prior match in this page/)).toBeInTheDocument();
+    expect(screen.getByText(/Missing findings cannot be interpreted as fixes/)).toBeInTheDocument();
+    expect(screen.getByText(/No resolution is inferred from an absent finding/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next PR rounds' }));
+    expect(timelineCalls).toEqual([0, 5]);
+    expect(screen.getByText(/Showing saved rounds 6/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide PR status' }));
+    expect(screen.queryByRole('heading', { name: 'Saved review timeline' })).not.toBeInTheDocument();
 });
