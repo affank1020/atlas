@@ -830,6 +830,63 @@ identity/permission milestone. Native GitHub reply/resolution workflows
 require separate, independently reviewed durable claims and owner
 controls.
 
+### Opt-in persisting-finding GitHub inline replies
+
+`code_reviews_publish_inline_reply({repository,prNumber,findingId,apply?})`
+supports the second round of a managed inline GitHub conversation: **one
+reply to an existing verified App-owned root per saved persisting finding**.
+The default `apply:false` is a read-only preview; all real writes require
+`apply:true`, the original structured review's authenticated OAuth
+submitter and a **separate disabled-by-default allowlist**:
+
+```text
+ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES=owner/repository
+```
+
+Enabling initial inline-root publication or managed summaries does not
+enable replies. Before preparing any reply, Atlas requires the latest
+complete native structured review, a new reviewed commit, an explicitly
+trusted shared lineage, and a `persisting` observation carrying its
+reviewer-submitted assessment/evidence for that commit. The root must
+have a saved `published` first-thread claim in an *older* review and
+be independently verified in the fully paginated GitHub review-comment
+inventory: Bot account, root ID, marker, original SHA, path, line and exact
+body checksum. This does **not** adopt or reply to unverified human/legacy
+Code Reviewer comments, or infer persistence from unchanged text.
+
+The unique reply marker binds the canonical owner/repository, PR,
+verified root ID and immutable finding record ID; it never relies on
+title matching, moved line numbers or GitHub's resolved checkbox. A
+bounded Bot-authenticated inventory examines both root and reply comments,
+ignores copied human markers as ownership evidence, rejects duplicate
+Bot-owned reply markers, and confirms replies belong to the exact root.
+The operation never creates a new initial thread or a GitHub review
+event, approves a PR or changes a GitHub conversation's resolved state.
+
+For `apply:true`, Atlas performs a read-only current-head check, obtains
+a scoped GitHub write token, and saves a durable transactionally fenced
+claim into `Review Findings.evidence.githubInlineReply` **before** calling
+`POST /pulls/{pr}/comments/{rootId}/replies`. A failed second
+read-only head check releases only the exact unsent claim. A POST timeout,
+HTTP 5xx, malformed GitHub response or failed remote attestation retains
+the claim and will **never** be POSTed automatically again. After a
+successful reply, Atlas re-reads the independent Bot-owned inventory
+and requires the exact parent, marker, reply ID and body checksum before
+recording a `published` receipt. Prior claims can be reconciled using
+the original finding ID even after later review rounds.
+
+Only an explicitly rejected POST (HTTP 403/422), followed by a complete
+verified absence check and an exact transactional claim release, allows a
+later separately authorised retry after correction. Any conflicting
+remote evidence, incomplete page or failed release stays uncertain.
+
+**Rollout:** Keep this new allowlist empty until the Code Reviews Bot and
+single-authoritative-publisher design are accepted against a real PR. A
+review-only request remains nonmutating. Verified fix replies and actual
+GitHub conversation resolution are separate follow-up milestones; missing
+comments, outdated code anchors and reviewer assertions do not themselves
+prove that GitHub threads should be marked resolved.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
