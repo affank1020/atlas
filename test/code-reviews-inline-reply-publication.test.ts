@@ -217,7 +217,7 @@ test('rejection with unreadable inventory or spoofed reply marker never unlocks 
             f.setReadFailure(false);
             const original=f.roots.inspect;
             let calls=0;
-            f.roots.inspect=async()=>{calls++;if(calls===2)throw Error('Pagination failed');return original();};
+            f.roots.inspect=async()=>{calls++;if(calls===3)throw Error('Pagination failed');return original();};
         } else {
             // A copied marker makes the initial preview fail closed.
             await assert.rejects(f.publish(true),/uniqueness/);
