@@ -419,7 +419,7 @@ export function Workspaces() {
                                     <small>{group.checkouts.length} {group.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {nodeCount} {nodeCount === 1 ? 'Node' : 'Nodes'}</small>
                                 </span>
                             </button>
-                            {expandable && <button className="wm-expand" type="button"
+                            {expandable && !search.trim() && <button className="wm-expand" type="button"
                                 aria-label={(expanded ? 'Hide' : 'Show') + ' checkouts for ' + group.name}
                                 aria-expanded={expanded} aria-controls={'wm-checkouts-' + group.id}
                                 onClick={() => toggleGroup(group.id)}>
@@ -446,11 +446,41 @@ export function Workspaces() {
                                                 <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
                                         </button>;
                                     })}</div>
-                                </div>;
-                            })}
-                        </div>}
+                            </div>;
+                        })}
                     </div>;
-                })}</div>                     <select aria-label="Project to associate" value={projectToLink} disabled={working || IS_MOCK_MODE}
+                })}</div>
+                {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
+            </section>
+            <aside className="wm-panel wm-inspector" aria-label="Workspace details" aria-busy={!!(inspecting || inspectorPending || (initialLoading && selectedId))}>
+                {!selected && initialLoading && selectedId ? <div className="wm-inspector-skeleton" aria-hidden="true">
+                    <span className="wm-skeleton wm-skeleton-meta" />
+                    <span className="wm-skeleton wm-skeleton-heading" />
+                    <span className="wm-skeleton wm-skeleton-path-wide" />
+                    <span className="wm-skeleton wm-skeleton-path-wide" />
+                </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
+                    <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
+                    <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
+                    <div className="actions">
+                        {logical.length > 0 && selectedLogical &&
+                            <a className="wm-link" href={monitoringHash('activity', { logicalWorkspaceId: selectedLogical.id })}>All Workspace activity</a>}
+                        <a className="wm-link" href={monitoringHash('activity', { checkoutId: selected.id })}>Selected checkout activity</a>
+                    </div>
+                    {logical.length > 0 && selectedLogical && <section className="wm-project-links" aria-label="Workspace Projects">
+                        <h3>Projects <span>Shared by every checkout</span></h3>
+                        <div className="wm-project-chips">
+                            {linkedProjects.length ? linkedProjects.map(projectId => {
+                                const project = projects.find(item => item.id === projectId);
+                                const projectName = project?.name || projectId;
+                                return <span className="wm-project-chip" key={projectId}>
+                                    <span title={projectId}>{projectName}{project?.archivedAt ? ' (archived)' : ''}</span>
+                                    <button type="button" className="wm-project-remove" aria-label={'Detach ' + projectName}
+                                        disabled={working || IS_MOCK_MODE} onClick={() => unlinkProject(projectId)}>×</button>
+                                </span>;
+                            }) : <span className="wm-hint">No Projects associated</span>}
+                        </div>
+                        {!!availableProjects.length && <div className="wm-project-add">
+                            <select aria-label="Project to associate" value={projectToLink} disabled={working || IS_MOCK_MODE}
                                 onChange={event => setProjectToLink(event.target.value)}>
                                 <option value="">Choose a Project</option>
                                 {availableProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
