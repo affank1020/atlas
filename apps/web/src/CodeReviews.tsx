@@ -25,14 +25,19 @@ type PrTimeline = {
     repository: string; prNumber: number; recordedRounds: number; limit: number; offset: number;
     hasMore: boolean; storedWindowComplete: boolean; resolutionInferred: false; unlinkedObservations: number;
     lineages: { key: string; observationsInPage: number; recurrence: string;
+        latestAssessmentInPage?: { state: 'resolved' | 'persisting' | 'unverified';
+            evidence: string; runId: string; headSha: string; assertedAt: string } | null;
         observations: { runId: string; findingId: string; headSha: string; reviewedAt: string;
             title: string; severity: string; state: string }[] }[];
     rounds: { runId: string; headSha: string; reviewedAt: string; verdict: string;
         source: 'structured' | 'historical' | 'unknown';
         findingCoverage: 'structured' | 'historical_partial' | 'unknown';
         totalFindingObservations: number; findingsTruncated: boolean;
+        resolutions?: { lineageKey: string; state: 'resolved'; evidence: string; assessedHeadSha: string }[];
         findings: { id: string; lineageKey: string | null; title: string;
-            severity: string; description: string; state: string; filePath?: string; line?: number }[];
+            severity: string; description: string; state: string; filePath?: string; line?: number;
+            lifecycleAssessment?: { state: 'persisting' | 'unverified'; evidence: string; assessedHeadSha: string };
+        }[];
     }[];
 };
 
@@ -168,6 +173,11 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                             {' '}· {lineage.observationsInPage > 1 ? 'Repeated root-cause identity' : 'No prior match in this page'}
                         </span>
                         <div className="code-reviews-subtitle">Key: <code>{lineage.key}</code></div>
+                        {lineage.latestAssessmentInPage && <div className="code-reviews-subtitle">
+                            Latest reviewer assertion in this page: <strong>{lineage.latestAssessmentInPage.state}</strong>
+                            {' '}at <code>{lineage.latestAssessmentInPage.headSha.slice(0, 7)}</code>
+                            <p>{lineage.latestAssessmentInPage.evidence}</p>
+                        </div>}
                     </div>)}
                 </div>}
                 {timeline.data.unlinkedObservations > 0 &&
@@ -188,7 +198,14 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                                     : 'Unknown evidence completeness'}
                             {round.findingsTruncated ? ' · Only first 100 findings shown' : ''}
                         </p>
-                        {round.findings.length === 0 && <p>No finding observations saved for this round; this is not proof of a fix.</p>}
+                        {round.findings.length === 0 && <p>No finding observations saved for this round; absence alone is not proof of a fix.</p>}
+                        {(round.resolutions ?? []).map(event => <article key={event.lineageKey} className="code-reviews-finding">
+                            <div className="code-reviews-finding-title">
+                                <strong>Reviewer-assessed resolution · {event.lineageKey}</strong>
+                                <span>At reviewed head {event.assessedHeadSha.slice(0, 7)}</span>
+                            </div>
+                            <p>Supporting evidence: {event.evidence}</p>
+                        </article>)}
                         {round.findings.map(finding => <article key={finding.id} className="code-reviews-finding">
                             <div className="code-reviews-finding-title">
                                 <strong>{finding.severity.toUpperCase()} · {finding.title}</strong>
@@ -201,11 +218,17 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                                 Root-cause key: <code>{finding.lineageKey}</code>
                             </div>}
                             <p>{finding.description}</p>
+                            {finding.lifecycleAssessment && <p>
+                                Reviewer-assessed {finding.lifecycleAssessment.state} at
+                                {' '}<code>{finding.lifecycleAssessment.assessedHeadSha.slice(0, 7)}</code>:
+                                {' '}{finding.lifecycleAssessment.evidence}
+                            </p>}
                         </article>)}
                     </details>)}
                 </div>
-                <p className="code-reviews-subtitle">No resolution is inferred from an absent finding,
-                    a changed commit or an outdated GitHub discussion. Stored state labels require independent evidence.</p>
+                <p className="code-reviews-subtitle">Lifecycle outcomes are reviewer assertions supported by
+                    supplied evidence, not independently code-verified by Atlas. No resolution is inferred from
+                    an absent finding, changed commit or outdated GitHub discussion.</p>
                 {timeline.data.recordedRounds > 5 && <div className="code-reviews-pagination">
                     <button type="button" className="ghost" disabled={timelineOffset === 0 || timeline.isFetching}
                         onClick={() => setTimelineOffset(Math.max(0, timelineOffset - 5))}>Previous PR rounds</button>
