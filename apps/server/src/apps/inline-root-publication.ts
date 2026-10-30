@@ -123,12 +123,10 @@ export class InlineRootPublicationService {
             !actor || actor.kind !== caller.kind || actor.subject !== caller.subject ||
             actor.issuer !== caller.issuer || coverage.githubPublication !== undefined)
             throw new AtlasError('Only unpublished native reviews from their authenticated submitter can create inline roots.', 'WORKSPACE_DENIED');
-        if (preview.status !== 'review_head_current' ||
-            preview.completeStructuredEvidence !== true ||
-            remote.completeStructuredEvidence !== true ||
+        if (remote.completeStructuredEvidence !== true ||
             preview.reviewedHeadSha !== run.data.headSha ||
             remote.reviewedHeadSha !== run.data.headSha)
-            throw new AtlasError('Inline publication requires a complete current review.', 'CONFLICT');
+            throw new AtlasError('Inline publication requires a complete recorded review.', 'CONFLICT');
         const target = preview.findings.find(f => f.findingId === findingId);
         const match = remote.findings.find(f => f.findingId === findingId);
         if (!target || !match || !('lineageKey' in target) || !target.lineageKey ||
@@ -153,8 +151,11 @@ export class InlineRootPublicationService {
             throw new AtlasError('Multiple inline publication claims share one lineage.', 'CONFLICT');
         if (claimed[0]?.claim?.marker !== undefined && claimed[0].claim.marker !== marker)
             throw new AtlasError('Inline root publication claim has mismatched lineage.', 'CONFLICT');
-        if (!claimed.length && (target.classification !== 'candidate' ||
-            match.state !== 'no_owned_thread'))
+        // A prior claim can be reconciled even after the GitHub head advances.
+        // Only a brand-new POST demands the current open head and valid diff.
+        if (!claimed.length && (preview.status !== 'review_head_current' ||
+            preview.completeStructuredEvidence !== true ||
+            target.classification !== 'candidate' || match.state !== 'no_owned_thread'))
             throw new AtlasError('New inline root requires a current unoccupied diff anchor.', 'CONFLICT');
         const body = render(finding, marker);
         return { run, finding, marker, body, bodySha256: sha(body),
