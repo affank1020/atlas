@@ -135,7 +135,9 @@ test('Store Activity deep links retain both Store and Project filters in the saf
     }, expect.any(AbortSignal)));
     expect(screen.getByRole('textbox', { name: 'Store ID' })).toHaveValue('store-def');
     expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveValue('project-abc');
-    expect(screen.getByText('No events match these filters.')).toBeInTheDocument();
+    // The request is issued before React commits the resolved empty page.
+    // Wait for the rendered response rather than racing the promise callback.
+    expect(await screen.findByText('No events match these filters.')).toBeInTheDocument();
 });
 
 test('activity uses correlated operation paging and counts attempts rather than audit rows', async () => {
