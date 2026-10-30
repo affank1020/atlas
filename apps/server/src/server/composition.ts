@@ -85,7 +85,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const inlineInventory = new InlineThreadInventoryService(catalog, new GitHubInlineThreadReader(githubBroker));
     const inlineRootPublisher = new InlineRootPublicationService(catalog, inlinePreflight,
         inlineInventory, new GitHubInlineRootWriter(githubBroker),
-        config.codeReviews.inlineRootRepositories);
+        config.codeReviews.inlineRootRepositories, new GitHubInlineThreadReader(githubBroker));
     const codeReviews = new CodeReviewsService(catalog, new GitHubReviewHistoryReader(githubBroker),
         config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher,
         inlinePreflight, inlineInventory, inlineRootPublisher);
