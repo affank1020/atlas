@@ -192,6 +192,8 @@ export class InlineFixPublicationService {
             typeof root.bodySha256 !== 'string' || !bodyHashPattern.test(root.bodySha256) ||
             typeof root.headSha !== 'string' || !shaPattern.test(root.headSha) ||
             !sourceRun || sourceRun.data.headSha !== root.headSha ||
+            typeof sourceRun.data.reviewedAt !== 'string' ||
+            sourceRun.data.reviewedAt >= latest.data.reviewedAt ||
             root.headSha === latest.data.headSha ||
             typeof root.path !== 'string' || !positive(root.line))
             throw new AtlasError('Original published root receipt is not verified.', 'CONFLICT');
