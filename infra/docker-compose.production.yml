@@ -104,8 +104,10 @@ services:
         aliases: [atlas-ingress]
     # Defaults preserve today's public ports. During an explicit migration,
     # set loopback-only binds in private production.env so vps-infra owns 80/443.
+    # Internal HTTP changes from 80 to 8080 during cutover, so the maintenance
+    # host port must target the active listener rather than an inactive port.
     ports:
-      - "${ATLAS_INGRESS_HTTP_BIND:-80}:80"
+      - "${ATLAS_INGRESS_HTTP_BIND:-80}:${ATLAS_INGRESS_HTTP_TARGET_PORT:-80}"
       - "${ATLAS_INGRESS_HTTPS_BIND:-443}:443"
       - "${ATLAS_INGRESS_HTTPS_BIND:-443}:443/udp"
     volumes:
