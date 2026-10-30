@@ -249,6 +249,32 @@ test('concurrent callers are fenced by PostgreSQL and only one sends POST',async
     assert.ok(a.some(r=>r.status==='fulfilled'));
 });
 
+test('second saved re-review on the SAME commit cannot generate repetitive reply spam',async()=>{
+    const f=await fixture();
+    assert.equal((await f.publish(true)).status,'published');
+    const reviewedAt='2026-10-30T22:00:00.000Z';
+    const submission='65a74961-e840-4277-a60f-b3b3b48d1bd7';
+    const newRun=await f.catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:f.runs.id,
+        data:{repository,prNumber,headSha:newHead,reviewer:'Code Reviewer',
+            verdict:'concerns_to_verify',reviewedAt,
+            coverage:{source:'atlas_structured_submission',submissionId:submission,
+                payloadSha256:'e'.repeat(64),findingCount:1,authenticatedCaller:actor}},
+    });
+    const later=await f.catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:f.findings.id,
+        data:{reviewRunId:newRun.id,findingKey:'structured:'+submission+':persisting-again',
+            title:'Missing guard still present',severity:'sev3',
+            description:'Observed same root at the same SHA',state:'persisting',
+            evidence:{source:'atlas_structured_submission',localKey:'persisting-again',
+                lineageKey:'root-1',lifecycleAssessment:{state:'persisting',
+                    evidence:'The original root still reproduces on this identical commit.',
+                    assessmentSource:'authenticated_structured_submission',
+                    assessedHeadSha:newHead,assertedAt:reviewedAt}}},
+    });
+    await assert.rejects(f.service.publish(repository,prNumber,later.id,true,actor),
+        /already has an inline reply claim for the reviewed commit/);
+    assert.equal(f.events.posts,1);
+});
+
 test('older claimed reply can reconcile after later review round',async()=>{
     const f=await fixture();
     f.setTimeout(true);
