@@ -9,6 +9,7 @@ import { readPrTimeline } from './review-timeline.js';
 import type { ReviewPublicationService } from './review-publication.js';
 import type { ManagedSummaryPreviewService } from './managed-summary.js';
 import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
+import type { InlineThreadPreflightService } from './inline-thread-preflight.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -21,7 +22,8 @@ export class CodeReviewsService {
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
         private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>,
         private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>,
-        private readonly managedPublisher?: Pick<ManagedSummaryPublicationService, 'publish'>) {}
+        private readonly managedPublisher?: Pick<ManagedSummaryPublicationService, 'publish'>,
+        private readonly inlinePreflight?: Pick<InlineThreadPreflightService, 'preview'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -97,6 +99,13 @@ export class CodeReviewsService {
         if (!this.managedPublisher)
             throw new AtlasError('Managed summary publication is unavailable.', 'CAPABILITY_UNAVAILABLE');
         return this.managedPublisher.publish(repository, prNumber, apply, caller);
+    }
+
+    /** Read-only verified new-side diff target analysis; no GitHub threads are written. */
+    async previewInlineThreads(repository: string, prNumber: number) {
+        if (!this.inlinePreflight)
+            throw new AtlasError('Inline thread preflight is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlinePreflight.preview(repository, prNumber);
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -305,6 +314,16 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     repository: string; prNumber: number; apply: boolean;
                 }, caller?: ApplicationCaller) =>
                     service.publishManagedSummary(repository, prNumber, apply, caller),
+            },
+            {
+                name: 'code_reviews_inline_thread_preflight',
+                description: 'Read-only current PR diff checks for potential inline finding anchors; unverified, outdated, historical and lifecycle outcomes remain summary-only. Does not create or reply to comments.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.previewInlineThreads(repository, prNumber),
             },
             {
                 name: 'code_reviews_list_runs',
