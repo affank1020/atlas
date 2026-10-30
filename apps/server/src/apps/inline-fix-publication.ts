@@ -193,6 +193,7 @@ export class InlineFixPublicationService {
             typeof root.headSha !== 'string' || !shaPattern.test(root.headSha) ||
             !sourceRun || sourceRun.data.headSha !== root.headSha ||
             typeof sourceRun.data.reviewedAt !== 'string' ||
+            typeof latest.data.reviewedAt !== 'string' ||
             sourceRun.data.reviewedAt >= latest.data.reviewedAt ||
             root.headSha === latest.data.headSha ||
             typeof root.path !== 'string' || !positive(root.line))
