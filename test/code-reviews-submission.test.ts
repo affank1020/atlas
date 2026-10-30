@@ -118,6 +118,65 @@ test('structured review submits one immutable run and linked findings with serve
     assert.equal(first.reviewedAt, run.data.reviewedAt);
 });
 
+test('explicit lineage key links observations across commits without rewriting per-run identity or lifecycle state', async () => {
+    const { catalog, findings } = await fixture();
+    let remoteHead = sha;
+    const service = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => ({ repository, prNumber: 84, headSha: remoteHead, open: true }),
+    });
+    const withLineage = {
+        ...request,
+        findings: [{ ...request.findings[0], lineageKey: 'validate-pr-head-root-cause' }],
+    };
+    const first = await service.submitStructuredReview(withLineage, reviewer);
+    remoteHead = 'b'.repeat(40);
+    const replay = await service.submitStructuredReview(withLineage, reviewer);
+    assert.equal(replay.created, false);
+    assert.deepEqual(replay.findingReceipts, first.findingReceipts);
+
+    const second = await service.submitStructuredReview({
+        ...withLineage, headSha: remoteHead,
+        submissionId: '5fd1e8c6-0792-4e9c-a809-df389d840d90',
+        findings: [{ ...withLineage.findings[0], key: 'new-local-observation' }],
+    }, reviewer);
+    const withoutLineage = await service.submitStructuredReview({
+        ...request, headSha: remoteHead, submissionId: 'c52d18bb-e0e6-493e-8ccc-b4357a0dff7d',
+    }, reviewer);
+    const records = (await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: findings.id, limit: 100,
+    })).items;
+    const firstFinding = records.find(item => item.data.reviewRunId === first.runId)!;
+    const secondFinding = records.find(item => item.data.reviewRunId === second.runId)!;
+    const unlinkedFinding = records.find(item => item.data.reviewRunId === withoutLineage.runId)!;
+    assert.notEqual(firstFinding.data.findingKey, secondFinding.data.findingKey,
+        'each observation retains its own immutable submission-scoped key');
+    assert.equal((firstFinding.data.evidence as any).lineageKey, 'validate-pr-head-root-cause');
+    assert.equal((secondFinding.data.evidence as any).lineageKey, 'validate-pr-head-root-cause');
+    assert.equal((unlinkedFinding.data.evidence as any).lineageKey, undefined,
+        'legacy and unlinked findings must not be joined by guessing');
+    assert.deepEqual(records.map(record => record.data.state), ['new', 'new', 'new'],
+        'a matching key alone is not evidence of a fix or persistence verdict');
+    await assert.rejects(service.submitStructuredReview({
+        ...withLineage, findings: [{ ...withLineage.findings[0], lineageKey: 'different-root' }],
+    }, reviewer), /already belongs to another payload/);
+});
+
+test('lineage keys must be valid and unique within a structured review', () => {
+    const linked = { ...request.findings[0], lineageKey: 'root-1' };
+    for (const invalid of [
+        [linked, { ...linked, key: 'other-observation' }],
+        [{ ...linked, lineageKey: 'has spaces' }],
+        [{ ...linked, lineageKey: 'x'.repeat(129) }],
+        [{ ...linked, lineageKey: '' }],
+    ]) assert.equal(structuredReviewSchema.safeParse({
+        ...request, findings: invalid,
+    }).success, false);
+    assert.equal(structuredReviewSchema.safeParse({
+        ...request, findings: [linked, { ...linked, key: 'other-observation', lineageKey: 'root-2' }],
+    }).success, true);
+});
+
 test('replay returns original receipt after PR SHA advances, without querying GitHub again', async () => {
     const { catalog, runs, findings } = await fixture();
     let calls = 0;

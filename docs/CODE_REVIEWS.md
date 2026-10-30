@@ -200,6 +200,7 @@ Call with a single `submission` object, for example:
     "summary": "One actionable issue; no confirmed merge blockers.",
     "findings": [{
       "key": "validate-input",
+      "lineageKey": "root-cause-input-validation",
       "severity": "sev3",
       "title": "Validate incoming review input",
       "description": "A malformed input reaches the handler unchecked.",
@@ -212,8 +213,25 @@ Call with a single `submission` object, for example:
 
 The example SHA is illustrative: **use the exact 40-character current GitHub
 PR head SHA**. Each caller must generate a stable UUID submission ID, retain
-it for retries, and supply unique finding keys within that review. Accepted
-verdicts are `changes_requested`, `concerns_to_verify`, `non_blocking`,
+it for retries, and supply unique finding keys within that review. An optional
+`lineageKey` (same bounded character format as `key`) identifies a **reviewer-asserted
+root cause across rounds of the same repository and PR**. When a re-review
+verifies that an observation concerns the same underlying issue, reuse its
+`lineageKey` even if the submission-local `key`, changed line or commit
+differs. Each explicit lineage key may occur only once within a review run.
+Do **not** invent a lineage key for uncertain matches; omission keeps the
+observation unlinked. A repeated key is an identity assertion, **not** proof
+that a finding persists or has been resolved. Cross-PR matches are never inferred.
+
+Atlas stores the optional key in the existing Review Findings
+`evidence.lineageKey` object without changing Store schemas or the immutable
+`findingKey: structured:<submissionId>:<key>` observation identity.
+Existing/historical imports have no asserted lineage keys; source GitHub
+comment IDs and similar descriptions must not be auto-matched. The lifecycle
+state remains `new`; explicit, evidence-backed transition handling and
+PR-level lineage reads are separate follow-up slices.
+
+Accepted verdicts are `changes_requested`, `concerns_to_verify`, `non_blocking`,
 `no_findings` and `inconclusive`. A `no_findings` verdict cannot include
 findings. The server validates all fields strictly, bounds text and findings,
 and produces finding counts itself.
