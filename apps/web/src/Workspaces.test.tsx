@@ -193,6 +193,54 @@ test('logical repository appears once while Mac and VPS checkouts remain selecta
     expect(within(browser).getByText('1 checkout across 1 Node')).toBeInTheDocument();
 });
 
+test('Node filter selects the matching physical checkout instead of the logical first checkout', async () => {
+    const mac = { ...repo, id: 'mac-checkout', nodeId: 'mac-node', name: 'Portfolio Site',
+        rootPath: '/mac/portfolio' };
+    const linux = { ...repo, id: 'linux-checkout', nodeId: node.id,
+        name: 'Portfolio Site (VPS)', rootPath: '/srv/portfolio' };
+    const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [macNode, node];
+        if (name === 'list_workspaces') return [mac, linux];
+        if (name === 'list_logical_workspaces') return [{
+            id: 'logical-portfolio', name: 'Portfolio Site',
+            repository: 'example/portfolio', kind: 'git', checkouts: [mac, linux],
+        }];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return {
+            available: true, branch: 'main', head: sha,
+            originRepository: 'example/portfolio', dirty: false,
+        };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    expect(await within(browser).findByText('1 Workspace')).toBeInTheDocument();
+    const groupButton = within(browser).getByRole('button', { name: 'Portfolio Site' });
+    fireEvent.click(groupButton);
+    expect(location.hash).toContain('workspace=logical-portfolio');
+
+    // The Linux checkout comes second in the unfiltered logical group.
+    fireEvent.change(within(browser).getByLabelText('Node'), { target: { value: node.id } });
+    expect(within(browser).getByText('1 checkout across 1 Node')).toBeInTheDocument();
+    expect(within(browser).queryByRole('button', { name: /Checkout on Linux VPS/ })).not.toBeInTheDocument();
+    fireEvent.click(groupButton);
+    expect(location.hash).toContain('workspace=linux-checkout');
+    const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
+    expect(within(inspector).getByText('/srv/portfolio')).toBeInTheDocument();
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_status', {
+        checkoutId: linux.id,
+    }));
+
+    fireEvent.change(within(browser).getByLabelText('Node'), { target: { value: macNode.id } });
+    fireEvent.click(groupButton);
+    expect(location.hash).toContain('workspace=mac-checkout');
+    await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_status', {
+        checkoutId: mac.id,
+    }));
+});
+
 test('repository-first navigation stays compact, searchable, and filterable', async () => {
     const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
     const checkouts = [
@@ -631,7 +679,7 @@ test('logical Workspace navigation offers group-wide and selected-checkout Activ
     });
     render(<Workspaces />);
     const browser = screen.getByRole('region', { name: 'Workspace browser' });
-    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas repository/ }));
+    fireEvent.click(await within(browser).findByRole('button', { name: 'Atlas repository' }));
     const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
     expect(await within(inspector).findByRole('link', { name: 'All Workspace activity' }))
         .toHaveAttribute('href', '#/monitoring?tab=activity&logicalWorkspaceId=' + logicalWorkspaceId);
@@ -658,7 +706,7 @@ test('Workspace inspector loads one on-demand preview and switches between logic
     });
     render(<Workspaces />);
     const browser = screen.getByRole('region', { name: 'Workspace browser' });
-    fireEvent.click(await within(browser).findByRole('button', { name: /Atlas repository/ }));
+    fireEvent.click(await within(browser).findByRole('button', { name: 'Atlas repository' }));
     const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
     const preview = within(inspector).getByRole('region', { name: 'Workspace activity preview' });
     expect(within(preview).getByRole('button', { name: 'Show recent activity' })).toHaveAttribute('aria-expanded', 'false');
