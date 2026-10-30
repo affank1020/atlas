@@ -702,6 +702,56 @@ to post**: the future publisher must separately verify author, existing
 GitHub thread IDs/markers, changed head and one-shot durable claims before
 the very first mutating HTTP request. This stage is diagnostic only.
 
+### Read-only GitHub inline thread identity inventory
+
+`code_reviews_inline_thread_inventory({repository,prNumber})` is a **read-only**
+inventory of possible existing inline conversations for the latest saved
+review. It does not create comments, adopt legacy threads, mark a finding
+fixed, resolve a GitHub discussion or write Atlas Store records.
+
+The identity design for a future reviewer-published inline thread uses a
+stable, opaque marker of the exact **canonical owner/repo, PR number and
+reviewer-asserted lineage key**:
+
+```text
+<!-- atlas-code-reviews-thread:v1:<sha256> -->
+```
+
+The marker must be the **single trailing marker** in a root inline comment.
+It is not an authentication secret. The reader independently resolves the
+installation's numeric GitHub App Bot user ID and requires that the comment
+was actually posted by that Bot. A copied marker from a human/other Bot
+is recorded as untrusted and cannot establish thread ownership. Replies
+(`in_reply_to_id`) cannot be adopted as new roots.
+
+The inventory reads the GitHub PR review-comments REST endpoint with
+installation-scoped **read-only** tokens, one page at a time, up to five
+100-comment pages. It validates every comment ID and fails closed for
+duplicate App-owned roots, malformed owned markers, missing reply parents,
+unreadable pages, invalid metadata and ambiguous full fifth pages.
+It preserves numeric root IDs and safe GitHub discussion links while
+identifying human/bot replies by count. It never treats
+`line === null` as evidence of a resolved finding: GitHub may merely
+indicate that the original diff location is outdated.
+
+Only the **exact structured lineage** saved in Atlas can match an owned
+root. Finding title, path, review timestamp and changing line number do
+not establish root-cause identity. The output distinguishes
+`owned_thread_found`, `no_owned_thread`,
+`missing_stable_lineage` and `historical_or_partial_evidence`,
+and reports older unmatched owned threads without deleting them.
+Reviewer-asserted resolutions remain labelled assertions with
+GitHub resolution state `unknown`; REST review comments do not attest
+whether a GitHub conversation was resolved. The separate diff preflight
+still determines whether an initial new-line anchor is safe.
+
+**Not yet enabled:** actual inline comment publication, existing-thread
+replies, automated verification of a fix, GitHub conversation resolution,
+durable one-shot per-thread claims or retroactive adoption of human-owned
+Code Reviewer skill comments. Those actions require an independently
+reviewed publisher identity/permissions and an opt-in workflow that
+prevents duplicate initial threads and ambiguous network retries.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
