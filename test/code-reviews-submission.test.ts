@@ -118,25 +118,30 @@ test('structured review submits one immutable run and linked findings with serve
     assert.equal(first.reviewedAt, run.data.reviewedAt);
 });
 
-test('explicit lineage key links observations without rewriting per-run identity or lifecycle state', async () => {
+test('explicit lineage key links observations across commits without rewriting per-run identity or lifecycle state', async () => {
     const { catalog, findings } = await fixture();
-    const service = new CodeReviewsService(catalog, openHead());
+    let remoteHead = sha;
+    const service = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => ({ repository, prNumber: 84, headSha: remoteHead, open: true }),
+    });
     const withLineage = {
         ...request,
         findings: [{ ...request.findings[0], lineageKey: 'validate-pr-head-root-cause' }],
     };
     const first = await service.submitStructuredReview(withLineage, reviewer);
+    remoteHead = 'b'.repeat(40);
     const replay = await service.submitStructuredReview(withLineage, reviewer);
     assert.equal(replay.created, false);
     assert.deepEqual(replay.findingReceipts, first.findingReceipts);
 
     const second = await service.submitStructuredReview({
-        ...withLineage,
+        ...withLineage, headSha: remoteHead,
         submissionId: '5fd1e8c6-0792-4e9c-a809-df389d840d90',
         findings: [{ ...withLineage.findings[0], key: 'new-local-observation' }],
     }, reviewer);
     const withoutLineage = await service.submitStructuredReview({
-        ...request, submissionId: 'c52d18bb-e0e6-493e-8ccc-b4357a0dff7d',
+        ...request, headSha: remoteHead, submissionId: 'c52d18bb-e0e6-493e-8ccc-b4357a0dff7d',
     }, reviewer);
     const records = (await catalog.queryRecords({
         projectId: CODE_REVIEWS_PROJECT_ID, storeId: findings.id, limit: 100,
