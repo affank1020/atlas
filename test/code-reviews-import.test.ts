@@ -405,3 +405,19 @@ test('an empty matching review timeline yields zero counts rather than a complet
     assert.equal(result.totals.runsCreated, 0);
     assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 0);
 });
+
+test('new mixed-case GitHub history imports use canonical repository identity without duplicating prior review IDs', async () => {
+    const { catalog, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, { read: async () => source }, trusted);
+    const first = await service.importPullRequest('Affank1020/Atlas', 69, true);
+    assert.equal(first.repository, repository);
+    assert.equal(first.runsCreated, 1);
+    const saved = await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+    });
+    assert.equal(saved.total, 1);
+    assert.equal(saved.items[0]!.data.repository, repository);
+    const second = await service.importPullRequest(repository, 69, true);
+    assert.equal(second.runsCreated, 0);
+    assert.equal(second.runsAlreadyPresent, 1);
+});
