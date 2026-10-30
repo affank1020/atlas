@@ -114,8 +114,16 @@ async function fixture() {
             return 73;
         },
     };
+    const owned = {
+        inspect: async () => ({ roots: remoteBody ? [{
+            id: 73, marker, bodySha256: hash(remoteBody),
+            path: 'src/new.ts', originalCommitSha: head,
+            originalLine: 14, currentLine: 14,
+            url: 'https://github.com/affank1020/atlas/pull/126#discussion_r73',
+        }] : [], copiedMarkers: [], replies: new Map() }),
+    };
     const service = new InlineRootPublicationService(catalog, preflight as any,
-        inventory as any, writer as any, new Set([repository]));
+        inventory as any, writer as any, new Set([repository]), owned as any);
     return {
         catalog, runs, findings, finding, run, events, service, writer,
         publish: (apply: boolean, caller: typeof actor | undefined = actor) =>
@@ -178,6 +186,27 @@ test('ambiguous POST is never retried; matching Bot root reconciles the exact co
     const saved = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID, f.findings.id, f.finding.id);
     assert.equal((saved.data.evidence as any).githubInlineThread.state, 'claimed');
     assert.equal((await f.publish(true)).status, 'published');
+    assert.equal(f.events.post, 1);
+});
+
+test('prior-round claimed inline root reconciles without checking a newer diff or resending', async () => {
+    const f = await fixture();
+    f.setUncertainPost(true);
+    assert.equal((await f.publish(true)).status, 'uncertain');
+    // A later saved run may become latest, but the old claim still has an
+    // independently verified Bot root, identified by its original finding ID.
+    await f.catalog.createRecord({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: f.runs.id,
+        data: { repository, prNumber, headSha: 'b'.repeat(40),
+            reviewer: 'Code Reviewer', verdict: 'no_findings',
+            reviewedAt: '2026-10-30T21:00:00.000Z',
+            coverage: { source: 'atlas_structured_submission',
+                submissionId: 'ed18bec8-59b2-47a9-824c-0ae7153a4573',
+                payloadSha256: 'b'.repeat(64), findingCount: 0,
+                authenticatedCaller: actor } },
+    });
+    const recovered = await f.publish(true);
+    assert.equal(recovered.status, 'published');
+    assert.equal(recovered.rootCommentId, 73);
     assert.equal(f.events.post, 1);
 });
 
