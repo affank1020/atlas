@@ -113,6 +113,12 @@ jobs:
           export ATLAS_IMAGE_TAG="$image_tag"
           compose=(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml)
 
+          # Make the shared application ingress bridge available, even when
+          # the standalone public proxy has not yet been deployed.
+          if ! docker network inspect vps_ingress >/dev/null 2>&1; then
+            docker network create --driver bridge vps_ingress >/dev/null
+          fi
+
           "${compose[@]}" pull server ingress
           "${compose[@]}" up -d --no-build --wait
 
