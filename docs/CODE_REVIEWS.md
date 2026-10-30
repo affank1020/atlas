@@ -388,11 +388,58 @@ expanded panel. This operation is read-only and does not backfill, publish,
 approve or resolve GitHub threads. The persistent PR bot summary, stable
 finding lifecycle and dedicated publishing identity remain later milestones.
 
+### Bounded PR timeline and explicit cross-round lineage (read-only)
+
+`code_reviews_pr_timeline({repository,prNumber,limit?,offset?})` reads the exact
+repository and PR from **Atlas's saved records only**. The default page has
+five rounds, maximum ten; rounds are sorted newest first and can be paginated
+with an offset. Each round queries at most 100 linked finding observations.
+The response includes `recordedRounds`, `rounds`, `hasMore`,
+`storedWindowComplete`, `unlinkedObservations` and `lineages`.
+`storedWindowComplete` means the selected page covers all **saved** rounds
+and their first 100 findings, **not** that GitHub review history is complete.
+More than 100 findings in a saved round is visibly labelled truncated.
+
+Each returned review round has its reviewed SHA, timestamp, verdict, source
+(`structured`, `historical` or `unknown`), finding completeness
+(`structured`, `historical_partial`, `unknown`), and saved finding
+observations. The result rejects invalid/mismatched Store records instead of
+silently hiding them. Historical Markdown text and missing inline comments
+remain partial source evidence.
+
+An observation enters a lineage **only** when a structured review explicitly
+submitted a valid `lineageKey` and its stored evidence matches that review's
+submission namespace. Key reuse across rounds means the reviewer asserted the
+same root cause: `observed_multiple_times_in_page` is not independently
+verified persistence. Unlinked or imported observations are **never**
+joined by title, file, line, comment ID or apparent disappearance. Within a
+page, duplicate asserted lineage keys in a single round cause an error rather
+than miscounting. `lineages[].observationsInPage` and recurrence labels are
+strictly scoped to that loaded page, including when additional older Atlas
+rounds exist. Different repository/PR identities are never combined.
+
+**No resolution is inferred** when an issue vanishes from a subsequent review,
+when a PR moves to a new SHA, or when a GitHub discussion becomes outdated.
+The response always carries `resolutionInferred:false`. The historical
+`state` field on a finding is merely its saved observation label, not a
+verified GitHub thread state or fresh fix confirmation. `no_findings` on a
+historical import does not establish complete issue coverage.
+
+The web application's existing **PR status** expansion now lazily retrieves
+this timeline alongside GitHub head freshness. Round details expand in place
+and older round pages can be navigated with Previous/Next; Refresh rechecks
+both active read operations. Collapsed rows perform neither PR-scoped read.
+No implicit background job, GitHub publication, Store mutation, lifecycle
+transition, historical import or permission change is involved.
+
+Explicit, evidence-backed lifecycle transitions, globally scoped finding
+queries and managed GitHub bot/thread publication remain later work.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
 ChatGPT connector clients surface only an initial portion of a large MCP tool
-list. Atlas registers Code Reviews' nine operations near the beginning
+list. Atlas registers Code Reviews' ten operations near the beginning
 of that list, after the existing priority football generalist tools. This does
 **not** introduce an alternate API, relax authenticated MCP OAuth requirements,
 enable native GitHub publication, or imply that this ChatGPT connection already
