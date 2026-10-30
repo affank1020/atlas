@@ -16,7 +16,7 @@ type RootReader = Pick<GitHubInlineThreadReader, 'inspect'>;
 type Identity = { runs: string; findings: string; repository: string; prNumber: number };
 type Claim = {
     state: 'claimed' | 'published'; claimId: string; findingId: string;
-    rootCommentId: number; rootMarker: string; marker: string;
+    rootCommentId: number; rootMarker: string; rootBodySha256: string; marker: string;
     bodySha256: string; headSha: string; claimedAt: string; replyCommentId?: number;
 };
 const obj = (x: unknown): x is Record<string, unknown> =>
@@ -52,8 +52,9 @@ function parseReplyClaim(finding: AtlasRecord): Claim | undefined {
     if (!obj(raw) || !['claimed','published'].includes(String(raw.state)) ||
         typeof raw.claimId !== 'string' || !/^[a-f0-9-]{36}$/i.test(raw.claimId) ||
         raw.findingId !== finding.id || !positive(raw.rootCommentId) ||
-        typeof raw.rootMarker !== 'string' || !markerPattern.test(raw.rootMarker) ||
-        typeof raw.marker !== 'string' || !markerPattern.test(raw.marker) ||
+        typeof raw.rootMarker !== 'string' || !/^<!-- atlas-code-reviews-thread:v1:[0-9a-f]{64} -->$/.test(raw.rootMarker) ||
+        typeof raw.rootBodySha256 !== 'string' || !/^[0-9a-f]{64}$/.test(raw.rootBodySha256) ||
+        typeof raw.marker !== 'string' || !/^<!-- atlas-code-reviews-reply:v1:[0-9a-f]{64} -->$/.test(raw.marker) ||
         typeof raw.bodySha256 !== 'string' || !/^[a-f0-9]{64}$/.test(raw.bodySha256) ||
         typeof raw.headSha !== 'string' || !/^[a-f0-9]{40}$/i.test(raw.headSha) ||
         typeof raw.claimedAt !== 'string' ||
@@ -168,7 +169,8 @@ export class InlineReplyPublicationService {
         const priorRun = related.byRun.get(String(predecessor.data.reviewRunId));
         const root = (predecessor.data.evidence as Record<string, unknown>).githubInlineThread;
         if (!priorRun || !obj(root) || root.state !== 'published' ||
-            !positive(root.rootCommentId) ||
+            !positive(root.rootCommentId) || root.findingId !== predecessor.id ||
+            typeof root.claimId !== 'string' || !/^[0-9a-f-]{36}$/i.test(root.claimId) ||
             typeof root.headSha !== 'string' || !/^[a-f0-9]{40}$/i.test(root.headSha) ||
             priorRun.data.headSha !== root.headSha ||
             root.headSha === latest.data.headSha ||
@@ -188,7 +190,7 @@ export class InlineReplyPublicationService {
     private attestRemote(remote: Awaited<ReturnType<RootReader['inspect']>>,
         claim: Claim) {
         const root = remote.roots.find(r => r.id === claim.rootCommentId &&
-            r.marker === claim.rootMarker);
+            r.marker === claim.rootMarker && r.bodySha256 === claim.rootBodySha256);
         const reply = remote.managedReplies.find(r => r.marker === claim.marker &&
             r.parentId === claim.rootCommentId);
         if (!root || remote.copiedReplyMarkers.includes(claim.marker))
@@ -271,7 +273,7 @@ export class InlineReplyPublicationService {
         const claim: Claim = {
             state:'claimed',claimId:randomUUID(),findingId,
             rootCommentId:ownedRoot.id,rootMarker:ownedRoot.marker,
-            marker:proposal.marker,bodySha256:proposal.bodySha256,
+            rootBodySha256:ownedRoot.bodySha256,marker:proposal.marker,bodySha256:proposal.bodySha256,
             headSha:latest.headSha,claimedAt:new Date().toISOString(),
         };
         await this.catalog.store.transaction(state => {
@@ -284,6 +286,13 @@ export class InlineReplyPublicationService {
         });
         try {
             await this.github.checkHead(repository,prNumber,latest.headSha);
+            const fresh = await this.roots.inspect(repository,prNumber);
+            const stillOwned = fresh.roots.some(root => root.id === claim.rootCommentId &&
+                root.marker === claim.rootMarker &&
+                root.bodySha256 === claim.rootBodySha256);
+            if (!stillOwned || fresh.managedReplies.some(reply => reply.marker === claim.marker) ||
+                fresh.copiedReplyMarkers.includes(claim.marker))
+                throw new AtlasError('Existing inline root changed before reply POST.', 'CONFLICT');
         } catch (error) {
             try {
                 await this.catalog.store.transaction(state => {
