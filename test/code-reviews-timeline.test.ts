@@ -124,7 +124,10 @@ test('missing history remains empty rather than clean; truncated findings surfac
     assert.deepEqual(none.rounds, []);
     assert.equal(none.resolutionInferred, false);
 
-    const partial = fixture({ rounds: [rounds[0]], counts: { [ids[0]]: 101 } });
+    const firstHundred = Array.from({ length: 100 }, (_, i) =>
+        observation(ids[0], submissionB, String(i + 1).padStart(3, '0')));
+    const partial = fixture({ rounds: [rounds[0]],
+        findings: { [ids[0]]: firstHundred }, counts: { [ids[0]]: 101 } });
     const truncated = await partial.app.invoke('code_reviews_pr_timeline',
         { repository: repo, prNumber: 116 }) as any;
     assert.equal(truncated.rounds[0].findingsTruncated, true);
