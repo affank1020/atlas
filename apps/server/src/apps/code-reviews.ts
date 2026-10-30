@@ -255,16 +255,6 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                 description: 'Read bounded saved PR review rounds and explicitly asserted finding lineage. Missing history and resolutions remain unknown.',
                 inputSchema: {
                     repository: z.string().regex(new RegExp('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+
-                    prNumber: z.number().int().min(1).max(1_000_000),
-                    limit: z.number().int().min(1).max(10).default(5),
-                    offset,
-                },
-                invoke: ({ repository, prNumber, limit, offset }: {
-                    repository: string; prNumber: number; limit: number; offset: number;
-                }) => service.prTimeline(repository, prNumber, limit, offset),
-            },
-            {
-                name: 'code_reviews_list_runs',
                 description: 'List saved independent review runs in descending review time.',
                 inputSchema: { limit, offset }, invoke: ({ limit, offset }: { limit: number; offset: number }) => service.runs(limit, offset),
             },
