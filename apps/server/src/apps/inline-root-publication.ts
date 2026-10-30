@@ -6,7 +6,7 @@ import type { ApplicationCaller } from './registry.js';
 import { assertStructuredCaller } from './review-submission.js';
 import { CODE_REVIEWS_PROJECT_ID, REVIEW_FINDINGS_STORE, REVIEW_RUNS_STORE } from './review-import.js';
 import { canonicalRepository } from './managed-summary.js';
-import { inlineThreadMarker } from './inline-thread-inventory.js';
+import { inlineThreadMarker, type GitHubInlineThreadReader } from './inline-thread-inventory.js';
 import type { InlineThreadPreflightService } from './inline-thread-preflight.js';
 import type { InlineThreadInventoryService } from './inline-thread-inventory.js';
 import type { GitHubInlineRootWriter } from './inline-thread-writer.js';
@@ -21,7 +21,6 @@ type Claim = {
     marker: string; bodySha256: string; headSha: string;
     path: string; line: number; claimedAt: string; rootCommentId?: number;
 };
-type Stored = { run: AtlasRecord; finding: AtlasRecord; claim?: Claim };
 const obj = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
 const positive = (value: unknown): value is number =>
@@ -73,7 +72,8 @@ export class InlineRootPublicationService {
         private readonly preflight: Pick<InlineThreadPreflightService, 'preview'>,
         private readonly inventory: Pick<InlineThreadInventoryService, 'preview'>,
         private readonly github: Pick<GitHubInlineRootWriter, 'checkHead' | 'prepareWrite' | 'post'>,
-        private readonly enabled: ReadonlySet<string> = new Set()) {}
+        private readonly enabled: ReadonlySet<string> = new Set(),
+        private readonly ownedRoots?: Pick<GitHubInlineThreadReader, 'inspect'>) {}
 
     private async storeIds(): Promise<Stores> {
         const rows = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -175,6 +175,46 @@ export class InlineRootPublicationService {
         });
     }
 
+    /** A saved claim can be reconciled by its original finding ID even if a
+     * newer round has replaced the latest finding or the PR head has advanced.
+     * Only the real Bot-root inventory can attest a match; no GitHub writes.
+     */
+    private async reconcileClaim(identity: Identity, finding: AtlasRecord,
+        claim: Claim, caller: ApplicationCaller, apply: boolean) {
+        if (!this.ownedRoots)
+            throw new AtlasError('Inline root ownership reconciliation is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        const saved = await this.catalog.store.snapshot();
+        const related = this.related(saved, identity);
+        const stored = related.findings.find(f => f.id === finding.id);
+        const run = stored && related.byRun.get(String(stored.data.reviewRunId));
+        const actor = run && obj(run.data.coverage) && obj(run.data.coverage.authenticatedCaller)
+            ? run.data.coverage.authenticatedCaller : null;
+        if (!stored || !run || !actor || actor.kind !== caller.kind ||
+            actor.subject !== caller.subject || actor.issuer !== caller.issuer ||
+            parseClaim(stored)?.claimId !== claim.claimId)
+            throw new AtlasError('Inline publication receipt belongs to another owner or changed.', 'CONFLICT');
+        const remote = await this.ownedRoots.inspect(identity.repository, identity.prNumber);
+        const root = remote.roots.find(item => item.marker === claim.marker);
+        const verified = root && root.bodySha256 === claim.bodySha256 &&
+            root.originalCommitSha === claim.headSha &&
+            root.originalLine === claim.line && root.path === claim.path &&
+            (!claim.rootCommentId || root.id === claim.rootCommentId);
+        if (!verified) return { status: claim.state === 'published' ?
+            'published_remote_drift' : 'uncertain', findingId: finding.id,
+            dryRun: true, postedAgain: false };
+        if (apply && claim.state === 'claimed') await this.catalog.store.transaction(state => {
+            const candidate = this.related(state, identity).findings.find(f => f.id === finding.id);
+            const pending = candidate && parseClaim(candidate);
+            if (!candidate || pending?.state !== 'claimed' || pending.claimId !== claim.claimId)
+                throw new AtlasError('Inline publication claim changed during reconciliation.', 'CONFLICT');
+            this.writeClaim(state, identity, finding.id, { ...pending,
+                state: 'published', rootCommentId: root!.id });
+        });
+        return { status: 'published', dryRun: !apply, findingId: finding.id,
+            rootCommentId: root!.id, alreadyPublished: claim.state === 'published',
+            postedAgain: false };
+    }
+
     async publish(repository: string, prNumber: number, findingId: string, apply: boolean,
         caller?: ApplicationCaller) {
         assertStructuredCaller(caller);
@@ -183,6 +223,9 @@ export class InlineRootPublicationService {
             throw new AtlasError('Initial inline root publication is disabled for this repository.', 'CAPABILITY_UNAVAILABLE');
         const identity: Identity = { ...(await this.storeIds()), repository, prNumber };
         const initial = await this.catalog.store.snapshot();
+        const previous = this.related(initial, identity).findings.find(f => f.id === findingId);
+        const savedClaim = previous && parseClaim(previous);
+        if (savedClaim) return this.reconcileClaim(identity, previous!, savedClaim, caller!, apply);
         const fingerprint = this.fingerprint(initial, identity);
         const [preflight, remote] = await Promise.all([
             this.preflight.preview(repository, prNumber),
