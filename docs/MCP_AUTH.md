@@ -165,36 +165,31 @@ Do **not** delete the old database or local private backup yet.
 - Keep `/mcp` behind OAuth; don't remove Server validation to fix linking.
 
 
-// ## Relay machine-to-machine MCP integration
+## Relay client as a self-hosted MCP peer
 
-Relay must not reuse the human ChatGPT OAuth token or a permanent copied bearer token.
-Create a separate **Machine to Machine** application in the same Auth0 tenant
-(e.g. `Relay Atlas Reader`) and authorize it against the existing Atlas MCP API
-resource `https://atlas.affankhan.dev/mcp`. Add and grant the API permission
-`atlas:relay:read` to this application; do **not** grant `atlas:access`.
+ChatGPT continues authenticating with Auth0. Relay can use a **dedicated service
+token**, generated privately once on a trusted terminal:
 
-Configure only the **public Auth0 application Client ID** in Atlas's private
-`~/atlas-deploy/infra/production.env`:
-
-```dotenv
-ATLAS_MCP_OAUTH_RELAY_CLIENT_ID=YOUR_RELAY_M2M_CLIENT_ID
+```sh
+token="$(openssl rand -hex 32)"
+printf 'Atlas digest: '
+printf '%s' "$token" | shasum -a 256 | awk '{print $1}'
+# Save the generated $token privately into ~/relay/.env as ATLAS_MCP_TOKEN.
+# Store only its printed SHA-256 digest in ~/atlas-deploy/infra/production.env:
+# ATLAS_MCP_RELAY_TOKEN_SHA256=<digest>
+unset token
 ```
 
-Deploy the reviewed Atlas change. The existing `ATLAS_MCP_OAUTH_ALLOWED_SUBJECT`
-continues to authorize only your human OAuth identity. The extra client subject
-`YOUR_RELAY_M2M_CLIENT_ID@clients` is accepted **only** with the signed
-`atlas:relay:read` scope and receives a server-enforced read-only catalogue
-matching Relay's current Atlas read tools. A service credential cannot dispatch
-project/store/record writes or Node development tasks, even if Relay's own
-allowlist is changed. Unconfigured client IDs fail closed.
+Never paste the token into ChatGPT, logs, issues, Git or shell history.
+On Relay set `ATLAS_MCP_URL=https://atlas.affankhan.dev/mcp` and
+`ATLAS_MCP_TOKEN=<raw-token>`; **no Auth0 client secret or OAuth app** is needed.
+Keep `ATLAS_MCP_OAUTH_ISSUER` and `ATLAS_MCP_OAUTH_ALLOWED_SUBJECT` unchanged
+for your ChatGPT connector.
 
-On the Relay VPS, the **Client Secret** belongs only in the private
-`~/relay/.env`. Configure `ATLAS_OAUTH_ISSUER`, `ATLAS_OAUTH_CLIENT_ID`,
-`ATLAS_OAUTH_CLIENT_SECRET`, and `ATLAS_MCP_URL` as documented in Relay.
-Relay fetches client-credentials access tokens on demand and refreshes before expiry.
-Keep Atlas client secrets out of the Atlas server, GitHub and browser.
-
-Deploy order: Atlas first (read-only M2M verifier), then Relay. Verify with a
-live `get_atlas_status` and a failed service-token mutation before allowing
-any broader permissions. Do not switch this service principal to user-level
-`atlas:access` just to make a blocked tool work.
+Atlas compares the service token digest in constant time. A valid Relay
+credential receives an Atlas-enforced read-only MCP catalogue; mutations and
+`workspace_run_dev_task` are not available to this identity. The server
+does not grant more authority simply because a caller advertises a tool.
+Start with a real `get_atlas_status` smoke test from Relay before extending
+permissions. If the token leaks, regenerate it, update both private env files,
+and redeploy Atlas and Relay.

@@ -16,8 +16,8 @@ const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
 const client = { client: z.string().optional() };
 const include = { includeArchived: z.boolean().optional() };
 const viewQuery = z.object({ name: z.string(), storeId: z.string().uuid(), filters: z.array(z.object({ field: z.string(), operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"]), value: z.unknown() })).optional(), sort: z.array(z.object({ field: z.string(), direction: z.enum(["asc", "desc"]).optional() })).optional(), limit: z.number().int().min(1).max(100).optional() });
-// Dedicated Relay machine identity is intentionally read-only, regardless of what
-// a compromised or modified Relay client attempts to dispatch.
+// Trust boundary: a Relay service credential is read-only even if its own
+// agent client is compromised. Do not make this a global MCP restriction.
 export const RELAY_READ_TOOLS: ReadonlySet<string> = new Set([
     'get_atlas_status', 'list_projects', 'get_project', 'list_nodes', 'get_node',
     'list_workspaces', 'get_workspace', 'list_logical_workspaces', 'list_project_workspaces',

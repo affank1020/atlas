@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature } from 'node:crypto';
+import { createHash, createPublicKey, timingSafeEqual, verify as verifySignature } from 'node:crypto';
 
 export type McpAuthOptions = {
     enabled: boolean;
@@ -7,7 +7,7 @@ export type McpAuthOptions = {
     resource: string;
     subject: string;
     scope: string;
-    relayClientId?: string;
+    relayTokenHash?: string;
 };
 
 type JwtHeader = { alg?: unknown; kid?: unknown; typ?: unknown };
@@ -65,30 +65,27 @@ export function createMcpTokenVerifier(config: McpAuthOptions, fetchImpl: typeof
         finally { inFlight = undefined; }
     }
 
-    async function identify(headerValue: string | undefined): Promise<'owner' | 'relay' | null> {
+    async function authenticate(headerValue: string | undefined): Promise<boolean> {
         if (!config.enabled || !headerValue || !/^Bearer [^\s]+$/i.test(headerValue) || headerValue.length > 16384)
-            return null;
+            return false;
         const token = headerValue.slice(7);
         const parts = token.split('.');
-        if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) return null;
+        if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) return false;
         const header = parseBase64UrlJson(parts[0]!) as JwtHeader | undefined;
         const claims = parseBase64UrlJson(parts[1]!) as Claims | undefined;
         if (!header || !claims || header.alg !== 'RS256' || typeof header.kid !== 'string' || header.kid.length > 256)
-            return null;
+            return false;
         // Validate the JWT claims before performing expensive signature work, then
         // verify the signature before trusting any of these claims.
         const now = Math.floor(Date.now() / 1000);
         const audience = claims.aud === config.resource || (Array.isArray(claims.aud) && claims.aud.includes(config.resource));
         const scopes = typeof claims.scope === 'string' ? claims.scope.split(/\s+/) : [];
-        const hasScope = (scope: string) => scopes.includes(scope) ||
-            (Array.isArray(claims.permissions) && claims.permissions.includes(scope));
-        const principal = claims.sub === config.subject && hasScope(config.scope) ? 'owner'
-            : config.relayClientId && claims.sub === config.relayClientId + '@clients' &&
-              hasScope('atlas:relay:read') ? 'relay' : null;
-        if (claims.iss !== config.issuer || !principal || !audience ||
+        const permitted = scopes.includes(config.scope) ||
+            (Array.isArray(claims.permissions) && claims.permissions.includes(config.scope));
+        if (claims.iss !== config.issuer || claims.sub !== config.subject || !audience || !permitted ||
             typeof claims.exp !== 'number' || claims.exp <= now - 30 ||
             (claims.nbf !== undefined && (typeof claims.nbf !== 'number' || claims.nbf > now + 30)))
-            return null;
+            return false;
         const signingInput = Buffer.from(parts[0]! + '.' + parts[1]!, 'ascii');
         const signature = Buffer.from(parts[2]!, 'base64url');
         let jwks = await getJwks();
@@ -96,12 +93,22 @@ export function createMcpTokenVerifier(config: McpAuthOptions, fetchImpl: typeof
         if (!key) { jwks = await getJwks(true); key = jwks.keys.find(jwk => jwk.kid === header.kid); }
         if (!key || key.kty !== 'RSA' || (key.use && key.use !== 'sig') ||
             (key.alg && key.alg !== 'RS256') || (key.key_ops && !key.key_ops.includes('verify')))
-            return null;
+            return false;
         try {
             const publicKey = createPublicKey({ key, format: 'jwk' });
-            return verifySignature('RSA-SHA256', signingInput, publicKey, signature) ? principal : null;
-        } catch { return null; }
+            return verifySignature('RSA-SHA256', signingInput, publicKey, signature);
+        } catch { return false; }
     }
-    const authenticate = async (headerValue: string | undefined) => (await identify(headerValue)) !== null;
-    return { authenticate, identify };
+    return { authenticate };
+}
+
+// Private service token path; no OAuth access-token semantics are implied.
+// Accept only an operator-generated 32-byte random hexadecimal bearer token.
+// Atlas stores just its SHA-256 hash, Relay holds the underlying random token.
+export function verifyRelayServiceToken(headerValue: string | undefined, hash: string | undefined): boolean {
+    if (!hash || !/^[a-f0-9]{64}$/.test(hash) || !headerValue) return false;
+    const match = /^Bearer ([a-f0-9]{64})$/i.exec(headerValue);
+    if (!match) return false;
+    const candidate = createHash('sha256').update(match[1]!, 'utf8').digest();
+    return timingSafeEqual(candidate, Buffer.from(hash, 'hex'));
 }

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, createSign } from 'node:crypto';
+import { createHash, generateKeyPairSync, createSign } from 'node:crypto';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { createMcpTokenVerifier, mcpResourceMetadata, type McpAuthOptions } from '../apps/server/src/api/mcp/oauth.js';
+import { createMcpTokenVerifier, mcpResourceMetadata, verifyRelayServiceToken, type McpAuthOptions } from '../apps/server/src/api/mcp/oauth.js';
 import { createHttpTransport } from '../apps/server/src/api/http/index.js';
 import type { ServerServices } from '../apps/server/src/server/composition.js';
 import { loadServerConfig } from '../apps/server/src/server/config.js';
@@ -15,7 +15,6 @@ const config: McpAuthOptions = {
     resource: 'https://affan-atlas.duckdns.org/mcp',
     subject: 'auth0|owner-only',
     scope: 'atlas:access',
-    relayClientId: 'relayClientTest12345',
 };
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'test-key-1', use: 'sig', alg: 'RS256' };
@@ -131,31 +130,24 @@ test('Hosted MCP refuses unauthenticated HTTP requests; metadata stays public', 
     });
 });
 
-
-// A dedicated Auth0 M2M application has a different signed subject and scope
-// from the human owner. It may never authenticate as the owner.
-test('Relay service token is explicitly scoped and cannot impersonate the human owner', async () => {
-    const verifier = createMcpTokenVerifier(config, async () => new Response(JSON.stringify({ keys: [jwk] }), { status: 200 }));
-    const service = { sub: config.relayClientId + '@clients', scope: 'atlas:relay:read' };
-    assert.equal(await verifier.identify('Bearer ' + jwt()), 'owner');
-    assert.equal(await verifier.identify('Bearer ' + jwt(service)), 'relay');
-    assert.equal(await verifier.identify('Bearer ' + jwt({ ...service, scope: 'atlas:access' })), null);
-    assert.equal(await verifier.identify('Bearer ' + jwt({ ...service, sub: 'other-client@clients' })), null);
-    assert.equal(await verifier.identify('Bearer ' + jwt({ scope: 'atlas:relay:read' })), null);
-    assert.equal(await verifier.identify('Bearer ' + jwt({ ...service, aud: 'https://another.invalid/mcp' })), null);
-    assert.equal(await verifier.identify('Bearer ' + jwt({ ...service, exp: 1 })), null);
-    assert.equal(await verifier.identify('Bearer ' + jwt(service).slice(0, -1) + 'z'), null);
-    const ownerOnly = createMcpTokenVerifier({ ...config, relayClientId: '' }, async () =>
-        new Response(JSON.stringify({ keys: [jwk] }), { status: 200 }));
-    assert.equal(await ownerOnly.identify('Bearer ' + jwt(service)), null);
+// Service token never shares the human OAuth verifier's identity or claim set.
+test('Relay service bearer matches its configured digest and rejects wrong or malformed tokens', () => {
+    const token = 'a'.repeat(64);
+    const digest = createHash('sha256').update(token).digest('hex');
+    assert.equal(verifyRelayServiceToken('Bearer ' + token, digest), true);
+    assert.equal(verifyRelayServiceToken('Bearer ' + 'b'.repeat(64), digest), false);
+    assert.equal(verifyRelayServiceToken('Basic ' + token, digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer short', digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer ' + token + ' extra', digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer ' + token, ''), false);
+    assert.equal(verifyRelayServiceToken(undefined, digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer ' + jwt(), digest), false);
 });
-
-test('M2M client ID requires existing owner OAuth and rejects malformed identifiers', () => {
-    const env = { DATABASE_URL: 'postgresql://localhost/example', ATLAS_TRUSTED_INGRESS: 'true' };
-    assert.throws(() => loadServerConfig({ ...env, ATLAS_MCP_OAUTH_RELAY_CLIENT_ID: 'relayClientTest12345' }), /requires owner MCP OAuth/);
-    assert.throws(() => loadServerConfig({ ...env, ATLAS_MCP_OAUTH_RELAY_CLIENT_ID: '../unsafe' }), /Client ID/);
-    const mcp = loadServerConfig({ ...env, ATLAS_MCP_OAUTH_ISSUER: config.issuer,
-        ATLAS_MCP_OAUTH_ALLOWED_SUBJECT: config.subject, ATLAS_MCP_RESOURCE: config.resource,
-        ATLAS_MCP_OAUTH_RELAY_CLIENT_ID: 'relayClientTest12345' });
-    assert.equal(mcp.mcpAuth.relayClientId, 'relayClientTest12345');
+test('Malformed Relay service digest fails startup without breaking owner OAuth', () => {
+    const env = { DATABASE_URL: 'postgresql://localhost/db', ATLAS_TRUSTED_INGRESS: 'true' };
+    assert.throws(() => loadServerConfig({ ...env, ATLAS_MCP_RELAY_TOKEN_SHA256: '123' }), /SHA-256/);
+    const hash = createHash('sha256').update('a'.repeat(64)).digest('hex');
+    const options = loadServerConfig({ ...env, ATLAS_MCP_RELAY_TOKEN_SHA256: hash });
+    assert.equal(options.mcpAuth.relayTokenHash, hash);
+    assert.equal(options.mcpAuth.enabled, false);
 });

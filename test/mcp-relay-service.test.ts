@@ -5,15 +5,14 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpTransport, RELAY_READ_TOOLS } from '../apps/server/src/api/mcp/index.js';
 import type { TransportServices } from '../apps/server/src/server/dispatch.js';
 
-test('Relay service MCP sees only Atlas read tools and cannot dispatch mutations', async () => {
+test('Relay service sees only Atlas read tools and cannot dispatch mutations', async () => {
   const names=['football_generalist_evaluate','football_generalist_baseline',
     'football_generalist_status','football_generalist_evaluation_detail',
     'football_generalist_policies','football_generalist_assessments'];
   const dispatched:string[]=[];
   const services={applications:{tools:()=>names.map(name=>({name,description:name,inputSchema:{}}))},
     dispatch:async (name:string)=>{dispatched.push(name);return {ok:true};}} as unknown as TransportServices;
-  const server=createMcpTransport(services,'atlas:relay:read',
-    {kind:'mcp-oauth',subject:'relayClientTest12345@clients',issuer:'https://issuer.example/'},RELAY_READ_TOOLS);
+  const server=createMcpTransport(services,undefined,undefined,RELAY_READ_TOOLS);
   const client=new Client({name:'relay-test',version:'1'});
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
   try {

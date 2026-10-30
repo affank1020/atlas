@@ -14,7 +14,7 @@ import { standaloneViewPage } from "../../view-standalone.js";
 import { verifyContentfulWebhook } from "../../integrations/contentful.js";
 import type { ServerServices } from "../../server/composition.js";
 import { createMcpTransport, RELAY_READ_TOOLS } from "../mcp/index.js";
-import { createMcpTokenVerifier, mcpResourceMetadata } from '../mcp/oauth.js';
+import { createMcpTokenVerifier, mcpResourceMetadata, verifyRelayServiceToken } from '../mcp/oauth.js';
 export function createHttpTransport(services: ServerServices) {
     const { catalog, askPortfolio, contentful, portfolio, media, lifecycle, config } = services;
     const mcpVerifier = createMcpTokenVerifier(config.mcpAuth);
@@ -133,22 +133,27 @@ export function createHttpTransport(services: ServerServices) {
         });
         // Public ingress MUST fail closed unless OAuth is configured. Local
         // loopback development retains its existing direct MCP behavior.
-        if (config.mcpAuth.trustedIngress && !config.mcpAuth.enabled) {
+        if (config.mcpAuth.trustedIngress && !config.mcpAuth.enabled && !config.mcpAuth.relayTokenHash) {
             response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
             response.end(JSON.stringify({ error: 'MCP_OAUTH_NOT_CONFIGURED' }));
             return;
         }
-        let principal: 'owner' | 'relay' | null = null;
-        if (config.mcpAuth.enabled) {
+        // Relay uses a separately configured, high-entropy service token. Human
+        // ChatGPT callers continue to use exactly the existing Auth0 OAuth flow.
+        const relayAuthenticated = verifyRelayServiceToken(request.headers.authorization, config.mcpAuth.relayTokenHash);
+        if (config.mcpAuth.enabled || config.mcpAuth.relayTokenHash) {
+            let authenticated = relayAuthenticated;
             stage = 'authenticating'; trace('stage');
-            try { principal = await mcpVerifier.identify(request.headers.authorization); }
-            catch {
-                stage = 'auth_provider_unavailable'; trace('stage');
-                response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-                response.end(JSON.stringify({ error: 'MCP_AUTH_PROVIDER_UNAVAILABLE' }));
-                return;
+            if (!authenticated && config.mcpAuth.enabled) {
+                try { authenticated = await mcpVerifier.authenticate(request.headers.authorization); }
+                catch {
+                    stage = 'auth_provider_unavailable'; trace('stage');
+                    response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+                    response.end(JSON.stringify({ error: 'MCP_AUTH_PROVIDER_UNAVAILABLE' }));
+                    return;
+                }
             }
-            if (!principal) {
+            if (!authenticated) {
                 stage = 'auth_rejected'; trace('stage');
                 response.writeHead(401, {
                     'content-type': 'application/json', 'cache-control': 'no-store',
@@ -163,9 +168,9 @@ export function createHttpTransport(services: ServerServices) {
         try {
             stage = 'creating_transport'; trace('stage');
             server = createMcpTransport(services,
-                config.mcpAuth.enabled ? (principal === 'relay' ? 'atlas:relay:read' : config.mcpAuth.scope) : undefined,
-                config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: principal === 'relay' ? config.mcpAuth.relayClientId + '@clients' : config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined,
-                principal === 'relay' ? RELAY_READ_TOOLS : undefined);
+                relayAuthenticated ? undefined : config.mcpAuth.enabled ? config.mcpAuth.scope : undefined,
+                !relayAuthenticated && config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined,
+                relayAuthenticated ? RELAY_READ_TOOLS : undefined);
             const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
             const connectedServer = server;
             response.once('close', () => { void connectedServer.close().catch(() => trace('cleanup_failed')); });
