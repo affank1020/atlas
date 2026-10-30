@@ -172,7 +172,7 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                 </div>}
                 {timeline.data.unlinkedObservations > 0 &&
                     <p>{timeline.data.unlinkedObservations} observation{timeline.data.unlinkedObservations === 1 ? '' : 's'}
-                        {' '}have no verified cross-round identity in this page.</p>}
+                        {' '}have no explicit cross-round lineage assertion in this page.</p>}
                 <div className="code-reviews-rounds">
                     {timeline.data.rounds.map((round, index) => <details className="code-reviews-round" key={round.runId}>
                         <summary>
