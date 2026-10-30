@@ -791,17 +791,33 @@ re-checks the PR head. A failure **before** any POST is attempted
 conditionally releases only the exact claim ID. If that cleanup cannot
 be confirmed, it fails closed.
 
-Once the POST may have started, Atlas **never automatically repeats the
-write**. It independently reads the Bot-owned root and checks its
-numeric comment ID, trailing marker, SHA-256 Markdown body, original
-reviewed commit, file path, and original line before committing a
-`published` receipt. Any uncertain HTTP response or unsuccessful
-verification preserves `claimed`; retries can only read/reconcile an
-exact match. No response from GitHub is treated as publication proof
-without independent inventory confirmation. A later review that repeats
-the same lineage cannot create a duplicate root. This first slice does
-**not** reply to existing threads, infer resolution, resolve GitHub
-conversations, or approve any PR.
+Once the POST may have started, Atlas **never automatically retransmits
+an ambiguous write**. The publisher distinguishes GitHub's explicit
+`POST /pulls/:pr/comments` HTTP **403 or 422 rejection** from ambiguous
+network failures, HTTP 5xx/other statuses, malformed responses and lost
+acknowledgements. Even an explicit rejection is **not** enough to release
+a claim alone: Atlas first performs a fresh, complete, independently
+Bot-authenticated GitHub inline-root inventory. Only if that inventory
+succeeds, finds **no owned root with the claim's exact marker** and no
+contradictory copied-marker evidence does a serialized transaction
+conditionally release the **same finding's exact claim ID and marker**.
+The response is `rejected_not_published` and a *new explicitly authorized
+apply* can retry after a corrected permission or diff anchor. If the
+read fails, a root exists, or the claim changed concurrently, the
+claim stays `claimed` and the outcome is `uncertain`: it must **not**
+automatically POST again. The allowlist for release is deliberately
+small and does not treat generic `GITHUB_REQUEST_FAILED` as proof of
+non-acceptance.
+
+Successful POSTs independently re-read the Bot-owned root and check
+its numeric comment ID, trailing marker, SHA-256 Markdown body,
+original reviewed commit, file path, and original line before committing
+a `published` receipt. Any ambiguous response or unsuccessful
+verification retains the claim; later calls only read/reconcile an
+exact remote match. A later review repeating the same lineage cannot
+create a duplicate root. This slice does **not** reply to existing
+threads, infer resolution, resolve GitHub conversations, or approve
+any PR.
 
 **Important rollout boundary:** Keep this environment allowlist empty
 until independent Code Reviewer review, green CI, real connected Atlas
