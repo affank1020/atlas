@@ -196,7 +196,7 @@ export class CodeReviewsService {
         };
     }
 
-    /** Bounded saved review rounds and explicitly asserted root-cause continuity, no inference from omissions. */
+    /** Read-only, page-scoped lineage; does not infer fixes from missing evidence. */
     async prTimeline(repository: string, prNumber: number, limit: number, offset: number) {
         const ids = await this.storeIds();
         return readPrTimeline(this.catalog, ids, repository, prNumber, limit, offset);
@@ -252,63 +252,9 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
             },
             {
                 name: 'code_reviews_pr_timeline',
-                description: 'Read bounded saved PR review rounds and explicitly asserted finding lineage. Missing history and resolutions remain unknown.',
+                description: 'Read bounded saved PR rounds and explicit finding lineage; missing history and resolutions remain unknown.',
                 inputSchema: {
-                    repository: z.string().regex(new RegExp('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+
-                description: 'List saved independent review runs in descending review time.',
-                inputSchema: { limit, offset }, invoke: ({ limit, offset }: { limit: number; offset: number }) => service.runs(limit, offset),
-            },
-            {
-                name: 'code_reviews_import_pull_request',
-                description: 'Preview an authenticated GitHub PR review history import. Set apply=true to save supported reviews and severity-labelled inline findings atomically. No GitHub publication.',
-                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
-                    prNumber: z.number().int().min(1).max(1_000_000), apply: z.boolean().default(false) },
-                invoke: ({ repository, prNumber, apply }: { repository: string; prNumber: number; apply: boolean }) =>
-                    service.importPullRequest(repository, prNumber, apply),
-            },
-            {
-                name: 'code_reviews_discover_pull_requests',
-                description: 'List a page of recent GitHub PR numbers in a repository for deliberate selection. Read-only; pages can shift as new PRs arrive.',
-                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
-                    page: z.number().int().min(1).max(100).default(1) },
-                invoke: ({ repository, page }: { repository: string; page: number }) =>
-                    service.discoverPullRequests(repository, page),
-            },
-            {
-                name: 'code_reviews_backfill_pull_requests',
-                description: 'Preview up to 8 explicitly selected GitHub PRs with apply=false. Set apply=true for atomic, idempotent batch import. Never automatically selects PRs.',
-                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
-                    prNumbers: z.array(z.number().int().min(1).max(1_000_000)).min(1).max(8)
-                        .refine(numbers => new Set(numbers).size === numbers.length, 'PR numbers must be distinct'),
-                    apply: z.boolean().default(false) },
-                invoke: ({ repository, prNumbers, apply }: { repository: string; prNumbers: number[]; apply: boolean }) =>
-                    service.backfillPullRequests(repository, prNumbers, apply),
-            },
-            {
-                name: 'code_reviews_submit_structured',
-                description: 'Persist an immutable, idempotent structured review run and findings. Requires current open GitHub PR head; never publishes to GitHub.',
-                inputSchema: { submission: structuredReviewSchema },
-                invoke: ({ submission }: { submission: StructuredReview }, caller?: ApplicationCaller) =>
-                    service.submitStructuredReview(submission, caller),
-            },
-            {
-                name: 'code_reviews_publish_github',
-                description: 'Preview structured review GitHub COMMENT publication. Requires verified OAuth, apply=true and repository opt-in. Durable claim prevents duplicate posts; never approves.',
-                inputSchema: { runId: z.string().uuid(), includeInline: z.boolean().default(false),
-                    apply: z.boolean().default(false) },
-                invoke: ({ runId, includeInline, apply }: { runId: string; includeInline: boolean; apply: boolean },
-                    caller?: ApplicationCaller) => service.publishReview(runId, includeInline, apply, caller),
-            },
-            {
-                name: 'code_reviews_list_findings',
-                description: 'List saved findings for one review run, without accessing other Projects.',
-                inputSchema: { reviewRunId: z.string().uuid(), limit, offset },
-                invoke: ({ reviewRunId, limit, offset }: { reviewRunId: string; limit: number; offset: number }) => service.findings(reviewRunId, limit, offset),
-            },
-        ],
-    };
-}
-)),
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
                     prNumber: z.number().int().min(1).max(1_000_000),
                     limit: z.number().int().min(1).max(10).default(5),
                     offset,
