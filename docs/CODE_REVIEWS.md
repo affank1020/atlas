@@ -374,7 +374,7 @@ finding lifecycle and dedicated publishing identity remain later milestones.
 
 The Server's Application registry includes the Code Reviews tools, but some
 ChatGPT connector clients surface only an initial portion of a large MCP tool
-list. Atlas registers Code Reviews' eight existing operations near the beginning
+list. Atlas registers Code Reviews' nine operations near the beginning
 of that list, after the existing priority football generalist tools. This does
 **not** introduce an alternate API, relax authenticated MCP OAuth requirements,
 enable native GitHub publication, or imply that this ChatGPT connection already
