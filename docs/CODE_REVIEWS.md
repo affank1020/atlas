@@ -337,6 +337,39 @@ are independently bounded to avoid fetching unrelated findings for collapsed
 rows. Missing Project/Store data, unsupported records and API failures have
 distinct error or empty states.
 
+### MCP discovery for bounded tool catalogues
+
+The Server's Application registry includes the Code Reviews tools, but some
+ChatGPT connector clients surface only an initial portion of a large MCP tool
+list. Atlas registers Code Reviews' eight existing operations near the beginning
+of that list, after the existing priority football generalist tools. This does
+**not** introduce an alternate API, relax authenticated MCP OAuth requirements,
+enable native GitHub publication, or imply that this ChatGPT connection already
+has a refreshed tool catalogue. The normal Application dispatch path remains
+authoritative.
+
+For integration acceptance after an independently reviewed deployment:
+
+1. Refresh/reconnect the Atlas MCP connection and inspect the **actual exposed**
+   `code_reviews_overview`, `code_reviews_list_runs`,
+   `code_reviews_list_findings` and `code_reviews_submit_structured` tools.
+   The three read operations are safe for baseline checks; a submit operation
+   must still require verified OAuth and an explicit request to persist a review.
+2. Verify that the Code Reviews Project and both Stores exist. An empty Store
+   is a legitimate baseline, not evidence the latest PR has been reviewed.
+3. Make one authorised structured submission for the **exact current open PR
+   SHA**, retain the receipt and repeat it idempotently; confirm linked run and
+   findings in the Application. Do not call `code_reviews_publish_github`
+   for a review that the existing Code Reviewer already published.
+4. Distinguish a missing tool after deployment from an operation returning
+   an application-level error. A code merge alone does not refresh the
+   connected connector or deploy/restart the Server.
+
+The change prioritises operations in the MCP registration order only.
+Connector-specific catalogue limits and refresh behaviour must be verified
+against a real connected client; successful local discovery tests alone do
+not prove production exposure.
+
 ### Code Reviewer plugin integration
 
 The separate private `Code Reviewer` plugin (from version `1.0.6`) has an
