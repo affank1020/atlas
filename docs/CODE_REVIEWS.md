@@ -629,15 +629,25 @@ verifies a fingerprint of saved PR rounds and linked finding records, no
 other pending claim and stable previous publication identity. This is an
 Atlas-side concurrency fence, not a GitHub conditional-write guarantee.
 
-After the claim, exactly one HTTP write is allowed. A subsequent read from
-GitHub must verify the Bot-owned PR marker, unique comment ID and exact body
-hash before Atlas records a `published` receipt. A malformed response, HTTP
-failure, timeout, unexpected head change or receipt-commit failure leaves the
-claim unresolved. **Retry never repeats the POST/PATCH automatically.**
-It only inspects GitHub and, if the exact expected body and comment identity
-are attested, records the receipt. If a newer review arrives while an older
-claim is unresolved, the older claim must first be reconciled. Otherwise the
-operation remains `uncertain` and needs operator investigation.
+After persisting the claim, Atlas performs a final read-only GitHub PR
+head check **before initiating any POST/PATCH**. If this read fails, no remote
+write has been attempted: a serialized transaction conditionally removes
+only that exact claim ID. The caller receives the original head/read error
+and can submit a new reviewed head (or retry after a transient read error)
+without manually unlocking anything. If transactional release itself fails,
+the response is `prewrite_recovery_required` and Atlas leaves the claim
+intact for investigation; it never guesses that the claim was cleared.
+
+Once POST or PATCH has *started*, the outcome may be ambiguous and the
+claim must not be released automatically. A subsequent read from GitHub must
+verify the Bot-owned PR marker, unique comment ID and exact body hash before
+Atlas records a `published` receipt. A malformed response, HTTP failure,
+timeout or receipt-commit failure **after write initiation** leaves the claim
+unresolved. **Retry never repeats the POST/PATCH automatically.** It only
+inspects GitHub and, if the exact expected body and comment identity are
+attested, records the receipt. If a newer review arrives while an older
+claim is unresolved, the older claim must first be reconciled. Otherwise
+the operation remains `uncertain` and needs operator investigation.
 
 A previously published receipt whose remote comment was edited is reported
 as `published_remote_drift`; it is not silently overwritten or classified
