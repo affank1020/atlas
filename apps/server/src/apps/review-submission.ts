@@ -148,6 +148,7 @@ function assertPriorLineages(state: AtlasData, stores: StoreIds, input: Structur
     ]);
     if (!referenced.size) return;
     const matches = new Set<string>();
+    const incompleteCandidates = new Set<string>();
     const priorRuns = state.records.filter(run =>
         run.storeId === stores.runs && run.projectId === CODE_REVIEWS_PROJECT_ID &&
         !run.archivedAt && run.data.repository === input.repository &&
@@ -159,13 +160,14 @@ function assertPriorLineages(state: AtlasData, stores: StoreIds, input: Structur
         const records = state.records.filter(item =>
             item.storeId === stores.findings && item.projectId === CODE_REVIEWS_PROJECT_ID &&
             item.data.reviewRunId === run.id);
-        // The original submission's cardinality, rather than an active-only
-        // count, is authoritative. Reject corrupted lineage sources.
-        if (!Number.isSafeInteger(coverage.findingCount) ||
-            (coverage.findingCount as number) < 0 ||
-            (coverage.findingCount as number) > 30 ||
-            coverage.findingCount !== records.length || records.some(item => item.archivedAt))
-            throw new AtlasError('Prior structured review finding history is incomplete.', 'CONFLICT');
+        // An unrelated damaged run must not prevent an assessment backed by
+        // another complete run. Only a complete source can establish lineage;
+        // archived or incomplete candidates remain ineligible.
+        const complete = Number.isSafeInteger(coverage.findingCount) &&
+            (coverage.findingCount as number) >= 0 &&
+            (coverage.findingCount as number) <= 30 &&
+            coverage.findingCount === records.length &&
+            records.every(item => !item.archivedAt);
         for (const item of records) {
             const e = item.data.evidence;
             if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
@@ -174,13 +176,18 @@ function assertPriorLineages(state: AtlasData, stores: StoreIds, input: Structur
                 typeof recordEvidence.localKey !== 'string' ||
                 item.data.findingKey !== `structured:${coverage.submissionId}:${recordEvidence.localKey}`)
                 continue;
-            if (typeof recordEvidence.lineageKey === 'string' && referenced.has(recordEvidence.lineageKey))
-                matches.add(recordEvidence.lineageKey);
+            const lineage = recordEvidence.lineageKey;
+            if (typeof lineage !== 'string' || !referenced.has(lineage)) continue;
+            if (complete) matches.add(lineage);
+            else incompleteCandidates.add(lineage);
         }
     }
-    for (const key of referenced)
-        if (!matches.has(key))
-            throw new AtlasError('Lifecycle assessment references no prior structured finding in this PR.', 'CONFLICT');
+    for (const key of referenced) {
+        if (matches.has(key)) continue;
+        if (incompleteCandidates.has(key))
+            throw new AtlasError('Prior structured review finding history is incomplete.', 'CONFLICT');
+        throw new AtlasError('Lifecycle assessment references no prior structured finding in this PR.', 'CONFLICT');
+    }
 }
 
 /** Unique submission ID is checked inside the serialized PostgreSQL transaction.
