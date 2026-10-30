@@ -12,6 +12,7 @@ import type { ManagedSummaryPublicationService } from './managed-summary-publica
 import type { InlineThreadPreflightService } from './inline-thread-preflight.js';
 import type { InlineThreadInventoryService } from './inline-thread-inventory.js';
 import type { InlineRootPublicationService } from './inline-root-publication.js';
+import type { InlineReplyPublicationService } from './inline-reply-publication.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -27,7 +28,8 @@ export class CodeReviewsService {
         private readonly managedPublisher?: Pick<ManagedSummaryPublicationService, 'publish'>,
         private readonly inlinePreflight?: Pick<InlineThreadPreflightService, 'preview'>,
         private readonly inlineInventory?: Pick<InlineThreadInventoryService, 'preview'>,
-        private readonly inlineRootPublisher?: Pick<InlineRootPublicationService, 'publish'>) {}
+        private readonly inlineRootPublisher?: Pick<InlineRootPublicationService, 'publish'>,
+        private readonly inlineReplyPublisher?: Pick<InlineReplyPublicationService, 'publish'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -126,6 +128,15 @@ export class CodeReviewsService {
         if (!this.inlineRootPublisher)
             throw new AtlasError('Initial inline thread publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
         return this.inlineRootPublisher.publish(repository, prNumber, findingId, apply, caller);
+    }
+
+    /** A new evidence-backed re-review can reply once to an existing Bot-owned root. */
+    async publishPersistingInlineReply(repository: string, prNumber: number, findingId: string,
+        apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.inlineReplyPublisher)
+            throw new AtlasError('Inline reply publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineReplyPublisher.publish(repository, prNumber, findingId, apply, caller);
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -368,6 +379,20 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     repository: string; prNumber: number; findingId: string; apply: boolean;
                 }, caller?: ApplicationCaller) =>
                     service.publishInitialInlineRoot(repository, prNumber, findingId, apply, caller),
+            },
+            {
+                name: 'code_reviews_publish_inline_reply',
+                description: 'Explicit, opt-in one-shot reply on a verified existing Bot-owned inline root for a persisting structured finding. Dry-run by default; never resolves GitHub threads.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    findingId: z.string().uuid(),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, findingId, apply }: {
+                    repository: string; prNumber: number; findingId: string; apply: boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishPersistingInlineReply(repository, prNumber, findingId, apply, caller),
             },
             {
                 name: 'code_reviews_list_runs',

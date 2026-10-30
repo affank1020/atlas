@@ -39,6 +39,7 @@ import { GitHubInlineDiffReader, InlineThreadPreflightService } from '../apps/in
 import { GitHubInlineThreadReader, InlineThreadInventoryService } from '../apps/inline-thread-inventory.js';
 import { GitHubInlineRootWriter } from '../apps/inline-thread-writer.js';
 import { InlineRootPublicationService } from '../apps/inline-root-publication.js';
+import { InlineReplyPublicationService } from '../apps/inline-reply-publication.js';
 import { GitHubBroker } from '../workspaces/github-broker.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
@@ -86,9 +87,12 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const inlineRootPublisher = new InlineRootPublicationService(catalog, inlinePreflight,
         inlineInventory, new GitHubInlineRootWriter(githubBroker),
         config.codeReviews.inlineRootRepositories, new GitHubInlineThreadReader(githubBroker));
+    const inlineReplyPublisher = new InlineReplyPublicationService(catalog,
+        new GitHubInlineThreadReader(githubBroker), new GitHubInlineRootWriter(githubBroker),
+        config.codeReviews.inlineReplyRepositories);
     const codeReviews = new CodeReviewsService(catalog, new GitHubReviewHistoryReader(githubBroker),
         config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher,
-        inlinePreflight, inlineInventory, inlineRootPublisher);
+        inlinePreflight, inlineInventory, inlineRootPublisher, inlineReplyPublisher);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
     const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };

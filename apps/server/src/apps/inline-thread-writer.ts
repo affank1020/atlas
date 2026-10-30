@@ -23,6 +23,13 @@ export class GitHubInlineRootRejectedError extends AtlasError {
     }
 }
 
+export class GitHubInlineReplyRejectedError extends AtlasError {
+    constructor(readonly httpStatus: 403 | 422) {
+        super('GitHub explicitly rejected inline thread reply POST (HTTP ' +
+            httpStatus + ').', 'GITHUB_REQUEST_FAILED');
+    }
+}
+
 /** A scoped GitHub REST writer. Its response is NEVER a durable receipt:
  * the caller independently re-reads the verified Bot-owned root inventory.
  */
@@ -51,8 +58,11 @@ export class GitHubInlineRootWriter {
             // Strict status allowlist: do not assume a 5xx response, network
             // timeout, malformed response or unexpected status means no write.
             // Only the initial POST can produce this typed rejection.
-            if (method === 'POST' && (response.status === 403 || response.status === 422))
+            if (method === 'POST' && (response.status === 403 || response.status === 422)) {
+                if (/\/comments\/[1-9][0-9]*\/replies$/.test(path))
+                    throw new GitHubInlineReplyRejectedError(response.status);
                 throw new GitHubInlineRootRejectedError(response.status);
+            }
             throw new AtlasError('GitHub inline endpoint returned HTTP ' +
                 response.status + '.', 'GITHUB_REQUEST_FAILED');
         }
@@ -83,6 +93,20 @@ export class GitHubInlineRootWriter {
 
     async prepareWrite(repository: string) {
         return this.broker.pullRequestPublishToken(canonicalRepository(repository));
+    }
+
+    /** Reply to an existing verified root. GitHub assigns no new diff anchor. */
+    async postReply(repository: string, prNumber: number, rootId: number,
+        body: string, token: string) {
+        if (!positive(prNumber) || prNumber > 1_000_000 || !positive(rootId) ||
+            typeof body !== 'string' || body.length < 1 || body.length > 8_000)
+            throw new AtlasError('Invalid inline reply payload.', 'INVALID_REQUEST');
+        const data = await this.request(repository,
+            '/pulls/' + prNumber + '/comments/' + rootId + '/replies',
+            token, 'POST', { body });
+        if (!positive(data.id) || data.in_reply_to_id !== rootId)
+            throw new AtlasError('GitHub inline reply response lacks matching parent.', 'GITHUB_REQUEST_FAILED');
+        return data.id;
     }
 
     async post(repository: string, prNumber: number, target: InlineRootTarget,
