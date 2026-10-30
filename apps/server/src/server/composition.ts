@@ -33,6 +33,8 @@ import { GitHubReviewHistoryReader } from '../apps/github-review-history.js';
 import { GitHubReviewPublisher } from '../apps/github-review-publisher.js';
 import { ReviewPublicationService } from '../apps/review-publication.js';
 import { GitHubManagedSummaryReader, ManagedSummaryPreviewService } from '../apps/managed-summary.js';
+import { GitHubManagedSummaryWriter } from '../apps/managed-summary-github.js';
+import { ManagedSummaryPublicationService } from '../apps/managed-summary-publication.js';
 import { GitHubBroker } from '../workspaces/github-broker.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
@@ -73,8 +75,10 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const publisher = new ReviewPublicationService(catalog, new GitHubReviewPublisher(githubBroker),
         config.codeReviews.publishRepositories);
     const managedSummary = new ManagedSummaryPreviewService(catalog, new GitHubManagedSummaryReader(githubBroker));
+    const managedPublisher = new ManagedSummaryPublicationService(catalog, managedSummary,
+        new GitHubManagedSummaryWriter(githubBroker), config.codeReviews.managedSummaryRepositories);
     const codeReviews = new CodeReviewsService(catalog, new GitHubReviewHistoryReader(githubBroker),
-        config.codeReviews.trustedPublishers, publisher, managedSummary);
+        config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
     const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
