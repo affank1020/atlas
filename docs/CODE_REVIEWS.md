@@ -467,8 +467,9 @@ The web Review history offers an **on-demand PR status** expansion beside
 the existing finding drill-down; the GitHub check is not performed for
 collapsed rows or every PR in a page. Manual Refresh revalidates the active
 expanded panel. This operation is read-only and does not backfill, publish,
-approve or resolve GitHub threads. The persistent PR bot summary, stable
-finding lifecycle and dedicated publishing identity remain later milestones.
+approve or resolve GitHub threads. The **write-enabled** persistent PR bot summary and dedicated publishing
+identity remain later milestones; a read-only managed-summary preflight now
+exposes the planned body and existing Bot-owned comment state.
 
 ### Bounded PR timeline and explicit cross-round lineage (read-only)
 
@@ -521,6 +522,56 @@ transition, historical import or permission change is involved.
 
 Explicit, evidence-backed lifecycle transitions, globally scoped finding
 queries and managed GitHub bot/thread publication remain later work.
+
+### Managed GitHub PR summary — read-only safety preflight
+
+`code_reviews_managed_summary_preview({repository,prNumber})` now produces a
+**deterministic, non-publishing draft** of the proposed one-comment-per-PR GitHub
+summary using only the *latest saved Atlas round* and its linked findings.
+It is not yet the write-enabled managed summary publisher. No GitHub POST,
+PATCH, claim, approval or thread resolution occurs, even if an owned comment
+already exists. It requires the exact Code Reviews Project/Stores, only reads
+one saved round with the strict cardinality and lineage integrity checks, and
+never equates missing history with a clean review.
+
+The preview distinguishes structured source coverage from partial historical
+imports. Counts are **for the selected saved round**, not all unique root
+causes or all GitHub review history. It includes latest reviewed SHA, verdict,
+recorded round count, severity observations, explicit finding-state labels
+and *reviewer-asserted* resolutions with limited supporting text. No lifecycle
+outcome is inferred from disappeared observations or outdated comments. Body
+length and untrusted Markdown/HTML marker handling are bounded.
+
+The proposed summary uses a **PR-scoped marker**, distinct from the legacy
+one-comment-per-review publisher:
+
+```text
+<!-- atlas-code-reviews-managed-summary:v1:owner/repo#123 -->
+```
+
+To inspect GitHub ownership, Atlas retrieves a repository-scoped GitHub App
+**read** token and independently verifies the App Bot's immutable GitHub
+user ID, not just the comment's claimed login or embedded marker. It
+paginates up to 500 issue/PR conversation comments. Results distinguish
+`no_owned_comment`, `current` and `needs_update`. A copied marker posted
+by another author does **not** count as an owned summary. Duplicate or
+malformed App-owned markers, incomplete pagination, unavailable GitHub or
+invalid JSON fail closed. A synthesized GitHub comment URL is based on the
+validated repository/PR and numeric comment ID rather than untrusted
+`html_url` fields. `publicationVerified:false` makes clear that a
+matching remote comment does not prove Atlas has a durable publication
+receipt. Missing records yield `no_saved_review` and no body.
+
+**Write publication is deliberately absent.** An owned-comment lookup is
+not enough to safely create/update comments across retries or concurrent
+review rounds. The next slice must implement an explicit opt-in publisher
+using an appropriately provisioned bot identity, strict permissions,
+durable claim and remote-body reconciliation for initial POST and subsequent
+PATCH. It must prohibit stale/out-of-order round updates and uncertain
+duplicate sends; existing Code Reviewer GitHub publication is already
+active and must remain the sole publisher until migration is reviewed.
+No `ATLAS_CODE_REVIEW_*` publish allowlist or GitHub App permission is
+changed by this work.
 
 ### MCP discovery for bounded tool catalogues
 
