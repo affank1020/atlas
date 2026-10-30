@@ -46,6 +46,17 @@ jobs:
             echo "::error::Local Atlas data snapshots must never be committed."
             exit 1
           fi
+      - name: Validate Caddy production routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext ci-test-password)"
+          docker run --rm \
+            -e ATLAS_SITE_ADDRESS=atlas.example.test \
+            -e ATLAS_ADMIN_USER=ci-user \
+            -e ATLAS_ADMIN_PASSWORD_HASH="$hash" \
+            -v "$PWD/infra/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
       - name: Install dependencies
         run: npm ci
       - name: Test server, node, and web

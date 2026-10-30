@@ -113,6 +113,12 @@ jobs:
           export ATLAS_IMAGE_TAG="$image_tag"
           compose=(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml)
 
+          # Separate Compose stacks share a Docker-only bridge; ensure it
+          # exists before recreating Atlas ingress (first-deploy safe).
+          if ! docker network inspect relay_ingress >/dev/null 2>&1; then
+            docker network create --driver bridge relay_ingress >/dev/null
+          fi
+
           "${compose[@]}" pull server ingress
           "${compose[@]}" up -d --no-build --wait
 

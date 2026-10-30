@@ -36,3 +36,27 @@
         file_server
     }
 }
+
+# Relay shares Atlas's existing public TLS ingress and human-facing credentials.
+# The internal gateway is never exposed through a published host port.
+relay.affankhan.dev {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+    }
+
+    route {
+        basic_auth {
+            {$ATLAS_ADMIN_USER} {$ATLAS_ADMIN_PASSWORD_HASH}
+        }
+
+        # Credential injection happens inside Relay's isolated gateway.
+        # Streaming response deltas must not be buffered.
+        reverse_proxy relay-gateway:8080 {
+            flush_interval -1
+        }
+    }
+}

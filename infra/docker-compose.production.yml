@@ -96,6 +96,11 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    # The relay_ingress bridge contains only Atlas's public proxy and Relay's
+    # private token gateway. Other Atlas services stay on the default network.
+    networks:
+      - default
+      - relay_ingress
     ports:
       - "80:80"
       - "443:443"
@@ -129,3 +134,8 @@ volumes:
   atlas_media:
   caddy_data:
   caddy_config:
+
+networks:
+  relay_ingress:
+    external: true
+    name: relay_ingress
