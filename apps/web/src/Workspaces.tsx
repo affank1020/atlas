@@ -412,7 +412,7 @@ export function Workspaces() {
                         <div className="wm-group-top">
                             <button className={'wm-row wm-group-heading' + (isSelected ? ' selected' : '')}
                                 aria-label={group.name} aria-pressed={isSelected}
-                                onClick={() => choose(group.id)}>
+                                onClick={() => choose(nodeFilter ? group.checkouts[0].id : group.id)}>
                                 <span className="wm-glyph" aria-hidden="true">{group.kind === 'git' ? '⌘' : '⌁'}</span>
                                 <span className="wm-row-main"><strong>{group.name}</strong>
                                     <small title={group.repository || undefined}>{group.repository || 'Local directory'}</small>
