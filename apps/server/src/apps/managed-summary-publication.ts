@@ -90,6 +90,10 @@ export class ManagedSummaryPublicationService {
         const actor = obj(coverage) && obj(coverage.authenticatedCaller)
             ? coverage.authenticatedCaller : null;
         if (!obj(coverage) || coverage.source !== 'atlas_structured_submission' ||
+            typeof coverage.submissionId !== 'string' ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(coverage.submissionId) ||
+            typeof coverage.payloadSha256 !== 'string' ||
+            !/^[a-f0-9]{64}$/i.test(coverage.payloadSha256) ||
             !actor || actor.kind !== caller.kind || actor.issuer !== caller.issuer ||
             actor.subject !== caller.subject ||
             !('fullEvidence' in preview) || preview.fullEvidence !== true)
