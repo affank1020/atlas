@@ -9,6 +9,9 @@ import { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } fro
 const sha = z.string().regex(/^[a-fA-F0-9]{40}$/).transform(value => value.toLowerCase());
 const finding = z.object({
     key: z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/),
+    // Optional cross-review root-cause identity, scoped to one repository/PR.
+    // Omission is deliberate: the per-submission key alone cannot prove lineage.
+    lineageKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/).optional(),
     severity: z.enum(['sev1', 'sev2', 'sev3', 'sev4']),
     title: z.string().min(1).max(200),
     description: z.string().min(1).max(8_000),
@@ -27,12 +30,17 @@ export const structuredReviewSchema = z.object({
     findings: z.array(finding).max(30),
 }).strict().superRefine((value, ctx) => {
     const keys = new Set<string>();
-    for (const item of value.findings) {
-        if (keys.has(item.key)) {
-            ctx.addIssue({ code: 'custom', path: ['findings'], message: 'Finding keys must be distinct.' });
-            break;
-        }
+    const lineageKeys = new Set<string>();
+    for (const [index, item] of value.findings.entries()) {
+        if (keys.has(item.key))
+            ctx.addIssue({ code: 'custom', path: ['findings', index, 'key'], message: 'Finding keys must be distinct.' });
         keys.add(item.key);
+        if (item.lineageKey !== undefined) {
+            if (lineageKeys.has(item.lineageKey))
+                ctx.addIssue({ code: 'custom', path: ['findings', index, 'lineageKey'],
+                    message: 'One root-cause lineage may have only one observation per review run.' });
+            lineageKeys.add(item.lineageKey);
+        }
     }
     if (value.verdict === 'no_findings' && value.findings.length)
         ctx.addIssue({ code: 'custom', path: ['verdict'], message: 'A clean review cannot contain findings.' });
@@ -155,7 +163,10 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
                 state: 'new', schemaVersion: 1,
                 ...(item.filePath !== undefined && { filePath: item.filePath }),
                 ...(item.line !== undefined && { line: item.line }),
-                evidence: { source: 'atlas_structured_submission', localKey: item.key },
+                evidence: {
+                    source: 'atlas_structured_submission', localKey: item.key,
+                    ...(item.lineageKey !== undefined && { lineageKey: item.lineageKey }),
+                },
             },
         });
     }
