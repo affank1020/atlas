@@ -247,9 +247,14 @@ test('unverified remote owner and stale PR heads fail before durable publication
 test('concurrent summary claims never create two comments', async () => {
     const f = await fixture();
     const settled = await Promise.allSettled([f.invoke(true), f.invoke(true)]);
-    assert.equal(f.events.post, 1);
-    assert.equal(settled.filter(x => x.status === 'rejected').length, 1);
-    assert.equal(settled.filter(x => x.status === 'fulfilled').length, 1);
+    assert.equal(f.events.post, 1, 'concurrent requests cannot both POST');
+    assert.equal(f.getRemote()?.id, 73);
+    const accepted = settled.filter(x => x.status === 'fulfilled');
+    assert.ok(accepted.length >= 1, 'one concurrent request must publish');
+    assert.ok(accepted.every(x => x.value.status === 'published'),
+        'a later observer can return an already-published receipt');
+    // Depending on which snapshot wins, the other call either detects the
+    // changed claim and conflicts or sees the completed published receipt.
 });
 
 test('GitHub issue comment writer verifies base PR, unchanged head, methods and scoped tokens', async () => {
