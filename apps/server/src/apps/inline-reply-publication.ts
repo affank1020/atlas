@@ -160,6 +160,13 @@ export class InlineReplyPublicationService {
         const predecessors = related.findings.filter(f => f.id !== finding.id &&
             obj(f.data.evidence) && f.data.evidence.lineageKey === ev.lineageKey &&
             f.data.reviewRunId !== latest.id);
+        // A new submission ID on an already reviewed SHA must not spam the
+        // same root merely because it has a fresh per-round finding UUID.
+        if (predecessors.some(f => {
+            const claimed = parseReplyClaim(f);
+            return claimed && claimed.headSha === latest.data.headSha;
+        }))
+            throw new AtlasError('This root already has an inline reply claim for the reviewed commit.', 'CONFLICT');
         const roots = predecessors.filter(f => obj(f.data.evidence) &&
             obj(f.data.evidence.githubInlineThread));
         if (roots.length !== 1)
@@ -223,7 +230,8 @@ export class InlineReplyPublicationService {
                 throw new AtlasError('Inline reply claim changed before receipt.', 'CONFLICT');
             this.persist(state,id,matching,{ ...pending,state:'published',replyCommentId:verified.id });
         });
-        return { status: 'published', dryRun: !apply, findingId: finding.id,
+        return { status: apply || claim.state === 'published'
+            ? 'published' : 'found_on_github', dryRun: !apply, findingId: finding.id,
             rootCommentId: claim.rootCommentId, replyCommentId: verified.id,
             postedAgain: false, alreadyPublished: claim.state === 'published' };
     }
