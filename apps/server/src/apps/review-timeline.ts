@@ -55,7 +55,8 @@ function parseRound(record: AtlasRecord, repository: string, prNumber: number): 
             typeof value.lineageKey !== 'string' || !key.test(value.lineageKey) ||
             !validEvidence(value.evidence) ||
             value.assessmentSource !== 'authenticated_structured_submission' ||
-            value.assessedHeadSha !== data.headSha || value.assertedAt !== data.reviewedAt ||
+            typeof value.assessedHeadSha !== 'string' || value.assessedHeadSha !== data.headSha ||
+            typeof value.assertedAt !== 'string' || value.assertedAt !== data.reviewedAt ||
             resolutionKeys.has(value.lineageKey))
             throw new AtlasError('PR timeline contains invalid or duplicate resolution assertions.', 'CONFLICT');
         resolutionKeys.add(value.lineageKey);
@@ -111,13 +112,13 @@ function parseFinding(record: AtlasRecord, round: Round, submissionId: unknown):
         lineageKey: trustedNamespace && typeof explicit === 'string' ? explicit : null,
         severity: d.severity as Observation['severity'], title: d.title,
         description: d.description, state: d.state as Observation['state'],
-        ...(assessment && object(assessment) && {
+        ...(object(assessment) ? {
             lifecycleAssessment: {
                 state: assessment.state as LifecycleAssessment['state'],
                 evidence: assessment.evidence as string, assertedAt: assessment.assertedAt as string,
                 assessedHeadSha: assessment.assessedHeadSha as string,
             },
-        }),
+        } : {}),
         ...(typeof d.filePath === 'string' && { filePath: d.filePath }),
         ...(typeof d.line === 'number' && { line: d.line }),
     };
