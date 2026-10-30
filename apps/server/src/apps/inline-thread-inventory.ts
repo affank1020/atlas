@@ -185,13 +185,19 @@ export class InlineThreadInventoryService {
         };
         // Historical imports cannot assert stable lineage from imported Markdown.
         const full = latest.source === 'structured' && !latest.findingsTruncated;
+        const linkedMarkers = new Set([
+            ...latest.findings.map(f => f.lineageKey),
+            ...latest.resolutions.map(r => r.lineageKey),
+        ].filter((value): value is string => typeof value === 'string')
+            .map(key => inlineThreadMarker(repository, prNumber, key)));
         return {
             repository, prNumber, status: 'inventory_complete', recordedRounds: saved.recordedRounds,
             runId: latest.runId, reviewedHeadSha: latest.headSha,
             source: latest.source, completeStructuredEvidence: full,
             ownedRootCount: inventory.roots.length, dryRun: true, publicationSupported: false,
             findings: latest.findings.map(finding => ({
-                findingId: finding.id, lineageKey: finding.lineageKey, state: finding.state,
+                findingId: finding.id, lineageKey: finding.lineageKey,
+                findingState: finding.state,
                 ...(full ? match(finding.lineageKey) :
                     { state: 'historical_or_partial_evidence' as const }),
             })),
@@ -201,11 +207,7 @@ export class InlineThreadInventoryService {
             })),
             // Markers for other, older lineages are retained and never deleted.
             unlinkedOwnedRootCount: inventory.roots.filter(root =>
-                !new Set([
-                    ...latest.findings.map(f => f.lineageKey),
-                    ...latest.resolutions.map(r => r.lineageKey),
-                ].filter((v): v is string => typeof v === 'string')
-                    .map(key => inlineThreadMarker(repository, prNumber, key))).has(root.marker)).length,
+                !linkedMarkers.has(root.marker)).length,
         };
     }
 }
