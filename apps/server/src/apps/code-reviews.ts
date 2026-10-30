@@ -277,7 +277,7 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
             {
                 name: 'code_reviews_managed_summary_preview',
                 description: 'Read-only managed PR summary draft and verified existing GitHub App Bot comment ownership. No posts, updates or claims.',
-                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$/),
+                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
                     prNumber: z.number().int().min(1).max(1_000_000) },
                 invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
                     service.previewManagedSummary(repository, prNumber),
