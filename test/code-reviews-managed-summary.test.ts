@@ -38,7 +38,9 @@ test('managed summary renders bounded latest saved structured evidence, without 
     assert.match(output.body, /new 1/);
     assert.match(output.body, /4 rounds recorded in Atlas/);
     assert.doesNotMatch(output.body, /Unvalidated <!--/);
-    assert.match(output.body, /Unvalidated &lt;!-- user input/);
+    assert.match(output.body, /Unvalidated &lt;/);
+    assert.doesNotMatch(output.body, /Unvalidated <!--/);
+    assert.ok(output.body.includes('user input'));
     assert.match(output.body, /absence is not evidence|does not become fixed/);
     assert.equal(output.fullEvidence, true);
 
