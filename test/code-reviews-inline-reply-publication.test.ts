@@ -54,7 +54,7 @@ async function fixture() {
     const oldRun=await createRun(oldHead,'2026-10-30T18:00:00.000Z',originalSubmission,1);
     const rootMarker=inlineThreadMarker(repository,prNumber,'root-1');
     const rootBody='Previously reported root issue.\n'+rootMarker;
-    await catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id,
+    const oldFinding=await catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id,
         data:{reviewRunId:oldRun.id,
             findingKey:'structured:'+originalSubmission+':old',
             title:'Unvalidated path',severity:'sev3',description:'A guard is absent.',
@@ -66,6 +66,13 @@ async function fixture() {
                     headSha:oldHead,path:'src/a.ts',line:10,
                     claimedAt:'2026-10-30T18:00:00.000Z',rootCommentId:73 } } },
     });
+    await catalog.store.transaction(state => catalog.updateRecordInState(state,{
+        projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id,recordId:oldFinding.id,
+        client:'test-inline-root-fixture',
+        data:{evidence:{...(oldFinding.data.evidence as any),
+            githubInlineThread:{...(oldFinding.data.evidence as any).githubInlineThread,
+                findingId:oldFinding.id}}},
+    }));
     const latestRun=await createRun(newHead,'2026-10-30T20:00:00.000Z',secondSubmission,1);
     const finding=await catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id,
         data:{reviewRunId:latestRun.id,
