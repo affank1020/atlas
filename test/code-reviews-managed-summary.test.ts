@@ -64,21 +64,26 @@ test('managed summary renders bounded latest saved structured evidence, without 
 });
 
 test('Markdown payloads remain inside one finding and code spans retain literal backticks', () => {
+    const newline = String.fromCharCode(10);
+    const slash = String.fromCharCode(92);
     const result = renderManagedSummary(repository, prNumber, round({
         findings: [{ ...round().findings[0],
-            title: 'Incomplete **\\n## Forged approval\\n> [!TIP] <!-- injected',
-            filePath: 'src/review`part``other.ts\\n## Unsafe',
+            title: ['Incomplete **', '## Forged approval', '> [!TIP] <!-- injected'].join(newline),
+            filePath: ['src/review`part``other.ts', '## Unsafe'].join(newline),
             lineageKey: 'issue`with``ticks' }],
         resolutions: [{ lineageKey: 'issue`with``ticks', state: 'resolved',
-            evidence: 'Source evidence\\n## New fake summary\\n[admin](https://example.com) **' }],
+            evidence: ['Source evidence', '## New fake summary',
+                '[admin](https://example.com) **'].join(newline) }],
     }) as any, 2);
-    assert.doesNotMatch(result.body, /\\n## Forged approval|\\n## New fake summary|\\n> \\[!TIP\\]/);
-    assert.match(result.body, /Incomplete \\\*\\\*/);
-    assert.match(result.body, /\\\\#\\\\# Forged approval/);
-    assert.match(result.body, /\\\\\\[\\\\!TIP\\\\\\]/);
-    assert.match(result.body, /``` src\\/review`part``other\\.ts ## Unsafe ```/);
-    assert.match(result.body, /``` issue`with``ticks ```/);
-    assert.doesNotMatch(result.body, /\\n\\[admin\\]\\(/);
+    assert.ok(!result.body.includes(newline + '## Forged approval'));
+    assert.ok(!result.body.includes(newline + '## New fake summary'));
+    assert.ok(!result.body.includes(newline + '> [!TIP]'));
+    assert.ok(result.body.includes('Incomplete ' + slash + '*' + slash + '*'));
+    assert.ok(result.body.includes(slash + '#' + slash + '# Forged approval'));
+    assert.ok(result.body.includes('&gt; ' + slash + '[' + slash + '!TIP' + slash + ']'));
+    assert.ok(result.body.includes('``` src/review`part``other.ts ## Unsafe ```'));
+    assert.ok(result.body.includes('``` issue`with``ticks ```'));
+    assert.ok(!result.body.includes(newline + '[admin]('));
     assert.ok(result.body.endsWith(managedSummaryMarker(repository, prNumber)));
 });
 
