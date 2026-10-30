@@ -101,7 +101,7 @@ export function renderManagedSummary(repository: string, prNumber: number, round
                 inlineText(item.evidence, 900)),
         ] : []),
         '',
-        '_This is a read-only preview of saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
+        '_This summary reflects saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
         '',
         marker,
     ];
