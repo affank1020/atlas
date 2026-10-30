@@ -155,7 +155,7 @@ test('MCP fails fast when a partially registered Code Reviews app omits required
     ]);
     assert.throws(() => createMcpTransport({
         applications, dispatch: async () => null,
-    } as unknown as TransportServices), /Required Code Reviews MCP tool missing.*code_reviews_list_runs/);
+    } as unknown as TransportServices), /Required Code Reviews MCP tool missing.*code_reviews_pr_summary/);
 });
 
 test('PR summary reports latest saved round, exact GitHub head and recorded counts without conflating commits', async () => {
