@@ -532,10 +532,21 @@ It is not yet the write-enabled managed summary publisher. No GitHub POST,
 PATCH, claim, approval or thread resolution occurs, even if an owned comment
 already exists. It rejects invalid owner/repository path segments (including
 `.` and `..`) and canonicalizes valid repository names to lowercase
-**before** querying the exact Code Reviews Project/Stores or inspecting
-GitHub, matching native structured-submission storage. It only reads one
-saved round with the strict cardinality and lineage integrity checks, and
-never equates missing history with a clean review.
+before querying Atlas or inspecting GitHub, matching native structured-submission
+storage. New GitHub history imports also persist canonical lowercase names.
+Older GitHub history imports may still contain mixed-case names: the managed
+preview performs a **read-only, bounded, PR-number-scoped scan** (up to 1,000
+candidate runs), compares the complete repository identity case-insensitively,
+and sorts/selects the latest matching run from saved chronological order.
+Other repositories with the same PR number are excluded from both preview
+and recorded-round count. If the legacy scan exceeds its bound, changes count
+during pagination or returns incomplete/duplicate pages, preview fails
+closed instead of reporting a misleading empty or partial history.
+This does **not** rewrite/migrate existing stored records, and other
+exact-match Code Reviews timeline queries retain their current semantics.
+The preview only materializes the selected saved round's linked findings,
+preserving existing strict cardinality and lineage integrity checks; missing
+history never establishes a clean review.
 
 The preview distinguishes structured source coverage from partial historical
 imports. Counts are **for the selected saved round**, not all unique root
