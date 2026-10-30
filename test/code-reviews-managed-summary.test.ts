@@ -155,8 +155,10 @@ test('managed summary is read-only and scoped to one PR and its stored findings'
             calls.push(query);
             assert.equal(query.projectId, CODE_REVIEWS_PROJECT_ID);
             if (query.storeId === 'runs') {
+                // Legacy GitHub imports may have retained uppercase names.
+                // The managed preview scans a bounded PR-number window and
+                // enforces canonical full repository identity before display.
                 assert.deepEqual(query.filters, [
-                    { field: 'repository', operator: 'eq', value: repository },
                     { field: 'prNumber', operator: 'eq', value: prNumber },
                 ]);
                 assert.equal(query.limit, 1);
@@ -199,4 +201,80 @@ test('managed summary is read-only and scoped to one PR and its stored findings'
     await assert.rejects(app.invoke('code_reviews_managed_summary_preview', {
         repository, prNumber: -1,
     }));
+});
+
+test('mixed-case historical imports remain visible and count with canonical structured rounds', async () => {
+    const oldRunId = '9f012b46-779d-44a4-aea8-4d24b6204528';
+    const unrelatedId = '67b448dc-1b56-43ab-87a4-47f05735b0a7';
+    const history = { id: oldRunId, data: {
+        repository: 'Affank1020/Atlas', prNumber, headSha: 'b'.repeat(40),
+        reviewedAt: '2026-10-30T18:00:00Z', verdict: 'non_blocking',
+        coverage: { source: 'github_pull_request_review' },
+    } };
+    const anotherOwner = { id: unrelatedId, data: {
+        repository: 'someone-else/atlas', prNumber, headSha: 'c'.repeat(40),
+        reviewedAt: '2026-10-30T19:00:00Z', verdict: 'no_findings',
+        coverage: { source: 'github_pull_request_review' },
+    } };
+    // Sorted as PostgreSQL returns it: newest other-owner PR first,
+    // followed by an older mixed-case import and then structured review.
+    const rows = [anotherOwner, history, run];
+    const calls: any[] = [];
+    const catalogue = {
+        listStores: async () => [
+            { id: 'runs', name: 'Review Runs' },
+            { id: 'findings', name: 'Review Findings' },
+        ],
+        queryRecords: async (input: any) => {
+            calls.push(input);
+            assert.equal(input.projectId, CODE_REVIEWS_PROJECT_ID);
+            if (input.storeId === 'runs') {
+                assert.deepEqual(input.filters, [
+                    { field: 'prNumber', operator: 'eq', value: prNumber },
+                ]);
+                const page = rows.slice(input.offset, input.offset + input.limit);
+                return { items: page, total: rows.length };
+            }
+            assert.equal(input.storeId, 'findings');
+            assert.deepEqual(input.filters, [
+                { field: 'reviewRunId', operator: 'eq', value: oldRunId },
+            ]);
+            return { items: [], total: 0 };
+        },
+    };
+    const preview = new ManagedSummaryPreviewService(catalogue as any, {
+        inspect: async (repo: string, pr: number, body: string) => {
+            assert.equal(repo, repository);
+            assert.equal(pr, prNumber);
+            assert.ok(body.includes('Historical import'));
+            return { status: 'no_owned_comment' };
+        },
+    } as any);
+    for (const requested of [repository, 'Affank1020/Atlas']) {
+        const result = await preview.preview(requested, prNumber) as any;
+        assert.equal(result.repository, repository);
+        assert.equal(result.recordedRounds, 2, 'same-number PR in another repository must not count');
+        assert.equal(result.runId, oldRunId, 'newest matching historical review must be selected');
+        assert.equal(result.source, 'historical');
+        assert.equal(result.fullEvidence, false);
+        assert.equal(result.remote.status, 'no_owned_comment');
+    }
+    assert.equal(calls.length, 4, 'two runs lookups and two latest-run findings queries');
+});
+
+test('canonical history scan rejects oversized PR-number histories rather than silently omitting old imports', async () => {
+    const catalogue = {
+        listStores: async () => [
+            { id: 'runs', name: 'Review Runs' },
+            { id: 'findings', name: 'Review Findings' },
+        ],
+        queryRecords: async (input: any) => {
+            assert.equal(input.storeId, 'runs');
+            return { total: 1001, items: [] };
+        },
+    };
+    const preview = new ManagedSummaryPreviewService(catalogue as any, {
+        inspect: async () => { throw Error('Remote lookup must not happen on incomplete history'); },
+    } as any);
+    await assert.rejects(preview.preview(repository, prNumber), /bounded canonical lookup/);
 });
