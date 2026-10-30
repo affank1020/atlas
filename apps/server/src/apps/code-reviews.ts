@@ -11,6 +11,7 @@ import type { ManagedSummaryPreviewService } from './managed-summary.js';
 import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
 import type { InlineThreadPreflightService } from './inline-thread-preflight.js';
 import type { InlineThreadInventoryService } from './inline-thread-inventory.js';
+import type { InlineRootPublicationService } from './inline-root-publication.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -25,7 +26,8 @@ export class CodeReviewsService {
         private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>,
         private readonly managedPublisher?: Pick<ManagedSummaryPublicationService, 'publish'>,
         private readonly inlinePreflight?: Pick<InlineThreadPreflightService, 'preview'>,
-        private readonly inlineInventory?: Pick<InlineThreadInventoryService, 'preview'>) {}
+        private readonly inlineInventory?: Pick<InlineThreadInventoryService, 'preview'>,
+        private readonly inlineRootPublisher?: Pick<InlineRootPublicationService, 'publish'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -115,6 +117,15 @@ export class CodeReviewsService {
         if (!this.inlineInventory)
             throw new AtlasError('Inline thread inventory is unavailable.', 'CAPABILITY_UNAVAILABLE');
         return this.inlineInventory.preview(repository, prNumber);
+    }
+
+    /** Publish an initial, verified inline root once, never a follow-up reply. */
+    async publishInitialInlineRoot(repository: string, prNumber: number, findingId: string,
+        apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.inlineRootPublisher)
+            throw new AtlasError('Initial inline thread publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineRootPublisher.publish(repository, prNumber, findingId, apply, caller);
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -343,6 +354,20 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                 },
                 invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
                     service.previewInlineThreadInventory(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_publish_initial_inline_root',
+                description: 'Opt-in, single new inline GitHub root on verified current diff anchor. Read-only by default; durable claim and no automatic repeat after uncertain POST. Never replies, approves or resolves.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    findingId: z.string().uuid(),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, findingId, apply }: {
+                    repository: string; prNumber: number; findingId: string; apply: boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishInitialInlineRoot(repository, prNumber, findingId, apply, caller),
             },
             {
                 name: 'code_reviews_list_runs',
