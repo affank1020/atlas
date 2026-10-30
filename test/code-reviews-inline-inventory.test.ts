@@ -110,7 +110,7 @@ const run = {
         verdict: 'non_blocking', coverage: {
             source: 'atlas_structured_submission', submissionId, findingCount: 3,
             lifecycleResolutions: [{
-                lineageKey: 'root-a', state: 'resolved',
+                lineageKey: 'older-root', state: 'resolved',
                 evidence: 'Tests now verify this root cause on the newly reviewed commit.',
                 assessedHeadSha: sha, assertedAt: timestamp,
                 assessmentSource: 'authenticated_structured_submission',
@@ -180,6 +180,9 @@ test('MCP inventory matches explicit roots and resolutions but never infers GitH
                 { id: 120, marker: inlineThreadMarker(repository, prNumber, 'older-root'),
                     path: 'src/old.ts', originalCommitSha: sha, originalLine: 4, currentLine: 4,
                     url: 'https://github.com/affank1020/atlas/pull/125#discussion_r120' },
+                { id: 130, marker: inlineThreadMarker(repository, prNumber, 'ancient-root'),
+                    path: 'src/ancient.ts', originalCommitSha: sha, originalLine: 3, currentLine: null,
+                    url: 'https://github.com/affank1020/atlas/pull/125#discussion_r130' },
             ], copiedMarkers: [markerB], replies: new Map([[110, 2]]) };
         },
     };
@@ -191,7 +194,7 @@ test('MCP inventory matches explicit roots and resolutions but never infers GitH
     assert.equal(result.dryRun, true);
     assert.equal(result.publicationSupported, false);
     assert.equal(result.recordedRounds, 1);
-    assert.equal(result.ownedRootCount, 2);
+    assert.equal(result.ownedRootCount, 3);
     assert.equal(result.unlinkedOwnedRootCount, 1, 'older threads are preserved, not considered resolved');
     assert.equal(result.findings[0].state, 'owned_thread_found');
     assert.equal(result.findings[0].rootCommentId, 110);
@@ -203,6 +206,7 @@ test('MCP inventory matches explicit roots and resolutions but never infers GitH
     assert.equal(result.findings[2].state, 'missing_stable_lineage');
     assert.equal(result.resolutions[0].assessment, 'reviewer_asserted_resolved');
     assert.equal(result.resolutions[0].state, 'owned_thread_found');
+    assert.equal(result.resolutions[0].rootCommentId, 120);
     assert.equal(result.resolutions[0].resolutionState, 'unknown');
     assert.equal(catalog.calls.length, 2);
 });
