@@ -322,8 +322,12 @@ destructive update to the prior finding. A `no_findings` review may include
 these assertions while its `findings` list remains empty. Every assertion
 must reference an **existing active, complete structured finding with the
 same lineage key in the exact same repository and PR**, checked inside the
-write transaction. Untrusted historical Markdown, other PRs, missing archived
-findings, same-round findings or invented keys cannot justify transitions.
+write transaction. The check considers only **complete source runs that
+actually supply a referenced root**. An unrelated older run with archived or
+damaged findings does not invalidate a lifecycle assertion backed by another
+complete run. An archived or otherwise incomplete **matching** run alone is
+never sufficient proof of identity. Untrusted historical Markdown, other PRs,
+same-round findings or invented keys cannot justify transitions.
 Each root cause may appear once per outcome collection and cannot be both
 observed and resolved in the same review. No implicit actions occur for
 unmentioned keys. Retries remain idempotent under the original submission UUID
