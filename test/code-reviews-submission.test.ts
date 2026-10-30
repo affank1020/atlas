@@ -363,3 +363,119 @@ test('a concurrent retry returns a committed receipt after the PR head closes or
         ...request, submissionId: 'df56ae1c-81b6-4334-aa53-205861494d84',
     }, reviewer), /head has changed|closed/i);
 });
+
+test('explicit lifecycle assessments and resolutions survive re-reviews without mutating earlier findings', async () => {
+    const { catalog, runs, findings } = await fixture();
+    let currentHead = sha;
+    const service = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => ({ repository, prNumber: 84, headSha: currentHead, open: true }),
+    });
+    const first = await service.submitStructuredReview({
+        ...request, findings: [{ ...request.findings[0], lineageKey: 'pr-head-root' }],
+    }, reviewer);
+    currentHead = 'b'.repeat(40);
+    const secondPayload = {
+        ...request, submissionId: 'ae6a5e3a-cf91-4b4c-9a93-a1b94a33a902', headSha: currentHead,
+        findings: [{ ...request.findings[0], key: 'recheck', lineageKey: 'pr-head-root',
+            assessment: { state: 'persisting' as const,
+                evidence: 'Reproduced the original stale-commit issue against this reviewed head.' } }],
+    };
+    const second = await service.submitStructuredReview(secondPayload, reviewer);
+    const repeated = await service.submitStructuredReview(secondPayload, reviewer);
+    assert.equal(repeated.created, false);
+    assert.deepEqual(repeated.findingReceipts, second.findingReceipts);
+    currentHead = 'c'.repeat(40);
+    const resolvedPayload = {
+        ...request, submissionId: 'd2fe73a7-7070-445f-8aa1-bdb6ac73d801', headSha: currentHead,
+        verdict: 'no_findings' as const, findings: [],
+        resolutions: [{ lineageKey: 'pr-head-root',
+            evidence: 'Confirmed the head check rejects changed revisions in a focused regression test.' }],
+    };
+    const resolved = await service.submitStructuredReview(resolvedPayload, reviewer);
+    assert.deepEqual(resolved.findingIds, []);
+    const saved = await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id, limit: 20,
+    });
+    const original = saved.items.find(record => record.id === first.runId)!;
+    const resolution = saved.items.find(record => record.id === resolved.runId)!;
+    assert.equal((original.data.coverage as any).lifecycleResolutions, undefined);
+    assert.equal((resolution.data.coverage as any).lifecycleResolutions[0].state, 'resolved');
+    assert.equal((resolution.data.coverage as any).lifecycleResolutions[0].assessedHeadSha, currentHead);
+    const savedFindings = await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: findings.id, limit: 20,
+    });
+    assert.equal(savedFindings.items.find(item => item.data.reviewRunId === first.runId)?.data.state, 'new');
+    const persisting = savedFindings.items.find(item => item.data.reviewRunId === second.runId)!;
+    assert.equal(persisting.data.state, 'persisting');
+    assert.equal((persisting.data.evidence as any).lifecycleAssessment.assessedHeadSha, secondPayload.headSha);
+    const history = await service.prTimeline(repository, 84, 5, 0) as any;
+    assert.equal(history.recordedRounds, 3);
+    assert.equal(history.lineages.length, 1);
+    assert.equal(history.lineages[0].latestAssessmentInPage.state, 'resolved');
+    assert.equal(history.lineages[0].observationsInPage, 2);
+    assert.equal(history.rounds[0].resolutions[0].lineageKey, 'pr-head-root');
+    assert.equal(history.resolutionInferred, false);
+});
+
+test('lifecycle assertions reject missing roots, cross-PR identities, contradictions and weak evidence', async () => {
+    const { catalog, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, openHead());
+    const base = {
+        ...request, submissionId: '57653ba8-93fa-4a49-9729-bb7f2cfc0802',
+        findings: [] as typeof request.findings,
+        resolutions: [{ lineageKey: 'missing-root',
+            evidence: 'Verified the source case with a complete unit test at this commit.' }],
+    };
+    await assert.rejects(service.submitStructuredReview(base, reviewer), /no prior structured finding/i);
+    await assert.rejects(service.submitStructuredReview({
+        ...base, findings: [{ ...request.findings[0], key: 'one', lineageKey: 'missing-root' }],
+    }, reviewer), /both observed and resolved/i);
+    await assert.rejects(service.submitStructuredReview({
+        ...base, resolutions: [base.resolutions[0], base.resolutions[0]],
+    }, reviewer), /resolved only once/i);
+    await assert.rejects(service.submitStructuredReview({
+        ...base, resolutions: [{ lineageKey: 'missing-root', evidence: 'looks fixed' }],
+    }, reviewer));
+    await assert.rejects(service.submitStructuredReview({
+        ...request, findings: [{ ...request.findings[0],
+            assessment: { state: 'persisting', evidence: 'Confirmed again in new tests on this head.' } }],
+    }, reviewer), /requires an explicit lineage key/i);
+    const first = await service.submitStructuredReview({
+        ...request, findings: [{ ...request.findings[0], lineageKey: 'owned-pr84-root' }],
+    }, reviewer);
+    assert.ok(first.created);
+    await assert.rejects(service.submitStructuredReview({
+        ...base, resolutions: [{ lineageKey: 'other-pr-root',
+            evidence: 'Sufficient evidence describing a completely different issue.' }],
+    }, reviewer), /no prior structured finding/i);
+    const differentPr = new CodeReviewsService(catalog, {
+        read: async () => ({ reviews: [], comments: [] }),
+        currentHead: async () => ({ repository, prNumber: 85, headSha: sha, open: true }),
+    });
+    await assert.rejects(differentPr.submitStructuredReview({
+        ...base, prNumber: 85,
+        resolutions: [{ lineageKey: 'owned-pr84-root',
+            evidence: 'Attempted to reuse a root cause from a different pull request.' }],
+    }, reviewer), /no prior structured finding/i);
+    assert.equal((await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+    })).total, 1, 'rejected assessments cannot create an additional review');
+});
+
+test('archived prior observation cannot support a new lifecycle assertion', async () => {
+    const { catalog, store, findings, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, openHead());
+    const first = await service.submitStructuredReview({
+        ...request, findings: [{ ...request.findings[0], lineageKey: 'archive-root' }],
+    }, reviewer);
+    await store.pool.query('UPDATE records SET archived_at = now() WHERE id = $1 AND store_id = $2',
+        [first.findingIds[0], findings.id]);
+    await assert.rejects(service.submitStructuredReview({
+        ...request, submissionId: '5c9f740a-e913-44f9-99ac-905b0aa1681f', findings: [],
+        verdict: 'no_findings', resolutions: [{
+            lineageKey: 'archive-root',
+            evidence: 'This is sufficient descriptive evidence but its source is archived.' }],
+    }, reviewer), /history is incomplete/i);
+    assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 1);
+});
