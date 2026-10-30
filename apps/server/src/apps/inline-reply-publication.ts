@@ -70,7 +70,7 @@ function renderReply(finding: AtlasRecord, evidence: string, headSha: string, ma
         throw new AtlasError('Invalid persisted finding for inline reply.', 'CONFLICT');
     const body = '**Still present · ' + finding.data.severity.toUpperCase() + '** — ' +
         escapeMarkdown(finding.data.title, 200) + '\n\n' +
-        escapeMarkdown(evidence, 4_000) + '\n\n_Reviewed commit \' +
+        escapeMarkdown(evidence, 4_000) + '\n\n_Reviewed commit ' +
         '`' + headSha + '` · Atlas finding ' + finding.id + '_\n\n' + marker;
     if (body.length > 8_000)
         throw new AtlasError('Managed inline reply is too large.', 'INVALID_REQUEST');
@@ -96,7 +96,8 @@ export class InlineReplyPublicationService {
 
     private related(state: AtlasData, id: Identity) {
         const runs = state.records.filter(r => r.projectId === CODE_REVIEWS_PROJECT_ID &&
-            r.storeId === id.runs && r.data.repository?.toLowerCase?.() === id.repository &&
+            r.storeId === id.runs && typeof r.data.repository === 'string' &&
+            r.data.repository.toLowerCase() === id.repository &&
             r.data.prNumber === id.prNumber && !r.archivedAt);
         const byRun = new Map(runs.map(run => [run.id, run]));
         const findings = state.records.filter(f => f.projectId === CODE_REVIEWS_PROJECT_ID &&
