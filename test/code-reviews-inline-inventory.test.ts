@@ -76,6 +76,30 @@ test('bounded multi-page reader verifies Bot-owned root, ignores copied human ma
     assert.deepEqual(result.copiedMarkers, [marker]);
 });
 
+test('Bot-authenticated reply markers retain exact parent and body while copied markers are untrusted', async () => {
+    const digest = 'b'.repeat(64);
+    const replyMarker = '<!-- atlas-code-reviews-reply:v1:' + digest + ' -->';
+    const { reader } = githubFixture([[
+        root(110),
+        { ...reply(111, 110, 'Verified again.\\n' + replyMarker),
+            user: { id: botId, type: 'Bot' } },
+        { ...reply(112, 110, 'Copied!\\n' + replyMarker),
+            user: { id: 888, type: 'User' } },
+    ]]);
+    const result = await reader.inspect(repository, prNumber);
+    assert.equal(result.managedReplies.length, 1);
+    assert.equal(result.managedReplies[0]!.id, 111);
+    assert.equal(result.managedReplies[0]!.parentId, 110);
+    assert.equal(result.managedReplies[0]!.marker, replyMarker);
+    assert.deepEqual(result.copiedReplyMarkers, [replyMarker]);
+    assert.equal(result.replies.get(110), 2);
+    await assert.rejects(githubFixture([[
+        root(110),
+        { ...reply(111, 110, 'A\\n' + replyMarker), user: { id: botId, type: 'Bot' } },
+        { ...reply(112, 110, 'B\\n' + replyMarker), user: { id: botId, type: 'Bot' } },
+    ]]).reader.inspect(repository, prNumber), /conflicting identity/);
+});
+
 test('duplicate owned roots, copied Bot reply and missing reply parents are conflicts', async () => {
     await assert.rejects(githubFixture([[root(110), root(111)]]).reader.inspect(repository, prNumber),
         /conflicting identity/);
