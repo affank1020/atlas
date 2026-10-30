@@ -141,3 +141,54 @@ test('Malformed finding records are omitted and errors are surfaced without hidi
     fireEvent.click(screen.getByRole('button',{name:'View findings'}));
     expect(screen.getByRole('alert')).toHaveTextContent('Access denied');
 });
+
+test('PR status is lazy, distinguishes an outdated review and does not infer complete history', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
+        if (name === 'code_reviews_overview') return { data: {
+            projectId: 'project', reviewRuns: 3, findingObservations: 1 },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_runs') return { data: { total: 1,
+            items: [makeRun(runId, 114)] }, isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_summary') return { data: {
+            repository: 'affank1020/atlas', prNumber: 114, recordedRounds: 3,
+            latestReviewHead: 'outdated',
+            currentHead: { state: 'open', sha: 'b'.repeat(40), checkedAt: '2026-10-30T12:00:00.000Z' },
+            latest: { runId, headSha: 'a'.repeat(40),
+                reviewedAt: '2026-10-29T12:00:00.000Z', verdict: 'non_blocking',
+                source: 'historical', severityCounts: null },
+        }, isLoading: false, isFetching: false, refetch } as never;
+        throw Error('Unexpected call: ' + name);
+    });
+    render(<CodeReviews />);
+    expect(vi.mocked(useApplicationRead).mock.calls.map(([name]) => name))
+        .not.toContain('code_reviews_pr_summary');
+    fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
+    expect(screen.getByText(/3 saved review rounds/)).toBeInTheDocument();
+    expect(screen.getByText(/different commit/)).toBeInTheDocument();
+    expect(screen.getByText(/Historical Markdown import/)).toBeInTheDocument();
+    expect(screen.getByText(/Full severity totals unavailable/)).toBeInTheDocument();
+    expect(vi.mocked(useApplicationRead).mock.calls.map(([name]) => name))
+        .toContain('code_reviews_pr_summary');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide PR status' }));
+    expect(screen.queryByText(/different commit/)).not.toBeInTheDocument();
+});
+
+test('PR status treats unavailable GitHub and empty stored history as unknown rather than clean', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
+        if (name === 'code_reviews_overview') return { data: { projectId: 'project',
+            reviewRuns: 1, findingObservations: 0 }, isLoading: false,
+            isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_runs') return { data: { total: 1,
+            items: [makeRun(runId, 114)] }, isLoading: false,
+            isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_summary') return { data: {
+            recordedRounds: 0, latestReviewHead: 'no_stored_review',
+            latest: null, currentHead: { state: 'unavailable' },
+        }, isLoading: false, isFetching: false, refetch } as never;
+        throw Error('Unexpected call: ' + name);
+    });
+    render(<CodeReviews />);
+    fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
+    expect(screen.getByText(/Current GitHub head unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/does not mean it has never been reviewed or has no issues/)).toBeInTheDocument();
+});
