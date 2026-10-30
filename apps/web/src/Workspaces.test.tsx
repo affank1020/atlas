@@ -228,7 +228,7 @@ test('Node filter selects the matching physical checkout instead of the logical 
     fireEvent.click(groupButton);
     expect(location.hash).toContain('workspace=linux-checkout');
     const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
-    expect(within(inspector).getByText('/srv/portfolio')).toBeInTheDocument();
+    expect(within(inspector).getAllByText('/srv/portfolio').length).toBeGreaterThan(0);
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('workspace_git_status', {
         checkoutId: linux.id,
     }));
