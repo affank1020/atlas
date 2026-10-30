@@ -20,10 +20,10 @@ const headB = 'b'.repeat(40);
 const rounds = [
     { id: ids[0], data: { repository: repo, prNumber: 116, headSha: headB,
         reviewedAt: '2026-10-30T15:00:00Z', verdict: 'non_blocking',
-        coverage: { source: 'atlas_structured_submission', submissionId: submissionB } } },
+        coverage: { source: 'atlas_structured_submission', submissionId: submissionB, findingCount: 2 } } },
     { id: ids[1], data: { repository: repo, prNumber: 116, headSha: headA,
         reviewedAt: '2026-10-30T14:00:00Z', verdict: 'changes_requested',
-        coverage: { source: 'atlas_structured_submission', submissionId: submissionA } } },
+        coverage: { source: 'atlas_structured_submission', submissionId: submissionA, findingCount: 1 } } },
     { id: ids[2], data: { repository: repo, prNumber: 116, headSha: headA,
         reviewedAt: '2026-10-29T14:00:00Z', verdict: 'no_findings',
         coverage: { source: 'github_pull_request_review' } } },
@@ -126,13 +126,56 @@ test('missing history remains empty rather than clean; truncated findings surfac
 
     const firstHundred = Array.from({ length: 100 }, (_, i) =>
         observation(ids[0], submissionB, String(i + 1).padStart(3, '0')));
-    const partial = fixture({ rounds: [rounds[0]],
-        findings: { [ids[0]]: firstHundred }, counts: { [ids[0]]: 101 } });
+    // Only a historical/partial import can legitimately exceed the strict
+    // structured-submission limit of 30 finding observations.
+    const historicalMany = { ...rounds[2] };
+    const historicalFindings = firstHundred.map((f, i) => ({
+        ...f, data: { ...f.data, reviewRunId: ids[2],
+            findingKey: `github-review-comment:${i + 1}`, state: 'unverified',
+            evidence: undefined },
+    }));
+    const partial = fixture({ rounds: [historicalMany],
+        findings: { [ids[2]]: historicalFindings }, counts: { [ids[2]]: 101 } });
     const truncated = await partial.app.invoke('code_reviews_pr_timeline',
         { repository: repo, prNumber: 116 }) as any;
     assert.equal(truncated.rounds[0].findingsTruncated, true);
     assert.equal(truncated.storedWindowComplete, false);
     assert.equal(truncated.rounds[0].totalFindingObservations, 101);
+});
+
+test('structured finding count is checked against original submission metadata, not active rows', async () => {
+    // Generic Atlas Store archiving removes a finding from active-only query results.
+    // Comparing active page.items to page.total alone falsely marked these runs complete.
+    const archived = fixture({ rounds: [rounds[0]], findings: {
+        [ids[0]]: [findingByRun[ids[0]][0]],
+    } });
+    await assert.rejects(
+        archived.app.invoke('code_reviews_pr_timeline', { repository: repo, prNumber: 116 }),
+        /structured review findings are incomplete/i);
+
+    // A zero-finding structured submission is valid only with an explicit count of zero.
+    const zero = { ...rounds[0], data: { ...rounds[0].data,
+        coverage: { ...rounds[0].data.coverage, findingCount: 0 } } };
+    const complete = fixture({ rounds: [zero], findings: { [ids[0]]: [] } });
+    const result = await complete.app.invoke('code_reviews_pr_timeline',
+        { repository: repo, prNumber: 116 }) as any;
+    assert.equal(result.rounds[0].totalFindingObservations, 0);
+    assert.equal(result.storedWindowComplete, true);
+
+    for (const count of [undefined, null, -1, 1.5, '2', 31, 0]) {
+        const invalid = { ...rounds[0], data: { ...rounds[0].data,
+            coverage: { ...rounds[0].data.coverage, findingCount: count } } };
+        const app = fixture({ rounds: [invalid] }).app;
+        await assert.rejects(app.invoke('code_reviews_pr_timeline',
+            { repository: repo, prNumber: 116 }), /structured review findings are incomplete/i);
+    }
+
+    // Legacy historical imports never declare the structured count contract.
+    const historical = fixture({ rounds: [rounds[2]] }).app;
+    const imported = await historical.invoke('code_reviews_pr_timeline',
+        { repository: repo, prNumber: 116 }) as any;
+    assert.equal(imported.rounds[0].findingCoverage, 'historical_partial');
+    assert.equal(imported.rounds[0].totalFindingObservations, 1);
 });
 
 test('malformed, mismatched and duplicate lineage observations fail closed', async () => {
