@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { AtlasError } from '../shared/errors.js';
 import type { CoreService } from '../core/service.js';
-import type { AtlasData, AtlasRecord, RecordData } from '../types.js';
+import type { AtlasData, AtlasRecord } from '../types.js';
 import type { ApplicationCaller } from './registry.js';
 import { assertStructuredCaller } from './review-submission.js';
 import { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
