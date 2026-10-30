@@ -136,7 +136,7 @@ export class ManagedSummaryPublicationService {
             throw new AtlasError('No complete saved review exists for managed publication.', 'CONFLICT');
         const proposed = preview as Extract<Preview, { runId: string }>;
         const body = proposed.previewBody;
-        const bodySha256 = digest(body); // JSON-string digest is intentionally NOT used here.
+        const bodySha256 = createHash('sha256').update(body).digest('hex');
         const remote = proposed.remote as Remote;
         const identity = this.latest(initial, id, preview, caller!);
         const current = identity.first;
