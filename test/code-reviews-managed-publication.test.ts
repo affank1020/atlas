@@ -133,7 +133,13 @@ test('managed publication is separately disabled, requires OAuth and preflights 
     const f = await fixture();
     const denied = new ManagedSummaryPublicationService(f.catalog, f.preview, f.writer);
     await assert.rejects(denied.publish(repository,prNumber,false,subject), /disabled/);
-    await assert.rejects(f.invoke(true, undefined), /authenticated MCP OAuth/);
+    await assert.rejects(
+        new ApplicationRegistry([codeReviewsApplication(
+            new CodeReviewsService(f.catalog, undefined, new Map(), undefined, f.preview,
+                new ManagedSummaryPublicationService(f.catalog, f.preview, f.writer,
+                    new Set([repository]))))])
+            .invoke('code_reviews_managed_summary_publish', { repository, prNumber, apply: true }),
+        /authenticated MCP OAuth/);
     await assert.rejects(f.invoke(true, { ...subject, subject: 'other' }), /another|Only complete native reviews/);
     const plan = await f.invoke(false);
     assert.equal(plan.status, 'ready');
