@@ -189,7 +189,7 @@ export class ManagedSummaryPreviewService {
         if (!runs || !findings)
             throw new AtlasError('Code Reviews Stores unavailable.', 'CAPABILITY_UNAVAILABLE');
         const saved = await readPrTimeline(this.catalog, { runs: runs.id, findings: findings.id },
-            repository, prNumber, 1, 0);
+            repository, prNumber, 1, 0, true);
         const latest = saved.rounds[0];
         if (!latest) return { repository, prNumber, recordedRounds: saved.recordedRounds,
             status: 'no_saved_review', publishSupported: false, dryRun: true };
