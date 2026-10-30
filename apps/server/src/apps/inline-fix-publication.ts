@@ -55,8 +55,10 @@ function parseClaim(run: AtlasRecord, lineageKey: string): Claim | undefined {
     if (entries === undefined) return undefined;
     if (!object(entries) || Object.keys(entries).length > 30)
         throw new AtlasError('Stored fix reply claim collection is malformed.', 'CONFLICT');
+    // Lineage keys may legally be "constructor", "toString" or "__proto__".
+    // Only persisted own claims count; inherited Object.prototype members do not.
+    if (!Object.hasOwn(entries, lineageKey)) return undefined;
     const raw = entries[lineageKey];
-    if (raw === undefined) return undefined;
     if (!object(raw) || !['claimed','published'].includes(String(raw.state)) ||
         typeof raw.claimId !== 'string' || !uuidPattern.test(raw.claimId) ||
         raw.runId !== run.id || raw.lineageKey !== lineageKey ||
@@ -129,9 +131,13 @@ export class InlineFixPublicationService {
         const previous = coverage.githubFixReplies;
         if (previous !== undefined && !object(previous))
             throw new AtlasError('Fix acknowledgement Store metadata is malformed.', 'CONFLICT');
-        const entries = { ...(object(previous) ? previous : {}) };
+        // Build a dictionary without Object.prototype or the __proto__ setter:
+        // an allowed lineage key must never change the claim map's prototype.
+        const entries: Record<string, unknown> = Object.assign(
+            Object.create(null) as Record<string, unknown>,
+            object(previous) ? previous : {});
         if (claim) entries[lineageKey] = claim;
-        else delete entries[lineageKey];
+        else if (Object.hasOwn(entries, lineageKey)) delete entries[lineageKey];
         this.catalog.updateRecordInState(state, {
             projectId: CODE_REVIEWS_PROJECT_ID, storeId: id.runs, recordId: run.id,
             client: 'atlas-inline-review-fix',
