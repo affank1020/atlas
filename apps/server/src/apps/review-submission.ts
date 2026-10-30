@@ -7,11 +7,22 @@ import type { ApplicationCaller } from './registry.js';
 import { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
 const sha = z.string().regex(/^[a-fA-F0-9]{40}$/).transform(value => value.toLowerCase());
+const lineageKey = z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/);
+const evidence = z.string().min(20).max(4_000).refine(value => !!value.trim(), 'Evidence is required.');
+const findingAssessment = z.object({
+    state: z.enum(['persisting', 'unverified']),
+    evidence,
+}).strict();
+const resolution = z.object({
+    lineageKey,
+    evidence,
+}).strict();
 const finding = z.object({
-    key: z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/),
+    key: lineageKey,
     // Optional cross-review root-cause identity, scoped to one repository/PR.
     // Omission is deliberate: the per-submission key alone cannot prove lineage.
-    lineageKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/).optional(),
+    lineageKey: lineageKey.optional(),
+    assessment: findingAssessment.optional(),
     severity: z.enum(['sev1', 'sev2', 'sev3', 'sev4']),
     title: z.string().min(1).max(200),
     description: z.string().min(1).max(8_000),
@@ -28,6 +39,8 @@ export const structuredReviewSchema = z.object({
     verdict: z.enum(['changes_requested', 'concerns_to_verify', 'non_blocking', 'no_findings', 'inconclusive']),
     summary: z.string().min(1).max(16_000).optional(),
     findings: z.array(finding).max(30),
+    // Explicit outcome assertions only: omissions never imply resolution.
+    resolutions: z.array(resolution).max(30).optional(),
 }).strict().superRefine((value, ctx) => {
     const keys = new Set<string>();
     const lineageKeys = new Set<string>();
@@ -35,12 +48,25 @@ export const structuredReviewSchema = z.object({
         if (keys.has(item.key))
             ctx.addIssue({ code: 'custom', path: ['findings', index, 'key'], message: 'Finding keys must be distinct.' });
         keys.add(item.key);
+        if (item.assessment && !item.lineageKey)
+            ctx.addIssue({ code: 'custom', path: ['findings', index, 'assessment'],
+                message: 'A lifecycle assessment requires an explicit lineage key.' });
         if (item.lineageKey !== undefined) {
             if (lineageKeys.has(item.lineageKey))
                 ctx.addIssue({ code: 'custom', path: ['findings', index, 'lineageKey'],
                     message: 'One root-cause lineage may have only one observation per review run.' });
             lineageKeys.add(item.lineageKey);
         }
+    }
+    const resolved = new Set<string>();
+    for (const [index, item] of (value.resolutions ?? []).entries()) {
+        if (resolved.has(item.lineageKey))
+            ctx.addIssue({ code: 'custom', path: ['resolutions', index, 'lineageKey'],
+                message: 'A lineage may be resolved only once per review.' });
+        if (lineageKeys.has(item.lineageKey))
+            ctx.addIssue({ code: 'custom', path: ['resolutions', index, 'lineageKey'],
+                message: 'A finding cannot be both observed and resolved in the same round.' });
+        resolved.add(item.lineageKey);
     }
     if (value.verdict === 'no_findings' && value.findings.length)
         ctx.addIssue({ code: 'custom', path: ['verdict'], message: 'A clean review cannot contain findings.' });
@@ -111,6 +137,52 @@ function receipt(state: AtlasData, stores: StoreIds, run: AtlasRecord, input: St
     };
 }
 
+/** Validate referenced root causes against previous active, complete structured
+ * review observations for this exact repository/PR. Historical Markdown and
+ * same-round claims can never establish a prior identity.
+ */
+function assertPriorLineages(state: AtlasData, stores: StoreIds, input: StructuredReview) {
+    const referenced = new Set([
+        ...input.findings.filter(item => item.assessment).map(item => item.lineageKey!),
+        ...(input.resolutions ?? []).map(item => item.lineageKey),
+    ]);
+    if (!referenced.size) return;
+    const matches = new Set<string>();
+    const priorRuns = state.records.filter(run =>
+        run.storeId === stores.runs && run.projectId === CODE_REVIEWS_PROJECT_ID &&
+        !run.archivedAt && run.data.repository === input.repository &&
+        run.data.prNumber === input.prNumber &&
+        run.data.coverage && typeof run.data.coverage === 'object' &&
+        (run.data.coverage as RecordData).source === 'atlas_structured_submission');
+    for (const run of priorRuns) {
+        const coverage = run.data.coverage as RecordData;
+        const records = state.records.filter(item =>
+            item.storeId === stores.findings && item.projectId === CODE_REVIEWS_PROJECT_ID &&
+            item.data.reviewRunId === run.id);
+        // The original submission's cardinality, rather than an active-only
+        // count, is authoritative. Reject corrupted lineage sources.
+        if (!Number.isSafeInteger(coverage.findingCount) ||
+            (coverage.findingCount as number) < 0 ||
+            (coverage.findingCount as number) > 30 ||
+            coverage.findingCount !== records.length || records.some(item => item.archivedAt))
+            throw new AtlasError('Prior structured review finding history is incomplete.', 'CONFLICT');
+        for (const item of records) {
+            const e = item.data.evidence;
+            if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+            const recordEvidence = e as RecordData;
+            if (recordEvidence.source !== 'atlas_structured_submission' ||
+                typeof recordEvidence.localKey !== 'string' ||
+                item.data.findingKey !== `structured:${coverage.submissionId}:${recordEvidence.localKey}`)
+                continue;
+            if (typeof recordEvidence.lineageKey === 'string' && referenced.has(recordEvidence.lineageKey))
+                matches.add(recordEvidence.lineageKey);
+        }
+    }
+    for (const key of referenced)
+        if (!matches.has(key))
+            throw new AtlasError('Lifecycle assessment references no prior structured finding in this PR.', 'CONFLICT');
+}
+
 /** Unique submission ID is checked inside the serialized PostgreSQL transaction.
  * Retries return the original receipt, even if the PR head has advanced.
  */
@@ -131,6 +203,7 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
         !state.stores.some(store => store.id === stores.findings && store.projectId === CODE_REVIEWS_PROJECT_ID &&
             store.name === REVIEW_FINDINGS_STORE && !store.archivedAt))
         throw new AtlasError('Code Reviews Project or Stores are unavailable.', 'CAPABILITY_UNAVAILABLE');
+    assertPriorLineages(state, stores, input);
     const digest = fingerprint(input);
     const counts = { sev1: 0, sev2: 0, sev3: 0, sev4: 0 };
     for (const item of input.findings) counts[item.severity]++;
@@ -146,6 +219,10 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
             coverage: {
                 source: 'atlas_structured_submission', submissionId: input.submissionId,
                 payloadSha256: digest, findingCount: input.findings.length,
+                ...(input.resolutions?.length && { lifecycleResolutions: input.resolutions.map(item => ({
+                    ...item, state: 'resolved', assertedAt: reviewedAt, assessedHeadSha: input.headSha,
+                    assessmentSource: 'authenticated_structured_submission',
+                })) }),
                 ...(input.summary !== undefined && { summary: input.summary }),
                 githubHeadVerifiedAt: verifiedAt,
                 publisherIdentityVerified: false, publication: 'not_published',
@@ -160,12 +237,17 @@ export function saveStructuredReview(catalog: SubmissionCatalog, state: AtlasDat
             data: {
                 reviewRunId: run.id, findingKey: `structured:${input.submissionId}:${item.key}`,
                 severity: item.severity, title: item.title, description: item.description,
-                state: 'new', schemaVersion: 1,
+                state: item.assessment?.state ?? 'new', schemaVersion: 1,
                 ...(item.filePath !== undefined && { filePath: item.filePath }),
                 ...(item.line !== undefined && { line: item.line }),
                 evidence: {
                     source: 'atlas_structured_submission', localKey: item.key,
                     ...(item.lineageKey !== undefined && { lineageKey: item.lineageKey }),
+                    ...(item.assessment && { lifecycleAssessment: {
+                        ...item.assessment, assertedAt: reviewedAt,
+                        assessedHeadSha: input.headSha,
+                        assessmentSource: 'authenticated_structured_submission',
+                    } }),
                 },
             },
         });
