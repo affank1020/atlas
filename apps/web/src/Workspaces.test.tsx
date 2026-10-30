@@ -181,6 +181,8 @@ test('logical repository appears once while Mac and VPS checkouts remain selecta
     const inspector = screen.getByRole('complementary', { name: 'Workspace details' });
     expect(await within(inspector).findAllByText(/affank1020\/portfolio-site/)).not.toHaveLength(0);
     expect(within(inspector).getByRole('group', { name: 'Choose Node checkout' })).toBeInTheDocument();
+    expect(within(browser).queryByRole('button', { name: /Checkout on MacBook/ })).not.toBeInTheDocument();
+    fireEvent.click(within(browser).getByRole('button', { name: 'Show checkouts for Portfolio Site' }));
     fireEvent.click(within(browser).getByRole('button', { name: /Checkout on MacBook/ }));
     expect(location.hash).toContain('workspace=mac');
     fireEvent.click(within(browser).getByRole('button', { name: /Checkout on Linux VPS/ }));
@@ -189,6 +191,44 @@ test('logical repository appears once while Mac and VPS checkouts remain selecta
     expect(callTool).not.toHaveBeenCalledWith('workspace_git_status', { checkoutId: 'logical-portfolio' });
     fireEvent.change(within(browser).getByLabelText('Node'), { target: { value: 'mac-node' } });
     expect(within(browser).getByText('1 checkout across 1 Node')).toBeInTheDocument();
+});
+
+test('repository-first navigation stays compact, searchable, and filterable', async () => {
+    const macNode = { ...node, id: 'mac-node', name: 'MacBook' };
+    const checkouts = [
+        { ...repo, id: 'main', nodeId: 'mac-node', rootPath: '/mac/atlas' },
+        { ...repo, id: 'feature', nodeId: 'mac-node', name: 'Feature UI', rootPath: '/mac/atlas-feature' },
+    ];
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_nodes') return [node, macNode];
+        if (name === 'list_workspaces') return [manager, ...checkouts];
+        if (name === 'list_logical_workspaces') return [
+            { id: 'atlas-group', name: 'Atlas', repository: 'example/atlas', kind: 'git', checkouts },
+            { id: 'local-group', name: 'Development root', repository: null, kind: 'local', checkouts: [manager] },
+        ];
+        if (name === 'list_github_repositories') return { repositories: [] };
+        if (name === 'workspace_git_status') return { available: true, branch: 'main', head: sha,
+            originRepository: 'example/atlas', dirty: false };
+        if (name === 'workspace_git_list_worktrees') return { worktrees: [] };
+        return {};
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    expect(await within(browser).findByText('2 Workspaces')).toBeInTheDocument();
+    expect(within(browser).getAllByRole('button', { name: /^(Atlas|Development root)$/ })).toHaveLength(2);
+    expect(browser.querySelectorAll('.wm-checkout-row')).toHaveLength(0);
+    fireEvent.click(within(browser).getByRole('button', { name: 'Show checkouts for Atlas' }));
+    expect(browser.querySelectorAll('.wm-checkout-row')).toHaveLength(2);
+    fireEvent.click(within(browser).getByRole('button', { name: 'Hide checkouts for Atlas' }));
+    expect(browser.querySelectorAll('.wm-checkout-row')).toHaveLength(0);
+    fireEvent.change(within(browser).getByLabelText('Search'), { target: { value: 'Feature UI' } });
+    expect(within(browser).getByText('1 Workspace')).toBeInTheDocument();
+    expect(within(browser).getByText('Feature UI')).toBeInTheDocument();
+    fireEvent.change(within(browser).getByLabelText('Search'), { target: { value: '' } });
+    fireEvent.change(within(browser).getByLabelText('Type'), { target: { value: 'local' } });
+    expect(within(browser).getByText('1 Workspace')).toBeInTheDocument();
+    expect(within(browser).getByRole('button', { name: 'Development root' })).toBeInTheDocument();
+    expect(within(browser).queryByRole('button', { name: 'Atlas' })).not.toBeInTheDocument();
 });
 
 test('multiple worktrees on one Node have distinct labels and a compact checkout selector', async () => {
@@ -215,6 +255,8 @@ test('multiple worktrees on one Node have distinct labels and a compact checkout
     const browser = screen.getByRole('region', { name: 'Workspace browser' });
     expect(await within(browser).findByText('1 Workspace')).toBeInTheDocument();
     expect(within(browser).getByText('4 checkouts across 1 Node')).toBeInTheDocument();
+    expect(browser.querySelectorAll('.wm-node-heading')).toHaveLength(0);
+    fireEvent.click(within(browser).getByRole('button', { name: 'Show checkouts for Atlas' }));
     expect(browser.querySelectorAll('.wm-node-heading')).toHaveLength(1);
     expect(within(browser).getByText('4 checkouts')).toBeInTheDocument();
     expect(within(browser).getByText('API cleanup')).toBeInTheDocument();
@@ -418,6 +460,9 @@ test('repository recognition uses Node Git inspection and never sends caller-cho
     });
     render(<Workspaces />);
     await screen.findByText('1 Workspace');
+    expect(screen.queryByRole('button', { name: 'Recognise repositories' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    expect(screen.getByText(/Unlike Refresh, this updates Workspace associations/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Recognise repositories' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('attach_checkout_repository', {
         checkoutId: 'mac',
