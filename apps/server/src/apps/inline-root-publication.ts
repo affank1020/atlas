@@ -210,9 +210,9 @@ export class InlineRootPublicationService {
             this.writeClaim(state, identity, finding.id, { ...pending,
                 state: 'published', rootCommentId: root!.id });
         });
-        return { status: 'published', dryRun: !apply, findingId: finding.id,
-            rootCommentId: root!.id, alreadyPublished: claim.state === 'published',
-            postedAgain: false };
+        return { status: apply || claim.state === 'published' ? 'published' : 'found_on_github',
+            dryRun: !apply, findingId: finding.id, rootCommentId: root!.id,
+            alreadyPublished: claim.state === 'published', postedAgain: false };
     }
 
     async publish(repository: string, prNumber: number, findingId: string, apply: boolean,
