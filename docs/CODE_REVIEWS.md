@@ -890,6 +890,62 @@ GitHub conversation resolution are separate follow-up milestones; missing
 comments, outdated code anchors and reviewer assertions do not themselves
 prove that GitHub threads should be marked resolved.
 
+### Explicit reviewer-verified fix acknowledgement on an inline thread
+
+`code_reviews_publish_fix_evidence({repository,prNumber,runId,lineageKey,apply?})`
+is the **separate, opt-in** final *comment* in the managed inline discussion
+lifecycle. It does **not** automatically close, collapse or resolve the
+GitHub conversation. The default `apply:false` is a read-only preview,
+and live replies require authenticated original structured-review submitter,
+explicit `apply:true` and a fourth, independent default-empty flag:
+
+```text
+ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES=owner/repository
+```
+
+A "fix" requires the latest saved structured review on an advanced SHA to
+contain exactly one explicit **resolved** assertion for this lineage, with
+nontrivial evidence and metadata asserting it was assessed on that SHA.
+An omitted finding never implies resolution. The origin must be exactly
+one older **published, App-owned** root with a retained matching Store
+receipt and verifiable GitHub root ID, owner, trailing marker, original SHA,
+path/line and raw body hash. Historical imports and human-authored comments
+cannot be adopted. This is *reviewer evidence*, not an independently
+computed code proof: the GitHub comment intentionally states that the
+reviewer assessed the issue as addressed.
+
+Fix messages use a separate trailing
+`<!-- atlas-code-reviews-fix:v1:... -->` marker, based on canonical
+repository/PR, numeric root ID, immutable review-run UUID and lineage.
+The bounded GitHub inventory verifies this specific Bot-owned reply
+parent, body checksum and marker and detects conflicting copied human
+markers and duplicates independently of existing persisting-issue replies.
+
+The durable claim belongs to `Review Runs.coverage.githubFixReplies` keyed
+by explicit root-cause lineage, since a resolved lineage has **no finding
+observation** in that round. Both the entire PR history fingerprint and
+the per-run claim are checked under PostgreSQL Store transactions. The
+current head and original GitHub root are re-checked after the claim but
+before any reply POST. Timeout, HTTP 5xx and uncertain GitHub outcomes
+keep the claim and never trigger automatic retransmission. An explicit
+403/422 rejection only permits exact-claim release after a separate,
+complete verification that no Bot-owned matching fix reply exists.
+Subsequent invocations can reconcile pending claims through the original
+review-run ID even after newer reviews.
+
+The same root and commit cannot be acknowledged twice merely through a
+new review submission ID. No thread is closed by this operation; a future
+GraphQL resolution workflow needs explicit **GitHub review-thread node ID**
+mapping, permission validation, fresh open/resolved-state checks, immutable
+claims and independent read-back, plus a policy for reopened discussions.
+The REST review-comments endpoint alone does **not** provide proof of
+GitHub's thread-resolved state. <https://docs.github.com/en/graphql/reference/pulls>
+
+**Rollout:** Keep this new flag empty until independent review, a real
+multi-SHA integration test and a deliberate one-authoritative-publisher
+transition from the existing human Code Reviewer plugin. GitHub's
+`resolveReviewThread` mutation is *not implemented or invoked* by this PR.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
