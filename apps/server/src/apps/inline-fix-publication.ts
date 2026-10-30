@@ -55,8 +55,8 @@ function parseClaim(run: AtlasRecord, lineageKey: string): Claim | undefined {
     if (entries === undefined) return undefined;
     if (!object(entries) || Object.keys(entries).length > 30)
         throw new AtlasError('Stored fix reply claim collection is malformed.', 'CONFLICT');
-    // Lineage keys may legally be "constructor", "toString" or "__proto__".
-    // Only persisted own claims count; inherited Object.prototype members do not.
+    // Valid lineage keys include "constructor", "toString" and "hasOwnProperty".
+    // Only own claims count; inherited Object.prototype members do not.
     if (!Object.hasOwn(entries, lineageKey)) return undefined;
     const raw = entries[lineageKey];
     if (!object(raw) || !['claimed','published'].includes(String(raw.state)) ||
