@@ -38,6 +38,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     ];
     const codeReviewPriorityNames = [
         'code_reviews_overview',
+        'code_reviews_pr_summary',
         'code_reviews_list_runs',
         'code_reviews_list_findings',
         'code_reviews_submit_structured',

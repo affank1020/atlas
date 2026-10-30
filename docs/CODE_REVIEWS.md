@@ -337,11 +337,44 @@ are independently bounded to avoid fetching unrelated findings for collapsed
 rows. Missing Project/Store data, unsupported records and API failures have
 distinct error or empty states.
 
+### PR-level latest review status (read-only)
+
+`code_reviews_pr_summary({repository,prNumber})` reads a **single exact
+repository/PR identity** from the Code Reviews Project's Review Runs Store
+using a server-filtered, descending `reviewedAt` query (one row plus total
+count). The stored total is **review rounds recorded in Atlas**, not unique
+commits or complete GitHub review history. Queries are exact against stored
+repository names; use the recorded repository spelling for historical records.
+
+The response includes `recordedRounds`, `latest` (run ID, recorded head SHA,
+timestamp, verdict, source and *recorded* severity counts when valid),
+`currentHead` and `latestReviewHead`. Current GitHub head is read on demand
+using the existing repository-scoped GitHub App read token. The result
+distinguishes `open`, `closed` and `unavailable`; available heads have an
+observed `checkedAt` timestamp. Freshness is `current`, `outdated`,
+`unknown`, or `no_stored_review`. None implies a passing review:
+`no_stored_review` means **no matching rows in Atlas**, not that GitHub has
+never been reviewed; `unknown` means the GitHub head was not verified.
+
+Historical Markdown imports represent **partial finding coverage** even when
+their stored verdict is `no_findings`. A missing or invalid recorded
+`counts` object is returned as `severityCounts: null`, never as invented
+zero findings. Invalid latest record fields cause an explicit error rather
+than masking stored data problems. Unavailable GitHub responses do not
+silently make an old review appear current.
+
+The web Review history offers an **on-demand PR status** expansion beside
+the existing finding drill-down; the GitHub check is not performed for
+collapsed rows or every PR in a page. Manual Refresh revalidates the active
+expanded panel. This operation is read-only and does not backfill, publish,
+approve or resolve GitHub threads. The persistent PR bot summary, stable
+finding lifecycle and dedicated publishing identity remain later milestones.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
 ChatGPT connector clients surface only an initial portion of a large MCP tool
-list. Atlas registers Code Reviews' eight existing operations near the beginning
+list. Atlas registers Code Reviews' nine operations near the beginning
 of that list, after the existing priority football generalist tools. This does
 **not** introduce an alternate API, relax authenticated MCP OAuth requirements,
 enable native GitHub publication, or imply that this ChatGPT connection already

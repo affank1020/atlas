@@ -124,6 +124,77 @@ export class CodeReviewsService {
         return this.catalog.store.transaction(state => reconcile(state, true));
     }
 
+    /** An on-demand PR read. Never infer a clean review from absent/partial history.
+     * The database query selects the latest *recorded* round; GitHub is read
+     * independently because the PR head can advance after that round.
+     */
+    async prSummary(repository: string, prNumber: number) {
+        const ids = await this.storeIds();
+        const saved = await this.catalog.queryRecords({
+            projectId: CODE_REVIEWS_PROJECT_ID, storeId: ids.runs,
+            filters: [
+                { field: 'repository', operator: 'eq', value: repository },
+                { field: 'prNumber', operator: 'eq', value: prNumber },
+            ],
+            sort: [{ field: 'reviewedAt', direction: 'desc' }], limit: 1, offset: 0,
+        });
+        const record = saved.items[0];
+        if (saved.total > 0 && !record)
+            throw new AtlasError('Latest Code Reviews record could not be loaded.', 'CAPABILITY_UNAVAILABLE');
+
+        let latest: null | {
+            runId: string; headSha: string; reviewedAt: string; verdict: string;
+            source: 'structured' | 'historical' | 'unknown';
+            severityCounts: { sev1: number; sev2: number; sev3: number; sev4: number } | null;
+        } = null;
+        if (record) {
+            const data = record.data;
+            if (typeof data.headSha !== 'string' || !/^[a-f0-9]{40}$/i.test(data.headSha) ||
+                typeof data.reviewedAt !== 'string' || Number.isNaN(Date.parse(data.reviewedAt)) ||
+                typeof data.verdict !== 'string' ||
+                !['changes_requested', 'concerns_to_verify', 'non_blocking', 'no_findings', 'inconclusive'].includes(data.verdict))
+                throw new AtlasError('Latest Code Reviews record has unsupported fields.', 'CAPABILITY_UNAVAILABLE');
+            const coverage = data.coverage && typeof data.coverage === 'object' && !Array.isArray(data.coverage)
+                ? data.coverage as Record<string, unknown> : undefined;
+            const counts = data.counts && typeof data.counts === 'object' && !Array.isArray(data.counts)
+                ? data.counts as Record<string, unknown> : undefined;
+            const validCount = (v: unknown): v is number => typeof v === 'number' &&
+                Number.isSafeInteger(v) && v >= 0;
+            const severityCounts = counts && validCount(counts.sev1) && validCount(counts.sev2) &&
+                validCount(counts.sev3) && validCount(counts.sev4)
+                ? { sev1: counts.sev1, sev2: counts.sev2, sev3: counts.sev3, sev4: counts.sev4 } : null;
+            latest = {
+                runId: record.id, headSha: data.headSha.toLowerCase(),
+                reviewedAt: data.reviewedAt, verdict: data.verdict,
+                source: coverage?.source === 'atlas_structured_submission' ? 'structured'
+                    : coverage?.source === 'github_pull_request_review' ? 'historical' : 'unknown',
+                severityCounts,
+            };
+        }
+
+        // An unavailable GitHub installation/endpoint is not evidence that
+        // a recorded review is current, stale, clean or absent.
+        let currentHead: { state: 'open' | 'closed' | 'unavailable'; sha?: string; checkedAt?: string } =
+            { state: 'unavailable' };
+        if (this.history?.currentHead) {
+            try {
+                const head = await this.history.currentHead(repository, prNumber);
+                currentHead = { state: head.open ? 'open' : 'closed',
+                    sha: head.headSha.toLowerCase(), checkedAt: new Date().toISOString() };
+            } catch (error) {
+                if (!(error instanceof AtlasError) ||
+                    !['GITHUB_UNAVAILABLE', 'GITHUB_REQUEST_FAILED', 'CAPABILITY_UNAVAILABLE'].includes(error.code))
+                    throw error;
+            }
+        }
+        return {
+            repository, prNumber, recordedRounds: saved.total, latest, currentHead,
+            latestReviewHead: !latest ? 'no_stored_review'
+                : currentHead.state === 'unavailable' ? 'unknown'
+                : latest.headSha === currentHead.sha ? 'current' : 'outdated',
+        };
+    }
+
     async overview() {
         const ids = await this.storeIds();
         const [runs, findings] = await Promise.all([
@@ -163,6 +234,14 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                 name: 'code_reviews_overview',
                 description: 'Read project-scoped Code Reviews totals; no GitHub publication.',
                 inputSchema: {}, invoke: () => service.overview(),
+            },
+            {
+                name: 'code_reviews_pr_summary',
+                description: 'Read the latest saved review and compare its commit with the current GitHub PR head. Unknown state is not clean; no writes.',
+                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000) },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.prSummary(repository, prNumber),
             },
             {
                 name: 'code_reviews_list_runs',
