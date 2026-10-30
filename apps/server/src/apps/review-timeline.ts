@@ -124,19 +124,69 @@ function parseFinding(record: AtlasRecord, round: Round, submissionId: unknown):
     };
 }
 
+/** Existing GitHub history imports may have retained the caller's mixed-case
+ * repository spelling. Resolve those records without rewriting audit history or
+ * changing ordinary exact-match PR timeline queries. Scan only this PR number
+ * in the Code Reviews Runs Store, then enforce the canonical full repo identity
+ * in memory. The explicit cap fails closed: no partial counts or false empty
+ * summaries if older data exceeds the supported read window.
+ */
+async function readCanonicalPrPage(catalog: Reader, runsId: string,
+    repository: string, prNumber: number, limit: number, offset: number) {
+    const maximumCandidates = 1_000;
+    const pageSize = 100;
+    const selected: AtlasRecord[] = [];
+    const seen = new Set<string>();
+    let expectedTotal: number | null = null;
+    for (let cursor = 0; cursor < maximumCandidates; cursor += pageSize) {
+        const page = await catalog.queryRecords({
+            projectId: CODE_REVIEWS_PROJECT_ID, storeId: runsId,
+            filters: [{ field: 'prNumber', operator: 'eq', value: prNumber }],
+            sort: [{ field: 'reviewedAt', direction: 'desc' }],
+            limit: pageSize, offset: cursor,
+        });
+        if (!Number.isSafeInteger(page.total) || page.total < 0 ||
+            page.total > maximumCandidates ||
+            (expectedTotal !== null && page.total !== expectedTotal))
+            throw new AtlasError('PR review history exceeds the bounded canonical lookup or changed during reading.', 'CAPABILITY_UNAVAILABLE');
+        expectedTotal = page.total;
+        const needed = Math.min(pageSize, Math.max(0, page.total - cursor));
+        if (page.items.length !== needed)
+            throw new AtlasError('Canonical PR history page is incomplete.', 'CAPABILITY_UNAVAILABLE');
+        for (const entry of page.items) {
+            if (seen.has(entry.id))
+                throw new AtlasError('Canonical PR history changed during pagination.', 'CAPABILITY_UNAVAILABLE');
+            seen.add(entry.id);
+            const name = entry.data.repository;
+            if (entry.data.prNumber !== prNumber ||
+                typeof name !== 'string' || name.toLowerCase() !== repository)
+                continue;
+            // parseRound still performs an exact identity check, while this
+            // read-only normalized copy retains original IDs and findings.
+            selected.push({ ...entry, data: { ...entry.data, repository } });
+        }
+        if (cursor + needed >= page.total) break;
+    }
+    return { items: selected.slice(offset, offset + limit),
+        total: selected.length, limit, offset };
+}
+
 /** Exactly one bounded page of saved PR rounds, no GitHub writes or inferred resolutions.
  * Lineage counts are scoped to this page, not to an unknown global history.
  */
 export async function readPrTimeline(catalog: Reader, ids: StoreIds,
-    repository: string, prNumber: number, limit: number, offset: number) {
-    const saved = await catalog.queryRecords({
-        projectId: CODE_REVIEWS_PROJECT_ID, storeId: ids.runs,
-        filters: [
-            { field: 'repository', operator: 'eq', value: repository },
-            { field: 'prNumber', operator: 'eq', value: prNumber },
-        ],
-        sort: [{ field: 'reviewedAt', direction: 'desc' }], limit, offset,
-    });
+    repository: string, prNumber: number, limit: number, offset: number,
+    includeLegacyCaseVariants = false) {
+    const saved = includeLegacyCaseVariants
+        ? await readCanonicalPrPage(catalog, ids.runs, repository, prNumber, limit, offset)
+        : await catalog.queryRecords({
+            projectId: CODE_REVIEWS_PROJECT_ID, storeId: ids.runs,
+            filters: [
+                { field: 'repository', operator: 'eq', value: repository },
+                { field: 'prNumber', operator: 'eq', value: prNumber },
+            ],
+            sort: [{ field: 'reviewedAt', direction: 'desc' }], limit, offset,
+        });
     if (saved.items.length > limit ||
         saved.items.length < Math.min(limit, Math.max(0, saved.total - offset)))
         throw new AtlasError('PR timeline returned an incomplete review page.', 'CAPABILITY_UNAVAILABLE');
