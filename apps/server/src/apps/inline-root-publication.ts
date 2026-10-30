@@ -9,7 +9,7 @@ import { canonicalRepository } from './managed-summary.js';
 import { inlineThreadMarker, type GitHubInlineThreadReader } from './inline-thread-inventory.js';
 import type { InlineThreadPreflightService } from './inline-thread-preflight.js';
 import type { InlineThreadInventoryService } from './inline-thread-inventory.js';
-import type { GitHubInlineRootWriter } from './inline-thread-writer.js';
+import { GitHubInlineRootRejectedError, type GitHubInlineRootWriter } from './inline-thread-writer.js';
 
 type Catalogue = Pick<CoreService, 'store' | 'listStores' | 'updateRecordInState'>;
 type Preflight = Awaited<ReturnType<InlineThreadPreflightService['preview']>>;
@@ -301,8 +301,45 @@ export class InlineRootPublicationService {
             }
             throw error;
         }
+        // Only an explicitly rejected POST (HTTP 403 or 422) can take the
+        // recoverable path. A timeout, 5xx, malformed response or a completed
+        // POST with failed verification always remains claimed.
+        let postedId: number;
         try {
-            const postedId = await this.github.post(repository, prNumber, claim, planned.body, token);
+            postedId = await this.github.post(repository, prNumber, claim, planned.body, token);
+        } catch (error) {
+            if (error instanceof GitHubInlineRootRejectedError && this.ownedRoots) {
+                try {
+                    // The direct Bot-owned inventory is complete and scoped to
+                    // this PR; the latest-round preview is NOT suitable here.
+                    const inventory = await this.ownedRoots.inspect(repository, prNumber);
+                    const absenceVerified = !inventory.roots.some(root =>
+                        root.marker === claim.marker) &&
+                        !inventory.copiedMarkers.includes(claim.marker);
+                    if (absenceVerified) {
+                        await this.catalog.store.transaction(state => {
+                            const current = this.related(state, identity).findings.find(f => f.id === findingId);
+                            const stored = current && parseClaim(current);
+                            if (!current || stored?.state !== 'claimed' ||
+                                stored.claimId !== claim.claimId ||
+                                stored.marker !== claim.marker)
+                                throw new AtlasError('Rejected inline claim changed before release.', 'CONFLICT');
+                            this.writeClaim(state, identity, findingId);
+                        });
+                        return { ...result, status: 'rejected_not_published',
+                            httpStatus: error.httpStatus, dryRun: false,
+                            claimReleased: true, postedAgain: false };
+                    }
+                } catch {
+                    // Inventory/pagination errors and transactional conflicts
+                    // MUST preserve the claim. Do not guess that no root exists.
+                }
+            }
+            return { ...result, status: 'uncertain', dryRun: false,
+                postedAgain: false,
+                message: 'Claim retained: POST outcome or verified remote absence is uncertain.' };
+        }
+        try {
             const verified = await this.inventory.preview(repository, prNumber);
             const found = verified.findings.find(f => f.findingId === findingId);
             if (found?.state !== 'owned_thread_found' ||
