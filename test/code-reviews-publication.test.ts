@@ -19,7 +19,7 @@ const submission = {
         description: 'The new line needs a guard.', filePath: 'src/new.ts', line: 15 }],
 };
 
-async function fixture() {
+async function fixture(lineageKey?: string) {
     const { catalog, store } = await databaseFixture();
     await store.pool.query(
         "INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Code Reviews',now(),now())",
@@ -46,8 +46,10 @@ async function fixture() {
         read: async () => ({ reviews: [], comments: [] }),
         currentHead: async () => ({ repository, prNumber:84, headSha: sha, open: true }),
     });
-    const first = await service.submitStructuredReview(submission, actor);
-    return { catalog, store, runs, runId: first.runId as string };
+    const first = await service.submitStructuredReview(lineageKey ? {
+        ...submission, findings: [{ ...submission.findings[0], lineageKey }],
+    } : submission, actor);
+    return { catalog, store, runs, service, runId: first.runId as string };
 }
 const result = { id: 1234, url: 'https://github.com/affank1020/atlas/pull/84#pullrequestreview-1234' };
 function mock(overrides: Record<string, any> = {}) {
@@ -84,6 +86,29 @@ test('publication defaults disabled, rejects caller spoofing, and never writes o
     assert.equal(events.published,0);
     const saved = await catalog.queryRecords({projectId:CODE_REVIEWS_PROJECT_ID,storeId:runs.id});
     assert.equal((saved.items[0]!.data.coverage as any).githubPublication,undefined);
+});
+
+test('legacy publisher refuses lifecycle assessment runs before touching GitHub', async () => {
+    const { catalog, service } = await fixture('shared-root');
+    const repeated = await service.submitStructuredReview({
+        ...submission, submissionId: 'ed18bec8-59b2-47a9-824c-0ae7153a4573',
+        findings: [{ ...submission.findings[0], key: 'rechecked', lineageKey: 'shared-root',
+            assessment: { state: 'persisting',
+                evidence: 'Reproduced the original failure against this exact reviewed commit.' } }],
+    }, actor);
+    const resolved = await service.submitStructuredReview({
+        ...submission, submissionId: '0f888f67-9817-42ab-a5cd-cd04e199e4bb',
+        verdict: 'no_findings', findings: [],
+        resolutions: [{ lineageKey: 'shared-root',
+            evidence: 'The focused regression now passes and the guard rejects the invalid input.' }],
+    }, actor);
+    const { github, events } = mock();
+    const publisher = new ReviewPublicationService(catalog, github, new Set([repository]));
+    for (const runId of [repeated.runId, resolved.runId])
+        for (const apply of [false, true])
+            await assert.rejects(publisher.publishRun(runId, false, apply, actor),
+                /requires the future managed publisher/i);
+    assert.deepEqual(events, { checked: 0, diff: 0, searched: 0, published: 0 });
 });
 
 test('apply posts exactly once and returns the committed GitHub review on retry', async () => {
