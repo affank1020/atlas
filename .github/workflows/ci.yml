@@ -54,11 +54,38 @@ jobs:
           for site in atlas.affankhan.dev :8080; do
             docker run --rm \
               -e ATLAS_SITE_ADDRESS="$site" \
-              -e ATLAS_ADMIN_USER=ci-user \
-              -e ATLAS_ADMIN_PASSWORD_HASH="$hash" \
+              -e VPS_ADMIN_USER=ci-user \
+              -e VPS_ADMIN_PASSWORD_HASH="$hash" \
               -v "$PWD/infra/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
               caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
           done
+      - name: Validate credential source compatibility
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+          DATABASE_URL: postgresql://atlas:ci-postgres@postgres:5432/atlas
+          ATLAS_SITE_ADDRESS: atlas.affankhan.dev
+          ATLAS_WORKSPACE_ORIGINS: https://atlas.affankhan.dev
+        run: |
+          set -euo pipefail
+          # New standalone vps-infra identity without legacy Atlas credentials.
+          VPS_ADMIN_USER=ci-vps VPS_ADMIN_PASSWORD_HASH=ci-vps-hash \
+            docker compose -f infra/docker-compose.production.yml config --format json \
+            | node -e '
+              let s="";process.stdin.on("data",c=>s+=c);
+              process.stdin.on("end",()=>{
+                const env=JSON.parse(s).services.ingress.environment;
+                if(env.VPS_ADMIN_USER!=="ci-vps" || env.VPS_ADMIN_PASSWORD_HASH!=="ci-vps-hash")process.exit(1);
+              });'
+          # Existing production remains compatible until migration is applied.
+          ATLAS_ADMIN_USER=ci-legacy ATLAS_ADMIN_PASSWORD_HASH=ci-legacy-hash \
+            docker compose -f infra/docker-compose.production.yml config --format json \
+            | node -e '
+              let s="";process.stdin.on("data",c=>s+=c);
+              process.stdin.on("end",()=>{
+                const env=JSON.parse(s).services.ingress.environment;
+                if(env.VPS_ADMIN_USER!=="ci-legacy" || env.VPS_ADMIN_PASSWORD_HASH!=="ci-legacy-hash")process.exit(1);
+              });'
       - name: Validate production Compose structure
         shell: bash
         env:

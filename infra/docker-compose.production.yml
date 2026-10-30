@@ -91,8 +91,10 @@ services:
     restart: unless-stopped
     environment:
       ATLAS_SITE_ADDRESS: ${ATLAS_SITE_ADDRESS:?Set ATLAS_SITE_ADDRESS in infra/production.env}
-      ATLAS_ADMIN_USER: ${ATLAS_ADMIN_USER:?Set ATLAS_ADMIN_USER in infra/production.env}
-      ATLAS_ADMIN_PASSWORD_HASH: ${ATLAS_ADMIN_PASSWORD_HASH:?Set ATLAS_ADMIN_PASSWORD_HASH in infra/production.env}
+      # Shared human login is owned by vps-infra/.env after migration.
+      # Legacy fallback preserves the current Atlas deployment until cutover.
+      VPS_ADMIN_USER: ${VPS_ADMIN_USER:-${ATLAS_ADMIN_USER:?Set VPS_ADMIN_USER in vps-infra/.env or legacy ATLAS_ADMIN_USER}}
+      VPS_ADMIN_PASSWORD_HASH: ${VPS_ADMIN_PASSWORD_HASH:-${ATLAS_ADMIN_PASSWORD_HASH:?Set VPS_ADMIN_PASSWORD_HASH in vps-infra/.env or legacy ATLAS_ADMIN_PASSWORD_HASH}}
     depends_on:
       server:
         condition: service_healthy
