@@ -144,6 +144,11 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const oauthSubject = env.ATLAS_MCP_OAUTH_ALLOWED_SUBJECT?.trim() || '';
     const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
     const scope = 'atlas:access';
+    const relayClientId = env.ATLAS_MCP_OAUTH_RELAY_CLIENT_ID?.trim() || '';
+    if (relayClientId && !/^[A-Za-z0-9_-]{10,128}$/.test(relayClientId))
+        throw new Error('ATLAS_MCP_OAUTH_RELAY_CLIENT_ID must be an Auth0 application Client ID.');
+    if (relayClientId && (!oauthIssuer || !oauthSubject || !mcpResource))
+        throw new Error('Relay MCP service authentication requires owner MCP OAuth to be configured first.');
     if (oauthIssuer || oauthSubject || mcpResource) {
         if (!oauthIssuer || !oauthSubject || !mcpResource) throw new Error('Atlas MCP OAuth requires ATLAS_MCP_OAUTH_ISSUER, ATLAS_MCP_OAUTH_ALLOWED_SUBJECT and ATLAS_MCP_RESOURCE together.');
         const issuer = new URL(oauthIssuer);
@@ -162,7 +167,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         serverDiagnosticsEnabled: env.ATLAS_SERVER_DIAGNOSTICS_ENABLED !== 'false',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
-            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
+            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope, relayClientId },
         nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
         // Fail closed until the separately reviewed host executor is installed.
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },

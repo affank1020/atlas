@@ -7,6 +7,7 @@ export type McpAuthOptions = {
     resource: string;
     subject: string;
     scope: string;
+    relayClientId?: string;
 };
 
 type JwtHeader = { alg?: unknown; kid?: unknown; typ?: unknown };
@@ -64,27 +65,30 @@ export function createMcpTokenVerifier(config: McpAuthOptions, fetchImpl: typeof
         finally { inFlight = undefined; }
     }
 
-    async function authenticate(headerValue: string | undefined): Promise<boolean> {
+    async function identify(headerValue: string | undefined): Promise<'owner' | 'relay' | null> {
         if (!config.enabled || !headerValue || !/^Bearer [^\s]+$/i.test(headerValue) || headerValue.length > 16384)
-            return false;
+            return null;
         const token = headerValue.slice(7);
         const parts = token.split('.');
-        if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) return false;
+        if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) return null;
         const header = parseBase64UrlJson(parts[0]!) as JwtHeader | undefined;
         const claims = parseBase64UrlJson(parts[1]!) as Claims | undefined;
         if (!header || !claims || header.alg !== 'RS256' || typeof header.kid !== 'string' || header.kid.length > 256)
-            return false;
+            return null;
         // Validate the JWT claims before performing expensive signature work, then
         // verify the signature before trusting any of these claims.
         const now = Math.floor(Date.now() / 1000);
         const audience = claims.aud === config.resource || (Array.isArray(claims.aud) && claims.aud.includes(config.resource));
         const scopes = typeof claims.scope === 'string' ? claims.scope.split(/\s+/) : [];
-        const permitted = scopes.includes(config.scope) ||
-            (Array.isArray(claims.permissions) && claims.permissions.includes(config.scope));
-        if (claims.iss !== config.issuer || claims.sub !== config.subject || !audience || !permitted ||
+        const hasScope = (scope: string) => scopes.includes(scope) ||
+            (Array.isArray(claims.permissions) && claims.permissions.includes(scope));
+        const principal = claims.sub === config.subject && hasScope(config.scope) ? 'owner'
+            : config.relayClientId && claims.sub === config.relayClientId + '@clients' &&
+              hasScope('atlas:relay:read') ? 'relay' : null;
+        if (claims.iss !== config.issuer || !principal || !audience ||
             typeof claims.exp !== 'number' || claims.exp <= now - 30 ||
             (claims.nbf !== undefined && (typeof claims.nbf !== 'number' || claims.nbf > now + 30)))
-            return false;
+            return null;
         const signingInput = Buffer.from(parts[0]! + '.' + parts[1]!, 'ascii');
         const signature = Buffer.from(parts[2]!, 'base64url');
         let jwks = await getJwks();
@@ -92,11 +96,12 @@ export function createMcpTokenVerifier(config: McpAuthOptions, fetchImpl: typeof
         if (!key) { jwks = await getJwks(true); key = jwks.keys.find(jwk => jwk.kid === header.kid); }
         if (!key || key.kty !== 'RSA' || (key.use && key.use !== 'sig') ||
             (key.alg && key.alg !== 'RS256') || (key.key_ops && !key.key_ops.includes('verify')))
-            return false;
+            return null;
         try {
             const publicKey = createPublicKey({ key, format: 'jwk' });
-            return verifySignature('RSA-SHA256', signingInput, publicKey, signature);
-        } catch { return false; }
+            return verifySignature('RSA-SHA256', signingInput, publicKey, signature) ? principal : null;
+        } catch { return null; }
     }
-    return { authenticate };
+    const authenticate = async (headerValue: string | undefined) => (await identify(headerValue)) !== null;
+    return { authenticate, identify };
 }

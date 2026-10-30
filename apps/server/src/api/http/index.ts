@@ -13,7 +13,7 @@ import { AtlasError } from "../../shared/errors.js";
 import { standaloneViewPage } from "../../view-standalone.js";
 import { verifyContentfulWebhook } from "../../integrations/contentful.js";
 import type { ServerServices } from "../../server/composition.js";
-import { createMcpTransport } from "../mcp/index.js";
+import { createMcpTransport, RELAY_READ_TOOLS } from "../mcp/index.js";
 import { createMcpTokenVerifier, mcpResourceMetadata } from '../mcp/oauth.js';
 export function createHttpTransport(services: ServerServices) {
     const { catalog, askPortfolio, contentful, portfolio, media, lifecycle, config } = services;
@@ -139,16 +139,16 @@ export function createHttpTransport(services: ServerServices) {
             return;
         }
         if (config.mcpAuth.enabled) {
-            let authenticated = false;
+            let principal: 'owner' | 'relay' | null = null;
             stage = 'authenticating'; trace('stage');
-            try { authenticated = await mcpVerifier.authenticate(request.headers.authorization); }
+            try { principal = await mcpVerifier.identify(request.headers.authorization); }
             catch {
                 stage = 'auth_provider_unavailable'; trace('stage');
                 response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
                 response.end(JSON.stringify({ error: 'MCP_AUTH_PROVIDER_UNAVAILABLE' }));
                 return;
             }
-            if (!authenticated) {
+            if (!principal) {
                 stage = 'auth_rejected'; trace('stage');
                 response.writeHead(401, {
                     'content-type': 'application/json', 'cache-control': 'no-store',
@@ -163,8 +163,9 @@ export function createHttpTransport(services: ServerServices) {
         try {
             stage = 'creating_transport'; trace('stage');
             server = createMcpTransport(services,
-                config.mcpAuth.enabled ? config.mcpAuth.scope : undefined,
-                config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined);
+                config.mcpAuth.enabled ? (principal === 'relay' ? 'atlas:relay:read' : config.mcpAuth.scope) : undefined,
+                config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: principal === 'relay' ? config.mcpAuth.relayClientId + '@clients' : config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined,
+                principal === 'relay' ? RELAY_READ_TOOLS : undefined);
             const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
             const connectedServer = server;
             response.once('close', () => { void connectedServer.close().catch(() => trace('cleanup_failed')); });

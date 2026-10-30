@@ -163,3 +163,38 @@ Do **not** delete the old database or local private backup yet.
   streaming. Turn the flag off after diagnosis. Do not collect raw Authorization
   headers in Caddy access logs; remove temporary access logging when done.
 - Keep `/mcp` behind OAuth; don't remove Server validation to fix linking.
+
+
+// ## Relay machine-to-machine MCP integration
+
+Relay must not reuse the human ChatGPT OAuth token or a permanent copied bearer token.
+Create a separate **Machine to Machine** application in the same Auth0 tenant
+(e.g. `Relay Atlas Reader`) and authorize it against the existing Atlas MCP API
+resource `https://atlas.affankhan.dev/mcp`. Add and grant the API permission
+`atlas:relay:read` to this application; do **not** grant `atlas:access`.
+
+Configure only the **public Auth0 application Client ID** in Atlas's private
+`~/atlas-deploy/infra/production.env`:
+
+```dotenv
+ATLAS_MCP_OAUTH_RELAY_CLIENT_ID=YOUR_RELAY_M2M_CLIENT_ID
+```
+
+Deploy the reviewed Atlas change. The existing `ATLAS_MCP_OAUTH_ALLOWED_SUBJECT`
+continues to authorize only your human OAuth identity. The extra client subject
+`YOUR_RELAY_M2M_CLIENT_ID@clients` is accepted **only** with the signed
+`atlas:relay:read` scope and receives a server-enforced read-only catalogue
+matching Relay's current Atlas read tools. A service credential cannot dispatch
+project/store/record writes or Node development tasks, even if Relay's own
+allowlist is changed. Unconfigured client IDs fail closed.
+
+On the Relay VPS, the **Client Secret** belongs only in the private
+`~/relay/.env`. Configure `ATLAS_OAUTH_ISSUER`, `ATLAS_OAUTH_CLIENT_ID`,
+`ATLAS_OAUTH_CLIENT_SECRET`, and `ATLAS_MCP_URL` as documented in Relay.
+Relay fetches client-credentials access tokens on demand and refreshes before expiry.
+Keep Atlas client secrets out of the Atlas server, GitHub and browser.
+
+Deploy order: Atlas first (read-only M2M verifier), then Relay. Verify with a
+live `get_atlas_status` and a failed service-token mutation before allowing
+any broader permissions. Do not switch this service principal to user-level
+`atlas:access` just to make a blocked tool work.
