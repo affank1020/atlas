@@ -20,7 +20,7 @@ const rootMarker=inlineThreadMarker(repository,prNumber,'root-a');
 const rootBody='Old source issue.\n'+rootMarker;
 const evidence='The regression suite now shows the unsafe request is rejected.';
 
-async function fixture(){
+async function fixture(additionalLineages: string[] = []){
     const {catalog,store}=await databaseFixture();
     await store.pool.query(
         "INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Code Reviews',now(),now())",
@@ -55,7 +55,7 @@ async function fixture(){
         data:{repository,prNumber,headSha:head0,reviewer:'Code Reviewer',
             verdict:'changes_requested',reviewedAt:'2026-10-30T18:00:00.000Z',
             coverage:{source:'atlas_structured_submission',submissionId:priorSubmission,
-                payloadSha256:'a'.repeat(64),findingCount:1,authenticatedCaller:actor}},
+                payloadSha256:'a'.repeat(64),findingCount:1+additionalLineages.length,authenticatedCaller:actor}},
     });
     const rootFinding=await catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,
         storeId:findings.id,data:{reviewRunId:original.id,
@@ -73,6 +73,31 @@ async function fixture(){
                 bodySha256:sha(rootBody),headSha:head0,path:'src/a.ts',line:10,
                 claimedAt:'2026-10-30T18:00:00.000Z'}}},
     }));
+    // Real earlier published roots, not just arbitrary resolution metadata.
+    const extraRoots = additionalLineages.map((lineageKey,index)=>({
+        lineageKey,rootId:74+index,marker:inlineThreadMarker(repository,prNumber,lineageKey),
+        path:'src/extra-'+index+'.ts',line:12+index,
+    }));
+    for(const item of extraRoots){
+        const previous=await catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id,
+            data:{reviewRunId:original.id,findingKey:'structured:'+priorSubmission+':extra-'+item.rootId,
+                title:'Extra root',severity:'sev4',description:'Independent root cause',
+                filePath:item.path,line:item.line,state:'new',
+                evidence:{source:'atlas_structured_submission',
+                    localKey:'extra-'+item.rootId,lineageKey:item.lineageKey}},
+        });
+        await catalog.store.transaction(state=>catalog.updateRecordInState(state,{
+            projectId:CODE_REVIEWS_PROJECT_ID,storeId:findings.id,recordId:previous.id,
+            client:'test-original-extra-root',
+            data:{evidence:{...previous.data.evidence,
+                githubInlineThread:{state:'published',
+                    claimId:'e089844a-724e-4964-b4c0-0f662cd27860',
+                    findingId:previous.id,rootCommentId:item.rootId,marker:item.marker,
+                    bodySha256:sha('Earlier finding.\\n'+item.marker),
+                    headSha:head0,path:item.path,line:item.line,
+                    claimedAt:'2026-10-30T18:00:00.000Z'}}},
+        }));
+    }
     const resolution={lineageKey:'root-a',state:'resolved',evidence,
         assessmentSource:'authenticated_structured_submission',
         assessedHeadSha:head1,assertedAt:reviewedAt};
@@ -81,10 +106,15 @@ async function fixture(){
             verdict:'no_findings',reviewedAt,coverage:{
                 source:'atlas_structured_submission',submissionId:fixSubmission,
                 payloadSha256:'b'.repeat(64),findingCount:0,authenticatedCaller:actor,
-                lifecycleResolutions:[resolution]}},
+                lifecycleResolutions:[resolution,...extraRoots.map(item=>({
+                    lineageKey:item.lineageKey,state:'resolved',evidence,
+                    assessmentSource:'authenticated_structured_submission',
+                    assessedHeadSha:head1,assertedAt:reviewedAt,
+                }))]}},
     });
     const fixMarker=inlineFixMarker(repository,prNumber,73,run.id,'root-a');
     const events={heads:0,tokens:0,posts:0,reads:0};
+    const extraBodies=new Map<number,string>();
     let remoteBody:string|null=null,timeout=false,failedStatus:403|422|null=null,
         readFailureAt=0,headFailureAt=0,copied=false;
     const githubRoots={inspect:async()=>{
@@ -92,11 +122,23 @@ async function fixture(){
         if(events.reads===readFailureAt)throw Error('Inventory temporarily unavailable');
         return {roots:[{id:73,marker:rootMarker,bodySha256:sha(rootBody),
             originalCommitSha:head0,path:'src/a.ts',originalLine:10,currentLine:null,
-            url:'https://github.com/affank1020/atlas/pull/130#discussion_r73'}],
+            url:'https://github.com/affank1020/atlas/pull/130#discussion_r73'},
+            ...extraRoots.map(item=>({
+                id:item.rootId,marker:item.marker,
+                bodySha256:sha('Earlier finding.\\n'+item.marker),
+                originalCommitSha:head0,path:item.path,originalLine:item.line,currentLine:null,
+                url:'https://github.com/affank1020/atlas/pull/130#discussion_r'+item.rootId,
+            }))],
             copiedMarkers:[],replies:new Map(),
             managedReplies:[],copiedReplyMarkers:[],
-            managedFixReplies:remoteBody?[{id:501,parentId:73,marker:fixMarker,
-                bodySha256:sha(remoteBody)}]:[],
+            managedFixReplies:[
+                ...(remoteBody?[{id:501,parentId:73,marker:fixMarker,bodySha256:sha(remoteBody)}]:[]),
+                ...extraRoots.filter(item=>extraBodies.has(item.rootId)).map(item=>({
+                    id:501+item.rootId-73,parentId:item.rootId,
+                    marker:inlineFixMarker(repository,prNumber,item.rootId,run.id,item.lineageKey),
+                    bodySha256:sha(extraBodies.get(item.rootId)!),
+                })),
+            ],
             copiedFixMarkers:copied?[fixMarker]:[]};
     }};
     const writer={
@@ -106,14 +148,18 @@ async function fixture(){
         prepareWrite:async()=>{events.tokens++;return 'write-token';},
         postReply:async (_repo:string,_pr:number,parent:number,body:string,token:string)=>{
             events.posts++;
-            assert.equal(parent,73);assert.equal(token,'write-token');
-            assert.ok(body.endsWith(fixMarker));
+            assert.equal(token,'write-token');
+            const extra=extraRoots.find(item=>item.rootId===parent);
+            assert.ok(parent===73 || extra,'Only seeded Bot-owned roots may receive replies');
+            const marker=extra?inlineFixMarker(repository,prNumber,parent,run.id,extra.lineageKey):fixMarker;
+            assert.ok(body.endsWith(marker));
             assert.match(body,/does not resolve the GitHub discussion/);
             assert.match(body,/reviewer assessment: addressed/);
             if(failedStatus!==null)throw new GitHubInlineReplyRejectedError(failedStatus);
-            remoteBody=body;
+            if(parent===73)remoteBody=body;
+            else extraBodies.set(parent,body);
             if(timeout)throw Error('Timeout after successful GitHub reply creation');
-            return 501;
+            return 501+parent-73;
         },
     };
     const service=new InlineFixPublicationService(catalog,githubRoots as any,writer as any,new Set([repository]));
@@ -268,4 +314,29 @@ test('duplicate same-SHA fix assertion after published claim cannot post again',
         f.service.publish(repository,prNumber,later.id,'root-a',true,actor),
         /already has a fix reply claim/);
     assert.equal(f.events.posts,1);
+});
+
+test('multiple fix acknowledgements support own-property prototype-name lineages',async()=>{
+    const special=['constructor','toString','hasOwnProperty','__proto__'];
+    const f=await fixture(special);
+    // First, store an ordinary claim so later lookups encounter a populated map.
+    assert.equal((await f.publish(true)).status,'published');
+    for(const lineageKey of special){
+        const before=await f.service.publish(repository,prNumber,f.run.id,lineageKey,false,actor);
+        assert.equal(before.status,'ready',lineageKey+' must not inherit an Object.prototype claim');
+        const posted=await f.service.publish(repository,prNumber,f.run.id,lineageKey,true,actor);
+        assert.equal(posted.status,'published');
+        assert.equal((await f.service.publish(repository,prNumber,f.run.id,lineageKey,true,actor)).status,
+            'published','duplicate '+lineageKey+' must reconcile without another POST');
+    }
+    const saved=await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID,f.runs.id,f.run.id);
+    const entries=(saved.data.coverage as any).githubFixReplies;
+    assert.equal(Object.getPrototypeOf(entries),Object.prototype);
+    assert.equal(Object.keys(entries).length,1+special.length);
+    assert.deepEqual([...Object.keys(entries)].sort(),['root-a',...special].sort());
+    for(const key of ['root-a',...special]){
+        assert.equal(Object.hasOwn(entries,key),true,'must own '+key);
+        assert.equal(entries[key].state,'published');
+    }
+    assert.equal(f.events.posts,1+special.length);
 });
