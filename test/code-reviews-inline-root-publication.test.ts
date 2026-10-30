@@ -229,8 +229,8 @@ test('explicit 422 or 403 rejection with independently verified absence releases
         f.setRejectedStatus(code);
         const rejected = await f.publish(true);
         assert.equal(rejected.status, 'rejected_not_published');
-        assert.equal(rejected.httpStatus, code);
-        assert.equal(rejected.claimReleased, true);
+        assert.equal((rejected as any).httpStatus, code);
+        assert.equal((rejected as any).claimReleased, true);
         assert.equal(rejected.postedAgain, false);
         assert.equal(f.events.post, 1);
         const after = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID,
