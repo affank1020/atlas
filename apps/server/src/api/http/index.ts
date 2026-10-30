@@ -138,8 +138,8 @@ export function createHttpTransport(services: ServerServices) {
             response.end(JSON.stringify({ error: 'MCP_OAUTH_NOT_CONFIGURED' }));
             return;
         }
+        let principal: 'owner' | 'relay' | null = null;
         if (config.mcpAuth.enabled) {
-            let principal: 'owner' | 'relay' | null = null;
             stage = 'authenticating'; trace('stage');
             try { principal = await mcpVerifier.identify(request.headers.authorization); }
             catch {
