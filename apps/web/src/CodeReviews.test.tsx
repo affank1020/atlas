@@ -239,10 +239,71 @@ test('PR status lazily loads paginated saved rounds and explicit lineages withou
     expect(screen.getByRole('heading', { name: 'Saved review timeline' })).toBeInTheDocument();
     expect(screen.getByText(/Repeated root-cause identity|No prior match in this page/)).toBeInTheDocument();
     expect(screen.getByText(/Missing findings cannot be interpreted as fixes/)).toBeInTheDocument();
-    expect(screen.getByText(/No resolution is inferred from an absent finding/)).toBeInTheDocument();
+    expect(screen.getByText(/No resolution is inferred from/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Next PR rounds' }));
     expect(timelineCalls).toEqual([0, 5]);
     expect(screen.getByText(/Showing saved rounds 6/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Hide PR status' }));
     expect(screen.queryByRole('heading', { name: 'Saved review timeline' })).not.toBeInTheDocument();
+});
+
+test('Timeline shows evidence-backed reviewer assertions without treating missing findings as verified fixes', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
+        if (name === 'code_reviews_overview') return {
+            data: { reviewRuns: 3, findingObservations: 2 },
+            isLoading: false, isFetching: false, refetch,
+        } as never;
+        if (name === 'code_reviews_list_runs') return {
+            data: { total: 1, items: [makeRun(runId, 118)] },
+            isLoading: false, isFetching: false, refetch,
+        } as never;
+        if (name === 'code_reviews_pr_summary') return {
+            data: { recordedRounds: 3, currentHead: { state: 'open', sha: 'c'.repeat(40) },
+                latestReviewHead: 'current', latest: null },
+            isLoading: false, isFetching: false, refetch,
+        } as never;
+        if (name === 'code_reviews_pr_timeline') return {
+            data: { ...emptyTimeline, recordedRounds: 3,
+                lineages: [{ key: 'same-root', observationsInPage: 2,
+                    recurrence: 'observed_multiple_times_in_page', observations: [{
+                        runId, findingId: 'found', headSha: 'b'.repeat(40),
+                        reviewedAt: '2026-10-30T12:00:00Z', severity: 'sev3',
+                        title: 'Guard stale head', state: 'persisting',
+                    }],
+                    latestAssessmentInPage: {
+                        runId, headSha: 'c'.repeat(40), assertedAt: '2026-10-30T13:00:00Z',
+                        state: 'resolved', evidence: 'Unit test confirms the revision check rejects an outdated SHA.',
+                    } }],
+                rounds: [
+                    { runId, headSha: 'c'.repeat(40), reviewedAt: '2026-10-30T13:00:00Z',
+                        verdict: 'no_findings', source: 'structured', findingCoverage: 'structured',
+                        totalFindingObservations: 0, findingsTruncated: false, findings: [],
+                        resolutions: [{ lineageKey: 'same-root', state: 'resolved',
+                            evidence: 'Unit test confirms the revision check rejects an outdated SHA.',
+                            assessedHeadSha: 'c'.repeat(40) }] },
+                    { runId: anotherRunId, headSha: 'b'.repeat(40), reviewedAt: '2026-10-30T12:00:00Z',
+                        verdict: 'non_blocking', source: 'structured', findingCoverage: 'structured',
+                        totalFindingObservations: 1, findingsTruncated: false, resolutions: [],
+                        findings: [{ id: 'found', lineageKey: 'same-root', severity: 'sev3',
+                            title: 'Guard stale head', description: 'The head still changes.', state: 'persisting',
+                            lifecycleAssessment: { state: 'persisting',
+                                evidence: 'Reproduced against the new head with a focused test.',
+                                assessedHeadSha: 'b'.repeat(40) } }] },
+                ],
+            },
+            isLoading: false, isFetching: false, refetch,
+        } as never;
+        throw Error('Unexpected tool: ' + name);
+    });
+    render(<CodeReviews />);
+    expect(screen.queryByText(/Reviewer-assessed resolution/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
+    expect(screen.getByText(/Latest reviewer assertion in this page:/)).toHaveTextContent('resolved');
+    const summaries = screen.getAllByText(/Round [12]/);
+    fireEvent.click(summaries[0]!);
+    expect(screen.getByText(/Reviewer-assessed resolution/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Unit test confirms the revision check/).length).toBeGreaterThan(0);
+    fireEvent.click(summaries[1]!);
+    expect(screen.getByText(/Reproduced against the new head with a focused test/)).toBeInTheDocument();
+    expect(screen.getByText(/Lifecycle outcomes are reviewer assertions/)).toBeInTheDocument();
 });
