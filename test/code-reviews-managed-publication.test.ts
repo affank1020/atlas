@@ -57,6 +57,7 @@ async function fixture() {
                 coverage: {
                     source: 'atlas_structured_submission',
                     submissionId: '76894d70-4b4d-481b-9d68-e05b1e536b01',
+                    payloadSha256: 'd'.repeat(64),
                     findingCount: 0, authenticatedCaller: subject,
                 },
             } });
