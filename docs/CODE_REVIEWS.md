@@ -592,6 +592,81 @@ active and must remain the sole publisher until migration is reviewed.
 No `ATLAS_CODE_REVIEW_*` publish allowlist or GitHub App permission is
 changed by this work.
 
+### Opt-in managed GitHub PR summary publisher (draft implementation)
+
+`code_reviews_managed_summary_publish({repository,prNumber,apply?})` builds
+on the managed preview. **Default `apply:false` never writes**. A deliberate
+`apply:true` requires the verified MCP OAuth caller to match the latest
+complete structured Review Run's saved submitter, an exact current open
+GitHub PR head, and an independently configured repository opt-in:
+
+```text
+ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES=owner/repo
+```
+
+This flag is **separate** from
+`ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES` (legacy comment-only GitHub
+reviews). Both default to disabled. No existing environment flag or GitHub App
+permission is changed by the PR. It uses the existing installation's
+pull-request read/write token; this is **not** an independently verified
+dedicated Code Reviewer bot. Production should remain disabled until
+independent approval and an authorized manual acceptance exercise.
+
+Publishing first uses the already verified GitHub App Bot comment inventory.
+An unclaimed bot-owned marker is a conflict, not automatically adopted.
+Without an owned comment or previous receipt, the operation plans exactly
+one new issue/PR conversation comment using the PR-scoped machine-readable
+marker. With a previously **published** receipt, the operation requires the
+same numeric bot comment ID and exact prior SHA-256 body hash before planning
+a PATCH to that comment. A previous review's publisher receipt is never
+removed or rewritten by later rounds.
+
+Before either POST or PATCH, Atlas checks that the latest complete structured
+review is for the still-open current GitHub head, acquires the repository's
+write-scoped token, and **persists a transactionally exclusive claim**
+(`coverage.githubManagedSummary`) on the latest Review Run. The transaction
+verifies a fingerprint of saved PR rounds and linked finding records, no
+other pending claim and stable previous publication identity. This is an
+Atlas-side concurrency fence, not a GitHub conditional-write guarantee.
+
+After persisting the claim, Atlas performs a final read-only GitHub PR
+head check **before initiating any POST/PATCH**. If this read fails, no remote
+write has been attempted: a serialized transaction conditionally removes
+only that exact claim ID. The caller receives the original head/read error
+and can submit a new reviewed head (or retry after a transient read error)
+without manually unlocking anything. If transactional release itself fails,
+the response is `prewrite_recovery_required` and Atlas leaves the claim
+intact for investigation; it never guesses that the claim was cleared.
+
+Once POST or PATCH has *started*, the outcome may be ambiguous and the
+claim must not be released automatically. A subsequent read from GitHub must
+verify the Bot-owned PR marker, unique comment ID and exact body hash before
+Atlas records a `published` receipt. A malformed response, HTTP failure,
+timeout or receipt-commit failure **after write initiation** leaves the claim
+unresolved. **Retry never repeats the POST/PATCH automatically.** It only
+inspects GitHub and, if the exact expected body and comment identity are
+attested, records the receipt. If a newer review arrives while an older
+claim is unresolved, the older claim must first be reconciled. Otherwise
+the operation remains `uncertain` and needs operator investigation.
+
+A previously published receipt whose remote comment was edited is reported
+as `published_remote_drift`; it is not silently overwritten or classified
+as current. Review completion is still reviewer-asserted; the comment does
+not approve a PR, resolve inline discussions, establish independent AI
+reviewer provenance, or infer a fix from absent findings.
+
+**Rollout limitations:** Explicit interactive calls only (no background
+scheduler or webhook). No automatic migration from an existing Code Reviewer
+GitHub review to a managed summary. The write flow assumes this GitHub App is
+the sole writer of its managed comment: GitHub's issue-comment PATCH API
+cannot provide an atomic compare-and-swap against external writers, so
+remote changes can race after preflight and must be handled operationally.
+Unresolved claims have no automated force-unlock. The separate inline GitHub
+conversation publisher and dedicated bot identity remain subsequent
+milestones. Full production acceptance requires checking the connected
+MCP catalogue, current deployed revision, reviewer identity, App permissions,
+initial POST, update PATCH and manual uncertain-response recovery.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { AtlasError } from '../shared/errors.js';
 import type { CoreService } from '../core/service.js';
 import type { GitHubBroker } from '../workspaces/github-broker.js';
@@ -100,7 +101,7 @@ export function renderManagedSummary(repository: string, prNumber: number, round
                 inlineText(item.evidence, 900)),
         ] : []),
         '',
-        '_This is a read-only preview of saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
+        '_This summary reflects saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
         '',
         marker,
     ];
@@ -166,7 +167,8 @@ export class GitHubManagedSummaryReader {
                     throw new AtlasError('Multiple App-owned managed PR summaries exist.', 'CONFLICT');
                 const found = matched[0];
                 return found ? { status: found.body === expectedBody ? 'current' : 'needs_update',
-                    commentId: found.id, commentUrl: found.url } :
+                    commentId: found.id, commentUrl: found.url,
+                    bodySha256: createHash('sha256').update(found.body).digest('hex') } :
                     { status: 'no_owned_comment' };
             }
         }
