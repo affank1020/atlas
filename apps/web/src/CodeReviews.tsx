@@ -12,6 +12,15 @@ type ReviewRun = {
     publication?: 'claimed' | 'published';
     githubReviewId?: string;
 };
+type PrSummary = {
+    recordedRounds: number;
+    latestReviewHead: 'current' | 'outdated' | 'unknown' | 'no_stored_review';
+    latest: { runId: string; headSha: string; reviewedAt: string; verdict: string;
+        source: 'structured' | 'historical' | 'unknown';
+        severityCounts: Counts | null } | null;
+    currentHead: { state: 'open' | 'closed' | 'unavailable'; sha?: string; checkedAt?: string };
+};
+
 type ReviewFinding = {
     id: string; key: string; severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
     title: string; description: string; state: string; filePath?: string; line?: number;
@@ -74,6 +83,52 @@ function parsedFinding(record: AtlasRecord): ReviewFinding | undefined {
         line: typeof d.line === 'number' && Number.isSafeInteger(d.line) && d.line > 0 ? d.line : undefined };
 }
 
+/** Fetch GitHub head state only after the user opens one PR status panel. */
+function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVersion: number }) {
+    const lastRefresh = useRef(refreshVersion);
+    const status = useApplicationRead<PrSummary>('code_reviews_pr_summary',
+        { repository: entry.repository, prNumber: entry.prNumber }, true);
+    useEffect(() => {
+        if (lastRefresh.current !== refreshVersion) {
+            lastRefresh.current = refreshVersion;
+            void status.refetch();
+        }
+    }, [refreshVersion, status.refetch]);
+    const data = status.data;
+    return <div className="code-reviews-detail" id={`code-reviews-pr-status-${entry.id}`}>
+        <div className="code-reviews-detail-header">
+            <h3>PR status for {entry.repository} #{entry.prNumber}</h3>
+            <span>On-demand GitHub head check</span>
+        </div>
+        {(status.isLoading || status.isFetching && !data) && <p role="status">Checking saved reviews and GitHub head…</p>}
+        {status.error && <p className="notice error" role="alert">Unable to check PR status: {status.error.message}</p>}
+        {data && !status.error && <>
+            <p>{data.recordedRounds} saved review round{data.recordedRounds === 1 ? '' : 's'}.
+                This is not a count of distinct commits or complete GitHub review history.</p>
+            {data.currentHead.state === 'unavailable'
+                ? <p>Current GitHub head unavailable — review freshness is unknown.</p>
+                : <p>GitHub PR is {data.currentHead.state}; current head: <code>{data.currentHead.sha?.slice(0, 7)}</code>.</p>}
+            {data.latestReviewHead === 'no_stored_review' &&
+                <p>No review stored for this PR. This does not mean it has never been reviewed or has no issues.</p>}
+            {data.latestReviewHead === 'unknown' &&
+                <p>The latest saved review cannot be compared with the current PR head.</p>}
+            {data.latestReviewHead === 'current' &&
+                <p>The latest saved review matches the current PR head.</p>}
+            {data.latestReviewHead === 'outdated' &&
+                <p>The latest saved review targets a different commit — re-review may be needed.</p>}
+            {data.latest && <p>Latest saved round: <code>{data.latest.headSha.slice(0, 7)}</code> ·
+                {' '}{data.latest.source === 'historical' ? 'Historical Markdown import (partial finding coverage)'
+                    : data.latest.source === 'structured' ? 'Structured Atlas submission'
+                        : 'Source completeness unknown'}.
+                {data.latest.severityCounts
+                    ? ` Recorded: ${severities.map(level =>
+                        `${level.toUpperCase()} ${data.latest!.severityCounts![level] ?? 0}`).join(' · ')}.`
+                    : ' Full severity totals unavailable.'}
+            </p>}
+        </>}
+    </div>;
+}
+
 function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVersion: number }) {
     const [offset, setOffset] = useState(0);
     const lastRefresh = useRef(refreshVersion);
@@ -126,6 +181,7 @@ function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVe
 export function CodeReviews() {
     const [offset, setOffset] = useState(0);
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [statusId, setStatusId] = useState<string | null>(null);
     const [refreshVersion, setRefreshVersion] = useState(0);
     // Revalidate on each entry: Store writes and imports may happen in other clients.
     const summary = useApplicationRead<Overview>('code_reviews_overview', {}, true);
@@ -174,6 +230,12 @@ export function CodeReviews() {
                             <div className="code-reviews-row-actions">
                                 <span className="code-reviews-verdict">{verdicts[entry.verdict]}</span>
                                 {validUuid.test(entry.id) && <button type="button" className="ghost"
+                                    aria-expanded={statusId === entry.id}
+                                    aria-controls={`code-reviews-pr-status-${entry.id}`}
+                                    onClick={() => setStatusId(statusId === entry.id ? null : entry.id)}>
+                                    {statusId === entry.id ? 'Hide PR status' : 'PR status'}
+                                </button>}
+                                {validUuid.test(entry.id) && <button type="button" className="ghost"
                                     aria-expanded={expandedId === entry.id}
                                     aria-controls={`code-reviews-detail-${entry.id}`}
                                     onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}>
@@ -182,15 +244,16 @@ export function CodeReviews() {
                             </div>
                         </div>
                     </div>
+                    {statusId === entry.id && validUuid.test(entry.id) && <PrStatusDetails key={entry.id} entry={entry} refreshVersion={refreshVersion}/>}
                     {expandedId === entry.id && validUuid.test(entry.id) && <FindingDetails key={entry.id} entry={entry} refreshVersion={refreshVersion}/>}
                 </article>)}
             </div>
             {runs.data && runs.data.total > pageSize && <div className="code-reviews-pagination">
                 <button type="button" className="ghost" disabled={offset === 0 || runs.isFetching}
-                    onClick={() => { setExpandedId(null); setOffset(Math.max(0, offset - pageSize)); }}>Previous</button>
+                    onClick={() => { setExpandedId(null); setStatusId(null); setOffset(Math.max(0, offset - pageSize)); }}>Previous</button>
                 <span>{offset + 1}–{Math.min(offset + pageSize, runs.data.total)} of {runs.data.total}</span>
                 <button type="button" className="ghost" disabled={offset + pageSize >= runs.data.total || runs.isFetching}
-                    onClick={() => { setExpandedId(null); setOffset(offset + pageSize); }}>Next</button>
+                    onClick={() => { setExpandedId(null); setStatusId(null); setOffset(offset + pageSize); }}>Next</button>
             </div>}
         </div>
     </section>;
