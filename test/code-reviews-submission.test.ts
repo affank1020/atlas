@@ -479,3 +479,54 @@ test('archived prior observation cannot support a new lifecycle assertion', asyn
     }, reviewer), /history is incomplete/i);
     assert.equal((await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id })).total, 1);
 });
+
+test('unrelated archived prior run does not veto a valid lineage assessment or resolution', async () => {
+    const { catalog, store, findings, runs } = await fixture();
+    const service = new CodeReviewsService(catalog, openHead());
+    const original = await service.submitStructuredReview({
+        ...request, findings: [{ ...request.findings[0], lineageKey: 'root-a' }],
+    }, reviewer);
+    const unrelated = await service.submitStructuredReview({
+        ...request, submissionId: 'eb641756-12f0-47e9-8d07-4c21dff42a13',
+        findings: [{ ...request.findings[0], key: 'unrelated', lineageKey: 'root-b' }],
+    }, reviewer);
+    // This models a generic Atlas Store administrator archiving a prior,
+    // unrelated observation while the independent root-a source stays intact.
+    await store.pool.query('UPDATE records SET archived_at = now() WHERE id = $1 AND store_id = $2',
+        [unrelated.findingIds[0], findings.id]);
+
+    const assessed = await service.submitStructuredReview({
+        ...request, submissionId: 'e64436d9-7638-46d4-8512-b495c1861bb6',
+        findings: [{ ...request.findings[0], key: 'root-a-followup', lineageKey: 'root-a',
+            assessment: { state: 'persisting',
+                evidence: 'A focused regression reproduces the original root-a issue on this reviewed head.' } }],
+    }, reviewer);
+    const resolved = await service.submitStructuredReview({
+        ...request, submissionId: '77428176-c984-452b-8aac-dcd6e4ba66b3',
+        verdict: 'no_findings', findings: [],
+        resolutions: [{ lineageKey: 'root-a',
+            evidence: 'A targeted regression confirms that the original root-a input is now rejected.' }],
+    }, reviewer);
+    assert.equal(assessed.created, true);
+    assert.equal(resolved.created, true);
+    assert.equal(resolved.findingIds.length, 0);
+    const saved = await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id, limit: 10,
+    });
+    assert.equal(saved.total, 4);
+    assert.ok(saved.items.some(item => item.id === original.runId));
+    const assessmentRun = saved.items.find(item => item.id === assessed.runId)!;
+    const resolutionRun = saved.items.find(item => item.id === resolved.runId)!;
+    assert.equal((assessmentRun.data.coverage as any).findingCount, 1);
+    assert.equal((resolutionRun.data.coverage as any).lifecycleResolutions[0].lineageKey, 'root-a');
+
+    await assert.rejects(service.submitStructuredReview({
+        ...request, submissionId: 'c37d8bb7-8b21-47c5-9a31-3a65e84f8e24',
+        verdict: 'no_findings', findings: [],
+        resolutions: [{ lineageKey: 'root-b',
+            evidence: 'An archived root-b observation cannot establish a valid resolution.' }],
+    }, reviewer), /history is incomplete/i);
+    assert.equal((await catalog.queryRecords({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+    })).total, 4, 'failed resolution must not persist a fifth review');
+});
