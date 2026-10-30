@@ -10,7 +10,7 @@ type Reader = Pick<CoreService, 'listStores' | 'queryRecords'>;
 type Broker = Pick<GitHubBroker, 'pullRequestReadToken' | 'reviewPublisherBot'>;
 type Round = Awaited<ReturnType<typeof readPrTimeline>>['rounds'][number];
 type ThreadRoot = {
-    id: number; marker: string; path: string; originalCommitSha: string | null;
+    id: number; marker: string; bodySha256: string; path: string; originalCommitSha: string | null;
     originalLine: number | null; currentLine: number | null; url: string;
 };
 type Inventory = { roots: ThreadRoot[]; copiedMarkers: string[]; replies: Map<number, number> };
@@ -119,7 +119,9 @@ export class GitHubInlineThreadReader {
                     throw new AtlasError('App-owned GitHub inline root has conflicting identity.', 'CONFLICT');
                 seenOwnedMarkers.add(marker);
                 roots.push({
-                    id: entry.id, marker, path: entry.path,
+                    id: entry.id, marker,
+                    bodySha256: createHash('sha256').update(entry.body).digest('hex'),
+                    path: entry.path,
                     originalCommitSha: typeof entry.original_commit_id === 'string'
                         ? entry.original_commit_id.toLowerCase() : null,
                     originalLine: positive(entry.original_line) ? entry.original_line : null,
@@ -175,7 +177,8 @@ export class InlineThreadInventoryService {
             const root = roots.get(marker);
             return root
                 ? { state: 'owned_thread_found' as const, rootCommentId: root.id,
-                    rootUrl: root.url, originalCommitSha: root.originalCommitSha,
+                    rootUrl: root.url, bodySha256: root.bodySha256,
+                    path: root.path, originalCommitSha: root.originalCommitSha,
                     originalLine: root.originalLine,
                     currentLine: root.currentLine,
                     observedReplyCount: inventory.replies.get(root.id) ?? 0,

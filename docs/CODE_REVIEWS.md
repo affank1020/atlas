@@ -752,6 +752,84 @@ Code Reviewer skill comments. Those actions require an independently
 reviewed publisher identity/permissions and an opt-in workflow that
 prevents duplicate initial threads and ambiguous network retries.
 
+### Opt-in first inline GitHub review thread publisher (draft)
+
+`code_reviews_publish_initial_inline_root({repository,prNumber,findingId,apply?})`
+prepares one **new** GitHub inline root comment for a complete structured
+Code Reviews finding. The default `apply:false` is read-only. An explicit
+`apply:true` is permitted only when its canonical repository is in a new,
+independent, **disabled-by-default** allowlist:
+
+```text
+ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES=owner/repository
+```
+
+This does not inherit the legacy COMMENT-review allowlist or the managed
+summary publisher allowlist. The authenticated MCP OAuth caller must match
+the latest saved structured review's original submitting account; the
+review must have its native submission receipt and must not already have
+legacy GitHub review publication metadata. A missing stable structured
+lineage key, historical imported review, persisting/unverified observation,
+closed/outdated PR, multiple findings at one diff location, or missing
+complete verified added RIGHT-side patch anchor cannot create a thread.
+
+Each root has a deterministic opaque GitHub marker derived from the
+canonical repository, PR number, and explicit root-cause lineage key.
+The existing **read-only** Bot-owned inline inventory checks every
+bounded page for an existing root and refuses duplicate or unclaimed
+matches. Human or unrelated Bot comments that copy markers are not
+trusted as App-owned; older human Code Reviewer skill conversations are
+**not** automatically adopted.
+
+Before a GitHub POST, Atlas obtains a repo-scoped installation write
+token, independently checks the current open PR head, and creates a
+transactionally exclusive claim under
+`Review Findings.evidence.githubInlineThread`. The transaction fences
+all current PR run/finding records, prior claims for the same lineage
+across rounds, and the selected latest structured finding. Atlas then
+re-checks the PR head. A failure **before** any POST is attempted
+conditionally releases only the exact claim ID. If that cleanup cannot
+be confirmed, it fails closed.
+
+Once the POST may have started, Atlas **never automatically retransmits
+an ambiguous write**. The publisher distinguishes GitHub's explicit
+`POST /pulls/:pr/comments` HTTP **403 or 422 rejection** from ambiguous
+network failures, HTTP 5xx/other statuses, malformed responses and lost
+acknowledgements. Even an explicit rejection is **not** enough to release
+a claim alone: Atlas first performs a fresh, complete, independently
+Bot-authenticated GitHub inline-root inventory. Only if that inventory
+succeeds, finds **no owned root with the claim's exact marker** and no
+contradictory copied-marker evidence does a serialized transaction
+conditionally release the **same finding's exact claim ID and marker**.
+The response is `rejected_not_published` and a *new explicitly authorized
+apply* can retry after a corrected permission or diff anchor. If the
+read fails, a root exists, or the claim changed concurrently, the
+claim stays `claimed` and the outcome is `uncertain`: it must **not**
+automatically POST again. The allowlist for release is deliberately
+small and does not treat generic `GITHUB_REQUEST_FAILED` as proof of
+non-acceptance.
+
+Successful POSTs independently re-read the Bot-owned root and check
+its numeric comment ID, trailing marker, SHA-256 Markdown body,
+original reviewed commit, file path, and original line before committing
+a `published` receipt. Any ambiguous response or unsuccessful
+verification retains the claim; later calls only read/reconcile an
+exact remote match. A later review repeating the same lineage cannot
+create a duplicate root. This slice does **not** reply to existing
+threads, infer resolution, resolve GitHub conversations, or approve
+any PR.
+
+**Important rollout boundary:** Keep this environment allowlist empty
+until independent Code Reviewer review, green CI, real connected Atlas
+deployment acceptance and a deliberate decision about the existing
+Code Reviewer skill's publication path. Otherwise the two publishers
+could post the same finding in separate GitHub discussions, since
+unmarked human-authored threads cannot be reliably deduplicated by
+identity. The dedicated Code Reviews Bot remains an optional future
+identity/permission milestone. Native GitHub reply/resolution workflows
+require separate, independently reviewed durable claims and owner
+controls.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some
