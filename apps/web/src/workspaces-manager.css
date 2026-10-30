@@ -5,7 +5,7 @@
 .wm-title { display:flex; justify-content:space-between; gap:14px; align-items:center; margin-bottom:16px; min-width:0; }
 .wm-title h2 { margin:0; font-size:1.05rem; letter-spacing:-.02em; }
 .wm-title small, .wm-title>span { color:var(--text-muted); font-size:.74rem; text-align:right; }
-.wm-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(315px,.85fr); gap:18px; align-items:start; }
+.wm-layout { display:grid; grid-template-columns:minmax(315px,.85fr) minmax(0,1.15fr); gap:18px; align-items:start; }
 .wm-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:end; gap:14px; margin-bottom:12px; }
 .wm-fields label, .wm-stack label { display:grid; gap:6px; min-width:0; color:var(--text-secondary); font-size:.75rem; font-weight:550; }
 .wm-fields input, .wm-fields select, .wm-stack input, .wm-stack textarea { width:100%; min-width:0; font-size:.81rem; }
@@ -16,9 +16,14 @@
 .wm-notice { border:1px solid var(--border); padding:11px 14px; font-size:.78rem; color:var(--text-secondary); border-radius:var(--radius-sm); }
 .wm-notice.error, .wm-hint.error { color:var(--danger); }
 .wm-browser { padding:0; overflow:hidden; }
-.wm-browser>.wm-fields { padding:20px 20px 8px; margin:0; }
+.wm-browser>.wm-fields { padding:20px 20px 12px; margin:0; }
+.wm-browser-filters { grid-template-columns:minmax(0,1.55fr) minmax(0,1fr) minmax(0,.95fr); gap:10px; }
+.wm-management { position:relative; }
+.wm-management-popover { position:absolute; right:0; top:calc(100% + 7px); z-index:10; width:min(320px,85vw); padding:12px; border:1px solid var(--border-strong); border-radius:var(--radius-md); background:var(--surface); box-shadow:0 12px 30px rgba(0,0,0,.14); }
+.wm-management-popover button { width:100%; text-align:left; }
+.wm-management-popover p { margin:8px 4px 2px; font-size:.72rem; line-height:1.5; color:var(--text-muted); }
 .wm-browser>.wm-title { padding:10px 20px 16px; border-bottom:1px solid var(--border); margin:0; }
-.wm-list { display:grid; max-height:65vh; overflow-y:auto; scrollbar-color:var(--border-strong) transparent; }
+.wm-list { display:grid; }
 .wm-row { background:transparent; display:flex; width:100%; text-align:left; border:0; border-radius:0; align-items:center; gap:13px; padding:15px 20px; border-bottom:1px solid var(--border); color:var(--text-primary); min-width:0; }
 .wm-row:last-child { border-bottom:0; }
 .wm-row:hover { background:var(--bg-secondary); }
@@ -55,6 +60,7 @@
 .wm-changes { padding-left:17px; font: .74rem/1.6 var(--font-mono); overflow-wrap:anywhere; }
 @media(max-width:1020px) { .wm-layout { grid-template-columns:1fr; } .wm-inspector { position:static; max-height:none; } }
 @media(max-width:610px) { .wm-panel { padding:15px; } .wm-browser { padding:0; } .wm-fields { grid-template-columns:1fr; } .wm-browser>.wm-fields { padding:15px; } .wm-browser>.wm-title { padding:12px 15px; } .wm-row { padding:13px 15px; } .wm-title { flex-wrap:wrap; } }
+@media(min-width:611px) and (max-width:1250px) { .wm-browser-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } .wm-browser-filters label:first-child { grid-column:1 / -1; } }
 @media(prefers-reduced-motion:reduce) { .workspaces-manager { animation:none; } }
 /* Layout-matched loading placeholders avoid an empty initial browser or inspector. */
 .wm-skeleton { display:block; border-radius:5px; background:var(--surface-elevated); background-image:linear-gradient(90deg,transparent 0%,var(--bg-secondary) 45%,transparent 90%); background-size:220% 100%; animation:wm-shimmer 1.6s ease-in-out infinite; }
@@ -83,8 +89,13 @@
  * checkout rows. Branch state stays in the inspector to avoid extra MCP calls. */
 .wm-group { border-bottom:1px solid var(--border); }
 .wm-group:last-child { border-bottom:0; }
-.wm-group-heading { border-bottom:0; padding-bottom:10px; }
-.wm-group-heading[aria-pressed="true"] { background:var(--bg-secondary); }
+.wm-group-top { display:flex; align-items:stretch; min-width:0; }
+.wm-group-heading { flex:1; border-bottom:0; }
+.wm-group-heading[aria-pressed="true"] { background:var(--accent-soft); }
+.wm-expand { display:grid; place-items:center; flex:none; width:42px; margin:7px 10px 7px 0; padding:0; border:0; border-radius:var(--radius-sm); background:transparent; color:var(--text-muted); font-size:1.35rem; }
+.wm-expand:hover { background:var(--bg-secondary); color:var(--text-primary); }
+.wm-expand:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.wm-group-checkouts { padding-top:3px; padding-bottom:3px; border-top:1px solid var(--border); background:var(--bg-secondary); }
 .wm-node-group { padding:0 20px 11px 68px; }
 .wm-node-heading { display:flex; align-items:center; gap:9px; min-width:0; color:var(--text-secondary); font-size:.74rem; padding:7px 10px; }
 .wm-node-heading strong { font-weight:580; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
