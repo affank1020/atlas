@@ -161,7 +161,8 @@ test('managed summary is read-only and scoped to one PR and its stored findings'
                 assert.deepEqual(query.filters, [
                     { field: 'prNumber', operator: 'eq', value: prNumber },
                 ]);
-                assert.equal(query.limit, 1);
+                assert.equal(query.limit, 100, 'bounded historical scan reads one 100-row page');
+                assert.equal(query.offset, 0);
                 return { items: [run], total: 1 };
             }
             assert.equal(query.storeId, 'findings');
@@ -187,6 +188,7 @@ test('managed summary is read-only and scoped to one PR and its stored findings'
     assert.equal(result.publishSupported, false);
     assert.equal(result.remote.status, 'no_owned_comment');
     assert.equal(result.recordedRounds, 1);
+    assert.equal(result.runId, runId, 'summary still selects only the latest matching round');
     assert.equal(calls.length, 2);
     assert.equal(lookups, 1);
     const normalized = await app.invoke('code_reviews_managed_summary_preview',
