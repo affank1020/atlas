@@ -317,7 +317,11 @@ test('duplicate same-SHA fix assertion after published claim cannot post again',
 });
 
 test('multiple fix acknowledgements support own-property prototype-name lineages',async()=>{
-    const special=['constructor','toString','hasOwnProperty','__proto__'];
+    // The shared lineage contract requires an alphanumeric initial character.
+// __proto__ is intentionally invalid, while these prototype names are valid.
+    const special=['constructor','toString','hasOwnProperty'];
+    assert.throws(()=>inlineThreadMarker(repository,prNumber,'__proto__'),
+        /Invalid managed inline thread identity/);
     const f=await fixture(special);
     // First, store an ordinary claim so later lookups encounter a populated map.
     assert.equal((await f.publish(true)).status,'published');
