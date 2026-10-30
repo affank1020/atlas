@@ -273,7 +273,7 @@ body { background: #0c0d10; }
   content: "";
   position: absolute;
   bottom: -1px;
-  left: 4px;
+  left: 0;
   width: 82px;
   height: 2px;
   background: linear-gradient(90deg, var(--accent-solid), transparent);
@@ -293,7 +293,7 @@ body { background: #0c0d10; }
   line-height: 1;
   letter-spacing: -.05em;
 }
-:is(.app-shell, .application-window) .brand-period { color: var(--accent); }
+:is(.app-shell, .application-window) .brand-period { color: var(--accent-solid); }
 .header-actions { display: flex; align-items: center; gap: 12px; }
 :is(.app-shell, .application-window) .header-icon-link {
   display: grid;
