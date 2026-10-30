@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import test, { after } from 'node:test';
 import { databaseFixture, cleanupDatabases } from './database.js';
 import { InlineRootPublicationService } from '../apps/server/src/apps/inline-root-publication.js';
-import { GitHubInlineRootWriter } from '../apps/server/src/apps/inline-thread-writer.js';
+import { GitHubInlineRootRejectedError, GitHubInlineRootWriter } from '../apps/server/src/apps/inline-thread-writer.js';
 import { inlineThreadMarker } from '../apps/server/src/apps/inline-thread-inventory.js';
 import { loadInlineRootRepositories } from '../apps/server/src/server/config.js';
 import { CODE_REVIEWS_PROJECT_ID } from '../apps/server/src/apps/review-import.js';
@@ -68,6 +68,9 @@ async function fixture() {
     let remoteBody: string | null = null;
     let headFailureAt = 0;
     let uncertainPost = false;
+    let rejectedStatus: 403 | 422 | null = null;
+    let rejectAfterWrite = false;
+    let ownedReadFailure = false;
     const preflight = {
         preview: async () => ({
             repository, prNumber, status: 'review_head_current',
@@ -109,18 +112,25 @@ async function fixture() {
             assert.equal(body.endsWith(marker), true);
             assert.ok(!body.includes('<user>'), 'Markdown title must be escaped');
             events.post++;
+            if (rejectedStatus !== null) {
+                if (rejectAfterWrite) remoteBody = body;
+                throw new GitHubInlineRootRejectedError(rejectedStatus);
+            }
             remoteBody = body;
             if (uncertainPost) throw Error('POST timed out after GitHub accepted it');
             return 73;
         },
     };
     const owned = {
-        inspect: async () => ({ roots: remoteBody ? [{
+        inspect: async () => {
+            if (ownedReadFailure) throw Error('GitHub root inventory pagination failed');
+            return { roots: remoteBody ? [{
             id: 73, marker, bodySha256: hash(remoteBody),
             path: 'src/new.ts', originalCommitSha: head,
             originalLine: 14, currentLine: 14,
             url: 'https://github.com/affank1020/atlas/pull/126#discussion_r73',
-        }] : [], copiedMarkers: [], replies: new Map() }),
+        }] : [], copiedMarkers: [], replies: new Map() };
+        },
     };
     const service = new InlineRootPublicationService(catalog, preflight as any,
         inventory as any, writer as any, new Set([repository]), owned as any);
@@ -130,6 +140,9 @@ async function fixture() {
             service.publish(repository, prNumber, finding.id, apply, caller),
         setHeadFailureAt: (n: number) => { headFailureAt = n; },
         setUncertainPost: (yes: boolean) => { uncertainPost = yes; },
+        setRejectedStatus: (status: 403 | 422 | null) => { rejectedStatus = status; },
+        setRejectAfterWrite: (yes: boolean) => { rejectAfterWrite = yes; },
+        setOwnedReadFailure: (yes: boolean) => { ownedReadFailure = yes; },
         getRemote: () => remoteBody,
         clearRemote: () => { remoteBody = null; },
         setRemote: (body: string) => { remoteBody = body; },
@@ -208,6 +221,71 @@ test('prior-round claimed inline root reconciles without checking a newer diff o
     assert.equal(recovered.status, 'published');
     assert.equal(recovered.rootCommentId, 73);
     assert.equal(f.events.post, 1);
+});
+
+test('explicit 422 or 403 rejection with independently verified absence releases exact claim', async () => {
+    for (const code of [422, 403] as const) {
+        const f = await fixture();
+        f.setRejectedStatus(code);
+        const rejected = await f.publish(true);
+        assert.equal(rejected.status, 'rejected_not_published');
+        assert.equal(rejected.httpStatus, code);
+        assert.equal(rejected.claimReleased, true);
+        assert.equal(rejected.postedAgain, false);
+        assert.equal(f.events.post, 1);
+        const after = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID,
+            f.findings.id, f.finding.id);
+        assert.equal((after.data.evidence as any).githubInlineThread, undefined,
+            'a verified non-acceptance releases only this finding claim');
+        f.setRejectedStatus(null); // permissions/line anchor corrected
+        const retried = await f.publish(true);
+        assert.equal(retried.status, 'published');
+        assert.equal(f.events.post, 2, 'a new, explicitly authorized apply may POST again');
+        const finalRecord = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID,
+            f.findings.id, f.finding.id);
+        assert.equal((finalRecord.data.evidence as any).githubInlineThread.state, 'published');
+    }
+});
+
+test('definite rejection with uncertain remote inventory retains claim, never repeats POST', async () => {
+    const f = await fixture();
+    f.setRejectedStatus(422);
+    f.setOwnedReadFailure(true);
+    assert.equal((await f.publish(true)).status, 'uncertain');
+    const after = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID,
+        f.findings.id, f.finding.id);
+    assert.equal((after.data.evidence as any).githubInlineThread.state, 'claimed');
+    f.setOwnedReadFailure(false);
+    assert.equal((await f.publish(true)).status, 'uncertain');
+    assert.equal(f.events.post, 1);
+});
+
+test('definite rejection with matching remote Bot root does not release the claim', async () => {
+    const f = await fixture();
+    f.setRejectedStatus(403);
+    f.setRejectAfterWrite(true); // adversarial: contrary remote evidence
+    assert.equal((await f.publish(true)).status, 'uncertain');
+    const after = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID,
+        f.findings.id, f.finding.id);
+    assert.equal((after.data.evidence as any).githubInlineThread.state, 'claimed');
+    assert.equal((await f.publish(true)).status, 'published',
+        'existing matching Bot root reconciles, never retransmits');
+    assert.equal(f.events.post, 1);
+});
+
+test('GitHub writer types only explicit 403/422 POST rejects; 5xx stays ambiguous', async () => {
+    for (const code of [403, 422, 500]) {
+        const writer = new GitHubInlineRootWriter({
+            pullRequestReadToken: async () => 'read',
+            pullRequestPublishToken: async () => 'write',
+        } as any, (async () => new Response('rejected', { status: code })) as typeof fetch);
+        await assert.rejects(
+            writer.post(repository, prNumber, { headSha: head, path: 'src/new.ts', line: 14 },
+                'one initial inline body', 'write'),
+            (error: unknown) => code === 500
+                ? !(error instanceof GitHubInlineRootRejectedError)
+                : error instanceof GitHubInlineRootRejectedError && error.httpStatus === code);
+    }
 });
 
 test('POST fails before GitHub accepts: existing claim stays uncertain and cannot automatically resend', async () => {
