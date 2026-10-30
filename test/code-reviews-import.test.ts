@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import { GitHubReviewHistoryReader } from '../apps/server/src/apps/github-review-history.js';
+import { ManagedSummaryPreviewService } from '../apps/server/src/apps/managed-summary.js';
 import { CodeReviewsService, codeReviewsApplication } from '../apps/server/src/apps/code-reviews.js';
 import { prepareGitHubReviews, CODE_REVIEWS_PROJECT_ID } from '../apps/server/src/apps/review-import.js';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
@@ -420,4 +421,52 @@ test('new mixed-case GitHub history imports use canonical repository identity wi
     const second = await service.importPullRequest(repository, 69, true);
     assert.equal(second.runsCreated, 0);
     assert.equal(second.runsAlreadyPresent, 1);
+});
+
+test('PostgreSQL managed summary includes legacy mixed-case historical runs with exact PR identity', async () => {
+    const { catalog, runs } = await fixture();
+    const prNumber = 69;
+    const historical = await catalog.createRecord({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+        data: {
+            repository: 'Affank1020/Atlas', prNumber, headSha: 'b'.repeat(40),
+            reviewer: 'code-reviewer-history', reviewedAt: '2026-10-30T18:00:00.000Z',
+            verdict: 'non_blocking',
+            coverage: { source: 'github_pull_request_review', findingCapture: 'partial' },
+        },
+    });
+    await catalog.createRecord({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+        data: {
+            repository, prNumber, headSha: 'a'.repeat(40),
+            reviewer: 'atlas-structured-review', reviewedAt: '2026-10-30T16:00:00.000Z',
+            verdict: 'no_findings', coverage: {
+                source: 'atlas_structured_submission', findingCount: 0,
+            },
+        },
+    });
+    await catalog.createRecord({
+        projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+        data: {
+            repository: 'unrelated/atlas', prNumber, headSha: 'c'.repeat(40),
+            reviewer: 'other-history', reviewedAt: '2026-10-30T19:00:00.000Z',
+            verdict: 'no_findings', coverage: { source: 'github_pull_request_review' },
+        },
+    });
+    const managed = new ManagedSummaryPreviewService(catalog, {
+        inspect: async (name: string, actualNumber: number, body: string) => {
+            assert.equal(name, repository);
+            assert.equal(actualNumber, prNumber);
+            assert.match(body, /Historical import/);
+            return { status: 'no_owned_comment' };
+        },
+    } as any);
+    for (const name of ['Affank1020/Atlas', repository]) {
+        const result = await managed.preview(name, prNumber) as any;
+        assert.equal(result.repository, repository);
+        assert.equal(result.recordedRounds, 2);
+        assert.equal(result.runId, historical.id, 'newest matching historical round must be selected');
+        assert.equal(result.source, 'historical');
+        assert.equal(result.fullEvidence, false);
+    }
 });
