@@ -115,6 +115,32 @@ export class ServerDiagnosticHistory {
         await this.sweeping;
     }
 
+    /** Fixed-table availability probe: not a proof of complete historical coverage.
+     * A responsive Server/primary DB can still have missing archive migration,
+     * blocked diagnostic-pool access, write backoff or dropped async events.
+     * Never disclose exception messages, SQL, code payloads or process IDs. */
+    async status(): Promise<{
+        source: 'atlas-server-history'; state: 'available' | 'unavailable' | 'disabled';
+        coverage: 'incomplete-possible'; retentionDays: 14;
+        droppedSinceStart: number; pending: number; writePaused: boolean;
+    }> {
+        const baseline = {
+            source: 'atlas-server-history' as const,
+            coverage: 'incomplete-possible' as const,
+            retentionDays: RETENTION_DAYS as 14,
+            droppedSinceStart: this.dropped,
+            pending: this.pending.length,
+            writePaused: this.clock() < this.pausedUntil,
+        };
+        if (!this.enabled) return { ...baseline, state: 'disabled' };
+        try {
+            await this.database.query('SELECT 1 FROM atlas_server_diagnostic_events LIMIT 1');
+            return { ...baseline, state: 'available' };
+        } catch {
+            return { ...baseline, state: 'unavailable' };
+        }
+    }
+
     async read(raw: unknown = {}) {
         const { limit } = inputSchema.parse(raw);
         const baseline = {
@@ -124,6 +150,8 @@ export class ServerDiagnosticHistory {
             // A prior process could have lost inserts. Only current-process
             // missed writes can be counted; never imply complete historical coverage.
             droppedSinceStart: this.dropped,
+            queuedForWrite: this.pending.length,
+            writePaused: this.clock() < this.pausedUntil,
             coverage: 'incomplete-possible' as const,
         };
         if (!this.enabled) return { ...baseline, available: false, truncated: false, events: [] };
@@ -131,6 +159,7 @@ export class ServerDiagnosticHistory {
             const result = await this.database.query(
                 'SELECT occurred_at, code FROM atlas_server_diagnostic_events ' +
                 "WHERE occurred_at >= NOW() - INTERVAL '14 days' " +
+                "AND occurred_at <= NOW() + INTERVAL '30 seconds' " +
                 'ORDER BY occurred_at DESC, id DESC LIMIT $1',
                 [limit + 1],
             );

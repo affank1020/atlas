@@ -107,7 +107,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     };
     for (const name of Object.keys(nodeSchemas) as NodeToolName[]) tool(name, nodeDescriptions[name], nodeSchemas[name].shape);
 
-    tool("get_monitoring_health", "Read a bounded live Atlas Server database probe and Node connectivity/heartbeat health snapshot. No CPU, disk or external-service monitoring; no credentials or logs.", {});
+    tool("get_monitoring_health", "Read bounded live database and Node health probes plus diagnostic-archive availability and current-process loss status. No CPU, disk or container logs; unknown is not healthy.", {});
     tool("read_server_diagnostics", "Read bounded, non-sensitive Atlas Server process diagnostics since the current restart, not Docker stdout/stderr or retained container logs.", {
         limit: z.number().int().min(1).max(100).default(30),
     });
