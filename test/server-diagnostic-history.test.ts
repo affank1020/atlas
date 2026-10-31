@@ -336,13 +336,16 @@ test('startup and recurring bounded retention sweeps catch up on a quiet large b
 
 test('retention failure is non-fatal, remains visible, and recovers on a later sweep', async () => {
     const { setTimeout: pause } = await import('node:timers/promises');
-    let failures = 1;
+    let failuresRemaining = 1;
     let deletes = 0;
     const service = new ServerDiagnosticHistory({
         query: async sql => {
             if (sql.startsWith('DELETE')) {
                 deletes++;
-                if (failures--) throw new Error('private pg maintenance error');
+                if (failuresRemaining > 0) {
+                    failuresRemaining--;
+                    throw new Error('private pg maintenance error');
+                }
                 return { rows: [] };
             }
             return { rows: [] };
