@@ -165,7 +165,26 @@ npm run files:r2:project-recovery -- \
   --confirm=SEED_PROJECT_RECOVERY --max-files=5
 ~~~
 
-Continue with --from=NEXT_ORDINAL when a run reports remaining objects;
+Every authorised seed batch stores immutable, per-object SHA-256/size
+verification receipts **after** independent recovery R2 readback. On a
+six-object manifest, the first five-object invocation is partial; the final
+one-object invocation reports completed only when all six durable receipts
+are present and match the manifest. The receipts survive process restarts.
+To inspect complete coverage across all prior batches, without R2 access:
+
+~~~sh
+npm run files:r2:project-recovery -- \
+  --status --project=PROJECT_UUID --run=RECOVERY_RUN_UUID
+~~~
+
+This read-only, metadata-only status reports totalEntries, verifiedEntries,
+the earliest unverified nextOrdinal, and complete/incomplete. It requires no
+primary or backup R2 credentials. It **does not** re-read current offsite
+bytes, assert current recoverability, or replace the separate isolated
+restoration drill. Dry-run writes no receipts. A failed/ambiguous PUT leaves
+its batch unreceipted until the objects are reverified on retry.
+
+Continue with --from=NEXT_ORDINAL when a run reports missing receipts;
 review each batch before an approved seed. The implementation preflights
 all source and existing recovery bytes before any atomic create-only PUT,
 then re-reads the remote object. It never overwrites a corrupt recovery copy
