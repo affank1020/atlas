@@ -238,7 +238,7 @@ export function Files() {
                     value={search} onChange={event => setSearch(event.target.value)} />
             </div>
         </div>
-        {busy && <div className="files-skeleton-list" role="status" aria-label="Loading files">
+        {(busy || (projects.isLoading && !owner && !projects.error)) && <div className="files-skeleton-list" role="status" aria-label={owner ? "Loading files" : "Loading projects"} aria-busy="true">
             {[1, 2, 3].map(value => <div className="files-skeleton-row" key={value}><span /><div><i /><i /></div></div>)}
         </div>}
         {!busy && owner && (visibleFolders.length > 0 || visibleFiles.length > 0) && <div className="files-list" aria-label="Project folder contents">
@@ -289,7 +289,7 @@ export function Files() {
                 </div>}
             </div>)}
         </div>}
-        {!busy && !error && !owner && <div className="files-empty">{projects.isLoading ? 'Loading Projects…' : 'No Projects available. Create a Project to store files.'}</div>}
+        {!busy && !error && !owner && !projects.isLoading && !projects.error && <div className="files-empty">No Projects available. Create a Project to store files.</div>}
         {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length &&
             <div className="files-empty">{searchText
                 ? 'Nothing matches your search in this folder.'

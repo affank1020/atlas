@@ -78,3 +78,8 @@
 .node-software-downloads { display:grid; gap:18px; padding-top:24px; border-top:1px solid var(--border); margin-top:12px; }
 @media (max-width:940px) { .node-software-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .node-software-fleet-layout { grid-template-columns:minmax(0,1fr); } .node-software-nodes { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); max-height:none; } }
 @media (max-width:600px) { .node-software-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .node-software-section-heading { flex-wrap:wrap; } .node-software-inspector { padding:16px; } .node-software-inspector-facts { grid-template-columns:1fr; } .node-software-fleet-controls select { flex:1; } }
+
+/* Inert placeholders use exactly the fleet card and history row geometry. */
+.node-software-node-skeleton { cursor:default; pointer-events:none; }
+.node-software-node-skeleton:hover { background:var(--surface); }
+.node-software-history-skeleton { padding:12px 0; border-bottom:1px solid var(--border); display:grid; gap:10px; }
