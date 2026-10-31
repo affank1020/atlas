@@ -16,13 +16,14 @@ try {
     const primaryStorage = loadPortfolioConfig();
     const primaryConfig = primaryStorage.r2;
     const recoveryConfig = loadRecoveryR2Config(process.env, primaryConfig);
-    pool = new Pool({ connectionString: requireDatabaseUrl(), connectionTimeoutMillis: 5000 });
+    const database = new Pool({ connectionString: requireDatabaseUrl(), connectionTimeoutMillis: 5000 });
+    pool = database;
     // Allocate an ID before the first R2 read or PUT. A thrown operation may
     // have written externally before its acknowledgement failed, so both
     // successes and aborts need independent best-effort audit evidence.
     const runId = randomUUID();
-    const result = await runObservedR2Seed(pool, runId, args.apply ? 'apply' : 'dry-run', () => seedR2Backup({
-        database: pool, primary: createR2SeedPrimarySource(
+    const result = await runObservedR2Seed(database, runId, args.apply ? 'apply' : 'dry-run', () => seedR2Backup({
+        database, primary: createR2SeedPrimarySource(
             new R2ObjectStore(primaryConfig!), new LocalObjectStore(primaryStorage.mediaRoot)),
         backup: new R2ObjectStore(recoveryConfig), ...args,
     }));
