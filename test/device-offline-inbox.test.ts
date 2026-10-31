@@ -17,8 +17,7 @@ async function allowReceiving(pool: Pool, nodeId: string) {
     await pool.query("UPDATE nodes SET capabilities=ARRAY['device.share.receive']::text[] WHERE id=$1", [nodeId]);
 }
 function inboxUsing(pool: Pool, approval: NodeShareApprovals) {
-    return new DeviceOfflineInbox(pool, randomBytes(32),
-        (source, target, client) => approval.allowedForInbox(source,target,client));
+    return new DeviceOfflineInbox(pool, randomBytes(32), approval);
 }
 
 test('enqueue does not deadlock by acquiring another pooled connection inside its transaction', async () => {
@@ -121,4 +120,122 @@ test('managed grant revocation and receiver rotation both invalidate queued plai
     assert.deepEqual(await inbox.list(target.nodeId),[]);
     await assert.rejects(inbox.read(target.nodeId,deliveryId),
         (error:any)=>error.code==='NOT_FOUND');
+});
+
+
+test('revoking a sender with 50 queued items releases the target quota and clears ciphertext', async () => {
+    const fixture = await databaseFixture();
+    const identity = new NodeIdentity(fixture.store.pool);
+    const source = await enroll(identity, 'Old Sender');
+    const target = await enroll(identity, 'Target');
+    const fresh = await enroll(identity, 'Fresh Sender');
+    await allowReceiving(fixture.store.pool, target.nodeId);
+    const grants = new NodeShareApprovals(fixture.store.pool);
+    await grants.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    await grants.update({sourceNodeId:fresh.nodeId,targetNodeId:target.nodeId,enabled:true});
+    const inbox = inboxUsing(fixture.store.pool,grants);
+    const ids: string[] = [];
+    for(let n=0;n<50;n++) {
+        const deliveryId=randomUUID();
+        ids.push(deliveryId);
+        await inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
+            deliveryId,text:'Item '+n});
+    }
+    assert.equal((await inbox.list(target.nodeId)).length,50);
+    await identity.revoke(source.nodeId);
+    assert.deepEqual(await inbox.list(target.nodeId),[],
+        'revoked source must not appear in recipient inbox');
+    const freshId=randomUUID();
+    assert.deepEqual(await inbox.enqueue({sourceId:fresh.nodeId,targetId:target.nodeId,
+        deliveryId:freshId,text:'New authorised item'}),{
+        deliveryId:freshId,status:'queued',queued:true,
+    });
+    assert.deepEqual((await inbox.list(target.nodeId)).map(item=>item.deliveryId),[freshId]);
+    const retired=await fixture.store.pool.query(`
+        SELECT state,payload_ciphertext,payload_nonce,payload_tag
+        FROM device_inbox WHERE source_node_id=$1 ORDER BY id
+    `,[source.nodeId]);
+    assert.equal(retired.rowCount,50);
+    for(const row of retired.rows) {
+        assert.equal(row.state,'expired');
+        assert.equal(row.payload_ciphertext,null);
+        assert.equal(row.payload_nonce,null);
+        assert.equal(row.payload_tag,null);
+    }
+    assert.equal(ids.length,50);
+});
+
+test('withdrawing a managed grant releases hidden quota without retiring other approved senders', async () => {
+    const fixture=await databaseFixture();
+    const identity=new NodeIdentity(fixture.store.pool);
+    const source=await enroll(identity,'Old Sender');
+    const target=await enroll(identity,'Target');
+    const other=await enroll(identity,'Other Sender');
+    await allowReceiving(fixture.store.pool,target.nodeId);
+    const grants=new NodeShareApprovals(fixture.store.pool);
+    await grants.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    await grants.update({sourceNodeId:other.nodeId,targetNodeId:target.nodeId,enabled:true});
+    const inbox=inboxUsing(fixture.store.pool,grants);
+    for(let n=0;n<49;n++) {
+        await inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
+            deliveryId:randomUUID(),text:'Before revoke '+n});
+    }
+    const stillValid=randomUUID();
+    await inbox.enqueue({sourceId:other.nodeId,targetId:target.nodeId,
+        deliveryId:stillValid,text:'Still approved'});
+    await grants.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:false});
+    const after=randomUUID();
+    assert.equal((await inbox.enqueue({sourceId:other.nodeId,targetId:target.nodeId,
+        deliveryId:after,text:'Fresh'})).status,'queued');
+    const visible=(await inbox.list(target.nodeId)).map(x=>x.deliveryId);
+    assert.deepEqual(visible.sort(),[stillValid,after].sort());
+    const old=await fixture.store.pool.query(
+        "SELECT count(*)::int AS total FROM device_inbox WHERE source_node_id=$1 AND state='queued'",
+        [source.nodeId]);
+    assert.equal(old.rows[0].total,0);
+});
+
+test('idempotent retry after receiver rotation is terminal, never a false queued success', async () => {
+    const fixture=await databaseFixture();
+    const identity=new NodeIdentity(fixture.store.pool);
+    const source=await enroll(identity,'Sender');
+    const target=await enroll(identity,'Target');
+    await allowReceiving(fixture.store.pool,target.nodeId);
+    const grants=new NodeShareApprovals(fixture.store.pool);
+    await grants.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    const inbox=inboxUsing(fixture.store.pool,grants);
+    const deliveryId=randomUUID();
+    const input={sourceId:source.nodeId,targetId:target.nodeId,deliveryId,text:'Original'};
+    assert.deepEqual(await inbox.enqueue(input),{deliveryId,status:'queued',queued:true});
+    assert.deepEqual(await inbox.enqueue(input),{deliveryId,status:'queued',queued:false},
+        'unchanged active generation returns the real queued status');
+    const ticket=await identity.ticket(target.nodeId,true);
+    await identity.enrol({token:ticket.enrolmentToken,name:'Target',platform:'test'});
+    assert.deepEqual(await inbox.enqueue(input),{deliveryId,status:'expired',queued:false},
+        'same delivery ID is a tombstone after credential replacement');
+    assert.deepEqual(await inbox.list(target.nodeId),[]);
+    const row=await fixture.store.pool.query(
+        'SELECT state,payload_ciphertext FROM device_inbox WHERE id=$1',[deliveryId]);
+    assert.equal(row.rows[0].state,'expired');
+    assert.equal(row.rows[0].payload_ciphertext,null);
+    const nextId=randomUUID();
+    assert.equal((await inbox.enqueue({...input,deliveryId:nextId})).status,'queued');
+});
+
+test('idempotent retry after sender credential replacement cannot resurrect old plaintext', async () => {
+    const fixture=await databaseFixture();
+    const identity=new NodeIdentity(fixture.store.pool);
+    const source=await enroll(identity,'Sender');
+    const target=await enroll(identity,'Receiver');
+    await allowReceiving(fixture.store.pool,target.nodeId);
+    const grants=new NodeShareApprovals(fixture.store.pool,
+        new Set([source.nodeId+':'+target.nodeId]));
+    const inbox=inboxUsing(fixture.store.pool,grants);
+    const deliveryId=randomUUID();
+    const input={sourceId:source.nodeId,targetId:target.nodeId,deliveryId,text:'Before rotation'};
+    await inbox.enqueue(input);
+    const ticket=await identity.ticket(source.nodeId,true);
+    await identity.enrol({token:ticket.enrolmentToken,name:'Sender',platform:'test'});
+    assert.deepEqual(await inbox.enqueue(input),{deliveryId,status:'expired',queued:false});
+    assert.deepEqual(await inbox.list(target.nodeId),[]);
 });
