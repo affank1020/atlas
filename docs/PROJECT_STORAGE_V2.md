@@ -237,8 +237,14 @@ duplicate catalogues fail closed. The entire manifest commits atomically.
 
 Each explicit apply batch starts at the first missing **durable receipt**,
 rather than relying on an operator to remember an untrusted cursor. The
-current catalogue must match the captured digest before copying. The Stage
-4A engine independently preflights and verifies both source and destination.
+current catalogue must match the captured digest before copying. The ledger
+supplies the **exact immutable manifest rows** to the copy engine; it never
+reselects a mutable live-catalogue page to decide which keys can be copied.
+After bounded source/destination preflight, the current catalogue fingerprint
+is checked again **before the first create-only PUT**. Detected drift aborts
+without copy or checkpoint. The check cannot exclude later concurrent
+metadata edits, but any resulting copy remains scoped to the saved manifest;
+subsequent drift checks and the independent byte audit remain mandatory.
 After completion, the ledger re-reads source and destination for actual
 SHA-256 and size and commits the receipts together. An inconclusive copy
 does not advance the ledger. A retry rechecks any previously copied R2
