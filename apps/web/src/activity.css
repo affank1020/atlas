@@ -48,3 +48,60 @@
     border-radius: 8px;
     text-align: center;
 }
+
+
+/* Monitoring investigation: the everyday controls are immediately available,
+   while the narrower technical scopes remain one keyboard-accessible step away. */
+.monitoring-primary-filters {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--line, var(--border));
+}
+.monitoring-primary-filters label { display: grid; gap: 5px; font-size: 12px; }
+.monitoring-primary-filters select,
+.monitoring-primary-filters input {
+    min-width: 140px;
+    max-width: min(280px, 100%);
+    padding: 7px 10px;
+    border: 1px solid var(--line, var(--border));
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+}
+.monitoring-advanced-filters { border-bottom: 1px solid var(--line, var(--border)); }
+.monitoring-advanced-filters > summary { padding: 12px 22px; cursor: pointer; font-size: 13px; }
+.monitoring-advanced-filters > summary:focus-visible { outline: 2px solid var(--border-strong); outline-offset: -3px; }
+.monitoring-advanced-filters[open] > summary { border-bottom: 1px solid var(--line, var(--border)); }
+.monitoring-advanced-filters .activity-filters { border-bottom: 0; }
+.monitoring-health-summary,
+.monitoring-source-guide {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+}
+.monitoring-health-summary > div,
+.monitoring-source-guide > div {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
+    padding: 14px;
+    border: 1px solid var(--line, var(--border));
+    border-radius: 8px;
+    overflow-wrap: anywhere;
+}
+.monitoring-health-summary strong { font-size: 17px; font-weight: 600; }
+.monitoring-health-summary small,
+.monitoring-source-guide span { font-size: 12px; opacity: .75; }
+.monitoring-source-guide { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 0 16px; }
+.monitoring-source-guide strong { font-size: 13px; }
+@media (max-width: 700px) {
+    .monitoring-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .monitoring-source-guide { grid-template-columns: minmax(0, 1fr); }
+    .monitoring-primary-filters { align-items: stretch; }
+    .monitoring-search { flex-wrap: wrap; }
+    .monitoring-search label, .monitoring-search input { flex: 1; min-width: 0; }
+}

@@ -147,6 +147,30 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     const changePage = (next: number) => { navigate({
         ...filters, offset: String(next), live: next > 0 ? undefined : filters.live,
     }); };
+    const advancedKeys: (keyof MonitoringFilters)[] = [
+        'projectId', 'logicalWorkspaceId', 'workspaceId', 'checkoutId', 'nodeId',
+        'storeId', 'client', 'operation', 'from', 'to',
+    ];
+    const advancedCount = advancedKeys.filter(key =>
+        Boolean(filters[key]) && !(key === 'projectId' && projectId)).length;
+    // Open a newly selected technical scope even when a same-tab Activity link
+    // reuses this component. Do not override a manual collapse when unrelated
+    // filters or the current scope's page/refresh change.
+    const advancedScopeKey = advancedKeys
+        .filter(key => Boolean(filters[key]) && !(key === 'projectId' && projectId))
+        .map(key => [key, filters[key]]);
+    const advancedScopeSignature = JSON.stringify(advancedScopeKey);
+    const [advancedOpen, setAdvancedOpen] = useState(Boolean(projectId || advancedCount));
+    const previousAdvancedScope = useRef(advancedScopeSignature);
+    useEffect(() => {
+        if (previousAdvancedScope.current === advancedScopeSignature) return;
+        previousAdvancedScope.current = advancedScopeSignature;
+        if (advancedScopeKey.length > 0) setAdvancedOpen(true);
+    }, [advancedScopeSignature]);
+    const hasActiveFilters = Object.entries(filters).some(([key, value]) =>
+        Boolean(value) && key !== 'live' && key !== 'offset' && !(key === 'projectId' && projectId))
+        || search !== (filters.search ?? '')
+        || advancedKeys.some(key => (draft[key] ?? '') !== (filters[key] ?? ''));
     return <section className="panel activity-panel" aria-label={projectId ? 'Project activity' : 'Monitoring activity'}>
         <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>{projectId ? 'Project activity' : 'Activity'}</h2></div><div className="actions">
             {projectId && <a className="monitoring-project-link" href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
@@ -156,28 +180,40 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
                 })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
             <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
         </div></div>
-        <div className="activity-filters monitoring-filters">
-            {projectId && <label>Workspace
-                <select aria-label="Workspace" value={filters.workspaceId ?? ''}
-                    onChange={e => setFilter('workspaceId', e.target.value)}>
-                    <option value="">All workspaces</option>
-                    {(scopedWorkspaces?.items ?? []).map(workspace =>
-                        <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.id.slice(0, 8)})</option>)}
-                    {filters.workspaceId && !scopedWorkspaces?.items.some(item => item.id === filters.workspaceId) &&
-                        <option value={filters.workspaceId}>Workspace {filters.workspaceId}</option>}
-                </select>
-            </label>}
-            {([
-                ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
-                ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
-            ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} readOnly={key === 'projectId' && !!projectId} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
-            <button type="button" className="ghost" onClick={() => { navigate({ ...draft, offset: undefined }); }}>Apply filters</button>
+        <div className="monitoring-primary-filters" role="group" aria-label="Common activity filters">
+            <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}>
+                <label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} placeholder="Find an operation" /></label>
+                <button type="submit">Apply</button>
+            </form>
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
-            <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
-            <label>To<input aria-label="To" type="datetime-local" value={localDateTimeValue(filters.to)} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
-            <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}><label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} /></label><button type="submit">Apply</button></form>
+            <button type="button" className="ghost" disabled={!hasActiveFilters}
+                onClick={() => { setSearch(''); setDraft(projectId ? { projectId } : {});
+                    navigate({ live: filters.live }); }}>Reset filters</button>
         </div>
+        <details className="monitoring-advanced-filters" open={advancedOpen}
+            onToggle={event => setAdvancedOpen(event.currentTarget.open)}>
+            <summary>Scope and time filters{advancedCount ? ' · ' + advancedCount + ' active' : ''}</summary>
+            <div className="activity-filters monitoring-filters">
+                {projectId && <label>Workspace
+                    <select aria-label="Workspace" value={filters.workspaceId ?? ''}
+                        onChange={e => setFilter('workspaceId', e.target.value)}>
+                        <option value="">All workspaces</option>
+                        {(scopedWorkspaces?.items ?? []).map(workspace =>
+                            <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.id.slice(0, 8)})</option>)}
+                        {filters.workspaceId && !scopedWorkspaces?.items.some(item => item.id === filters.workspaceId) &&
+                            <option value={filters.workspaceId}>Workspace {filters.workspaceId}</option>}
+                    </select>
+                </label>}
+                {([
+                    ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
+                    ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
+                ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} readOnly={key === 'projectId' && !!projectId} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
+                <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
+                <label>To<input aria-label="To" type="datetime-local" value={localDateTimeValue(filters.to)} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
+                <button type="button" className="ghost" onClick={() => navigate({ ...draft, offset: undefined })}>Apply filters</button>
+            </div>
+        </details>
         {projectId && scopedWorkspaces?.unavailable && <p role="status" className="activity-footnote">
             Workspace names unavailable. You can still filter by Workspace ID.
         </p>}
@@ -380,6 +416,10 @@ function LogsPanel({ filters }: { filters: MonitoringFilters }) {
                 e.target.value === 'server' ? { target: 'server' } : { target: 'node' })}>
             <option value="node">Connected Node</option><option value="server">Atlas Server diagnostics</option>
         </select></label></div>
+        <div className="monitoring-source-guide" role="group" aria-label="Log source boundaries">
+            <div><strong>Node tails</strong><span>Approved stdout, stderr or Linux service journal. On-demand, bounded and not an archive.</span></div>
+            <div><strong>Server signals</strong><span>Fixed-code diagnostics only: current process or best-effort retained history, not Docker logs.</span></div>
+        </div>
         {target === 'server' ? <ServerDiagnosticsPanel filters={filters} /> : <NodeLogsPanel filters={filters} />}
     </>;
 }
@@ -427,7 +467,7 @@ function MonitoringHealthPanel() {
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
         return () => controller.abort();
     }, [refresh]);
-    const badge = (status: string) => status === 'healthy' || status === 'reachable' ? 'success' : 'muted';
+    const badge = (status: string) => ['healthy', 'reachable', 'available', 'caught-up'].includes(status) ? 'success' : 'muted';
     const displayedOverall = snapshot ? displayedHealthOverall(snapshot) : 'unknown';
     return <section className="workspace-section" aria-label="Live operational health">
         <div className="section-heading"><h2>Live operational health</h2>
@@ -437,6 +477,12 @@ function MonitoringHealthPanel() {
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
             <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
+            <div className="monitoring-health-summary" role="group" aria-label="Health signal summary">
+                <div><strong>{snapshot.server.database.status}</strong><small>Database</small></div>
+                <div><strong>{snapshot.diagnostics?.status ?? 'unknown'}</strong><small>Diagnostic archive</small></div>
+                <div><strong>{snapshot.diagnostics?.retentionCleanup ?? 'unknown'}</strong><small>Physical expiry</small></div>
+                <div><strong>{snapshot.nodes.available ? snapshot.nodes.summary.healthy + ' / ' + snapshot.nodes.summary.total : 'unknown'}</strong><small>Healthy Nodes</small></div>
+            </div>
             <div className="workspace-row"><span className="row-copy"><strong>Atlas Server · database</strong>
                 <small>{snapshot.server.database.status === 'reachable'
                     ? `Database query succeeded · ${snapshot.server.database.latencyMs ?? '—'} ms · Server uptime ${Math.floor(snapshot.server.uptimeSeconds / 60)} min`
