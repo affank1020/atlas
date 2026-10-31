@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically check immutable Atlas Linux Node releases (%i)
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=15min
+AccuracySec=1min
+Persistent=true
+Unit=atlas-node-update-check@%i.service
+
+[Install]
+WantedBy=timers.target

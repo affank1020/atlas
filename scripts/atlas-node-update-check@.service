@@ -1,0 +1,32 @@
+[Unit]
+Description=Check available Atlas Linux Node releases (%i)
+Documentation=https://github.com/affank1020/atlas/blob/main/docs/LINUX_NODE_LIFECYCLE.md
+ConditionPathExists=/usr/local/bin/atlas-node-update
+ConditionPathExists=/opt/atlas-node/current
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Instance name is an explicitly provisioned ordinary operator user.
+# Do not run this service as root or as the Node's own service account.
+User=%i
+ExecStart=/usr/local/bin/atlas-node-update check --json
+WorkingDirectory=/
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=/nonexistent
+TimeoutStartSec=60s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
