@@ -216,11 +216,62 @@ class RealMacLaunchdCheckOnly(unittest.TestCase):
         # Probe the actual watchdog's known per-user launchd shape, without
         # installing or restarting a Node service. With no pending journal,
         # the real watchdog process performs only its safe no-op recover.
-        operator.lifecycle.manage(self.layout, ["install-watchdog"])
-        operator.lifecycle.require_watchdog(self.layout)
-        self.assertTrue(
-            operator.lifecycle.launch_loaded(self.layout, self.layout.recovery_target)
-        )
+        # Isolate the real launchd process's stdout/stderr to a path unique
+        # to this acceptance run. A loaded plist alone does not prove the
+        # RunAtLoad interpreter actually ran the watchdog's recover command.
+        stdout = self.test_logs_dir / f"recover-acceptance-{RUN_ID}-{os.getpid()}.log"
+        stderr = self.test_logs_dir / f"recover-acceptance-{RUN_ID}-{os.getpid()}-error.log"
+        for log in (stdout, stderr):
+            self.assertFalse(log.exists() or log.is_symlink(),
+                             "Refusing to reuse a watchdog execution log.")
+            self.addCleanup(lambda path=log: path.unlink(missing_ok=True)
+                            if not path.is_symlink() else None)
+
+        original_plist = operator.lifecycle.watchdog_plist
+
+        def test_scoped_plist(layout, script):
+            job = plistlib.loads(original_plist(layout, script))
+            job["StandardOutPath"] = str(stdout)
+            job["StandardErrorPath"] = str(stderr)
+            return plistlib.dumps(job, fmt=plistlib.FMT_XML)
+
+        # Patch *only the test job's log destinations*, not the script the
+        # real launchd process executes or its recovery command.
+        with patch.object(operator.lifecycle, "watchdog_plist",
+                          side_effect=test_scoped_plist):
+            operator.lifecycle.manage(self.layout, ["install-watchdog"])
+            operator.lifecycle.require_watchdog(self.layout)
+            self.assertTrue(
+                operator.lifecycle.launch_loaded(self.layout, self.layout.recovery_target)
+            )
+
+            deadline = time.monotonic() + 30
+            observed = ""
+            exit_state = ""
+            while time.monotonic() < deadline:
+                if stdout.is_file() and not stdout.is_symlink():
+                    observed = stdout.read_text()
+                exit_state = operator.lifecycle.command(
+                    "launchctl", "print", self.layout.recovery_target,
+                    capture=True,
+                )
+                # The installed lifecycle prints this only when the actual
+                # recover action successfully returns with no pending journal.
+                # Requiring a clean launchd exit guards against a process
+                # that printed the message but later crashed.
+                if ("No overdue recovery." in observed and
+                        "last exit code = 0" in exit_state):
+                    break
+                time.sleep(0.25)
+            else:
+                self.fail("Real watchdog RunAtLoad did not successfully recover: "
+                          f"stdout={observed!r}; launchd exit={exit_state[-700:]!r}; "
+                          f"stderr={stderr.read_text()[-700:] if stderr.is_file() else ''!r}")
+            self.assertFalse(stderr.is_symlink())
+            if stderr.exists():
+                self.assertEqual(stderr.read_text(), "",
+                                 "Real watchdog wrote unexpected stderr.")
+
         self.assertFalse(self.layout.plist.exists())
         self.assertFalse(self.layout.pending.exists())
 
