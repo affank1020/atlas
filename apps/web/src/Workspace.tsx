@@ -7,7 +7,7 @@ import type { Project } from './types';
 import type { AtlasNode } from './Nodes';
 import { callTool } from './api';
 import './workspace-overview.css';
-import { SkeletonRows } from './Skeletons';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 export function WorkspaceHeading({ title, copy, children }: { title: string; copy: string; children?: React.ReactNode }) {
     return <header className="page-head"><div><p className="eyebrow">Atlas workspace</p><h1>{title}</h1><p>{copy}</p></div><div className="actions">{children}</div></header>;
@@ -73,7 +73,7 @@ function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects, onDetai
         <div className="overview-card-feature"><strong>{total ?? '—'}</strong><span>Hosted across {nodes?.length ?? '—'} nodes</span></div>
         {loading && !items.length && !failed && <SkeletonRows label="Loading workspace details" variant="list" rows={3} />}
         {!loading && items.length === 0 && <p className="overview-muted">{failed ? 'Open the Nodes view to inspect assignments.' : 'No workspaces currently assigned.'}</p>}
-        <div className="overview-compact-list">{!loading && items.slice(0, 5).map(workspace =>
+        <div className="overview-compact-list">{items.slice(0, 5).map(workspace =>
             <a key={workspace.id} href={`#/workspaces?workspace=${encodeURIComponent(workspace.id)}`} className="overview-compact-row">
                 <span className="overview-item-main"><strong>{workspace.name}</strong><small>{projectNames.get(workspace.projectId ?? '') ?? workspace.nodeName}</small></span>
                 <span aria-hidden="true">↗</span>
@@ -136,16 +136,16 @@ export function WorkspaceHome() {
             <a href="#/monitoring">Monitoring <span aria-hidden="true">↗</span></a>
         </aside>}
         <div className="overview-metrics" aria-label="Atlas totals">
-            <a href="#/projects" className="overview-metric"><span>Projects</span><strong>{projects.data?.length ?? '—'}</strong><small>Active projects</small></a>
-            <a href="#/data" className="overview-metric"><span>Data stores</span><strong>{status.data?.stores ?? '—'}</strong><small>{status.error ? 'Unavailable' : 'Atlas storage'}</small></a>
-            <a href="#/data" className="overview-metric"><span>Records</span><strong>{status.data?.records?.toLocaleString() ?? '—'}</strong><small>{status.error ? 'Unavailable' : 'Stored records'}</small></a>
-            <a href="#/nodes" className="overview-metric"><span>Connected nodes</span><strong>{online ?? '—'}<em>{nodes.data ? ` / ${nodes.data.length}` : ''}</em></strong><small>{workspaceCount ?? '—'} hosted workspaces</small></a>
+            <a href="#/projects" className="overview-metric"><span>Projects</span><strong>{projects.data?.length ?? (projects.isLoading && !projects.error ? <Skeleton width={52} height={28} /> : '—')}</strong><small>Active projects</small></a>
+            <a href="#/data" className="overview-metric"><span>Data stores</span><strong>{status.data?.stores ?? (status.isLoading && !status.error ? <Skeleton width={52} height={28} /> : '—')}</strong><small>{status.error ? 'Unavailable' : 'Atlas storage'}</small></a>
+            <a href="#/data" className="overview-metric"><span>Records</span><strong>{status.data?.records?.toLocaleString() ?? (status.isLoading && !status.error ? <Skeleton width={67} height={28} /> : '—')}</strong><small>{status.error ? 'Unavailable' : 'Stored records'}</small></a>
+            <a href="#/nodes" className="overview-metric"><span>Connected nodes</span><strong>{online ?? (nodes.isLoading && !nodes.error ? <Skeleton width={40} height={28} /> : '—')}<em>{nodes.data ? ` / ${nodes.data.length}` : ''}</em></strong><small>{workspaceCount ?? (nodes.isLoading && !nodes.error ? <Skeleton width={26} height={11} /> : '—')} hosted workspaces</small></a>
         </div>
         <div className="overview-content-grid">
             <div className="overview-content-column">
                 <section className="overview-card overview-projects" aria-label="Projects overview">
                     <div className="overview-card-head"><h2>Projects</h2><a href="#/projects">All projects <span aria-hidden="true">↗</span></a></div>
-                    <QueryNotice loading={projects.isLoading} error={projects.error} retry={projects.refetch} />
+                    <QueryNotice loading={projects.isLoading && !projects.data} error={projects.error} retry={projects.refetch} />
                     <ProjectRows projects={topProjects} />
                     {!projects.isLoading && !projects.error && projects.data?.length === 0 && <p className="overview-muted">No active projects.</p>}
                 </section>
@@ -157,9 +157,9 @@ export function WorkspaceHome() {
                     <div className="overview-service">
                         <span className="overview-item-main">
                             <strong>Atlas Server</strong>
-                            <small>{status.data ? `v${status.data.version} · ${status.data.storage}` : status.error ? 'Unable to reach server' : 'Checking connection…'}</small>
+                            <small>{status.data ? `v${status.data.version} · ${status.data.storage}` : status.error ? 'Unable to reach server' : <Skeleton width={110} height={12} />}</small>
                         </span>
-                        <span className={`overview-status ${status.error ? 'offline' : status.data ? 'online' : 'pending'}`}>{status.error ? 'Unavailable' : status.data ? 'Connected' : 'Checking'}</span>
+                        <span className={`overview-status ${status.error ? 'offline' : status.data ? 'online' : 'pending'}`}>{status.error ? 'Unavailable' : status.data ? 'Connected' : <Skeleton width={65} height={12} />}</span>
                     </div>
                     {nodes.data?.map(node => <div className="overview-service" key={node.id}>
                         <span className="overview-item-main"><strong>{node.name}</strong><small>{node.platform === 'linux' ? 'Linux node / server runtime' : node.platform === 'darwin' ? 'macOS node' : node.platform || 'Node'} · {node.hostedWorkspaceCount} workspaces</small></span>
@@ -194,7 +194,7 @@ export function WorkspaceLibrary({ kind }: { kind: 'views' | 'data' }) {
     const visibleProjects = (projects.data ?? []).filter(project => !selected || project.id === selected);
     return <>
         <WorkspaceHeading title={kind === 'views' ? 'Views' : 'Data'} copy={kind === 'views' ? 'Explore the interfaces built around your projects.' : 'The stores and records behind your work, organised by project.'} />
-        <QueryNotice loading={projects.isLoading} error={projects.error} retry={projects.refetch} />
+        <QueryNotice loading={projects.isLoading && !projects.data} error={projects.error} retry={projects.refetch} />
         {!!projects.data?.length && <div className="browse-toolbar">
             <label>Project<select value={selected} onChange={event => setSelected(event.target.value)}>
                 <option value="">All projects</option>
