@@ -3,6 +3,7 @@ import { callTool } from './api';
 import type { AuditEvent } from './types';
 import { clientName, filterActivity, presentActivity, readable } from './activity';
 import { monitoringHash } from './monitoringLinks';
+import { SkeletonRows } from './Skeletons';
 import './activity.css';
 
 type WorkspaceName = { id: string; name: string };
@@ -88,14 +89,14 @@ function ActivityReader({ projectId, title, refreshVersion }: { projectId?: stri
     const visible = filterActivity(items, category, client, workspaceId);
     const workspaceOptions = { ...names, ...Object.fromEntries(items.filter(i => i.workspaceId).map(i => [i.workspaceId!, i.workspaceName!])) };
     return <section className="panel activity-panel" aria-label={title}>
-        <div className="panel-head"><div><p className="eyebrow">Workspace Activity · Core · Views</p><h2>{title}</h2></div><div className="actions"><small role="status">{updated ? `Auto-refresh · Updated ${updated}` : 'Loading activity…'}</small><button className="ghost" onClick={() => setManualRefresh(value => value + 1)}>Refresh</button></div></div>
+        <div className="panel-head"><div><p className="eyebrow">Workspace Activity · Core · Views</p><h2>{title}</h2></div><div className="actions"><small role="status">{updated ? `Auto-refresh · Updated ${updated}` : '—'}</small><button className="ghost" onClick={() => setManualRefresh(value => value + 1)}>Refresh</button></div></div>
         <div className="activity-filters">
             <label>Category<select value={category} onChange={e => setCategory(e.target.value)}>{[['', 'All'], ['workspace', 'Workspace'], ['files', 'Files'], ['unity', 'Unity'], ['git', 'Git'], ['dev', 'Development'], ['error', 'Errors'], ['node', 'Nodes'], ['backup', 'Backups'], ['core', 'Core'], ['view', 'Views']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Client<select value={client} onChange={e => setClient(e.target.value)}><option value="">All clients</option>{[...new Set([...items.map(i => clientName(i.client)), ...(client ? [client] : [])])].sort().map(c => <option key={c} value={c}>{clientName(c)}</option>)}</select></label>
             <label>Workspace<select value={workspaceId} onChange={e => { setWorkspaceId(e.target.value); setClient(''); }}><option value="">All workspaces</option>{Object.entries(workspaceOptions).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
         </div>
         {error && <p className="activity-error" role="alert">Activity could not refresh: {error}. Retrying automatically.</p>}
-        <div className="activity-scroll" ref={viewport}>{visible.map(item => <ActivityRow key={item.id} item={item} />)}{loaded && visible.length === 0 && <p className="empty">No activity matches these filters.</p>}</div>
+        <div className="activity-scroll" ref={viewport}>{!loaded && !error && <SkeletonRows label="Loading activity" variant="activity" rows={5} />}{visible.map(item => <ActivityRow key={item.id} item={item} />)}{loaded && visible.length === 0 && <p className="empty">No activity matches these filters.</p>}</div>
         <p className="activity-footnote">Latest 200 audit events in this scope · Paired requests and results are grouped · Expand an action for details</p>
     </section>;
 }
