@@ -12,19 +12,19 @@ export function macShareSocketPath(): string {
 
 const MAX_LOCAL_REQUEST = 80 * 1024; // UTF-8 JSON up to 16,384 UTF-16 characters.
 type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare' | 'queueDeviceShare'>;
-type Approve = (targetId: string, text: string) => Promise<boolean>;
+type Approve = (targetId: string, text: string, mode?: 'live' | 'queue') => Promise<boolean>;
 
 /** A local socket caller is not proof that the user consented. Require a
  * separate macOS GUI decision before forwarding any clipboard content.
  * Only a short preview enters osascript stdin, never argv or Node logs.
  */
-export async function promptMacOutgoingShare(targetId: string, text: string): Promise<boolean> {
+export async function promptMacOutgoingShare(targetId: string, text: string, mode: 'live' | 'queue' = 'live'): Promise<boolean> {
     if (process.platform !== 'darwin') return false;
     const shortId = targetId.slice(0, 8);
     const preview = text.slice(0, 150)
         .replace(/[\u0000-\u001f\u007f]/g, ' ')
         .replace(/[\\"]/g, char => '\\' + char);
-    const script = 'set response to display dialog "Send Atlas clipboard to Node ' +
+    const script = 'set response to display dialog "' + (mode === 'queue' ? 'Queue Atlas text on Server for Node ' : 'Send Atlas clipboard to Node ') +
         shortId + '?" & return & return & "' + preview +
         '" with title "Atlas" buttons {"Cancel", "Send"} default button "Cancel" giving up after 15\n' +
         'return button returned of response\n';
@@ -40,7 +40,7 @@ export async function promptMacOutgoingShare(targetId: string, text: string): Pr
         const timeout = setTimeout(() => { proc.kill('SIGKILL'); finish(false); }, 18_000);
         proc.stdout.on('data', bytes => { output = (output + String(bytes)).slice(0, 16); });
         proc.on('error', () => finish(false));
-        proc.on('close', code => finish(code === 0 && output.trim() === 'Send'));
+        proc.on('close', code => finish(code === 0 && output.trim() === (mode === 'queue' ? 'Queue' : 'Send')));
         proc.stdin.on('error', () => undefined);
         proc.stdin.end(script);
     });
@@ -137,7 +137,7 @@ export async function startMacShareControlServer(
                             throw Error('Invalid request');
                         // Same explicit native approval as live Send, including
                         // the destination. Never enqueue from an IPC call alone.
-                        if (!await approve(data.targetNodeId,data.text) || socket.destroyed) {
+                        if (!await approve(data.targetNodeId,data.text,'queue') || socket.destroyed) {
                             result = { cancelled: true };
                         } else {
                             result = await node.queueDeviceShare(
