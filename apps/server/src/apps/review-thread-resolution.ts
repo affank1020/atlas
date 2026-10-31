@@ -172,8 +172,13 @@ export class ReviewThreadResolutionService {
         const ordered=[...runs].sort((a,b)=>
             String(b.data.reviewedAt).localeCompare(String(a.data.reviewedAt))||
             a.id.localeCompare(b.id));
-        const run=ordered[0];
-        if(!run||run.id!==runId)
+        const run=runs.find(x=>x.id===runId&&!x.archivedAt);
+        if(!run)
+            throw new AtlasError('Review run is not available for this PR.','CONFLICT');
+        // Existing one-shot claims remain reconcilable after a newer review.
+        // A *new* mutation must still originate from the latest round.
+        const existing=parsedClaim(run,lineage);
+        if(!existing&&ordered[0]?.id!==runId)
             throw new AtlasError('Only the latest review run may initiate thread resolution.','CONFLICT');
         const coverage=run.data.coverage;
         const actor=object(coverage)&&object(coverage.authenticatedCaller)
@@ -226,7 +231,7 @@ export class ReviewThreadResolutionService {
             if(other.id!==run.id&&parsedClaim(other,lineage))
                 throw new AtlasError('This root already has a past resolution attempt.','CONFLICT');
         }
-        return {run,claim:parsedClaim(run,lineage),
+        return {run,claim:existing,
             threadRoot:{id:fix.rootCommentId as number,marker:origin.marker as string,
                 bodySha256:origin.bodySha256 as string,
                 originalCommitSha:origin.headSha as string,path:origin.path as string,
