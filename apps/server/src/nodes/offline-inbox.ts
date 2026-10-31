@@ -29,7 +29,7 @@ export class DeviceOfflineInbox {
         const source = this.uuid(input.sourceId), target = this.uuid(input.targetId), id = this.uuid(input.deliveryId);
         if (source === target || !(await this.allowed(source,target)))
             throw new AtlasError('Offline share not authorised.', 'SHARE_DENIED');
-        const bytes = validateInboxText(input.text);
+        validateInboxText(input.text);
         const digest = digestInboxSubmission(target, input.text);
         const envelope = sealInboxText(this.key,source,target,id,input.text);
         const client = await this.pool.connect();
@@ -113,9 +113,9 @@ export class DeviceOfflineInbox {
         const result = await this.pool.query(`
             UPDATE device_inbox
             SET state=$3, decided_at=now(),
-                payload_ciphertext=decode('00','hex'),
-                payload_nonce=decode('000000000000000000000000','hex'),
-                payload_tag=decode('00000000000000000000000000000000','hex')
+                payload_ciphertext=NULL,
+                payload_nonce=NULL,
+                payload_tag=NULL
             WHERE target_node_id=$1 AND id=$2 AND state='queued' AND expires_at>now()
             RETURNING id
         `,[target,id,decision]);
