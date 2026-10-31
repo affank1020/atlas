@@ -304,7 +304,9 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
         return () => controller.abort();
     }, [limit, refresh, history]);
-    const events = result?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];
+    // A bookmark/source switch must never briefly render rows from the other source.
+    const visible = result?.source === (history ? 'atlas-server-history' : 'atlas-server-process') ? result : undefined;
+    const events = visible?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];
     const output = events.map(event => event.at + ' [' + event.level + '] ' + event.message).join('\n');
     return <section className="panel activity-panel" aria-label="Server diagnostics">
         <div className="panel-head"><div><p className="eyebrow">{history ? 'Best-effort retained fixed codes' : 'Current server process · fixed event codes'}</p><h2>Atlas Server diagnostics</h2></div>
@@ -326,9 +328,9 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
             : 'Only non-sensitive operational event codes from this Atlas Server process are shown. This is not Docker stdout/stderr or a multi-instance archive.'}</p>
         {busy && <p role="status" className="empty">Loading server diagnostics…</p>}
         {error && <p role="alert" className="activity-error">Server diagnostics unavailable: {error}</p>}
-        {result && !result.available && <p className="empty">Server diagnostic source unavailable or disabled. Check database migration/connectivity for retained events.</p>}
-        {result?.available && <div className="monitoring-log-result">
-            <p>{history ? 'Available events from the last 14 days · coverage may be incomplete' : 'Since ' + (result.startedAt ? new Date(result.startedAt).toLocaleString() : 'this restart')}{result.truncated ? ' · More events exist than the current limit' : ''}{history && result.droppedSinceStart ? ' · ' + result.droppedSinceStart + ' writes lost in this process' : ''}</p>
+        {visible && !visible.available && <p className="empty">{history ? 'Retained Server diagnostics unavailable or disabled. Check database migration and connectivity.' : 'Server diagnostics are disabled on this deployment.'}</p>}
+        {visible?.available && <div className="monitoring-log-result">
+            <p>{history ? 'Available events from the last 14 days · coverage may be incomplete' : 'Since ' + (visible.startedAt ? new Date(visible.startedAt).toLocaleString() : 'this restart')}{visible.truncated ? ' · More events exist than the current limit' : ''}{history && visible.droppedSinceStart ? ' · ' + visible.droppedSinceStart + ' writes lost in this process' : ''}</p>
             <div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(output)}>Copy visible diagnostics</button></div>
             <pre>{output || (search ? '(no matching events in loaded diagnostics)' : '(no diagnostic events)')}</pre>
         </div>}
