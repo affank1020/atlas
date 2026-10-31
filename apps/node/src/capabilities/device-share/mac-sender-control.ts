@@ -26,7 +26,7 @@ export async function promptMacOutgoingShare(targetId: string, text: string, mod
         .replace(/[\\"]/g, char => '\\' + char);
     const script = 'set response to display dialog "' + (mode === 'queue' ? 'Queue Atlas text on Server for Node ' : 'Send Atlas clipboard to Node ') +
         shortId + '?" & return & return & "' + preview +
-        '" with title "Atlas" buttons {"Cancel", "Send"} default button "Cancel" giving up after 15\n' +
+        '" with title "Atlas" buttons {"Cancel", "' + (mode === 'queue' ? 'Queue' : 'Send') + '"} default button "Cancel" giving up after 15\n' +
         'return button returned of response\n';
     return new Promise(resolve => {
         const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'ignore'] });
