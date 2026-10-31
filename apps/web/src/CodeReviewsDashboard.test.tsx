@@ -63,7 +63,7 @@ test('dashboard aggregates review productivity without confusing review rounds w
     expect(screen.getByText('Findings recorded').parentElement).toHaveTextContent('4');
     expect(screen.getByText('Findings / review').parentElement).toHaveTextContent('1.33');
     expect(screen.getByText('PRs reviewed').parentElement).toHaveTextContent('2');
-    expect(screen.queryByText(/^1st review$|^\\d+ re-reviews?$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^1st review$|^\d+ re-reviews?$/i)).not.toBeInTheDocument();
     expect(screen.getAllByRole('combobox', { name: 'Filter pull requests' })).toHaveLength(1);
     expect(screen.getByText('2.0 / round')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(2);
