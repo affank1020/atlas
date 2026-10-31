@@ -4,16 +4,19 @@ import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +41,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -343,8 +349,27 @@ private fun SendContent(
         Button(onClick = onLoadDeferredShare, enabled = !sharePending,
             modifier = Modifier.testTag("load-next-share")) { Text("Load newest shared item") }
     }
-    if (session.error != null) InfoCard("Share not imported", session.error)
-    InfoCard("Share to Atlas", "Text and links from Android's Share menu appear here.")
+    if (session.error != null) InfoCard(
+        if (session.error == "Opening shared image…") "Importing image" else "Share not imported",
+        session.error,
+    )
+    if (session.image != null) {
+        val image = session.image
+        val thumbnail = remember(image) { thumbnailForShare(image.bytes) }
+        InfoCard("Image imported", image.mimeType + " · " + (image.sizeBytes / 1024) +
+            " KiB. Image delivery is not enabled yet; this image has NOT been sent.")
+        if (thumbnail != null) {
+            Image(
+                bitmap = thumbnail,
+                contentDescription = "Preview of shared image",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                    .testTag("shared-image-preview"),
+            )
+        }
+        Text("Editing the text below will discard this temporary image. Atlas does not save image drafts.")
+    }
+    InfoCard("Share to Atlas", "Text, links and PNG/JPEG screenshots from Android's Share menu appear here.")
     OutlinedTextField(
         value = session.draft,
         onValueChange = onEditDraft,
@@ -384,7 +409,7 @@ private fun SendContent(
             !recipientsLoading && recipientsError == null &&
             recipients.any { it.available && it.nodeId.equals(shareTarget, ignoreCase = true) } &&
             validNodeId(shareTarget) && !shareTarget.equals(node.nodeId, ignoreCase = true) &&
-            session.draft.isNotBlank() && !sharePending,
+            session.image == null && session.draft.isNotBlank() && !sharePending,
         modifier = Modifier.testTag("share-submit"),
     ) { Text(if (sharePending) "Waiting for approval…" else "Send to selected Node") }
     InfoCard("Delivery status", shareStatus)
@@ -469,3 +494,20 @@ private fun DevicePairing(
     Text("Requires valid HTTPS/WSS. The pairing ticket is never saved; the issued Node credential is protected using Android Keystore.",
         style = MaterialTheme.typography.bodySmall)
 }
+
+
+// Decode a *sampled* preview only: never allocate a full-resolution bitmap
+// for an untrusted image provider. The full original stays in volatile memory.
+private fun thumbnailForShare(bytes: ByteArray): ImageBitmap? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
+        bounds.outWidth > MAX_IMAGE_DIMENSION || bounds.outHeight > MAX_IMAGE_DIMENSION ||
+        bounds.outWidth.toLong() * bounds.outHeight.toLong() > 64_000_000L) {
+        return@runCatching null
+    }
+    var sample = 1
+    while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+}.getOrNull()

@@ -3,6 +3,8 @@ package dev.affankhan.atlas.node
 import android.app.Application
 import java.util.UUID
 import android.content.Intent
+import android.net.Uri
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -23,7 +25,13 @@ internal const val RECIPIENT_LOOKUP_TIMEOUT_MS = 10_000L
 // A little beyond the gateway's 2-second cooldown avoids boundary races.
 internal const val RECIPIENT_REFRESH_COOLDOWN_MS = 2_500L
 
-internal data class ShareDelivery(val id: Long, val text: String? = null, val error: String? = null)
+internal data class ShareDelivery(
+    val id: Long,
+    val text: String? = null,
+    val error: String? = null,
+    val image: SharedImageDraft? = null,
+    val importingImage: Boolean = false,
+)
 
 internal enum class Section(val label: String) {
     DEVICES("Devices"), SEND("Send"), INBOX("Inbox"), SETTINGS("Settings")
@@ -33,6 +41,8 @@ internal enum class Section(val label: String) {
 internal data class CompanionSession(
     val section: Section = Section.DEVICES,
     val draft: String = "",
+    val image: SharedImageDraft? = null,
+    val importingImage: Boolean = false,
     val error: String? = null,
     val lastDeliveryId: Long = 0,
     val deferredShare: ShareDelivery? = null,
@@ -51,15 +61,31 @@ internal data class CompanionSession(
         return copy(
             section = Section.SEND,
             draft = delivery.text.orEmpty(),
+            image = delivery.image,
+            importingImage = delivery.importingImage,
             error = delivery.error,
             lastDeliveryId = delivery.id,
             deferredShare = null,
         )
     }
 
+    /** Only an unfinished image placeholder can be completed. Editing the
+     * active draft must not invalidate a separate deferred import, and a
+     * completed/edited draft must never be resurrected by a late provider read.
+     */
+    fun completeImageImport(delivery: ShareDelivery): CompanionSession = when {
+        deferredShare?.id == delivery.id && deferredShare.importingImage ->
+            copy(deferredShare = delivery)
+        lastDeliveryId == delivery.id && importingImage ->
+            copy(image = delivery.image, error = delivery.error, importingImage = false)
+        else -> this
+    }
+
     fun navigate(destination: Section): CompanionSession = copy(section = destination)
     fun editDraft(value: String): CompanionSession = copy(
         draft = value.take(MAX_SHARE_CHARACTERS),
+        image = null,
+        importingImage = false,
         error = null,
     )
 }
@@ -73,6 +99,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private val transport = AtlasTransport()
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    private var importSequence = 0L
     private var connectionGeneration = 0L
     private var reconnectDelayMs = 1_000L
     private var pendingRetry: Runnable? = null
@@ -435,6 +462,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun sendCurrentDraft() {
+        if (session.image != null) {
+            shareStatus = "The image is imported locally; binary delivery is not available yet."
+            return
+        }
         val target = shareTarget.trim()
         val text = session.draft
         val ws = socket
@@ -473,6 +504,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         sharePending = false
         shareStatus = "Nothing sent yet"
         inboxStatus = "No incoming shares yet."
+        importSequence++
+        session = CompanionSession()
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
         foreground = wasForeground
@@ -497,14 +530,82 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     fun navigate(destination: Section) { session = session.navigate(destination) }
     fun editDraft(value: String) {
+        // The reducer cancels a loading *active* image. A separate deferred
+        // screenshot keeps loading while the user edits the sent text draft.
         session = session.editDraft(value)
         if (!sharePending) shareStatus = "Nothing sent yet"
     }
 
     fun receive(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return
+        if (intent?.action != Intent.ACTION_SEND) return
+        val type = intent.type ?: return
+        if (type != "text/plain" && !type.startsWith("image/")) return
+        val nextId = ++importSequence
+        if (!sharePending) shareStatus = "Nothing sent yet"
+        if (type.startsWith("image/")) {
+            @Suppress("DEPRECATION")
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+            if (uri?.scheme != "content") {
+                session = session.receiveShare(
+                    ShareDelivery(nextId, error = "The shared image must use a readable content URI."),
+                    sending = sharePending,
+                )
+                return
+            }
+            session = session.receiveShare(
+                ShareDelivery(nextId, error = "Opening shared image…", importingImage = true),
+                sending = sharePending,
+            )
+            viewModelScope.launch {
+                val delivery = try {
+                    val image = withContext(Dispatchers.IO) {
+                        // MIME/provider queries may perform I/O; keep them off the UI thread.
+                        val resolver = getApplication<Application>().contentResolver
+                        val providerType = runCatching { resolver.getType(uri) }.getOrNull()
+                        // Some Sharesheet producers use image/* instead of the actual subtype.
+                        val specificType = when {
+                            type == "image/png" || type == "image/jpeg" -> type
+                            type == "image/jpg" -> "image/jpeg"
+                            providerType == "image/png" -> "image/png"
+                            providerType == "image/jpeg" || providerType == "image/jpg" -> "image/jpeg"
+                            else -> throw IllegalArgumentException("Unsupported image format.")
+                        }
+                        val imported = resolver.openInputStream(uri)?.use {
+                            readSharedImage(it, specificType)
+                        } ?: throw IllegalArgumentException("The image could not be opened.")
+                        // Validate dimensions without allocating a full bitmap.
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(imported.bytes, 0, imported.bytes.size, bounds)
+                        require(bounds.outWidth in 1..MAX_IMAGE_DIMENSION &&
+                            bounds.outHeight in 1..MAX_IMAGE_DIMENSION &&
+                            bounds.outWidth.toLong() * bounds.outHeight.toLong() <= 64_000_000L) {
+                            "The shared image has invalid or excessive dimensions."
+                        }
+                        imported
+                    }
+                    ShareDelivery(nextId, image = image)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    ShareDelivery(nextId, error = "Could not read this image (PNG/JPEG, maximum 8 MB).")
+                }
+                // New Sharesheet events supersede older imports. The reducer
+                // independently rejects a late completion after text edits or
+                // after the pending placeholder has been replaced/loaded.
+                if (nextId != importSequence) return@launch
+                val completed = session.completeImageImport(delivery)
+                if (completed === session) return@launch
+                session = completed
+                if (!sharePending && completed.lastDeliveryId == nextId) {
+                    shareStatus = if (delivery.image != null)
+                        "Image imported locally; sending images is not yet supported."
+                    else "Image import failed; nothing was sent."
+                }
+            }
+            return
+        }
         val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
-        val nextId = maxOf(session.lastDeliveryId, session.deferredShare?.id ?: 0) + 1
         val delivery = when {
             text.isBlank() -> ShareDelivery(nextId, error = "The shared item did not contain text.")
             text.length > MAX_SHARE_CHARACTERS -> ShareDelivery(
