@@ -154,7 +154,9 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     const advancedCount = advancedKeys.filter(key =>
         Boolean(filters[key]) && !(key === 'projectId' && projectId)).length;
     const hasActiveFilters = Object.entries(filters).some(([key, value]) =>
-        Boolean(value) && key !== 'live' && key !== 'offset' && !(key === 'projectId' && projectId));
+        Boolean(value) && key !== 'live' && key !== 'offset' && !(key === 'projectId' && projectId))
+        || search !== (filters.search ?? '')
+        || advancedKeys.some(key => (draft[key] ?? '') !== (filters[key] ?? ''));
     return <section className="panel activity-panel" aria-label={projectId ? 'Project activity' : 'Monitoring activity'}>
         <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>{projectId ? 'Project activity' : 'Activity'}</h2></div><div className="actions">
             {projectId && <a className="monitoring-project-link" href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
@@ -172,7 +174,8 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
             <button type="button" className="ghost" disabled={!hasActiveFilters}
-                onClick={() => navigate({ live: filters.live })}>Reset filters</button>
+                onClick={() => { setSearch(''); setDraft(projectId ? { projectId } : {});
+                    navigate({ live: filters.live }); }}>Reset filters</button>
         </div>
         <details className="monitoring-advanced-filters">
             <summary>Scope and time filters{advancedCount ? ' · ' + advancedCount + ' active' : ''}</summary>
