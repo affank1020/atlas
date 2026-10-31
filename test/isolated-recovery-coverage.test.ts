@@ -30,6 +30,10 @@ async function fixture(){
     await files.pool.query(
         "INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Coverage',now(),now())",
         [project]);
+    // Portfolio's synthetic Project ID must exist for recovery-run foreign keys.
+    await files.pool.query(
+        "INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Portfolio',now(),now())",
+        [PORTFOLIO_PROJECT_ID]);
     const upload=async(owner:{kind:"project"|"workspace"|"application";id:string},value:string)=>{
         const file=await files.upload({owner,fileName:value+".txt",
             mimeType:"text/plain",bytes:Buffer.from(value)});
