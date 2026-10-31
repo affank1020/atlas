@@ -36,6 +36,7 @@
     "files:r2:isolated-recovery-coverage": "node apps/server/dist/server/isolated-recovery-coverage-cli.js",
     "files:r2:project-cutover-check": "node apps/server/dist/server/project-cutover-cli.js",
     "files:r2:project-cutover-rehearsal": "node apps/server/dist/server/project-cutover-rehearsal-cli.js",
+    "files:r2:project-key-cutover": "node apps/server/dist/server/project-key-cutover-cli.js",
     "files:staging:maintenance": "node apps/server/dist/server/node-transfer-maintenance-cli.js",
     "files:node:enqueue": "node apps/node/dist/core/file-queue-cli.js enqueue",
     "files:node:queue-status": "node apps/node/dist/core/file-queue-cli.js status",
