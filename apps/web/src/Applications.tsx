@@ -7,7 +7,7 @@ const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: mo
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
 const CodeReviews = lazy(() => import('./CodeReviews').then(module => ({ default: module.CodeReviews })));
 import './applications.css';
-import { SkeletonCards, SkeletonApplicationWindow } from './Skeleton';
+import { SkeletonProjectApplications, SkeletonApplicationWindow } from './Skeleton';
 
 export type ApplicationManifest = {
     type: string;
@@ -33,16 +33,16 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
     return <section className="panel project-applications" aria-label="Project Applications">
         <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{busy ? '— available' : `${applications.length} available`} <button onClick={() => void refetch()}>Refresh</button></span></div>
         <p className="application-section-copy">Applications open within Atlas. Unlike Views, they provide dedicated tools and workflows.</p>
-        {busy && applications.length === 0 && <SkeletonCards label="Loading project applications" />}
+        {busy && applications.length === 0 && <SkeletonProjectApplications />}
         {error && <div role="alert" className="notice error">{error}</div>}
         {!busy && !error && applications.length === 0 && <p className="application-status">No Applications are registered in this Project yet.</p>}
-        <div className="application-grid">
+        {applications.length > 0 && <div className="application-grid">
             {applications.map(app => <article className="application-card" key={app.slug}>
                 <div className="application-card-icon" aria-hidden="true">{app.name.slice(0, 2).toUpperCase()}</div>
                 <div className="application-card-details"><h3>{app.name}</h3><p>{app.description}</p><small>{app.type} Application</small></div>
                 <a className="button application-launch" href={`#/projects/${projectId}/applications/${app.slug}`} onClick={() => rememberWork({ href: `#/projects/${projectId}/applications/${app.slug}`, name: app.name, projectId, kind: 'Application' })} aria-label={`Launch ${app.name}`}>Launch →</a>
             </article>)}
-        </div>
+        </div>}
     </section>;
 }
 
