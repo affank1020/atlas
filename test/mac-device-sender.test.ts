@@ -82,6 +82,12 @@ test('Mac Node lists recipients and sends only via existing authenticated WebSoc
                         nodeId: receiverId, name: 'Samsung', platform: 'android',
                         status: 'online', available: true,
                     }] } }));
+            } else if (msg.type === 'device.inbox.recipients') {
+                socket.send(JSON.stringify({ type:'response',requestId:msg.requestId,ok:true,
+                    result:{recipients:[{
+                        nodeId:receiverId,name:'Samsung',platform:'android',
+                        status:'offline',available:false,queueCapable:true,
+                    }]}}));
             } else if (msg.type === 'device.inbox.enqueue') {
                 queued++;
                 assert.equal(msg.targetNodeId,receiverId);
@@ -112,6 +118,11 @@ test('Mac Node lists recipients and sends only via existing authenticated WebSoc
         node.start(); await online;
         const recipients = await node.shareRecipients();
         assert.deepEqual(recipients.map(x => x.name), ['Samsung']);
+        assert.equal(Object.hasOwn(recipients[0]!, 'queueCapable'), false,
+            'legacy Mac directory must remain five-field and strict');
+        const offlineTargets = await node.inboxRecipients();
+        assert.deepEqual(offlineTargets.map(x => ({name:x.name,available:x.available,queueCapable:x.queueCapable})),
+            [{name:'Samsung',available:false,queueCapable:true}]);
         assert.deepEqual(await node.sendDeviceShare(receiverId, 'Hello from Mac 🚀'), { accepted: true });
         assert.equal(registrations, 1, 'sharing must not create a second Node session');
         assert.equal(shares, 1);
@@ -156,6 +167,10 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
             nodeId: target, name: 'Samsung', platform: 'android',
             available: true, status: 'online' as const,
         }],
+        inboxRecipients: async () => [{
+            nodeId:target,name:'Samsung',platform:'android',
+            available:false,status:'offline' as const,queueCapable:true,
+        }],
         sendDeviceShare: async (id, text) => {
             delivered++;
             assert.equal(id, target); assert.equal(text, 'secret message');
@@ -172,6 +187,12 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
     try {
         assert.equal((await stat(path)).mode & 0o077, 0);
         assert.equal((await ipc(path, { action: 'recipients' })).result.recipients[0].name, 'Samsung');
+        const live = (await ipc(path,{action:'recipients'})).result.recipients[0];
+        const queued = (await ipc(path,{action:'queueRecipients'})).result.recipients[0];
+        assert.equal(Object.hasOwn(live,'queueCapable'),false);
+        assert.equal(live.available,true);
+        assert.equal(queued.queueCapable,true);
+        assert.equal(queued.available,false);
         assert.deepEqual(await ipc(path, { action: 'send', targetNodeId: target, text: 'secret message' }),
             { ok: true, result: { accepted: true } });
         assert.equal(delivered, 1);
