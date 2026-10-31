@@ -36,7 +36,7 @@
 
 - [ ] Confirm a bounded R2 dry-run and its per-run UUID report, including `partial`, `empty`, `failed`, and `aborted` handling. Simulate a failed remote PUT in a disposable environment and verify no success is claimed after an uncertain result.
 - [ ] Confirm encrypted PostgreSQL snapshots and private manifests on the host using the documented operator procedure; do **not** mark restore tested from metadata alone. Validate in an isolated restore environment before setting any restore evidence.
-- [ ] Confirm Node technical log sources remain fixed and read-only, and that unavailable journal permissions return unavailable rather than escalating privileges.
+- [ ] Confirm Node technical log sources remain fixed and read-only. On Linux, independently verify the root-owned `/var/log/atlas-node` directory and Node-owned `service.log` file meet the exact permissions in [LINUX_NODE_PRIVATE_LOGS.md](LINUX_NODE_PRIVATE_LOGS.md), and that logrotate is configured. Read the new `service` source with at most 10 redacted lines and check its available/truncated status; **do not record contents**. A legacy explicit `journal` request must remain unavailable when the service lacks journal-read permission, without falling back to a different source or adding broad journal privileges. A missing private file must not be shown as healthy.
 - [ ] Verify a desktop and narrow mobile viewport for Monitoring Overview/Activity/Logs, focus order, text overflow, select controls and clear unknown/unavailable descriptions.
 - [ ] Record any failures and references to test fixtures, not raw outputs, under issue #110. Separate *CI passed*, *deployed smoke passed*, *fault-injection passed*, and *restore tested*.
 
