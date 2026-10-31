@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 
 /** Explicit text sharing UI with an optional app-scoped background receiver. */
 class MainActivity : ComponentActivity() {
+    private var notificationInboxRefreshPending = false
     private val model: CompanionViewModel get() = (application as AtlasNodeApp).model
 
     private val askNotifications = registerForActivityResult(
@@ -167,6 +168,10 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.startConnection()
+        if (notificationInboxRefreshPending) {
+            notificationInboxRefreshPending = false
+            model.refreshQueuedInbox()
+        }
     }
 
     override fun onStop() {
@@ -185,7 +190,13 @@ class MainActivity : ComponentActivity() {
     private fun openInboxFromNotification(intent: Intent?) {
         if (intent?.getBooleanExtra(BackgroundReceiverService.EXTRA_OPEN_INBOX,false)==true) {
             model.navigate(Section.INBOX)
-            model.refreshQueuedInbox()
+            // Activity may not have entered onStart yet. Defer until visible
+            // so a push tap reliably refreshes an already-online receiver.
+            notificationInboxRefreshPending = true
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                notificationInboxRefreshPending = false
+                model.refreshQueuedInbox()
+            }
             intent.removeExtra(BackgroundReceiverService.EXTRA_OPEN_INBOX)
         }
     }
