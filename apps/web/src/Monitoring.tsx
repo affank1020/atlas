@@ -284,6 +284,7 @@ type ServerDiagnosticResponse = {
     source: 'atlas-server-process' | 'atlas-server-history'; available: boolean;
     startedAt?: string; retention: 'current-process' | 'best-effort';
     retentionDays?: number; coverage?: 'incomplete-possible'; droppedSinceStart?: number;
+    queuedForWrite?: number; writePaused?: boolean;
     events: ServerDiagnosticEvent[]; truncated: boolean; nextCursor?: string;
 };
 function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
@@ -291,6 +292,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     const parsed = Number(filters.lines);
     const limit = Number.isInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : 30;
     const [result, setResult] = useState<ServerDiagnosticResponse>();
+    const [settledPage, setSettledPage] = useState<{ scope: string; cursor?: string }>();
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [search, setSearch] = useState('');
@@ -308,13 +310,17 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
         setResult(undefined); setError(''); setBusy(true);
         void callTool<ServerDiagnosticResponse>(history ? 'read_server_diagnostic_history' : 'read_server_diagnostics',
             history && cursor ? { limit, cursor } : { limit }, controller.signal)
-            .then(value => { if (!controller.signal.aborted) setResult(value); })
+            .then(value => { if (!controller.signal.aborted) {
+                setResult(value); setSettledPage({ scope: pageScope, cursor });
+            } })
             .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); })
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
         return () => controller.abort();
     }, [limit, refresh, history, cursor]);
     // A bookmark/source switch must never briefly render rows from the other source.
-    const visible = result?.source === (history ? 'atlas-server-history' : 'atlas-server-process') ? result : undefined;
+    const visible = settledPage?.scope === pageScope && settledPage.cursor === cursor
+        && result?.source === (history ? 'atlas-server-history' : 'atlas-server-process')
+        ? result : undefined;
     const events = visible?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];
     const output = events.map(event => event.at + ' [' + event.level + '] ' + event.message).join('\n');
     return <section className="panel activity-panel" aria-label="Server diagnostics">
@@ -339,7 +345,8 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
         {error && <p role="alert" className="activity-error">Server diagnostics unavailable: {error}</p>}
         {visible && !visible.available && <p className="empty">{history ? 'Retained Server diagnostics unavailable or disabled. Check database migration and connectivity.' : 'Server diagnostics are disabled on this deployment.'}</p>}
         {visible?.available && <div className="monitoring-log-result">
-            <p>{history ? 'Available events from the last 14 days · coverage may be incomplete' : 'Since ' + (visible.startedAt ? new Date(visible.startedAt).toLocaleString() : 'this restart')}{visible.truncated ? ' · More events exist than the current limit' : ''}{history && visible.droppedSinceStart ? ' · ' + visible.droppedSinceStart + ' writes lost in this process' : ''}</p>
+            <p>{history ? 'Available events from the last 14 days · coverage may be incomplete' : 'Since ' + (visible.startedAt ? new Date(visible.startedAt).toLocaleString() : 'this restart')}{visible.truncated ? ' · More events exist than the current limit' : ''}{history && visible.droppedSinceStart ? ' · ' + visible.droppedSinceStart + ' writes lost in this process' : ''}
+                {history && visible.writePaused ? ' · Diagnostic writer backing off; recent history may be missing' : ''}</p>
             <div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(output)}>Copy visible diagnostics</button></div>
             <pre>{output || (search ? '(no matching events in loaded diagnostics)' : '(no diagnostic events)')}</pre>
         </div>}
