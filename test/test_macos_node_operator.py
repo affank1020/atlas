@@ -224,9 +224,9 @@ class MacOperatorTests(unittest.TestCase):
             operator.disable_check(self.layout)
         self.assertEqual(self.check_commands.count(
             ("launchctl", "bootstrap", f"gui/{self.layout.uid}",
-             str(operator.check_paths(self.layout)[0])), 1)
+             str(operator.check_paths(self.layout)[0]))), 1)
         self.assertEqual(self.check_commands.count(
-            ("launchctl", "bootout", operator.check_target(self.layout)), 1)
+            ("launchctl", "bootout", operator.check_target(self.layout))), 1)
         self.assertFalse(self.layout.pending.exists())
         self.assertFalse(self.layout.watchdog_refresh.exists())
 
@@ -282,7 +282,6 @@ class MacOperatorTests(unittest.TestCase):
         }), patch.object(operator.importlib.util, "module_from_spec",
                           return_value=SimpleNamespace()):
             operator.background_check(self.layout)
-        result = operator.installed_check_status
         saved = json.loads(operator.check_paths(self.layout)[1].read_text())
         self.assertEqual(saved["state"], "available")
         self.assertEqual(saved["candidate"], "node-" + self.version2)
