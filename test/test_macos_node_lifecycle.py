@@ -356,6 +356,86 @@ class MacLifecycleTests(unittest.TestCase):
 
 
 class AtlasControlGuardTests(unittest.TestCase):
+    def test_development_install_build_serializes_activation_across_processes(self):
+        # Start a REAL atlas-control.mjs CLI, pause its npm build and attempt
+        # a competing Python activation while it is in flight. Neither tool
+        # touches the real user's launchd or Node.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            entry = repo / lifecycle.ENTRYPOINT
+            entry.parent.mkdir(parents=True)
+            entry.write_text("// simulated precompiled Node")
+            config = repo / "apps/node/.env.node"
+            config.write_text("ATLAS_SERVER_URL=wss://example.test/node/connect\n")
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            build_started = root / "build-started"
+            build_continue = root / "build-continue"
+            loaded = root / "launch-loaded"
+            fake_npm = bin_dir / "npm"
+            fake_npm.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, time\n"
+                "pathlib.Path(os.environ['TEST_BUILD_STARTED']).touch()\n"
+                "deadline = time.monotonic() + 15\n"
+                "while not pathlib.Path(os.environ['TEST_BUILD_CONTINUE']).exists():\n"
+                "    if time.monotonic() > deadline: raise SystemExit(1)\n"
+                "    time.sleep(0.025)\n"
+            )
+            fake_npm.chmod(0o755)
+            fake_launchctl = bin_dir / "launchctl"
+            fake_launchctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = print ]; then\n"
+                "    if [ -f \"$TEST_LAUNCH_LOADED\" ]; then\n"
+                "        printf 'state = running\\npid = 54321\\n'\n"
+                "        exit 0\n"
+                "    fi\n"
+                "    exit 1\n"
+                "fi\n"
+                "if [ \"$1\" = bootstrap ]; then touch \"$TEST_LAUNCH_LOADED\"; exit 0; fi\n"
+                "exit 0\n"
+            )
+            fake_launchctl.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                "ATLAS_CONTROL_TEST_ROOT": str(root),
+                "ATLAS_CONTROL_TEST_PLATFORM": "darwin",
+                "PATH": str(bin_dir) + os.pathsep + env.get("PATH", ""),
+                "TEST_BUILD_STARTED": str(build_started),
+                "TEST_BUILD_CONTINUE": str(build_continue),
+                "TEST_LAUNCH_LOADED": str(loaded),
+            })
+            control = SCRIPT.parent / "atlas-control.mjs"
+            proc = subprocess.Popen(["node", str(control), "launchd", "install"],
+                                    env=env, text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 12
+                while not build_started.exists() and proc.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.025)
+                self.assertTrue(build_started.exists(), "installer never reached its paused npm build")
+                layout = lifecycle.Layout(root / "home", os.getuid())
+                # Under the old implementation this would acquire the lock
+                # while atlasctl is building and could switch the Node.
+                with self.assertRaises(BlockingIOError):
+                    lifecycle.manage(layout, ["activate", "v2.0.0-" + "a" * 12, "--confirm"])
+            finally:
+                build_continue.touch()
+                try:
+                    stdout, stderr = proc.communicate(timeout=12)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    stdout, stderr = proc.communicate(timeout=5)
+                    raise
+            self.assertEqual(proc.returncode, 0, stderr + stdout)
+            self.assertTrue(loaded.exists())
+            self.assertTrue(layout.plist.exists())
+            # The lock is now released for the separately confirmed lifecycle.
+            with lifecycle.lock_state(layout):
+                self.assertFalse(layout.pending.exists())
+
     def test_old_control_manager_refuses_pending_lifecycle_and_release_owned_plist(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -368,6 +448,7 @@ class AtlasControlGuardTests(unittest.TestCase):
             home.mkdir()
             state = home / "Library/Application Support/Atlas/NodeSoftware/activation"
             state.mkdir(parents=True)
+            state.chmod(0o700)
             pending = state / "pending.json"
             pending.write_text("{}")
             env = os.environ.copy()

@@ -90,10 +90,18 @@ refuses before creating any pending transaction.
 ## Operational caveats and acceptance
 
 The standard `./atlasctl launchd install` still manages a **development
-checkout**. It refuses to replace a release-managed plist; the normal
-`atlasctl` Node start/stop/restart/uninstall entrypoints also refuse to touch
-an in-progress lifecycle transaction. Use this lifecycle's rollback or an
-explicit manual recovery procedure to change the selected release. If an update fails to restore local connectivity, the pending
+checkout**. All hosted Node and launchd mutations from `atlasctl`
+(including install, uninstall, start, stop and restart) now execute under
+the **same exclusive per-user filesystem lock** as lifecycle activation,
+rollback and watchdog recovery. The lock spans the complete development
+build and service mutation, so another terminal cannot switch the release
+between a preflight check and launchd bootstrap. A separate Python
+supervisor retains this lock for the entire Node CLI operation and also
+passes the descriptor to its child, preserving exclusion if the supervisor
+crashes. Lock contention is fail-closed; retry the command after the
+other operation completes. The previous pending-journal and release-managed
+plist guards still apply under that lock. Use this lifecycle's rollback or
+an explicit manual recovery procedure to change the selected release. If an update fails to restore local connectivity, the pending
 journal is left for recovery; investigate before attempting another update.
 The recovery watchdog runs as a per-user LaunchAgent and therefore requires
 that the logged-in user session exists; it is **not** an always-on system

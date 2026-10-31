@@ -939,6 +939,26 @@ async function down(includePostgres, hosted = true) {
 }
 
 const [command = "status", argument] = process.argv.slice(2);
+
+// Serialize every hosted Node / launchd mutation with the Python lifecycle's
+// fcntl.flock on NodeSoftware/activation/.lifecycle.lock. Holding the lock
+// across a potentially slow npm build prevents a second terminal from
+// activating a signed release while atlasctl is preparing a dev checkout.
+// The Python helper passes its lock fd to this child so a killed supervisor
+// cannot leave an unlocked Node process running.
+const mutatesHostedLaunchd =
+  ["up", "down", "restart"].includes(command) ||
+  (command === "launchd" && ["install", "uninstall"].includes(argument)) ||
+  (["start", "stop"].includes(command) && ["node", "atlas-node"].includes(argument));
+if (controlPlatform === "darwin" && mutatesHostedLaunchd &&
+    process.env.ATLAS_CONTROL_LIFECYCLE_LOCK_HELD !== "1") {
+  const helper = join(dirname(fileURLToPath(import.meta.url)), "macos-node-lifecycle.py");
+  const guarded = spawnSync("python3", [helper, "guard-atlasctl", process.execPath, ...process.argv.slice(2)], {
+    stdio: "inherit",
+  });
+  if (guarded.error) console.error("Cannot acquire Atlas Node lifecycle lock: " + guarded.error.message);
+  process.exit(guarded.status ?? 1);
+}
 function vpsCommand(action = "status", service) {
   const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight", "node-status", "node-upgrade"]);
   const targets = new Set(["server", "postgres", "ingress"]);

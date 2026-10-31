@@ -214,7 +214,7 @@ def lock_state(layout: Layout):
     with os.fdopen(fd, "rb") as lock:
         require_private(layout.lock, layout.uid, directory=False)
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        yield
+        yield lock.fileno()
 
 
 def recover_record(layout: Layout) -> dict | None:
@@ -488,6 +488,31 @@ def manage(layout: Layout, argv: list[str]) -> None:
             print("Node " + action + " completed with local PID/connected status verified.")
 
 
+def guard_atlasctl(argv: list[str]) -> int:
+    # atlasctl delegates each hosted/launchd mutation through this helper.
+    # Keep the *same* advisory lock for the full Node process, including a
+    # potentially slow development build before launchctl bootout/bootstrap.
+    if len(argv) < 2 or not os.path.isabs(argv[0]):
+        raise Refused("Expected an absolute Node executable and atlasctl action.")
+    test_root = os.environ.get("ATLAS_CONTROL_TEST_ROOT")
+    test_platform = os.environ.get("ATLAS_CONTROL_TEST_PLATFORM")
+    if sys.platform != "darwin" and not (test_root and test_platform == "darwin"):
+        raise Refused("Atlas launchd locking requires macOS.")
+    if os.geteuid() == 0 and not test_root:
+        raise Refused("Never manage the user's LaunchAgent as root.")
+    home = Path(test_root) / "home" if test_root else Path.home()
+    layout = Layout(home, os.getuid())
+    layout.app.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_state(layout) as lock_fd:
+        env = os.environ.copy()
+        env["ATLAS_CONTROL_LIFECYCLE_LOCK_HELD"] = "1"
+        # Pass the locked descriptor to the child. If the Python supervisor
+        # dies, the Node process still holds the flock until it exits.
+        result = subprocess.run([argv[0], str(Path(__file__).with_name("atlas-control.mjs")),
+                                 *argv[1:]], env=env, check=False, pass_fds=(lock_fd,))
+        return result.returncode if result.returncode >= 0 else 1
+
+
 def main(argv: list[str]) -> int:
     if sys.platform != "darwin" or os.geteuid() == 0:
         raise Refused("Only the logged-in, non-root macOS operator may manage launchd.")
@@ -500,6 +525,8 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) >= 3 and sys.argv[1] == "guard-atlasctl":
+            sys.exit(guard_atlasctl(sys.argv[2:]))
         sys.exit(main(sys.argv[1:]))
     except (Refused, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired,
             BlockingIOError, ValueError) as exc:
