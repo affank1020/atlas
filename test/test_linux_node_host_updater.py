@@ -1,6 +1,10 @@
 """Safe, network-free selection tests for the host-local Linux Node updater."""
+import contextlib
 import importlib.util
+import io
 import json
+import signal
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -82,6 +86,110 @@ class CatalogTests(unittest.TestCase):
     def test_reject_truncated_catalogue(self):
         with self.assertRaises(updater.Refused):
             updater.releases_from_json("[" + ",".join("{}" for _ in range(100)) + "]")
+
+    def test_public_release_check_is_bounded_and_pins_the_url(self):
+        class PublicResponse(io.BytesIO):
+            def geturl(self):
+                return updater.PUBLIC_RELEASES_URL
+
+        payload = json.dumps([release(A, 100)]).encode()
+        with patch.object(updater.urllib.request, "urlopen",
+                          return_value=PublicResponse(payload)) as fetch:
+            self.assertEqual(updater.read_public_release_catalogue(), payload.decode())
+        request = fetch.call_args.args[0]
+        self.assertEqual(request.full_url, updater.PUBLIC_RELEASES_URL)
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(fetch.call_args.kwargs["timeout"], 20)
+
+    def test_public_catalogue_redirect_is_refused(self):
+        class Redirected(io.BytesIO):
+            def geturl(self):
+                return "https://unexpected.example.net/releases"
+
+        with patch.object(updater.urllib.request, "urlopen",
+                          return_value=Redirected(b"[]")):
+            with self.assertRaisesRegex(updater.Refused, "redirected"):
+                updater.read_public_release_catalogue()
+
+    def test_public_catalogue_too_large_fails_closed(self):
+        class PublicResponse(io.BytesIO):
+            def geturl(self):
+                return updater.PUBLIC_RELEASES_URL
+
+        with patch.object(updater, "MAX_CATALOGUE_BYTES", 8), \
+             patch.object(updater.urllib.request, "urlopen",
+                          return_value=PublicResponse(b"0123456789")):
+            with self.assertRaisesRegex(updater.Refused, "bounded"):
+                updater.read_public_release_catalogue()
+
+    def test_slow_drip_cannot_extend_wall_clock_deadline(self):
+        class SlowDripResponse(io.BytesIO):
+            def geturl(self):
+                return updater.PUBLIC_RELEASES_URL
+
+            def read(self, _size=-1):
+                # Simulates a peer continually making progress before a
+                # socket idle timeout, without ever completing the payload.
+                while True:
+                    time.sleep(0.01)
+
+        prior_handler = signal.getsignal(signal.SIGALRM)
+        with patch.object(updater, "CATALOGUE_DEADLINE_SECONDS", 0.05), \
+             patch.object(updater.urllib.request, "urlopen",
+                          return_value=SlowDripResponse(b"")):
+            started = time.monotonic()
+            with self.assertRaisesRegex(updater.Refused, "wall-clock deadline"):
+                updater.read_public_release_catalogue()
+            self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        self.assertEqual(signal.getsignal(signal.SIGALRM), prior_handler)
+
+    def test_slow_connect_also_obeys_the_full_deadline(self):
+        def slow_urlopen(_request, *, timeout):
+            self.assertEqual(timeout, 20)
+            time.sleep(0.3)
+            raise AssertionError("Slow connection should have been interrupted")
+
+        with patch.object(updater, "CATALOGUE_DEADLINE_SECONDS", 0.05), \
+             patch.object(updater.urllib.request, "urlopen", side_effect=slow_urlopen):
+            with self.assertRaisesRegex(updater.Refused, "wall-clock deadline"):
+                updater.read_public_release_catalogue()
+
+    def test_public_check_json_never_invokes_gh_or_sudo(self):
+        payload = json.dumps([release(A, 100), release(B, 110)])
+        out = io.StringIO()
+        with patch.object(updater.os, "geteuid", return_value=1000), \
+             patch.object(updater, "read_public_release_catalogue", return_value=payload) as fetch, \
+             patch.object(updater, "installed_release", return_value="v2.0.0-" + A), \
+             patch.object(updater, "run", side_effect=AssertionError("No commands in read-only check")), \
+             contextlib.redirect_stdout(out):
+            self.assertEqual(updater.main(["check", "--json"]), 0)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(json.loads(out.getvalue()), {
+            "schema": 1, "installed": "v2.0.0-" + A,
+            "candidate": "node-v2.0.0-" + B, "state": "available",
+            "verification": "catalogue-only",
+        })
+
+    def test_public_check_failure_never_reports_current(self):
+        with patch.object(updater.os, "geteuid", return_value=1000), \
+             patch.object(updater, "read_public_release_catalogue", side_effect=updater.Refused("429 rate limited")), \
+             patch.object(updater, "run", side_effect=AssertionError("No install fallback")):
+            with self.assertRaisesRegex(updater.Refused, "429"):
+                updater.main(["check", "--json"])
+
+    def test_systemd_checker_is_sandboxed_and_never_installs(self):
+        scripts = Path(__file__).resolve().parents[1] / "scripts"
+        unit = (scripts / "atlas-node-update-check@.service").read_text()
+        timer = (scripts / "atlas-node-update-check@.timer").read_text()
+        self.assertIn("User=%i", unit)
+        self.assertIn("NoNewPrivileges=yes", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("ExecStart=/usr/local/bin/atlas-node-update check --json", unit)
+        self.assertNotIn("ExecStart=sudo", unit)
+        self.assertNotIn(" update", unit.split("ExecStart=")[1].splitlines()[0])
+        self.assertIn("OnCalendar=hourly", timer)
+        self.assertIn("RandomizedDelaySec=15min", timer)
 
     def test_status_is_read_only_and_no_root_main_allowed(self):
         self.assertFalse(updater.TAG.fullmatch("node-v2.0.0-unsafe;rm"))

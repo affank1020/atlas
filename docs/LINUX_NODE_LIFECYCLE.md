@@ -28,8 +28,10 @@ sudo install -o root -g root -m 0755 scripts/linux-node-release.sh /usr/local/li
 # an arbitrary copy after validating the host.
 ```
 
-As the **normal non-root** VPS account, authenticate a recent GitHub CLI
-(`gh` >= 2.102.0) to access the public releases and attestations. Then:
+As the **normal non-root** VPS account, the read-only release check now
+uses the public GitHub HTTPS API without GitHub credentials. The interactive
+`update` command still requires an authenticated recent GitHub CLI
+(`gh` >= 2.102.0) for downloads and signed attestation verification. Then:
 
 ```bash
 atlas-node-update status
@@ -68,6 +70,65 @@ host-root evidence reconciliation and Atlas Software UI integration remain
 tracked in [#111](https://github.com/affank1020/atlas/issues/111),
 [#167](https://github.com/affank1020/atlas/issues/167) and
 [#168](https://github.com/affank1020/atlas/issues/168).
+
+## Optional scheduled release detection (no automatic installation)
+
+This is an **operator-provisioned, read-only** Linux systemd timer: it
+checks GitHub's public release catalogue once per hour, without a GitHub
+token, sudo, Node credentials, access to private user homes, or a writable
+system filesystem. It does **not** download the release archive, request root
+authorization, touch the running Node, or activate anything. A published
+candidate is only a *catalogue hint*, not a verified artifact until the
+separate interactive `update` command validates its signed provenance.
+
+From a reviewed checkout **on a disposable Linux host first**, provision
+the checked-in service and timer. Replace `ubuntu` with the name of an
+existing, unprivileged operator account that can read
+`/opt/atlas-node/current` and its release directory.
+
+```bash
+# First install the reviewed atlas-node-update CLI as documented above.
+sudo install -o root -g root -m 0644 scripts/atlas-node-update-check@.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 scripts/atlas-node-update-check@.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+# Review effective sandbox and exact selected user before enabling:
+systemctl cat atlas-node-update-check@ubuntu.service
+sudo systemctl enable --now atlas-node-update-check@ubuntu.timer
+
+# Query release availability without credentials or privileged execution:
+atlas-node-update check --json
+sudo systemctl start atlas-node-update-check@ubuntu.service
+sudo journalctl -u atlas-node-update-check@ubuntu.service -n 30 --no-pager
+```
+
+The JSON contains `schema`, `installed`, `candidate`, `state` and
+`verification: catalogue-only`. A successful check reports either
+`current` or `available`, both with exit code 0. A network failure,
+invalid/truncated catalogue, unknown installed same-version build, or
+unparseable metadata exits nonzero, never reporting an update as installed.
+The check is bounded by a **hard 20-second wall-clock deadline** for the
+entire HTTPS connection and response body, alongside an 8 MiB response
+limit. The Python socket timeout alone would not stop a slow-drip response;
+the Linux CLI also uses a real-time process alarm and refuses an expired
+check without treating the result as a completed update.
+Systemd's `RandomizedDelaySec` spreads polls and the timer retains scheduled
+checks across host restarts.
+
+**No service or timer is automatically enabled by this PR.** Do not enable
+it on the production VPS until a disposable-host check has confirmed the
+actual Node service remains unchanged, the sandbox is compatible with
+the installed filesystem, and the observed journal distinguishes errors
+from available updates. Disabling the timer does not change Node operation:
+
+```bash
+sudo systemctl disable --now atlas-node-update-check@ubuntu.timer
+```
+
+Unattended automatic **installation** is a separate, security-sensitive
+milestone in [#111](https://github.com/affank1020/atlas/issues/111)
+and [#167](https://github.com/affank1020/atlas/issues/167);
+do not confuse a polling timer with permission for an unattended root
+upgrade.
 
 ## Previous Mac-initiated one-command upgrade
 

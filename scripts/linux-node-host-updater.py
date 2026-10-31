@@ -12,13 +12,18 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import urllib.request
 
 REPO = "affank1020/atlas"
 RELEASES_API = "repos/affank1020/atlas/releases?per_page=100"
+PUBLIC_RELEASES_URL = "https://api.github.com/" + RELEASES_API
+MAX_CATALOGUE_BYTES = 8 * 1024 * 1024
+CATALOGUE_DEADLINE_SECONDS = 20.0
 ROOT = Path("/opt/atlas-node")
 LIFECYCLE = Path("/usr/local/libexec/atlas-node-lifecycle.sh")
 TRUSTED_STAGE = Path("/usr/local/libexec/linux-node-trusted-stage.sh")
@@ -44,6 +49,48 @@ def releases_from_json(raw: str) -> list[dict]:
     if len(items) >= 100:
         raise Refused("Release catalogue reached the 100-item limit; pagination required before continuing.")
     return items
+
+
+def read_public_release_catalogue() -> str:
+    """Bounded read-only GitHub release discovery: no gh login or host secrets.
+
+    Only the immutable public api.github.com endpoint is accepted. This
+    response supplies *candidate metadata*, not verified update authority.
+    Actual downloads still require pinned Sigstore attestation verification.
+    """
+    request = urllib.request.Request(
+        PUBLIC_RELEASES_URL,
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": "atlas-node-update-check"},
+        method="GET",
+    )
+    # urllib's timeout only bounds each socket operation, not the full fetch.
+    # A peer that drip-feeds bytes can otherwise keep read() alive forever.
+    # This Linux-only CLI uses a SIGALRM wall-clock deadline for connect and
+    # the complete response, independently of the per-socket idle timeout.
+    if any(signal.getitimer(signal.ITIMER_REAL)):
+        raise Refused("Cannot check releases while another real-time alarm is active.")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def deadline_expired(_signum, _frame):
+        raise Refused("GitHub release catalogue exceeded the wall-clock deadline.")
+
+    try:
+        signal.signal(signal.SIGALRM, deadline_expired)
+        signal.setitimer(signal.ITIMER_REAL, CATALOGUE_DEADLINE_SECONDS)
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.geturl() != PUBLIC_RELEASES_URL:
+                raise Refused("Release catalogue redirected away from the pinned GitHub API URL.")
+            data = response.read(MAX_CATALOGUE_BYTES + 1)
+            if len(data) > MAX_CATALOGUE_BYTES:
+                raise Refused("GitHub release catalogue exceeds bounded input size.")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Refused("GitHub release catalogue is not UTF-8.") from exc
 
 
 def verified_catalogue(items: list[dict]) -> list[dict]:
@@ -214,10 +261,11 @@ def download_and_verify(release: dict, directory: Path) -> tuple[Path, Path, Pat
 
 
 def main(args: list[str]) -> int:
-    if len(args) != 1 or args[0] not in ("check", "update", "status", "rollback"):
-        print("Usage: atlas-node-update check | update | status | rollback", file=sys.stderr)
+    if args not in (["check"], ["check", "--json"], ["update"], ["status"], ["rollback"]):
+        print("Usage: atlas-node-update check [--json] | update | status | rollback", file=sys.stderr)
         return 2
     command = args[0]
+    json_mode = args == ["check", "--json"]
     if os.geteuid() == 0:
         raise Refused("Run as an ordinary VPS user, never via sudo; only the installed helpers use root.")
     if command == "status":
@@ -235,13 +283,26 @@ def main(args: list[str]) -> int:
             raise Refused("Rollback cancelled.")
         run("sudo", str(LIFECYCLE), "rollback")
         return 0
-    raw = run("gh", "api", "-X", "GET", RELEASES_API, capture=True)
+    # The background-safe "check" path is a public, unprivileged, credential-
+    # free HTTPS read. The interactive update path retains authenticated gh.
+    raw = read_public_release_catalogue() if command == "check" else run(
+        "gh", "api", "-X", "GET", RELEASES_API, capture=True
+    )
     catalog = verified_catalogue(releases_from_json(raw))
     current = installed_release()
     candidate, state = choose_latest(catalog, current)
-    print("Installed:", current)
-    print("Latest verified-catalogue candidate:", candidate["tag"])
-    print("State:", state)
+    if json_mode:
+        print(json.dumps({
+            "schema": 1,
+            "installed": current,
+            "candidate": candidate["tag"],
+            "state": state,
+            "verification": "catalogue-only",
+        }, sort_keys=True))
+    else:
+        print("Installed:", current)
+        print("Latest catalogue candidate (signature checked on install):", candidate["tag"])
+        print("State:", state)
     if command == "check" or state == "current":
         return 0
     if not sys.stdin.isatty():
