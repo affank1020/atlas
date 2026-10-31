@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
+import { Skeleton } from './Skeletons';
 import type { AtlasNode } from './Nodes';
 import type { NodeRelease, NodeUpdateIntent } from './NodeSoftware';
 import {
@@ -20,7 +21,8 @@ function useNodeSoftwareFleet(refreshGeneration: number) {
         const controller = new AbortController();
         let polling = false;
         let pollInterval: number | undefined;
-        setFleet({ nodes: [], loading: true, error: null });
+        // Keep the last successful inventory visible during explicit refresh.
+        setFleet(current => ({ ...current, loading: true, error: null }));
         setIntents({});
         void (async () => {
             try {
@@ -181,17 +183,33 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
             <a className="ghost" href="#/nodes">Manage Node identities →</a>
         </div>
         <div className="node-software-metrics" aria-label="Software fleet summary">
-            <div><span>Registered Nodes</span><strong>{loading ? '—' : error ? 'Unknown' : nodes.length}</strong></div>
-            <div><span>Online</span><strong>{loading ? '—' : error ? 'Unknown' : nodes.filter(node => node.status === 'online').length}</strong></div>
-            <div><span>Claimed updates needing operator review</span><strong>{loading || error ? '—' : activeReviews}</strong>
+            <div><span>Registered Nodes</span><strong>{loading && !nodes.length && !error ? <Skeleton width={42} height={26} /> : error ? 'Unknown' : nodes.length}</strong></div>
+            <div><span>Online</span><strong>{loading && !nodes.length && !error ? <Skeleton width={42} height={26} /> : error ? 'Unknown' : nodes.filter(node => node.status === 'online').length}</strong></div>
+            <div><span>Claimed updates needing operator review</span><strong>{loading && !nodes.length && !error ? <Skeleton width={42} height={26} /> : error ? 'Unknown' : checksPending ? '—' : activeReviews}</strong>
                 {!loading && !error && checksPending && <small>Some Linux histories unavailable or still loading</small>}</div>
-            <div><span>Published runtime platforms</span><strong>{catalogueLoading ? '—' : catalogue?.state === 'ready'
+            <div><span>Published runtime platforms</span><strong>{catalogueLoading && !catalogue ? <Skeleton width={42} height={26} /> : catalogue?.state === 'ready'
                 ? new Set(catalogue.releases.map(release => release.platform)).size : 'Unknown'}</strong></div>
         </div>
         {error && <p role="alert" className="node-page-notice">Node inventory unavailable: {error}</p>}
-        {loading && <p role="status">Loading registered Nodes…</p>}
+        {loading && nodes.length === 0 && !error && <div className="node-software-fleet-layout" role="status" aria-label="Loading registered Nodes" aria-busy="true">
+            <div className="node-software-nodes">
+                {Array.from({ length: 3 }, (_, index) => <div className="node-software-node node-software-node-skeleton" key={index} aria-hidden="true">
+                    <Skeleton width="66%" height={16} />
+                    <Skeleton width="45%" height={12} />
+                    <Skeleton width="78%" height={12} />
+                </div>)}
+            </div>
+            <div className="node-software-inspector" aria-hidden="true">
+                <Skeleton width="48%" height={22} />
+                <div className="node-software-inspector-facts">
+                    {Array.from({ length: 4 }, (_, index) => <div key={index}>
+                        <Skeleton width="60%" height={11} /><Skeleton width="80%" height={16} />
+                    </div>)}
+                </div>
+            </div>
+        </div>}
         {!loading && !error && nodes.length === 0 && <p className="node-software-empty">No Nodes are registered yet. <a href="#/nodes">Enrol a Node</a> to start managing its software.</p>}
-        {!loading && !error && nodes.length > 0 && <>
+        {!error && nodes.length > 0 && <>
             <div className="node-software-fleet-controls">
                 <label htmlFor="software-node-filter">Show Nodes</label>
                 <select id="software-node-filter" value={filter} onChange={event => setFilter(event.target.value as Filter)}>
@@ -253,7 +271,11 @@ export function NodeSoftwareFleet({ catalogue, refreshGeneration, catalogueLoadi
                         {selected.platform === 'linux' && <section className="node-software-history" aria-label="Linux update history">
                             <h4>Update requests and recovery</h4>
                             {selectedSnapshot?.state === 'loading' || !selectedSnapshot
-                                ? <p role="status">Checking update history…</p>
+                                ? <div className="node-software-history-list" role="status" aria-label="Loading update history" aria-busy="true">
+                                    {Array.from({ length: 2 }, (_, index) => <div className="node-software-history-skeleton" key={index} aria-hidden="true">
+                                        <Skeleton width="52%" height={13} /><Skeleton width="78%" height={11} />
+                                    </div>)}
+                                </div>
                                 : selectedSnapshot.state === 'unavailable'
                                     ? <p role="alert">Update history unavailable. No lifecycle state can be confirmed.</p>
                                     : !selectedHistory.length

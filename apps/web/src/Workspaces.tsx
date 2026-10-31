@@ -427,7 +427,10 @@ export function Workspaces() {
                         {draftPR && <a href={draftPR.url} target="_blank" rel="noreferrer">Draft PR #{draftPR.number} ↗</a>}
                         </section>
                                 </>}
-                            </> : <p className="wm-hint">Loading Git actions…</p>)}
+                            </> : inspectorPending ? <div className="wm-git" role="status" aria-label="Loading Git actions" aria-busy="true">
+                                <div><span>Worktrees</span><span className="wm-skeleton wm-skeleton-git" aria-hidden="true" /></div>
+                                <div><span>New worktree</span><span className="wm-skeleton wm-skeleton-git" aria-hidden="true" /></div>
+                            </div> : null)}
                         </details>
                     </> : status?.reason && <p className="wm-hint">{status.reason}</p>}
                     {working && <p role="status" className="wm-hint">Working on the Node…</p>}

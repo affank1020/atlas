@@ -105,3 +105,30 @@ test('Remote errors remain visible without implying missing threads are resolved
     render(<CodeReviewThreads repository={repository} prNumber={prNumber} refreshVersion={0} />);
     expect(screen.getByRole('alert')).toHaveTextContent('No thread is assumed resolved');
 });
+
+test('initial GitHub conversation read uses inert card placeholders, without implying a clean PR', () => {
+    vi.mocked(useApplicationRead).mockReturnValue({
+        data: undefined, isLoading: true, isFetching: true, refetch: refresh,
+    } as never);
+    const { container } = render(<CodeReviewThreads repository={repository} prNumber={prNumber} refreshVersion={0} />);
+    expect(screen.getByRole('status', { name: 'Loading GitHub conversations' })).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelectorAll('.code-reviews-thread[aria-hidden="true"]')).toHaveLength(2);
+    expect(screen.queryByText(/No Atlas-owned inline conversations found/)).not.toBeInTheDocument();
+    expect(container.querySelector('.code-reviews-thread-list a, .code-reviews-thread-list button')).toBeNull();
+});
+
+test('a known conversation snapshot remains visible during revalidation, errors replace skeletons', () => {
+    vi.mocked(useApplicationRead).mockReturnValue({
+        data: valid, isLoading: false, isFetching: true, refetch: refresh,
+    } as never);
+    const view = render(<CodeReviewThreads repository={repository} prNumber={prNumber} refreshVersion={0} />);
+    expect(screen.queryByRole('status', { name: 'Loading GitHub conversations' })).not.toBeInTheDocument();
+    expect(screen.getByText(/3 Atlas-owned roots:/)).toBeInTheDocument();
+    vi.mocked(useApplicationRead).mockReturnValue({
+        data: undefined, isLoading: false, isFetching: false,
+        error: { message: 'GitHub unavailable' }, refetch: refresh,
+    } as never);
+    view.rerender(<CodeReviewThreads repository={repository} prNumber={prNumber} refreshVersion={0} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('GitHub unavailable');
+    expect(screen.queryByRole('status', { name: 'Loading GitHub conversations' })).not.toBeInTheDocument();
+});
