@@ -35,8 +35,11 @@ export class DeviceOfflineInbox {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            // Serialize admissions to this target and delivery key across server replicas.
-            await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [target]);
+            // Enforce per-source and per-target quotas across server replicas.
+            // Sort lock keys to avoid deadlocks between opposite-direction sends.
+            const lockKeys = ['inbox-source:' + source, 'inbox-target:' + target].sort();
+            for (const lockKey of lockKeys)
+                await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
             const peers = await client.query(
                 "SELECT id,credential_state FROM nodes WHERE id IN ($1,$2) FOR SHARE",
                 [source,target]);
