@@ -123,8 +123,16 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var pushRetryTask: Runnable? = null
     private var pushToken: String? = null
     var pushRegistrationStatus by mutableStateOf(
-        if (pushEnabled) "Push registration pending connection." else "Push disabled."
+        if (pushEnabled) "Push registration pending connection."
+        else if (AtlasPush.revocationPending(application)) "Server push removal awaiting reconnection."
+        else "Push disabled."
     )
+        private set
+    private var pushRevocation: PushRevocationGate? = null
+    private var pushRevocationTimeout: Runnable? = null
+    private val pushRevocationCallbacks = mutableListOf<(PushRevocationResult) -> Unit>()
+    var forgetInProgress by mutableStateOf(false)
+        private set
         private set
     private val recentIncoming = RecentIncomingShares()
     private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
@@ -228,12 +236,64 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     /** Explicit user intent takes priority over a pending earlier request.
      * The gateway applies the sent commands in order; stale replies are ignored. */
     fun updatePushConsent(enabled: Boolean) {
+        if (!enabled) {
+            revokePushBeforeShutdown {}
+            return
+        }
+        if (pushRevocation != null) {
+            pushRegistrationStatus = "Finishing previous push opt-out."
+            return
+        }
         cancelPushTimers()
         pendingPush = null
         pushRetryPolicy.reset()
-        AtlasPush.setEnabled(getApplication(), enabled)
-        pushEnabled = enabled
-        if (!enabled) sendPushUnregister() else refreshPushRegistration()
+        AtlasPush.setEnabled(getApplication(), true)
+        pushEnabled = true
+        AtlasPush.markRevocationPending(getApplication(), false)
+        refreshPushRegistration()
+    }
+
+    /** Keep the Activity or service socket owner alive until the server has
+     * confirmed deletion, or until a short explicit timeout. Never silently
+     * equate a queued WebSocket send with a completed server-side opt-out.
+     */
+    fun revokePushBeforeShutdown(done: (PushRevocationResult) -> Unit) {
+        pushRevocationCallbacks.add(done)
+        if (pushRevocation != null) return
+        AtlasPush.setEnabled(getApplication(), false)
+        pushEnabled = false
+        AtlasPush.markRevocationPending(getApplication(), true)
+        cancelPushTimers()
+        pendingPush = null
+        pushRetryPolicy.reset()
+        lateinit var gate: PushRevocationGate
+        gate = PushRevocationGate { result ->
+            if (pushRevocation !== gate) return@PushRevocationGate
+            pushRevocationTimeout?.let(handler::removeCallbacks)
+            pushRevocationTimeout = null
+            pushRevocation = null
+            if (result.serverConfirmed) {
+                AtlasPush.markRevocationPending(getApplication(), false)
+                pushRegistrationStatus = "Push disabled; Atlas Server removed registration."
+            } else {
+                AtlasPush.markRevocationPending(getApplication(), true)
+                pushRegistrationStatus =
+                    "Push disabled locally; server removal not confirmed. Reconnect or revoke Node in Atlas Web."
+                backgroundReceiveError =
+                    "Atlas Server did not confirm push unregistration. Retry while connected or revoke this Node in Atlas Web."
+            }
+            val callbacks = pushRevocationCallbacks.toList()
+            pushRevocationCallbacks.clear()
+            callbacks.forEach { it(result) }
+        }
+        pushRevocation = gate
+        val deadline = Runnable { if (pushRevocation === gate) gate.deadlineExpired() }
+        pushRevocationTimeout = deadline
+        handler.postDelayed(deadline, 8_000L)
+        sendPushUnregister()
+        AtlasPush.deleteToken(getApplication()) { success ->
+            handler.post { if (pushRevocation === gate) gate.firebaseDeletionFinished(success) }
+        }
     }
 
     fun onPushTokenChanged(token: String) {
@@ -314,6 +374,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pendingPush = null
         if (reply.errorCode == null && reply.registered == command.register) {
             pushRetryPolicy.reset()
+            if (!command.register) {
+                AtlasPush.markRevocationPending(getApplication(), false)
+                pushRevocation?.serverUnregistered()
+            }
             pushRegistrationStatus = if (command.register)
                 "Push registered. Delivery is best effort."
             else "Push disabled; server token removed."
@@ -872,29 +936,40 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun forget() {
-        updatePushConsent(false)
-        val visibleActivities = owners.visibleActivities
-        // Stop the independently running receiver before deleting its identity.
-        getApplication<AtlasNodeApp>().stopService(Intent(
-            getApplication(), BackgroundReceiverService::class.java))
-        owners = ConnectionOwners()
-        backgroundReceivingRunning = false
-        disconnect()
-        vault.clear()
-        pairedNode = null
-        pairingError = null
-        unrecoverableIdentity = false
-        connectionStatus = "Not enrolled"
-        shareTarget = ""
-        clearRecipientLookup()
-        sharePending = false
-        shareStatus = "Nothing sent yet"
-        inboxStatus = "No incoming shares yet."
-        importSequence++
-        session = CompanionSession()
-        // Forgetting while the Activity is open must not prevent a new pair
-        // from opening its socket immediately after enrolment.
-        owners = ConnectionOwners(visibleActivities = visibleActivities)
+        if (forgetInProgress) return
+        forgetInProgress = true
+        revokePushBeforeShutdown { result ->
+            forgetInProgress = false
+            // Never destroy the only credential with which we can revoke an
+            // extant server registration. The user can retry or revoke the
+            // Node from Atlas Web before forgetting this enrolment.
+            if (!result.serverConfirmed && AtlasPush.configured(getApplication())) {
+                pairingError = "Atlas could not confirm push revocation. Reconnect and retry Forget, " +
+                    "or revoke this Node in Atlas Web before removing it."
+                return@revokePushBeforeShutdown
+            }
+            val visibleActivities = owners.visibleActivities
+            // Stop the independently running receiver only after the
+            // correlated unregister acknowledgement or explicit fallback.
+            getApplication<AtlasNodeApp>().stopService(Intent(
+                getApplication(), BackgroundReceiverService::class.java))
+            owners = ConnectionOwners()
+            backgroundReceivingRunning = false
+            disconnect()
+            vault.clear()
+            pairedNode = null
+            pairingError = null
+            unrecoverableIdentity = false
+            connectionStatus = "Not enrolled"
+            shareTarget = ""
+            clearRecipientLookup()
+            sharePending = false
+            shareStatus = "Nothing sent yet"
+            inboxStatus = "No incoming shares yet."
+            importSequence++
+            session = CompanionSession()
+            owners = ConnectionOwners(visibleActivities = visibleActivities)
+        }
     }
 
     fun clearRecoveryNotice() {
