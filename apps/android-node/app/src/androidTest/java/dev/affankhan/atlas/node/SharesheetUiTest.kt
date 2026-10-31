@@ -35,6 +35,7 @@ class SharesheetUiTest {
     private var inboxReviewed = false
     private var inboxCopied = false
     private var inboxDeclined = false
+    private var sendClicked = false
     private var copied = false
     private var declined = false
     private val senderNode = StoredNode("https://atlas.example.com",
@@ -66,7 +67,7 @@ class SharesheetUiTest {
                 onRefreshRecipients = {},
                 shareStatus = "Nothing sent yet",
                 sharePending = false,
-                onSend = {},
+                onSend = { sendClicked = true },
                 onLoadDeferredShare = { state = state.loadDeferredShare() },
                 incomingShare = incoming,
                 queuedInboxItems = inboxItems,
@@ -136,7 +137,7 @@ class SharesheetUiTest {
         compose.onNodeWithTag("share-draft").assertTextContains("local draft")
     }
 
-    @Test fun imageShareShowsPreviewButCannotSubmitThroughTextRelay() {
+    @Test fun croppedImagePreviewRequiresSelectedMacAndCanSendExplicitly() {
         mount(ready = true)
         val png = ByteArrayOutputStream().use { output ->
             val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
@@ -153,7 +154,9 @@ class SharesheetUiTest {
             selected = mac.nodeId
         }
         compose.onNodeWithTag("shared-image-preview").assertExists()
-        compose.onNodeWithTag("share-submit").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
+            .performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(sendClicked) }
         compose.onNodeWithTag("share-draft").performTextReplacement("send text instead")
         compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
     }
