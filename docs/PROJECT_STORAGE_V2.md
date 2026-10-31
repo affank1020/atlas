@@ -533,3 +533,89 @@ The existing manual encrypted PostgreSQL and independent R2 recovery
 tools remain available, but no additional offsite restore exercise is
 performed or claimed by this feature code. Merging this PR does not
 change live flags, source database keys or any R2 object.
+
+
+## Stage 12 — operator-only Project/Portfolio key cutover (feature delivery)
+
+Migration `040_project_storage_cutover.sql` records an atomic metadata
+switch for each Project. The **immutable Stage 4B key run** is the durable
+rollback map; old R2 objects are retained. An explicit operator command
+supports read-only status, one-way apply, and a constrained reverse while the
+catalogue is still unchanged. All three authoritative tables are updated
+inside a single serializable PostgreSQL transaction, with table locks,
+exact matching original keys, post-swap catalogue checks, and a durable
+cutover record committed alongside them. Public Portfolio URLs are still
+identified by the same asset IDs and variants.
+
+This is a **feature cutover**, not an offsite recovery certification.
+Independent recovery issue #109 is deferred; no live DR drill is implied.
+Neither this code nor merging its PR touches the production database or R2.
+
+### Required manual maintenance window
+
+1. Merge/deploy the default-OFF versioned-writes code and this operator
+   tooling first. Keep `ATLAS_PROJECT_VERSIONED_WRITES_ENABLED=false`.
+2. Reconcile **every nonempty Project** with its exact Stage 4B immutable
+   manifest and all copied byte receipts. Finish the bounded primary R2
+   copies and all manifest pages **before** any metadata cutover. A missing
+   source/target byte or a changed catalogue aborts the process.
+3. **Stop Atlas server and every other PostgreSQL / object writer**,
+   including upload workers and any direct Portfolio/media writer. Verify
+   there are no in-flight uploads or other writers. Keep them stopped for
+   the ENTIRE multi-Project cutover and configuration change. The CLI cannot
+   itself stop external writers or make R2 transactional. Never run it while
+   the application is accepting uploads.
+4. With the maintenance window active, inspect status and apply **each
+   nonempty Project** using its own exact copied run. Use the real primary R2
+   account and checked local legacy fallback configuration; the tool
+   reads/hashes **both** old and v1 bytes for all native Files, archived
+   files, Portfolio originals and variants **before** the SQL switch.
+5. With writers still stopped, verify all Project cutover records and
+   representative Files and public Portfolio reads. Set
+   `ATLAS_PROJECT_VERSIONED_WRITES_ENABLED=true` only after ALL existing
+   keys are switched; start Atlas with the new configuration. Projects
+   with no objects have no migration run and simply begin using v1 keys.
+
+The exact operator interface (requires a **separate explicit approval** for
+any real production execution):
+
+```sh
+npm run build:server
+
+# Read-only status, no R2 credential requirement:
+npm run files:r2:project-key-cutover -- --status --project=PROJECT_UUID
+
+# Only after all primary copy receipts are complete, the entire writer
+# fleet is stopped, and a separate operator approval is recorded:
+ATLAS_PROJECT_STORAGE_CUTOVER_ENABLED=1 npm run files:r2:project-key-cutover -- \
+  --apply --project=PROJECT_UUID --key-run=KEY_COPY_RUN_UUID \
+  --confirm=APPLY_PROJECT_STORAGE_KEY_CUTOVER
+
+# Emergency pre-new-write rollback for that Project, with writers stopped:
+ATLAS_PROJECT_STORAGE_CUTOVER_ENABLED=1 npm run files:r2:project-key-cutover -- \
+  --rollback --project=PROJECT_UUID \
+  --confirm=ROLLBACK_PROJECT_STORAGE_KEY_CUTOVER
+```
+
+The operator CLI refuses mutation without its exact environment gate and
+confirmation, rejects a true versioned-write flag in its own environment,
+and performs **zero** R2 PUT/DELETE operations. Primary source/target reads
+are bounded and SHA-256 checked against the durable copy receipts.
+SQL locks revalidate the *entire* authoritative metadata catalogue after
+any in-flight writer has finished. If even one object, receipt, row,
+archived status or variant differs, there is no SQL switch.
+
+Rollback is atomic, but deliberately **only possible before the first
+post-cutover metadata change**, including a new v1 upload, archive,
+variant replacement or newly populated Project. It will refuse drift rather
+than discard newer references. After enabling versioned writes, normal
+recovery is to keep v1 reads active; restoring legacy-only metadata requires
+a separately designed reconciliation. Do not assume a blanket production
+rollback remains available after new writes.
+
+An interrupted database commit can have an **unknown** outcome. Inspect
+`--status` and actual object references before retrying; a Project with
+an applied or rolled-back record will not silently apply the same run again.
+Never delete old objects or relax retention based on this cutover. The
+full independent PostgreSQL/R2 recovery exercise and future automated
+retention policy remain separate work.
