@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 
@@ -46,20 +47,20 @@ def current_node(layout) -> tuple[str, str]:
         lifecycle.exact_plist_bytes(layout.plist, layout.uid), layout
     )
     executable = Path(data["ProgramArguments"][1])
-    parent = executable.parents[4]  # releases/vVERSION-SHA, or source root
+    parent = executable.parents[5]  # releases/vVERSION-SHA, or source root
     if (
         parent.parent == layout.releases
         and lifecycle.TAG.fullmatch(parent.name)
         and executable == parent / lifecycle.ENTRYPOINT
     ):
-        return parent.name, "release"
+        return parent.name, "release", str(executable)
     if layout.releases in executable.parents:
         raise Refused("LaunchAgent points into an unexpected release path.")
-    return "development-checkout", "development"
+    return "development-checkout", "development", str(executable)
 
 
 def local_state(layout) -> dict:
-    installed, mode = current_node(layout)
+    installed, mode, entrypoint = current_node(layout)
     if layout.pending.is_symlink():
         raise Refused("Symlinked recovery journal; inspect the lifecycle.")
     pid = lifecycle.launch_pid(layout)
@@ -67,6 +68,7 @@ def local_state(layout) -> dict:
         "schema": 1,
         "installed": installed,
         "mode": mode,
+        "currentEntrypoint": entrypoint,
         "launchdPid": pid,
         "recoveryPending": layout.pending.exists(),
         "rollbackAvailable": layout.previous.exists(),
@@ -85,6 +87,7 @@ def discover(layout) -> dict:
     state.update({
         "candidate": selected["tag"],
         "candidateSource": selected["commit"],
+        "candidateDigest": selected["digest"],
         "state": status,
         "verification": "catalogue-only",
     })
@@ -147,6 +150,8 @@ def apply_update(layout, *, migrate: bool) -> int:
         fresh["candidate"] != tag
         or fresh["candidateSource"] != selected_state["candidateSource"]
         or fresh["installed"] != installed
+        or fresh["currentEntrypoint"] != selected_state["currentEntrypoint"]
+        or fresh["candidateDigest"] != selected_state["candidateDigest"]
         or fresh["recoveryPending"]
     ):
         raise Refused("Release or host state changed; check again and reconfirm.")
@@ -167,7 +172,8 @@ def apply_update(layout, *, migrate: bool) -> int:
         if lifecycle.launch_loaded(layout, layout.recovery_target):
             raise Refused("Loaded recovery watchdog needs manual inspection; refusing update.")
         lifecycle.manage(layout, ["install-watchdog"])
-    lifecycle.manage(layout, ["activate", tag.removeprefix("node-"), "--confirm"])
+    lifecycle.manage(layout, ["activate", tag.removeprefix("node-"), "--confirm",
+                              "--expect-entrypoint", selected_state["currentEntrypoint"]])
     print("Local launchd reconnect verified; confirm authenticated Server registration separately.")
     return 0
 
@@ -206,6 +212,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
     except (Refused, lifecycle.Refused, staging.Refused, catalogue.Refused,
-            OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+            OSError, ValueError, RuntimeError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
         print("Atlas macOS Node updater:", str(exc), file=sys.stderr)
         sys.exit(1)
