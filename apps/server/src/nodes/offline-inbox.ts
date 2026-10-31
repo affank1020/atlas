@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { AtlasError } from '../shared/errors.js';
 import {
     DEVICE_INBOX_TTL_MS, digestInboxSubmission, openInboxText,
@@ -16,7 +16,7 @@ export class DeviceOfflineInbox {
         private readonly pool: Pool,
         private readonly key: Buffer,
         /** Trusted ACL — caller must authenticate node credentials separately. */
-        private readonly allowed: (source: string, target: string) => Promise<boolean>,
+        private readonly allowed: (source: string, target: string, transaction?: PoolClient) => Promise<boolean>,
     ) {
         if (key.length !== 32) throw new Error('Missing device inbox encryption key.');
     }
@@ -50,7 +50,7 @@ export class DeviceOfflineInbox {
             if (peers.rowCount !== 2 || peers.rows.some(p => p.credential_state !== 'active') ||
                 !peers.rows.some(p => String(p.id).toLowerCase() === target &&
                     Array.isArray(p.capabilities) && p.capabilities.includes('device.share.receive')) ||
-                !(await this.allowed(source,target)))
+                !(await this.allowed(source,target,client)))
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
             const previous = await client.query(
                 'SELECT submission_hash,state,expires_at FROM device_inbox WHERE source_node_id=$1 AND id=$2',
