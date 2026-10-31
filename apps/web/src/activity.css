@@ -105,3 +105,27 @@
     .monitoring-search { flex-wrap: wrap; }
     .monitoring-search label, .monitoring-search input { flex: 1; min-width: 0; }
 }
+
+/* Only the server-filtered Monitoring investigation adds a provenance summary.
+   It is intentionally labelled as recorded evidence, not authenticated identity. */
+.activity-evidence {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 14px;
+    border: 1px solid var(--line, var(--border));
+    border-radius: 8px;
+}
+.activity-evidence-header { display: grid; gap: 5px; }
+.activity-evidence-header strong { font-size: 13px; }
+.activity-evidence-header small { font-size: 12px; opacity: .75; }
+.activity-details .activity-evidence dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+.activity-details .activity-evidence dl > div { display: grid; grid-template-columns: 1fr; gap: 4px; min-width: 0; }
+.activity-evidence dd { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+    .activity-details .activity-evidence dl { grid-template-columns: 1fr; }
+}
