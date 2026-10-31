@@ -397,8 +397,8 @@ def watchdog_plist(layout: Layout, script: Path) -> bytes:
     }, fmt=plistlib.FMT_XML)
 
 
-def require_watchdog(layout: Layout) -> None:
-    if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
+def require_watchdog(layout: Layout, *, during_refresh: bool = False) -> None:
+    if not during_refresh and (layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()):
         raise Refused("Recovery watchdog upgrade is pending; restore it first.")
     require_private(layout.state, layout.uid)
     script = layout.recovery_script
@@ -566,12 +566,10 @@ def refresh_watchdog(layout: Layout) -> None:
         command("launchctl", "bootstrap", f"gui/{layout.uid}", str(layout.recovery_plist))
         if not launch_loaded(layout, layout.recovery_target):
             raise Refused("Updated recovery watchdog is not loaded.")
-        # require_watchdog() intentionally refuses outstanding migration
-        # journals. The exact new script/plist must be checked before commit.
-        if script.read_bytes() != candidate or exact_plist_bytes(layout.recovery_plist, layout.uid) != new_plist:
-            raise Refused("Updated recovery watchdog files changed during migration.")
+        # Check exact source/plist and a loaded job while the rollback
+        # journal still exists. Never commit away the recovery path first.
+        require_watchdog(layout, during_refresh=True)
         clear_watchdog_refresh(layout)
-        require_watchdog(layout)
     except (Refused, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         try:
             restore_watchdog_refresh(layout)
