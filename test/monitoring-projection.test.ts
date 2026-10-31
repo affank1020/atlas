@@ -89,7 +89,7 @@ test('node correlation metadata is strictly allowlisted and arbitrary actor clai
         path: '/private/secret', token: 'secret',
     }), operation: 'node.update_intent_claimed' as AuditEvent['operation'] });
     assert.deepEqual(full.resulting, {
-        nodeId, intentId, transport: 'node-credential', actorKind: 'node-credential',
+        nodeId, intentId, transport: 'http', actorKind: 'node-credential',
         status: 'claimed', reportedState: 'requires_reconciliation',
         approved: false, executable: false, verified: false, clearsClaim: false,
     });

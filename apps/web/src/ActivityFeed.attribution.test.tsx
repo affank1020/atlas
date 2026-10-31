@@ -33,7 +33,7 @@ test('Node update events render in the Node category and preserve bounded intent
     const event: AuditEvent = { id: 'intent', occurredAt: '2026-10-31T12:00:00Z',
         client: 'atlas-node-credential', operation: 'node.update_intent_claimed',
         resulting: { nodeId: target, intentId: source, actorKind: 'node-credential',
-            transport: 'node-credential', approved: false, executable: false },
+            transport: 'http', approved: false, executable: false },
     };
     render(<ActivityRows events={[event]} scopeLinks />);
     expect(screen.getByText('atlas-node-credential · Node')).toBeInTheDocument();
