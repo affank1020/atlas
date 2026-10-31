@@ -60,8 +60,8 @@ unit tests run in normal Atlas CI, and on macOS during Node packaging.
 The separately delivered lifecycle and the interactive
 [macOS Node updater](MAC_NODE_UPDATE.md) now provide explicit
 operator-confirmed launchd cutover, rollback and a one-command
-\`check\` / \`update\` experience. The first migration from the developer
-checkout requires \`update --migrate\`; unattended installation is **off**.
+`check` / `update` experience. The first migration from the developer
+checkout requires `update --migrate`; unattended installation is **off**.
 
 The signed-staging command in this document is still useful when preparing
 a specific immutable release without touching launchd. The coordinator
