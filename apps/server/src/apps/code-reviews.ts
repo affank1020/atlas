@@ -5,7 +5,7 @@ import type { ApplicationDefinition, ApplicationCaller } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
-import { readPrTimeline } from './review-timeline.js';
+import { readCanonicalPrPage, readPrTimeline } from './review-timeline.js';
 import type { ReviewPublicationService } from './review-publication.js';
 import type { ManagedSummaryPreviewService } from './managed-summary.js';
 import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
@@ -224,14 +224,9 @@ export class CodeReviewsService {
      */
     async prSummary(repository: string, prNumber: number) {
         const ids = await this.storeIds();
-        const saved = await this.catalog.queryRecords({
-            projectId: CODE_REVIEWS_PROJECT_ID, storeId: ids.runs,
-            filters: [
-                { field: 'repository', operator: 'eq', value: repository },
-                { field: 'prNumber', operator: 'eq', value: prNumber },
-            ],
-            sort: [{ field: 'reviewedAt', direction: 'desc' }], limit: 1, offset: 0,
-        });
+        const canonicalRepository = repository.toLowerCase();
+        const saved = await readCanonicalPrPage(this.catalog, ids.runs,
+            canonicalRepository, prNumber, 1, 0);
         const record = saved.items[0];
         if (saved.total > 0 && !record)
             throw new AtlasError('Latest Code Reviews record could not be loaded.', 'CAPABILITY_UNAVAILABLE');
@@ -292,7 +287,7 @@ export class CodeReviewsService {
     /** Read-only, page-scoped lineage; does not infer fixes from missing evidence. */
     async prTimeline(repository: string, prNumber: number, limit: number, offset: number) {
         const ids = await this.storeIds();
-        return readPrTimeline(this.catalog, ids, repository, prNumber, limit, offset);
+        return readPrTimeline(this.catalog, ids, repository.toLowerCase(), prNumber, limit, offset, true);
     }
 
     async overview() {

@@ -112,6 +112,44 @@ test('missing per-round severity totals remain unknown rather than becoming zero
     expect(screen.getByText('Incomplete')).toBeInTheDocument();
     expect(screen.getByText('Findings / review').parentElement).toHaveTextContent('1.00');
 });
+test('older saved-run pages never claim to show a PR’s latest result or complete counts', () => {
+    const firstHundred = Array.from({ length: 100 }, (_, i) =>
+        run('recent-' + i, 'affank1020/atlas', 59, '2026-10-30T12:00:00Z',
+            'no_findings', {}));
+    const older = run('older-round', 'affank1020/atlas', 59,
+        '2026-10-01T12:00:00Z', 'changes_requested', { sev3: 1 });
+    vi.mocked(useApplicationRead).mockImplementation((name: string, input: Record<string, unknown> = {}) => {
+        if (name === 'code_reviews_overview') return {
+            data: { reviewRuns: 101, findingObservations: 1 }, isLoading: false, isFetching: false, refetch,
+        } as never;
+        if (name === 'code_reviews_list_runs') return {
+            data: { total: 101, limit: 100, offset: input.offset,
+                items: input.offset === 100 ? [older] : firstHundred },
+            isLoading: false, isFetching: false, refetch,
+        } as never;
+        if (name === 'code_reviews_list_findings') return {
+            data: { total: 0, items: [] }, isLoading: false, isFetching: false, refetch,
+        } as never;
+        throw Error('Unexpected tool ' + name);
+    });
+    render(<CodeReviewsDashboard />);
+    expect(screen.getByText('Rounds (page)')).toBeInTheDocument();
+    expect(screen.getByText('Latest result')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Older' }));
+    expect(screen.getByText('Result on page')).toBeInTheDocument();
+    expect(screen.queryByText('Latest result')).not.toBeInTheDocument();
+    expect(screen.getByText('Rounds (page)')).toBeInTheDocument();
+    expect(screen.getByText('Findings (page)')).toBeInTheDocument();
+    expect(screen.getByText('PRs on page')).toBeInTheDocument();
+    expect(screen.getByText(/verdicts may be older/)).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Repeated on page' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Details for affank1020/atlas #59' }));
+    expect(screen.getByRole('tab', { name: 'Findings on page' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Find pull request' }),
+        { target: { value: '#999999' } });
+    expect(screen.getByText('No matching PRs on this page.')).toBeInTheDocument();
+});
+
 test('refreshes the dashboard without changing GitHub state', () => {
     render(<CodeReviewsDashboard />);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));

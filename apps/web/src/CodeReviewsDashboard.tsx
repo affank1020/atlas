@@ -85,7 +85,7 @@ export function groupReviewRuns(entries: Run[]): Group[] {
 const findingCount = (group: Group) => group.countsComplete ? String(group.findings)
     : group.findings > 0 ? String(group.findings) + '+' : '—';
 
-function FindingList({ run }: { run: Run }) {
+function FindingList({ run, olderPage }: { run: Run; olderPage: boolean }) {
     const query = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_findings',
         { reviewRunId: run.id, limit: 50, offset: 0 }, true);
     const valid = (query.data?.items ?? []).map(record => {
@@ -97,8 +97,8 @@ function FindingList({ run }: { run: Run }) {
             filePath: typeof d.filePath === 'string' ? d.filePath : undefined,
             line: Number.isSafeInteger(d.line) && Number(d.line) > 0 ? Number(d.line) : undefined } as Finding;
     }).filter((v): v is Finding => v !== null);
-    return <section aria-label="Latest round findings" className="cr-detail-section">
-        <div className="cr-detail-heading"><h3>Latest round findings</h3><span>{run.headSha.slice(0, 7)}</span></div>
+    return <section aria-label={olderPage ? 'Findings in selected round' : 'Latest round findings'} className="cr-detail-section">
+        <div className="cr-detail-heading"><h3>{olderPage ? 'Findings in selected round' : 'Latest round findings'}</h3><span>{run.headSha.slice(0, 7)}</span></div>
         {query.isLoading && <p role="status">Loading findings…</p>}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data && !query.error && query.data.total === 0 && <p className="cr-quiet">No recorded findings in this round.</p>}
@@ -170,17 +170,17 @@ function GithubStatus({ group, refreshVersion }: { group: Group; refreshVersion:
     </section>;
 }
 
-function PrDetails({ group, refreshVersion }: { group: Group; refreshVersion: number }) {
+function PrDetails({ group, refreshVersion, olderPage }: { group: Group; refreshVersion: number; olderPage: boolean }) {
     const [tab, setTab] = useState<'findings' | 'rounds' | 'github'>('findings');
     return <div className="cr-detail" id={'cr-detail-' + group.key}>
         <div className="cr-tabs" role="tablist" aria-label={'PR #' + group.prNumber + ' details'}>
             {(['findings', 'rounds', 'github'] as const).map(name =>
                 <button type="button" role="tab" key={name} className={tab === name ? 'active' : ''}
                     aria-selected={tab === name} onClick={() => setTab(name)}>
-                    {name === 'findings' ? 'Latest findings' : name === 'rounds' ? 'Review rounds' : 'GitHub'}</button>)}
+                    {name === 'findings' ? (olderPage ? 'Findings on page' : 'Latest findings') : name === 'rounds' ? 'Review rounds' : 'GitHub'}</button>)}
         </div>
         <div role="tabpanel">
-            {tab === 'findings' && <FindingList run={group.latest}/>}
+            {tab === 'findings' && <FindingList run={group.latest} olderPage={olderPage}/>} 
             {tab === 'rounds' && <RoundHistory group={group}/>}
             {tab === 'github' && <GithubStatus group={group} refreshVersion={refreshVersion}/>}
         </div>
@@ -205,7 +205,8 @@ export function CodeReviewsDashboard() {
     const overview = summary.data;
     const average = overview && overview.reviewRuns > 0
         ? (overview.findingObservations / overview.reviewRuns).toFixed(2) : '—';
-    const incomplete = runs.data && (offset > 0 || offset + runs.data.items.length < runs.data.total);
+    const incomplete = !!(runs.data && (offset > 0 || offset + runs.data.items.length < runs.data.total));
+    const olderPage = offset > 0;
     const error = summary.error?.message || runs.error?.message;
     return <section className="code-reviews cr-dashboard" aria-label="Code Reviews">
         <header className="cr-header"><h1>Code Reviews</h1>
@@ -226,24 +227,27 @@ export function CodeReviewsDashboard() {
         <section className="cr-list" aria-label="Pull request reviews">
             <div className="cr-list-head"><h2>Pull requests</h2>
                 <div className="cr-filters">
-                    <input type="search" aria-label="Find pull request" placeholder="Find PR…" value={search}
+                    <input type="search" aria-label="Find pull request" placeholder={incomplete ? 'Find on page…' : 'Find PR…'} value={search}
                         onChange={e => setSearch(e.target.value)}/>
                     <span className="cr-filter-select">
                         <select aria-label="Filter pull requests" value={filter}
                             onChange={e => setFilter(e.target.value as typeof filter)}>
                             <option value="all">All PRs</option><option value="findings">With findings</option>
-                            <option value="revisited">Re-reviewed</option>
+                            <option value="revisited">{incomplete ? 'Repeated on page' : 'Re-reviewed'}</option>
                         </select>
                     </span>
                 </div></div>
-            {incomplete && <p className="cr-quiet cr-page-note" role="status">Showing a slice of saved rounds; per-PR counts may be partial.</p>}
+            {incomplete && runs.data && <p className="cr-quiet cr-page-note" role="status">
+                Rounds {offset + 1}–{Math.min(offset + runs.data.items.length, runs.data.total)} of {runs.data.total}.
+                PR counts, search and filters cover this page only{olderPage ? '; verdicts may be older than the PR’s latest review.' : '.'}
+            </p>}
             {runs.isLoading && <p className="cr-quiet cr-loading" role="status">Loading reviews…</p>}
             {!runs.isLoading && runs.data?.total === 0 && <p className="cr-empty">No reviews recorded.</p>}
             {runs.data && entries.length !== runs.data.items.length && <p role="status" className="cr-page-note">
                 Some review records could not be displayed.</p>}
             {runs.data && groups.length > 0 && <>
-                <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>Rounds</span>
-                    <span>Findings</span><span>Latest result</span><span>Reviewed</span><span/></div>
+                <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>{incomplete ? 'Rounds (page)' : 'Rounds'}</span>
+                    <span>{incomplete ? 'Findings (page)' : 'Findings'}</span><span>{olderPage ? 'Result on page' : 'Latest result'}</span><span>{olderPage ? 'Reviewed (page)' : 'Reviewed'}</span><span/></div>
                 {shown.map(group => <article className="cr-pr" key={group.key}>
                     <div className="cr-pr-main">
                         <div className="cr-pr-identity">
@@ -267,9 +271,9 @@ export function CodeReviewsDashboard() {
                             onClick={() => setExpandedKey(expandedKey === group.key ? null : group.key)}>
                             {expandedKey === group.key ? '−' : '+'}</button>
                     </div>
-                    {expandedKey === group.key && <PrDetails key={group.key + ':' + refreshVersion} group={group} refreshVersion={refreshVersion}/>}
+                    {expandedKey === group.key && <PrDetails key={group.key + ':' + refreshVersion} group={group} refreshVersion={refreshVersion} olderPage={olderPage}/>} 
                 </article>)}
-                {shown.length === 0 && <p className="cr-empty">No matching PRs.</p>}
+                {shown.length === 0 && <p className="cr-empty">{incomplete ? 'No matching PRs on this page.' : 'No matching PRs.'}</p>
             </>}
             {runs.data && runs.data.total > 100 && <div className="cr-pagination">
                 <button type="button" className="ghost" disabled={offset === 0 || runs.isFetching}

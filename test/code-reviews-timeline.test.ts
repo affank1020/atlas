@@ -56,7 +56,7 @@ function fixture(override: { rounds?: any[]; findings?: Record<string, any[]>; c
             queries.push(q);
             const filter = Object.fromEntries((q.filters ?? []).map((f: any) => [f.field, f.value]));
             if (q.storeId === runsId) {
-                assert.deepEqual(filter, { repository: repo, prNumber: 116 });
+                assert.deepEqual(filter, { prNumber: 116 });
                 return { total: allRounds.length, items: allRounds.slice(q.offset, q.offset + q.limit) };
             }
             assert.equal(q.storeId, findingsId);

@@ -184,7 +184,12 @@ test('PR summary reports latest saved round, exact GitHub head and recorded coun
         listStores: async () => [{ id: runsId, name: 'Review Runs' }, { id: findingsId, name: 'Review Findings' }],
         queryRecords: async (input: any) => {
             queries.push(input);
-            return { items: [latest], total: 3, limit: 1, offset: 0 };
+            // The case-insensitive canonical read fetches a complete bounded
+            // PR-number window before selecting the latest matching run.
+            return { items: [latest,
+                { ...latest, id: 'second', data: { ...latest.data, reviewedAt: '2026-10-29T12:00:00.000Z' } },
+                { ...latest, id: 'third', data: { ...latest.data, reviewedAt: '2026-10-28T12:00:00.000Z' } }],
+                total: 3, limit: input.limit, offset: input.offset };
         },
     } as any, {
         read: async () => ({ reviews: [], comments: [] }),
@@ -205,11 +210,8 @@ test('PR summary reports latest saved round, exact GitHub head and recorded coun
     });
     assert.deepEqual(queries[0], {
         projectId: CODE_REVIEWS_PROJECT_ID, storeId: runsId,
-        filters: [
-            { field: 'repository', operator: 'eq', value: 'affank1020/atlas' },
-            { field: 'prNumber', operator: 'eq', value: 114 },
-        ],
-        sort: [{ field: 'reviewedAt', direction: 'desc' }], limit: 1, offset: 0,
+        filters: [{ field: 'prNumber', operator: 'eq', value: 114 }],
+        sort: [{ field: 'reviewedAt', direction: 'desc' }], limit: 100, offset: 0,
     });
     head = latestSha;
     open = false;
@@ -226,6 +228,7 @@ test('PR summary reports latest saved round, exact GitHub head and recorded coun
 
 test('PR summary retains explicit unknown status for missing, incomplete or unavailable evidence', async () => {
     const run = { id: runId, data: {
+        repository: 'affank1020/atlas', prNumber: 114,
         headSha: 'a'.repeat(40), reviewedAt: '2026-10-30T12:00:00.000Z',
         verdict: 'no_findings', coverage: { source: 'github_pull_request_review' },
     } };
@@ -255,7 +258,7 @@ test('PR summary retains explicit unknown status for missing, incomplete or unav
     assert.equal((await service.prSummary('affank1020/atlas', 114)).latestReviewHead, 'outdated');
     items = [];
     await assert.rejects(service.prSummary('affank1020/atlas', 114),
-        /could not be loaded/);
+        /incomplete/);
     items = [{ id: runId, data: { ...run.data, headSha: 'broken' } }];
     await assert.rejects(service.prSummary('affank1020/atlas', 114),
         /unsupported fields/);
