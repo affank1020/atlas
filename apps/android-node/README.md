@@ -1,17 +1,17 @@
-# Atlas Android Node (0.5.0 development build)
+# Atlas Android Node (0.6.0 development build)
 
 Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not** an Android port of the Atlas Web UI.
 
-## Current scope (v0.5.0)
+## Current scope (v0.6.0)
 
 - Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
-- One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated foreground WSS.
-- Android Sharesheet text/link import with memory-only draft. On the **screenshot-intake feature branch**, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images cannot yet be sent**: the image Send button stays disabled until a separately authorized binary transport is implemented. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
-- Advertises `device.share.send` and foreground-only `device.share.receive`. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
+- One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated WSS (foreground by default, optional background service).
+- Android Sharesheet text/link import with memory-only draft. Since merged PR #161, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images cannot yet be sent**: the image Send button stays disabled until a separately authorized binary transport is implemented. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
+- Advertises `device.share.send` and `device.share.receive`; the Node disconnects on backgrounding unless the operator turns on Background receiving in Settings. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
 - Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or background receiver.
-- No Workspace capabilities, persistent inbox/history, file transfer, automatic send, blanket clipboard permission or background service.
+- No Workspace capabilities, persistent inbox/history, file transfer, automatic send or blanket clipboard permission. The optional remote-messaging foreground service provides best-effort live receiving; it is not offline delivery.
 
-This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, Mac → Android physical acceptance, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
+This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, the negative-case Mac → Android physical acceptance matrix, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
 ## Develop / sideload
 
@@ -37,8 +37,8 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 2. One-time ticket enrolment, encrypted identity and foreground Node registration — implemented.
 3. Opt-in Mac receiver, directional managed approvals and explicit Android text send — implemented; first real Samsung → Mac copy confirmed.
 4. Approved receiver discovery by name — implemented in Android 0.4.0.
-5. Foreground Android Copy/Decline receiver — implemented in 0.5.0. Mac-side sender is merged in PR #82; reverse-direction physical acceptance remains outstanding.
-6. **Next gate:** physically verify Mac → Android text with Android 0.5.0 and merged Mac sender; complete the remaining Samsung → Mac [E2E cases](../../docs/MOBILE_SHARE_E2E.md). A screenshot-intake draft adds preview-only image import, not image transfer.
+5. Foreground Android Copy/Decline receiver — implemented in 0.5.0. Mac-side sender merged in PR #82; an initial physical Mac → Samsung text Copy transfer succeeded on 31 October 2026. The negative cases still need acceptance.
+6. **Next gate:** physically verify Android 0.6.0 notification-based receiving in another app; complete screen-off, declined, timeout and revocation [E2E cases](../../docs/MOBILE_BACKGROUND_RECEIVER.md). Preview-only screenshot import is merged but still cannot send images.
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
@@ -47,7 +47,7 @@ Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader mi
 CI runs host JVM reducer regression tests (`gradle :app:testDebugUnitTest`) and builds both
 app and Compose instrumentation test APKs. Run `gradle :app:connectedDebugAndroidTest` on
 an Android emulator/connected device for real navigation and Sharesheet UI tests.
-Share drafts survive tab changes and Activity recreation in a volatile-only ViewModel:
+Share drafts survive tab changes and Activity recreation in an application-scoped volatile-only ViewModel:
 no SavedState, backup, logging, or disk persistence of received content.
 
 CI debug APKs are **signed with ephemeral keys**; they are unsuitable for
@@ -142,6 +142,13 @@ explicit and re-authorised against current policy by the relay.
 The server rate-limits directory reads per authenticated socket and never
 persists contents or directory responses. Re-enrolment and Node updates still
 require normal trusted APK signing and end-to-end device testing.
+
+## 0.6.0 — Opt-in background receiver (foreground service only)
+
+- In Settings, enable **Background receiving** and grant Android 13+ notifications. Atlas checks **app-wide notifications and both incoming/status channels**, refuses background delivery when blocked, and offers **Open notification settings** to recover; while running it rechecks channel availability. Atlas starts a `remoteMessaging` foreground service and displays an ongoing Stop notification. Only this active service or an open Activity owns a single application-scoped authenticated Node WebSocket; no duplicate Node registrations.
+- While another app is visible, new incoming approved text raises a content-free notification. Tap it quickly to open the Atlas Copy/Decline dialog. The existing 15-second expiry remains enforced; receipt is accepted **only** after a foreground user Copy action. No automatic clipboard writes, intrusive activity launches, lockscreen previews, or durable content cache.
+- The service stops when the user selects Stop, forgets the Node, or Android terminates it. It is not automatically launched at boot or resumed after force-stop. It does **not** guarantee receipt with the screen off or under Doze, and **there is no push or offline inbox**. See [background delivery issue #163](https://github.com/affank1020/atlas/issues/163) for the next server+FCM slice.
+- App versionCode is now 6. Build and upgrade on the same private persistent signing key; do not install the ephemeral CI debug APK over an enrolled device.
 
 ## 0.5.0 — Foreground Android text receiver
 
