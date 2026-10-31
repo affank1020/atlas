@@ -129,6 +129,37 @@ logout/login and reboot, missing/outdated watchdog, zero duplicate Node
 processes, Gatekeeper and permissions behavior, and retention of the original
 credential file. Validate the absence of secrets in evidence/logs.
 
+## Real launchd check-only smoke on disposable CI macOS
+
+The `Atlas macOS Node lifecycle` workflow also runs
+`test/test_macos_node_launchd_real.py` on a **GitHub-hosted macOS runner**
+with `ATLAS_MACOS_LAUNCHD_SMOKE=1`. This test is different from the
+in-memory/mock-`launchctl` unit tests:
+
+- It refuses to run as root or over an existing Atlas NodeSoftware directory,
+  runtime LaunchAgent, or recovery LaunchAgent. It requires the explicit CI
+  opt-in and a GitHub-hosted macOS user session.
+- It creates a local **test-only, not cryptographically signed** release fixture
+  and a one-off label under `com.affank1020.atlas.node.update-check.acceptance.*`.
+  No production Node LaunchAgent label, credentials, Node PID or workspaces
+  are touched.
+- It uses **real `launchctl bootstrap` and `bootout`**, checks the loaded
+  LaunchAgent, waits for `RunAtLoad` to execute the standalone Python
+  checker, verifies a private `unavailable` observation (since no real Node
+  exists), then validates removal and cleans the disposable fixture.
+- It never stages an actual release archive, installs/upgrades Node, tests
+  a 60-minute timer interval, or proves Sigstore verification. The fixture
+  only exercises the runtime wiring of a signed-style operator bundle.
+- The test must fail if the runner lacks a suitable user `gui/<uid>` domain,
+  cannot load the job, or the checker never executes. A skipped or failed
+  run must **not** be counted as real-launchd acceptance.
+
+This closes a narrow checker-`launchctl` integration gap; it **does not**
+replace the full macOS host drill below. The runtime activation,
+watchdog-recovery, SIGKILL, reboot, and authenticated Atlas Server registration
+still require a disposable machine/user with a real independently verified
+Node release, before updating the personal Mac or enabling unattended installs.
+
 Track [#167](https://github.com/affank1020/atlas/issues/167) and
 [#111](https://github.com/affank1020/atlas/issues/111). Nothing is
 automatically deployed by merging this change.
