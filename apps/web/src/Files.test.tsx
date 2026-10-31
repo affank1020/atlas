@@ -36,6 +36,10 @@ vi.mock('./filesApi', () => ({
 }));
 
 beforeEach(() => {
+    vi.mocked(useListProjectsQuery).mockImplementation(() => ({
+        data: [{ id: projectId, name: 'Research' }, { id: otherProject, name: 'University' }],
+        isLoading: false, error: null, isFetching: false, refetch: vi.fn(),
+    } as never));
     vi.mocked(listFiles).mockResolvedValue([]);
     vi.mocked(listProjectFolders).mockResolvedValue([]);
     vi.mocked(downloadFile).mockResolvedValue(undefined);
@@ -172,24 +176,26 @@ test('Downloads and archives stay scoped to selected Project', async () => {
 });
 
 test('pending Project selection shows a Files skeleton instead of an empty message or zero files', async () => {
-    vi.mocked(useListProjectsQuery).mockReturnValueOnce({
+    const previousQuery = vi.mocked(useListProjectsQuery).getMockImplementation()!;
+    vi.mocked(useListProjectsQuery).mockImplementation(() => ({
         data: undefined, isLoading: true, isFetching: true, error: null, refetch: vi.fn(),
-    } as never);
+    } as never));
     const view = render(<Files />);
     expect(screen.getByRole('status', { name: 'Loading projects' })).toBeInTheDocument();
     expect(screen.queryByText('No Projects available. Create a Project to store files.')).not.toBeInTheDocument();
     expect(screen.queryByText('0 files · 0 B')).not.toBeInTheDocument();
     expect(listFiles).not.toHaveBeenCalled();
+    vi.mocked(useListProjectsQuery).mockImplementation(previousQuery);
     view.rerender(<Files />);
     expect(await screen.findByText('This folder is empty')).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Loading projects' })).not.toBeInTheDocument();
 });
 
 test('failed Project discovery shows an error without a false empty Files state or zero count', () => {
-    vi.mocked(useListProjectsQuery).mockReturnValueOnce({
+    vi.mocked(useListProjectsQuery).mockImplementation(() => ({
         data: undefined, isLoading: false, isFetching: false,
         error: { message: 'Projects unavailable' }, refetch: vi.fn(),
-    } as never);
+    } as never));
     render(<Files />);
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load Projects');
     expect(screen.queryByText('0 files · 0 B')).not.toBeInTheDocument();
