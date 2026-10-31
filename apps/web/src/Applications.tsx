@@ -63,7 +63,7 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
     const Component = currentApplication ? applicationComponents[currentApplication.type] : undefined;
     return <div className="application-window">
         <AtlasTopBar page="application" context={<nav className="application-breadcrumb" aria-label="Application location">
-            <a href={projectId ? `#/projects/${projectId}/applications` : '#/applications'} className="application-back">← {projectId ? 'Project Applications' : 'All Applications'}</a>
+            <a href="#/applications" className="application-back">← Applications</a>
             <span className="application-breadcrumb-separator" aria-hidden="true">/</span>
             <span className="application-window-name" title={application?.name ?? slug}>{application?.name ?? 'Application'}</span>
         </nav>} />
