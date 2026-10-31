@@ -427,33 +427,38 @@ def background_check(layout) -> None:
             # Error type/message could contain a URL or host-local path.
             # Never persist a raw exception or the Node's identity/config.
             pass
-    # A versioned CLI can change during the bounded release catalogue read.
-    # Never persist a candidate computed by an obsolete helper as current.
-    if current_target(layout) != current:
-        observation = {
-            "schema": 1,
-            "checkedAt": observation["checkedAt"],
-            "state": "unavailable",
-            "reason": "operator-changed-during-check",
-        }
-    elif layout.pending.exists() or layout.pending.is_symlink() or (
-        layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()
-    ):
-        observation = {
-            "schema": 1,
-            "checkedAt": observation["checkedAt"],
-            "state": "needs-attention",
-            "reason": "local-recovery-pending",
-        }
-    _, record = check_paths(layout)
-    lifecycle.require_owned_parent(layout.app, layout.uid)
-    if record.is_symlink():
-        raise Refused("Release-checker result path is symlinked.")
-    if record.exists():
-        lifecycle.require_private(record, layout.uid, directory=False)
-    lifecycle.atomic_write(record, (
-        json.dumps(observation, separators=(",", ":"), sort_keys=True) + "\n"
-    ).encode())
+    # Network discovery must not hold the lifecycle lock: it is bounded by
+    # network timeouts and must never stall a Node activation or watchdog.
+    # However, the *final* operator/recovery checks and atomic publication
+    # must be one critical section with promote() and activate()/rollback().
+    # Otherwise a promotion between validation and atomic_write() could
+    # publish an obsolete candidate after the new operator is already active.
+    with lifecycle.lock_state(layout):
+        if current_target(layout) != current:
+            observation = {
+                "schema": 1,
+                "checkedAt": observation["checkedAt"],
+                "state": "unavailable",
+                "reason": "operator-changed-during-check",
+            }
+        elif layout.pending.exists() or layout.pending.is_symlink() or (
+            layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()
+        ):
+            observation = {
+                "schema": 1,
+                "checkedAt": observation["checkedAt"],
+                "state": "needs-attention",
+                "reason": "local-recovery-pending",
+            }
+        _, record = check_paths(layout)
+        lifecycle.require_owned_parent(layout.app, layout.uid)
+        if record.is_symlink():
+            raise Refused("Release-checker result path is symlinked.")
+        if record.exists():
+            lifecycle.require_private(record, layout.uid, directory=False)
+        lifecycle.atomic_write(record, (
+            json.dumps(observation, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode())
 
 
 def monitor_manage(layout, argv: list[str]) -> int:
