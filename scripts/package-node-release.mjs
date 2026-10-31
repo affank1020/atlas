@@ -16,6 +16,12 @@ import { fileURLToPath } from 'node:url';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(process.argv[2] ?? join(repo, '.build/node-releases'));
+// Reuse the verified Node release provenance for the macOS operator itself.
+// There is no separately signed/managed updater that could drift from its runtime.
+const macOperatorSources = [
+    'macos-node-update.py', 'macos-node-stage.py', 'macos-node-lifecycle.py',
+    'linux-node-host-updater.py', 'macos-node-operator.py',
+];
 const required = [
     'apps/node/package.json', 'apps/node/dist',
     'packages/protocol/package.json', 'packages/protocol/dist',
@@ -34,6 +40,15 @@ try {
         const destination = join(stage, item);
         await mkdir(dirname(destination), { recursive: true });
         await cp(join(repo, item), destination, { recursive: true, force: false });
+    }
+    const operatorScripts = {};
+    for (const file of macOperatorSources) {
+        const source = join(repo, 'scripts', file);
+        const destination = join(stage, 'scripts', file);
+        await mkdir(dirname(destination), { recursive: true });
+        const contents = await readFile(source);
+        await writeFile(destination, contents);
+        operatorScripts['scripts/' + file] = createHash('sha256').update(contents).digest('hex');
     }
     // Generate a Node-only npm workspace graph. The monorepo's root lockfile
     // also describes Server and Web, so copying it would leak unrelated
@@ -68,6 +83,7 @@ try {
         entrypoint: 'apps/node/dist/platforms/desktop/main.js',
         supportedHosts: ['darwin', 'linux'],
         nodeRuntime: '>=20',
+        operatorScripts,
         install: 'npm ci --omit=dev --ignore-scripts --workspace @atlas/node --workspace @atlas/protocol --include-workspace-root=false',
     };
     await writeFile(join(stage, 'atlas-node-release.json'), JSON.stringify(release, null, 2) + '\n');

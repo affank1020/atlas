@@ -147,6 +147,11 @@ test('node-only publication gate ignores later Web-only pushes but rejects newer
         git('add', '.'); git('commit', '-q', '-m', 'Web B');
         assert.equal(execFileSync('bash', [helper, root, nodeA, 'HEAD'], { encoding: 'utf8' }).trim(), 'current');
 
+        mkdirSync(join(root, 'scripts'), { recursive: true });
+        writeFileSync(join(root, 'scripts/macos-node-operator.py'), '# new updater');
+        git('add', '.'); git('commit', '-q', '-m', 'Signed macOS operator change');
+        assert.equal(execFileSync('bash', [helper, root, nodeA, 'HEAD'], { encoding: 'utf8' }).trim(), 'superseded');
+
         writeFileSync(join(root, 'apps/node/runtime.txt'), 'Node C');
         git('add', '.'); git('commit', '-q', '-m', 'Node C');
         assert.equal(execFileSync('bash', [helper, root, nodeA, 'HEAD'], { encoding: 'utf8' }).trim(), 'superseded');

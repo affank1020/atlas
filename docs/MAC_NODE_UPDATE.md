@@ -8,28 +8,82 @@ an automatic policy, migrate credentials, or update Atlas Server/Web.
 launchd acceptance in [MAC_NODE_LIFECYCLE.md](MAC_NODE_LIFECYCLE.md).
 A passing CI runner with mocked launchctl cannot prove live host safety.
 
-## Commands
+## Bootstrap the standalone updater once
 
-Requirements: macOS logged-in non-root user, Python 3.10+, Node.js 20+,
-npm, GitHub CLI 2.102.0+ with release/attestation access, the existing hosted
-LaunchAgent, and the updater scripts from this repository.
+Requirements: a logged-in non-root macOS user, Python 3.10+, Node.js 20+,
+npm, GitHub CLI 2.102.0+ with release/attestation access, and an existing
+Atlas Node LaunchAgent. An initial **reviewed checkout** is used only to
+stage and provision the signed operator. This does **not** migrate or
+restart the existing Node.
 
-Run from the repository checkout:
+Choose a **published, immutable Node release built after this operator
+bundle was added**. Older releases do not carry the required scripts and
+are intentionally refused. Replace the placeholder with the real signed tag:
 
 ```bash
-python3 scripts/macos-node-update.py status
-python3 scripts/macos-node-update.py check
-python3 scripts/macos-node-update.py check --json
-
-# First use: explicit migration from a checkout-managed LaunchAgent
-python3 scripts/macos-node-update.py update --migrate
-
-# Subsequent versioned release updates
-python3 scripts/macos-node-update.py update
-
-# Roll back to the preceding LaunchAgent, with interactive confirmation
-python3 scripts/macos-node-update.py rollback
+# One-time bootstrap from a reviewed Atlas source checkout:
+python3 scripts/macos-node-stage.py stage node-vVERSION-SHA
+python3 scripts/macos-node-operator.py install vVERSION-SHA --confirm
 ```
+
+The installer checks the signed staging receipt and the manifest-bound SHA-256
+of **all five bundled updater scripts**. It then atomically selects them
+under a private per-user directory and creates one executable wrapper at:
+
+```text
+~/Library/Application Support/Atlas/NodeSoftware/bin/atlas-node-mac
+```
+
+The wrapper always resolves a previously signed-staged release, **not the
+source checkout**. No new privileged service, scheduled auto-install policy,
+additional Node identity or background job is created. The original Node
+credential file path remains unchanged.
+
+## Routine commands (no checkout required)
+
+```bash
+operator="$HOME/Library/Application Support/Atlas/NodeSoftware/bin/atlas-node-mac"
+"$operator" status
+"$operator" check
+"$operator" check --json
+
+# First migration of the existing development-checkout-managed Node:
+"$operator" update --migrate
+
+# Subsequent updates, confirmed against a specific signed release:
+"$operator" update
+
+# Explicit rollback (still requires confirmation):
+"$operator" rollback
+```
+
+The CLI source pointer advances **only after a successful Node activation**,
+when the newly staged release has a valid signed operator bundle. Before
+switching that pointer, the lifecycle lock checks that the loaded recovery
+LaunchAgent is compatible with the **new** signed operator. When the
+lifecycle script changed across versions, the operator migrates the loaded
+watchdog to the new signed script using its existing journal and failure
+rollback. If replacement fails, the CLI pointer remains on its previous
+release, so routine updates and rollback remain accessible.
+
+A killed updater can leave the old CLI pointer paired with the newer
+watchdog between those two steps. The confirmed `rollback` command
+reconciles the watcher to its own signed lifecycle before rolling back the
+Node, and the operator's explicit `sync --confirm` can finish aligning
+the updater with the active signed runtime. The active Node may already
+have updated successfully even if operator promotion did not complete;
+do not repeat the cutover blindly. If interrupted between Node cutover
+and operator promotion, explicitly sync from the **currently active**
+verified release (not a fresh network candidate):
+
+```bash
+python3 "$HOME/Library/Application Support/Atlas/NodeSoftware/operator/current/macos-node-operator.py" sync --confirm
+```
+
+The standalone CLI isn't an auto-updater: each runtime update remains
+interactive. The operator and its compatibility are verified in CI, but the
+first real macOS login-session migration still requires disposable-host
+acceptance.
 
 **There is no automatic installation.** The command displays the exact stable
 release tag and requires typing `UPDATE node-vVERSION-SHA`. It checks the
@@ -80,16 +134,16 @@ without changing the Node.
 If recovery is pending, use:
 
 ```bash
-python3 scripts/macos-node-lifecycle.py recover
-python3 scripts/macos-node-update.py status
+python3 "$HOME/Library/Application Support/Atlas/NodeSoftware/operator/current/macos-node-lifecycle.py" recover
+"$HOME/Library/Application Support/Atlas/NodeSoftware/bin/atlas-node-mac" status
 ```
 
 If a previous watcher refresh was interrupted, **do not manually delete its
 journal or files**. Restore the previous working watchdog explicitly:
 
 ```bash
-python3 scripts/macos-node-lifecycle.py restore-watchdog --confirm
-python3 scripts/macos-node-update.py status
+python3 "$HOME/Library/Application Support/Atlas/NodeSoftware/operator/current/macos-node-lifecycle.py" restore-watchdog --confirm
+"$HOME/Library/Application Support/Atlas/NodeSoftware/bin/atlas-node-mac" status
 ```
 
 The restore command holds the lifecycle lock, checks the durable backup,
@@ -99,11 +153,12 @@ operator inspection/retry. A loaded watchdog with unexpected job settings,
 symlinked paths or unsafe ownership is rejected rather than overwritten.
 Never manually change the watchdog while the LaunchAgent is loaded.
 
-The scripts currently run from a repository checkout, although the staged
-Node runtime is release-managed. A separately provisioned updater bundle
-and real macOS login-host validation remain required before treating macOS CD
-as fully rolled out. Linux's host-local updater is independent and unaffected;
-neither platform's automatic installation is enabled by this PR.
+The standalone macOS operator is versioned inside the same signed Node
+release, but no updater or Node activation happens merely by merging the PR.
+The original checkout hosting the credential file must remain readable even
+after the runtime is release-managed. Real-host acceptance remains required
+before enabling automatic installation. Linux's host-local updater is
+independent and unaffected; neither platform's automatic installation is enabled.
 
 See [issue #167](https://github.com/affank1020/atlas/issues/167) and
 [issue #111](https://github.com/affank1020/atlas/issues/111).

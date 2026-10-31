@@ -195,7 +195,7 @@ class MacUpdateTests(unittest.TestCase):
         ), patch("builtins.input", return_value="UPDATE " + self.tag2), patch.object(
             update, "prepared_release", side_effect=lambda *_: events.append("stage")
         ), patch.object(update.lifecycle, "require_watchdog",
-                        side_effect=update.lifecycle.Refused("old script")), patch.object(
+                        side_effect=[update.lifecycle.Refused("old script"), None]), patch.object(
             update.lifecycle, "launch_loaded", return_value=True
         ), patch.object(update.lifecycle, "manage", side_effect=lambda _layout, args: events.append(tuple(args))):
             self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
@@ -225,6 +225,46 @@ class MacUpdateTests(unittest.TestCase):
                 update.apply_update(self.layout, migrate=False)
             lifecycle_manage.assert_not_called()
 
+    def test_uninstalled_operator_is_not_implicitly_bootstrapped(self):
+        with patch.object(update, "load_helper", side_effect=AssertionError("No CLI install expected")):
+            update.sync_installed_operator(self.layout, self.tag2.removeprefix("node-"))
+        self.assertFalse((self.layout.app / "operator").exists())
+
+    def test_post_activation_operator_promotes_only_installed_cli(self):
+        link = self.layout.app / "operator" / "current"
+        link.parent.mkdir()
+        link.symlink_to(self.layout.releases / self.tag1.removeprefix("node-") / "scripts")
+        from contextlib import nullcontext
+        from unittest.mock import Mock
+        helper = Mock()
+        with patch.object(update, "load_helper", return_value=helper), patch.object(
+            update.lifecycle, "lock_state", return_value=nullcontext()
+        ):
+            update.sync_installed_operator(self.layout, self.tag2.removeprefix("node-"))
+        helper.promote.assert_called_once_with(
+            self.layout, self.tag2.removeprefix("node-"), require_existing=True
+        )
+
+    def test_operator_promotion_failure_does_not_misreport_successful_node_cutover(self):
+        candidate = {
+            "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
+            "installed": self.tag1.removeprefix("node-"), "mode": "release",
+            "state": "available", "launchdPid": 123, "recoveryPending": False,
+        }
+        with patch.object(update, "discover", return_value=candidate), patch.object(
+            update.sys.stdin, "isatty", return_value=True
+        ), patch("builtins.input", return_value="UPDATE " + self.tag2), patch.object(
+            update, "prepared_release"
+        ), patch.object(update.lifecycle, "require_watchdog"), patch.object(
+            update.lifecycle, "manage"
+        ) as activate, patch.object(
+            update, "sync_installed_operator", side_effect=RuntimeError("operator pointer refused")
+        ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
+            self.assertIn("Node activated but standalone updater", stderr.getvalue())
+        activate.assert_called_once()
+
     def test_successful_flow_verifies_staging_then_reuses_lifecycle(self):
         old = self.tag1.removeprefix("node-")
         candidate = {
@@ -245,7 +285,7 @@ class MacUpdateTests(unittest.TestCase):
             update.lifecycle, "manage", side_effect=lambda *args: events.append(tuple(args[1]))
         ):
             self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
-        self.assertEqual(events, ["stage", "watchdog",
+        self.assertEqual(events, ["stage", "watchdog", "watchdog",
                                   ("activate", self.tag2.removeprefix("node-"), "--confirm",
                                    "--expect-entrypoint", "/test/node.js")])
 
