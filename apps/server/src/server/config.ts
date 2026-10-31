@@ -159,6 +159,16 @@ export function loadThreadResolutionRepositories(env:NodeJS.ProcessEnv=process.e
     return new Set(entries);
 }
 
+/** One explicitly approved cutover for all GitHub-App-accessible repositories.
+ * Legacy COMMENT reviews and GraphQL thread resolution are not enabled by it.
+ */
+export function loadNativePublishAllRepositories(env: NodeJS.ProcessEnv = process.env): boolean {
+    const value = env.ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES?.trim() || 'false';
+    if (value !== 'true' && value !== 'false')
+        throw new Error('ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES must be true or false.');
+    return value === 'true';
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -192,14 +202,21 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     // available for the same repository. A bad cutover configuration must
     // fail at startup rather than allow duplicate GitHub publication.
     const publishRepositories = loadCodeReviewPublishRepositories(env);
-    const managedSummaryRepositories = loadManagedSummaryRepositories(env);
-    const inlineRootRepositories = loadInlineRootRepositories(env);
-    const inlineReplyRepositories = loadInlineReplyRepositories(env);
-    const inlineFixRepositories = loadInlineFixRepositories(env);
+    const publishAllNative = loadNativePublishAllRepositories(env);
+    // Validate legacy repository-specific inputs even when the global opt-in is active.
+    const configuredSummary = loadManagedSummaryRepositories(env);
+    const configuredRoots = loadInlineRootRepositories(env);
+    const configuredReplies = loadInlineReplyRepositories(env);
+    const configuredFixes = loadInlineFixRepositories(env);
+    const managedSummaryRepositories = publishAllNative ? new Set<string>(['*']) : configuredSummary;
+    const inlineRootRepositories = publishAllNative ? new Set<string>(['*']) : configuredRoots;
+    const inlineReplyRepositories = publishAllNative ? new Set<string>(['*']) : configuredReplies;
+    const inlineFixRepositories = publishAllNative ? new Set<string>(['*']) : configuredFixes;
+    // Resolving conversations remains separately approved and never accepts global opt-in.
     const threadResolutionRepositories = loadThreadResolutionRepositories(env);
     const managedAllowLists = [managedSummaryRepositories, inlineRootRepositories,
         inlineReplyRepositories, inlineFixRepositories, threadResolutionRepositories];
-    if ([...publishRepositories].some(repo => managedAllowLists.some(set => set.has(repo))))
+    if ([...publishRepositories].some(repo => managedAllowLists.some(set => set.has(repo) || set.has('*'))))
         throw new Error('Atlas Code Reviews legacy and managed GitHub publishing must not overlap for a repository.');
     return {
         databaseUrl, host, port,
