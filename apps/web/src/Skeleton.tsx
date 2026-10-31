@@ -12,8 +12,10 @@ export function SkeletonRows({ count = 3, variant = 'default', label = 'Loading 
         </div>)}
     </div>;
 }
-export function SkeletonCards({ count = 3, label = 'Loading cards' }: { count?: number; label?: string }) {
-    return <div className="atlas-skeleton-grid" role="status" aria-label={label} aria-busy="true">
+export function SkeletonCards({ count = 3, label = 'Loading cards', decorative = false }: { count?: number; label?: string; decorative?: boolean }) {
+    return <div className="atlas-skeleton-grid" role={decorative ? undefined : 'status'}
+        aria-label={decorative ? undefined : label} aria-busy={decorative ? undefined : true}
+        aria-hidden={decorative ? true : undefined}>
         {Array.from({ length: count }, (_, index) => <div className="atlas-skeleton-card" key={index} aria-hidden="true">
             <span className="atlas-skeleton atlas-skeleton-icon" />
             <span className="atlas-skeleton-lines"><SkeletonLine width="short" /><SkeletonLine width="long" /><SkeletonLine /></span>
@@ -22,6 +24,6 @@ export function SkeletonCards({ count = 3, label = 'Loading cards' }: { count?: 
 }
 export function SkeletonApplicationWindow() {
     return <div className="atlas-skeleton-app-window" role="status" aria-label="Loading application interface" aria-busy="true">
-        <SkeletonLine width="short" /><SkeletonCards count={3} label="Loading application panels" />
+        <SkeletonLine width="short" /><SkeletonCards count={3} decorative />
     </div>;
 }
