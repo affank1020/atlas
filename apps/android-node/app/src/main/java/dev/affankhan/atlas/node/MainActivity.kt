@@ -336,6 +336,7 @@ internal fun AtlasCompanion(
                     title = { Text("Queued Atlas text") },
                     text = {
                         Text("From Node " + queuedInboxPreview.sourceNodeId.take(8) +
+                            "\nDelivery ID: " + queuedInboxPreview.deliveryId +
                             "\n\n" + queuedInboxPreview.text.take(180)
                                 .replace(Regex("[\\u0000-\\u001f\\u007f]"), " ") +
                             (if(queuedInboxPreview.text.length>180) "…" else "") +
@@ -446,7 +447,14 @@ private fun CompanionContent(
                             modifier=Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement=Arrangement.SpaceBetween,
                         ) {
-                            Text("From " + item.sourceNodeId.take(8))
+                            Column(modifier=Modifier.weight(1f)) {
+                                Text("From " + item.sourceNodeId.take(8))
+                                Text(
+                                    "Delivery ID: " + item.deliveryId,
+                                    modifier=Modifier.testTag("queued-inbox-id-" + item.deliveryId),
+                                    style=MaterialTheme.typography.bodySmall,
+                                )
+                            }
                             TextButton(
                                 onClick={onOpenQueuedInboxItem(item.deliveryId)},
                                 enabled=!queuedInboxBusy && connection=="Online",
