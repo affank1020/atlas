@@ -44,7 +44,7 @@ test('A launched Application renders a dedicated page without the project View h
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
     expect(screen.getByRole('main')).toHaveClass('application-window-main');
     expect(readRecentWork()[0]).toMatchObject({ name: 'Portfolio', kind: 'Application', href: '#/projects/project-portfolio/applications/portfolio' });
-    expect(screen.getByRole('link', { name: /Project Applications/ })).toHaveAttribute('href', '#/projects/project-portfolio/applications');
+    expect(screen.getByRole('link', { name: '← Applications' })).toHaveAttribute('href', '#/applications');
     expect(callTool).toHaveBeenCalledWith('get_application', { projectId: 'project-portfolio', slug: 'portfolio' }, expect.any(AbortSignal));
 });
 
@@ -72,7 +72,7 @@ test('Standalone Application opens with a global back link and no Project scope'
     vi.mocked(callTool).mockImplementation(async name => (name === 'list_projects' ? [] : standalone) as never);
     render(<ApplicationWindow slug="portfolio" />);
     expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /All Applications/ })).toHaveAttribute('href', '#/applications');
+    expect(screen.getByRole('link', { name: '← Applications' })).toHaveAttribute('href', '#/applications');
     expect(callTool).toHaveBeenCalledWith('get_application', { slug: 'portfolio' }, expect.any(AbortSignal));
     expect(readRecentWork()[0]).toMatchObject({ href: '#/applications/portfolio', projectId: null });
 });
