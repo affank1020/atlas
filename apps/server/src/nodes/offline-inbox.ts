@@ -45,13 +45,17 @@ export class DeviceOfflineInbox {
             for (const lockKey of lockKeys)
                 await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
             const peers = await client.query(
-                "SELECT id,credential_state,capabilities FROM nodes WHERE id IN ($1,$2) FOR SHARE",
+                "SELECT id,credential_state,credential_updated_at,capabilities FROM nodes WHERE id IN ($1,$2) FOR SHARE",
                 [source,target]);
             if (peers.rowCount !== 2 || peers.rows.some(p => p.credential_state !== 'active') ||
                 !peers.rows.some(p => String(p.id).toLowerCase() === target &&
                     Array.isArray(p.capabilities) && p.capabilities.includes('device.share.receive')) ||
                 !(await this.allowed(source,target,client)))
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
+            const sender = peers.rows.find(p => String(p.id).toLowerCase() === source);
+            const receiver = peers.rows.find(p => String(p.id).toLowerCase() === target);
+            if (!sender?.credential_updated_at || !receiver?.credential_updated_at)
+                throw new AtlasError('Node credential generation unavailable.', 'SHARE_DENIED');
             const previous = await client.query(
                 'SELECT submission_hash,state,expires_at FROM device_inbox WHERE source_node_id=$1 AND id=$2',
                 [source,id]);
@@ -73,9 +77,11 @@ export class DeviceOfflineInbox {
                 throw new AtlasError('Offline inbox is full.', 'SHARE_BUSY');
             await client.query(`
                 INSERT INTO device_inbox
-                  (id,source_node_id,target_node_id,submission_hash,payload_ciphertext,payload_nonce,payload_tag,expires_at)
-                VALUES($1,$2,$3,$4,$5,$6,$7,now()+($8::bigint*interval '1 millisecond'))
-            `,[id,source,target,digest,envelope.ciphertext,envelope.nonce,envelope.tag,DEVICE_INBOX_TTL_MS]);
+                  (id,source_node_id,target_node_id,source_credential_updated_at,target_credential_updated_at,
+                   submission_hash,payload_ciphertext,payload_nonce,payload_tag,expires_at)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+($10::bigint*interval '1 millisecond'))
+            `,[id,source,target,sender.credential_updated_at,receiver.credential_updated_at,
+                digest,envelope.ciphertext,envelope.nonce,envelope.tag,DEVICE_INBOX_TTL_MS]);
             await client.query('COMMIT');
             return { deliveryId:id, status:'queued' as const, queued:true };
         } catch (error) {
@@ -88,10 +94,15 @@ export class DeviceOfflineInbox {
     async list(targetId: string) {
         const target = this.uuid(targetId);
         const result = await this.pool.query(`
-            SELECT id,source_node_id,created_at,expires_at
-            FROM device_inbox
-            WHERE target_node_id=$1 AND state='queued' AND expires_at>now()
-            ORDER BY created_at,id LIMIT 50
+            SELECT inbox.id,inbox.source_node_id,inbox.created_at,inbox.expires_at
+            FROM device_inbox inbox
+            JOIN nodes sender ON sender.id=inbox.source_node_id
+            JOIN nodes receiver ON receiver.id=inbox.target_node_id
+            WHERE inbox.target_node_id=$1 AND inbox.state='queued' AND inbox.expires_at>now()
+              AND sender.credential_state='active' AND receiver.credential_state='active'
+              AND sender.credential_updated_at=inbox.source_credential_updated_at
+              AND receiver.credential_updated_at=inbox.target_credential_updated_at
+            ORDER BY inbox.created_at,inbox.id LIMIT 50
         `,[target]);
         // Do not expose metadata for sources whose directional permission
         // was revoked after they queued their item.
@@ -107,9 +118,15 @@ export class DeviceOfflineInbox {
     async read(targetId: string, deliveryId: string) {
         const target = this.uuid(targetId), id = this.uuid(deliveryId);
         const row = await this.pool.query(`
-            SELECT source_node_id,payload_ciphertext,payload_nonce,payload_tag
-            FROM device_inbox
-            WHERE target_node_id=$1 AND id=$2 AND state='queued' AND expires_at>now()
+            SELECT inbox.source_node_id,inbox.payload_ciphertext,inbox.payload_nonce,inbox.payload_tag
+            FROM device_inbox inbox
+            JOIN nodes sender ON sender.id=inbox.source_node_id
+            JOIN nodes receiver ON receiver.id=inbox.target_node_id
+            WHERE inbox.target_node_id=$1 AND inbox.id=$2 AND inbox.state='queued'
+              AND inbox.expires_at>now()
+              AND sender.credential_state='active' AND receiver.credential_state='active'
+              AND sender.credential_updated_at=inbox.source_credential_updated_at
+              AND receiver.credential_updated_at=inbox.target_credential_updated_at
         `,[target,id]);
         if (!row.rowCount) throw new AtlasError('Device inbox item unavailable.', 'NOT_FOUND');
         const item = row.rows[0];
@@ -132,6 +149,13 @@ export class DeviceOfflineInbox {
                 payload_nonce=NULL,
                 payload_tag=NULL
             WHERE target_node_id=$1 AND id=$2 AND state='queued' AND expires_at>now()
+              AND EXISTS (
+                SELECT 1 FROM nodes sender JOIN nodes receiver ON receiver.id=device_inbox.target_node_id
+                WHERE sender.id=device_inbox.source_node_id
+                  AND sender.credential_state='active' AND receiver.credential_state='active'
+                  AND sender.credential_updated_at=device_inbox.source_credential_updated_at
+                  AND receiver.credential_updated_at=device_inbox.target_credential_updated_at
+              )
             RETURNING id
         `,[target,id,decision]);
         if (!result.rowCount) throw new AtlasError('Inbox item expired or already decided.', 'SHARE_EXPIRED');
