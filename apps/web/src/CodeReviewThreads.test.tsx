@@ -61,6 +61,8 @@ test('Rejects mismatched and malformed remote results instead of showing false r
     for (const bad of [
         {...valid, repository: 'somebody-else/atlas'},
         {...valid, ownedRootCount: 1},
+        {...valid, mappedOwnedRoots: 3},
+        {...valid, mappingComplete: true},
         {...valid, ownedThreads: [{rootCommentId: -1, mappingState: 'verified',
             threadId: 'PRRT_123456789', resolutionState: 'resolved_on_github'}]},
         {...valid, readOnly: false},
