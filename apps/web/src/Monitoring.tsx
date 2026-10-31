@@ -281,10 +281,13 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
 
 type ServerDiagnosticEvent = { at: string; code: string; level: 'info' | 'warning'; message: string };
 type ServerDiagnosticResponse = {
-    source: 'atlas-server-process'; available: boolean; startedAt: string; retention: 'current-process';
+    source: 'atlas-server-process' | 'atlas-server-history'; available: boolean;
+    startedAt?: string; retention: 'current-process' | 'best-effort';
+    retentionDays?: number; coverage?: 'incomplete-possible'; droppedSinceStart?: number;
     events: ServerDiagnosticEvent[]; truncated: boolean;
 };
 function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
+    const history = filters.history === '1';
     const parsed = Number(filters.lines);
     const limit = Number.isInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : 30;
     const [result, setResult] = useState<ServerDiagnosticResponse>();
@@ -295,29 +298,37 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     useEffect(() => {
         const controller = new AbortController();
         setResult(undefined); setError(''); setBusy(true);
-        void callTool<ServerDiagnosticResponse>('read_server_diagnostics', { limit }, controller.signal)
+        void callTool<ServerDiagnosticResponse>(history ? 'read_server_diagnostic_history' : 'read_server_diagnostics', { limit }, controller.signal)
             .then(value => { if (!controller.signal.aborted) setResult(value); })
             .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); })
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
         return () => controller.abort();
-    }, [limit, refresh]);
+    }, [limit, refresh, history]);
     const events = result?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];
     const output = events.map(event => event.at + ' [' + event.level + '] ' + event.message).join('\n');
     return <section className="panel activity-panel" aria-label="Server diagnostics">
-        <div className="panel-head"><div><p className="eyebrow">Current server process · fixed event codes</p><h2>Atlas Server diagnostics</h2></div>
+        <div className="panel-head"><div><p className="eyebrow">{history ? 'Best-effort retained fixed codes' : 'Current server process · fixed event codes'}</p><h2>Atlas Server diagnostics</h2></div>
             <button type="button" className="ghost" disabled={busy} onClick={() => setRefresh(x => x + 1)}>{busy ? 'Reading…' : 'Refresh diagnostics'}</button></div>
         <div className="activity-filters">
+            <label>Source<select aria-label="Diagnostic source" value={history ? 'history' : 'process'}
+                onChange={e => location.hash = monitoringHash('logs', { ...filters, target: 'server',
+                    history: e.target.value === 'history' ? '1' : undefined })}>
+                <option value="process">Current process</option>
+                <option value="history">Retained Server events</option>
+            </select></label>
             <label>Events<input type="number" aria-label="Diagnostic events" min={1} max={100} value={limit}
                 onChange={e => { const next = Number(e.target.value); if (Number.isInteger(next) && next >= 1 && next <= 100)
-                    location.hash = monitoringHash('logs', { target: 'server', lines: String(next) }); }} /></label>
+                    location.hash = monitoringHash('logs', { target: 'server', history: filters.history, lines: String(next) }); }} /></label>
             <label>Search loaded events<input aria-label="Search diagnostics" value={search} onChange={e => setSearch(e.target.value)} /></label>
         </div>
-        <p className="activity-footnote">Only non-sensitive operational event codes from this Atlas Server process are shown. This is not Docker stdout/stderr, historical logs or a multi-instance archive.</p>
+        <p className="activity-footnote">{history
+            ? 'PostgreSQL retains up to 14 days of fixed-code Server signals across restarts. Writes are best-effort, so missing events do not prove healthy operation. This is not Docker stdout/stderr, complete historical logs or an audit ledger.'
+            : 'Only non-sensitive operational event codes from this Atlas Server process are shown. This is not Docker stdout/stderr or a multi-instance archive.'}</p>
         {busy && <p role="status" className="empty">Loading server diagnostics…</p>}
         {error && <p role="alert" className="activity-error">Server diagnostics unavailable: {error}</p>}
-        {result && !result.available && <p className="empty">Server diagnostics are disabled on this deployment.</p>}
+        {result && !result.available && <p className="empty">Server diagnostic source unavailable or disabled. Check database migration/connectivity for retained events.</p>}
         {result?.available && <div className="monitoring-log-result">
-            <p>Since {new Date(result.startedAt).toLocaleString()}{result.truncated ? ' · Earlier events have been discarded or excluded by the limit' : ''}</p>
+            <p>{history ? 'Available events from the last 14 days · coverage may be incomplete' : 'Since ' + (result.startedAt ? new Date(result.startedAt).toLocaleString() : 'this restart')}{result.truncated ? ' · More events exist than the current limit' : ''}{history && result.droppedSinceStart ? ' · ' + result.droppedSinceStart + ' writes lost in this process' : ''}</p>
             <div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(output)}>Copy visible diagnostics</button></div>
             <pre>{output || (search ? '(no matching events in loaded diagnostics)' : '(no diagnostic events)')}</pre>
         </div>}
