@@ -17,10 +17,16 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
     const [open, setOpen] = useState(false);
     const contentFrameRef = useRef<HTMLDivElement>(null);
     useEffect(() => setOpen(false), [page, projectId]);
-    // The shell stays mounted across hash routes, so restore the content pane
-    // to the top without scrolling the header or navigation.
+    // Keep the content pane's position while selecting Workspaces or checkouts.
+    // These are URL state changes within the same page, not page navigation.
     useEffect(() => {
-        const resetContentScroll = () => { if (contentFrameRef.current) contentFrameRef.current.scrollTop = 0; };
+        let previousRoute = window.location.hash.split('?')[0];
+        const resetContentScroll = () => {
+            const nextRoute = window.location.hash.split('?')[0];
+            const withinWorkspaces = previousRoute === '#/workspaces' && nextRoute === '#/workspaces';
+            if (!withinWorkspaces && contentFrameRef.current) contentFrameRef.current.scrollTop = 0;
+            previousRoute = nextRoute;
+        };
         window.addEventListener('hashchange', resetContentScroll);
         return () => window.removeEventListener('hashchange', resetContentScroll);
     }, []);

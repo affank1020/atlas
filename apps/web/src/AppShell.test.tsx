@@ -45,8 +45,9 @@ test('shell exposes focused navigation and keeps experimental tools out of the h
     fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
     expect(screen.getByRole('button', { name: 'Close menu' })).toHaveAttribute('aria-expanded', 'true');
 });
-test('only the content pane scrolls and route navigation resets its scroll position', () => {
+test('only the content pane scrolls and page navigation resets its scroll position', () => {
     vi.mocked(callTool).mockResolvedValue([]);
+    window.history.replaceState(null, '', '#/projects');
     const { container } = render(<Provider store={store}><AppShell page="projects" contentClass=""><h1>Projects</h1></AppShell></Provider>);
     const frame = container.querySelector<HTMLDivElement>('.content-frame');
     expect(frame).not.toBeNull();
@@ -56,6 +57,27 @@ test('only the content pane scrolls and route navigation resets its scroll posit
 
     if (!frame) return;
     frame.scrollTop = 350;
+    window.history.replaceState(null, '', '#/nodes');
+    fireEvent(window, new Event('hashchange'));
+    expect(frame.scrollTop).toBe(0);
+});
+
+test('switching Workspaces and checkouts preserves content scroll without breaking page navigation', () => {
+    vi.mocked(callTool).mockResolvedValue([]);
+    window.history.replaceState(null, '', '#/workspaces');
+    const { container } = render(<Provider store={store}><AppShell page="workspaces" contentClass=""><h1>Workspaces</h1></AppShell></Provider>);
+    const frame = container.querySelector<HTMLDivElement>('.content-frame');
+    expect(frame).not.toBeNull();
+    if (!frame) return;
+
+    frame.scrollTop = 430;
+    for (const hash of ['#/workspaces?group=atlas', '#/workspaces?workspace=checkout-a',
+        '#/workspaces?group=portfolio', '#/workspaces?workspace=checkout-b', '#/workspaces']) {
+        window.history.replaceState(null, '', hash);
+        fireEvent(window, new Event('hashchange'));
+        expect(frame.scrollTop).toBe(430);
+    }
+    window.history.replaceState(null, '', '#/monitoring');
     fireEvent(window, new Event('hashchange'));
     expect(frame.scrollTop).toBe(0);
 });
@@ -66,4 +88,4 @@ test('project sections retain an overview deep link and indicate the selected se
     expect(screen.getByRole('link', { name: 'Workspaces' })).toHaveAttribute('href', '#/projects/p/workspaces');
 });
 
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); window.history.replaceState(null, '', '#/'); });

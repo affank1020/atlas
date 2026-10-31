@@ -1,6 +1,7 @@
 /* Shared layout for Projects, Applications and future Atlas catalogues. */
 .app-shell .catalogue-page > .page-head {
-    margin-bottom: 10px;
+    /* Match the gap between the Workspaces title and its search toolbar. */
+    margin-bottom: 20px;
 }
 .app-shell .catalogue-page > .browse-toolbar {
     padding: 6px 0 26px;
