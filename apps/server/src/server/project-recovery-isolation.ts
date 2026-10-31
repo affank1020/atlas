@@ -7,6 +7,12 @@ export function loadIsolatedRecoveryConfig(env:NodeJS.ProcessEnv){
         throw new Error("Production database/R2 variables are forbidden in isolated verification.");
     if(env.ATLAS_RECOVERY_HOST_APPROVED!=="1"||!env.ATLAS_RESTORED_DATABASE_URL)
         throw new Error("Explicit isolated recovery host and restored database required.");
+    const restored=new URL(env.ATLAS_RESTORED_DATABASE_URL);
+    if(!["postgres:","postgresql:"].includes(restored.protocol) ||
+       !["localhost","127.0.0.1","[::1]"].includes(restored.hostname) ||
+       !/^\/atlas_recovery(?:_[a-z0-9_]+)?$/.test(restored.pathname) ||
+       restored.search||restored.hash)
+        throw new Error("Isolated verification requires a local disposable atlas_recovery database.");
     const primaryId=env.ATLAS_R2_PRIMARY_ACCOUNT_ID??"";
     const endpoint=env.ATLAS_R2_RECOVERY_ENDPOINT??"";
     if(!/^[a-f0-9]{32}$/.test(primaryId))
