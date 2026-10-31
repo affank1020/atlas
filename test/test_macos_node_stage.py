@@ -105,6 +105,36 @@ class MacStageTests(unittest.TestCase):
             with self.assertRaisesRegex(stage.Refused, "Links and special"):
                 stage.inspect_archive(archive, stage.release_info(release(digest), TAG))
 
+    def test_repeated_root_headers_count_toward_physical_entry_limit(self):
+        # Repeated skipped "./" directory headers must not bypass the
+        # per-archive work bound, even in an otherwise valid signed bundle.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            archive, digest = create_archive(directory)
+            with tarfile.open(archive, "w:gz") as tar:
+                root = tarfile.TarInfo("./")
+                root.type = tarfile.DIRTYPE
+                for _ in range(stage.MAX_MEMBERS + 1):
+                    tar.addfile(root)
+                for name, contents in {
+                    "package.json": b'{}',
+                    "package-lock.json": b'{}',
+                    "atlas-node-release.json": json.dumps(MANIFEST).encode(),
+                    stage.ENTRYPOINT: b"// safe test runtime",
+                }.items():
+                    member = tarfile.TarInfo("./" + name)
+                    member.size = len(contents)
+                    tar.addfile(member, io.BytesIO(contents))
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            info = stage.release_info(release(digest), TAG)
+            with self.assertRaisesRegex(stage.Refused, "Too many entries"):
+                stage.inspect_archive(archive, info)
+            output = directory / "extracted"
+            output.mkdir()
+            with self.assertRaisesRegex(stage.Refused, "Too many entries"):
+                stage.unpack_safe(archive, output)
+            self.assertFalse((output / stage.ENTRYPOINT).exists())
+
     def test_tampered_digest_never_reaches_attestation(self):
         with tempfile.TemporaryDirectory() as tmp:
             create_archive(Path(tmp))

@@ -98,9 +98,11 @@ def inspect_archive(archive: Path, expected: dict) -> None:
     has = set()
     try:
         with tarfile.open(archive, "r:gz") as tar:
-            for member in tar:
-                if len(seen) >= MAX_MEMBERS:
-                    raise Refused("Too many files in Node archive.")
+            # Count every physical header, including skipped ./ root
+            # directories. A distinct-path count misses repeated headers.
+            for count, member in enumerate(tar, start=1):
+                if count > MAX_MEMBERS:
+                    raise Refused("Too many entries in Node archive.")
                 rel = safe_member_path(member)
                 if rel is None:
                     continue
@@ -141,7 +143,10 @@ def inspect_archive(archive: Path, expected: dict) -> None:
 
 def unpack_safe(archive: Path, destination: Path) -> None:
     with tarfile.open(archive, "r:gz") as tar:
-        for member in tar:
+        # Re-enforce the physical-entry bound during the second tar parse.
+        for count, member in enumerate(tar, start=1):
+            if count > MAX_MEMBERS:
+                raise Refused("Too many entries in Node archive.")
             rel = safe_member_path(member)
             if rel is None:
                 continue
