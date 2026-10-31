@@ -198,7 +198,9 @@ export class ReviewThreadResolutionService {
             !positive(fix.replyCommentId)||fix.headSha!==run.data.headSha||
             typeof fix.marker!=='string'||typeof fix.bodySha256!=='string'||
             !hex.test(fix.bodySha256)||
-            fix.marker!==inlineFixMarker(id.repository,id.prNumber,fix.rootCommentId,runId,lineage))
+            fix.marker!==inlineFixMarker(id.repository,id.prNumber,fix.rootCommentId,runId,lineage)||
+            typeof fix.rootMarker!=='string'||typeof fix.rootBodySha256!=='string'||
+            !hex.test(fix.rootBodySha256))
             throw new AtlasError('Verified published fix reply receipt is required.','CONFLICT');
         const roots=findings.filter(x=>object(x.data.evidence)&&
             x.data.evidence.lineageKey===lineage&&object(x.data.evidence.githubInlineThread));
@@ -209,6 +211,7 @@ export class ReviewThreadResolutionService {
         const prior=runs.find(x=>x.id===roots[0]!.data.reviewRunId);
         if(!object(origin)||origin.state!=='published'||origin.findingId!==roots[0]!.id||
             origin.rootCommentId!==fix.rootCommentId||
+            origin.marker!==fix.rootMarker||origin.bodySha256!==fix.rootBodySha256||
             origin.marker!==inlineThreadMarker(id.repository,id.prNumber,lineage)||
             typeof origin.bodySha256!=='string'||!hex.test(origin.bodySha256)||
             typeof origin.headSha!=='string'||!sha.test(origin.headSha)||
@@ -282,6 +285,11 @@ export class ReviewThreadResolutionService {
         const snapshot=await this.catalog.store.snapshot();
         const plan=this.plan(snapshot,id,runId,lineage,caller!);
         if(plan.claim)return this.reconcile(id,runId,lineage,caller!,apply);
+        const timeline=await readPrTimeline(this.catalog,id,repository,prNumber,1,0,true);
+        const latest=timeline.rounds[0];
+        if(!latest||latest.runId!==runId||latest.source!=='structured'||
+            latest.findingsTruncated||!latest.resolutions.some(x=>x.lineageKey===lineage))
+            throw new AtlasError('A complete current structured resolution round is required.','CONFLICT');
         const fingerprint=this.fingerprint(snapshot,id);
         const [rest,graph]=await Promise.all([
             this.rest.inspect(repository,prNumber),this.read.inspect(repository,prNumber),
