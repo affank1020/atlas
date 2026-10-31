@@ -61,7 +61,10 @@ test("Complete legacy Project inventory is captured and restores from recovery-o
         assert.equal(first.createdVerified,1);
         assert.equal(first.remaining,true);
         const final=await seedProjectRecovery({...args,apply:true,fromOrdinal:first.nextOrdinal,maxFiles:1});
-        assert.equal(final.status,"completed");
+        assert.equal(final.status,"partial","a final page alone cannot establish full-manifest coverage");
+        assert.equal(final.remaining,false);
+        const full=await seedProjectRecovery({...args,apply:true,maxFiles:2});
+        assert.equal(full.status,"completed","the full manifest must be checked in one run");
         assert.equal(saved.size,2);assert.equal(writes.length,2);
         const offline=new Pool({connectionString:ctx.db});
         try{
