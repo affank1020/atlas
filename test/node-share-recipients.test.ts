@@ -73,12 +73,17 @@ test('authenticated recipient directory only shows sender-approved and active pe
         assert.equal(queuedOnline.ok,true,JSON.stringify(queuedOnline));
         assert.deepEqual(queuedOnline.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId),{
             nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'online',
-            available:true,queueCapable:true,
+            available:true,queueCapable:false,
         });
         assert.deepEqual(queuedOnline.result.recipients.find((x:any)=>x.nodeId===revoked!.nodeId),{
             nodeId:revoked!.nodeId,name:'Revoked Mac',platform:'darwin',status:'offline',
             available:false,queueCapable:false,
         });
+        // An Android 0.6 or older Mac advertises *live* receive only.
+        // Its legacy live directory is unaffected, but queue discovery must
+        // explicitly reject it until it reconnects with inbox consumer code.
+        assert.equal(queuedOnline.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId).queueCapable,
+            false);
         assert.deepEqual((await lookup(other)).result,{recipients:[]},
             'Unapproved registered senders cannot discover any other Node');
         const throttled = await lookup(source);
@@ -91,6 +96,12 @@ test('authenticated recipient directory only shows sender-approved and active pe
         const disconnected = once(receiver,'close');
         receiver.terminate();
         await disconnected;
+        // Upgrade using exactly the same Node identity, now registering
+        // device.inbox.receive after implementing list/read/decide in Android 0.7.
+        const upgraded = await connect(mac!,['device.share.receive','device.inbox.receive']);
+        const upgradedDisconnected = once(upgraded,'close');
+        upgraded.terminate();
+        await upgradedDisconnected;
         await new Promise(resolve=>setTimeout(resolve,2100));
         const offlineCapable = await lookup(source,'device.inbox.recipients');
         assert.equal(offlineCapable.ok,true,JSON.stringify(offlineCapable));
