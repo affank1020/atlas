@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/macos-node-operator.py"
 spec = importlib.util.spec_from_file_location("atlas_macos_operator_tests", SCRIPT)
@@ -178,6 +179,161 @@ class MacOperatorTests(unittest.TestCase):
         identity.start()
         self.addCleanup(identity.stop)
         return update
+
+    def fake_check_service(self):
+        """Real job plist/fs operations, fake *only* launchctl."""
+        self.check_loaded = False
+        self.check_commands = []
+        def command(*args, capture=False):
+            self.check_commands.append(args)
+            if args == ("launchctl", "print", operator.check_target(self.layout)):
+                if self.check_loaded:
+                    return "state = waiting\n"
+                raise subprocess.CalledProcessError(113, args)
+            if args == ("launchctl", "bootstrap", f"gui/{self.layout.uid}",
+                        str(operator.check_paths(self.layout)[0])):
+                self.check_loaded = True
+                return ""
+            if args == ("launchctl", "bootout", operator.check_target(self.layout)):
+                self.check_loaded = False
+                return ""
+            raise AssertionError(f"Unexpected or mutating host command: {args}")
+        return patch.object(operator.lifecycle, "command", side_effect=command)
+
+    def test_scheduled_checker_enable_status_disable_is_read_only_for_node(self):
+        operator.initial_install(self.layout, self.version1)
+        with self.fake_check_service():
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"], "disabled")
+            operator.enable_check(self.layout)
+            plist = operator.check_paths(self.layout)[0]
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.stat().st_mode & 0o077, 0)
+            schedule = plistlib.loads(plist.read_bytes())
+            self.assertEqual(schedule["Label"], operator.CHECK_LABEL)
+            self.assertEqual(schedule["StartInterval"], 3600)
+            self.assertEqual(schedule["ProgramArguments"][1:],
+                             [str(self.layout.app / "operator/current/macos-node-operator.py"),
+                              "check-background"])
+            self.assertNotIn("EnvironmentVariables", schedule)
+            self.assertNotIn("StandardOutPath", schedule)
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"], "enabled")
+            operator.enable_check(self.layout)
+            operator.disable_check(self.layout)
+            self.assertFalse(plist.exists())
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"], "disabled")
+            operator.disable_check(self.layout)
+        self.assertEqual(self.check_commands.count(
+            ("launchctl", "bootstrap", f"gui/{self.layout.uid}",
+             str(operator.check_paths(self.layout)[0])), 1)
+        self.assertEqual(self.check_commands.count(
+            ("launchctl", "bootout", operator.check_target(self.layout)), 1)
+        self.assertFalse(self.layout.pending.exists())
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+
+    def test_schedule_never_overwrites_unknown_plist_or_loaded_job(self):
+        operator.initial_install(self.layout, self.version1)
+        plist, _ = operator.check_paths(self.layout)
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        plist.write_bytes(plistlib.dumps({
+            "Label": operator.CHECK_LABEL,
+            "ProgramArguments": [sys.executable, "/tmp/untrusted.py", "run"],
+            "RunAtLoad": True, "StartInterval": 3600,
+        }))
+        with self.fake_check_service():
+            with self.assertRaisesRegex(operator.Refused, "Unexpected release-checker job"):
+                operator.enable_check(self.layout)
+        self.assertIn(b"/tmp/untrusted.py", plist.read_bytes())
+
+        plist.unlink()
+        with self.fake_check_service():
+            self.check_loaded = True
+            with self.assertRaisesRegex(operator.Refused, "Unrecognized loaded"):
+                operator.enable_check(self.layout)
+            with self.assertRaisesRegex(operator.Refused, "Unrecognized loaded"):
+                operator.disable_check(self.layout)
+
+    def test_missing_launchd_session_is_needs_attention_not_enabled(self):
+        operator.initial_install(self.layout, self.version1)
+        with self.fake_check_service():
+            operator.enable_check(self.layout)
+            self.check_loaded = False
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"],
+                             "needs-attention")
+
+    def mock_updater_discover(self, discover):
+        """Inject the selected signed module's discovery without public network."""
+        class Loader:
+            def exec_module(self, module):
+                module.discover = discover
+        mock_spec = SimpleNamespace(loader=Loader())
+        return patch.object(operator.importlib.util, "spec_from_file_location",
+                            return_value=mock_spec)
+
+    def test_background_checker_persists_candidate_only_without_identity_or_install(self):
+        operator.initial_install(self.layout, self.version1)
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), self.mock_updater_discover(lambda _: {
+            "state": "available",
+            "installed": self.version1,
+            "candidate": "node-" + self.version2,
+            "currentEntrypoint": "/sensitive/local/workspace",
+            "launchdPid": 7654,
+        }), patch.object(operator.importlib.util, "module_from_spec",
+                          return_value=SimpleNamespace()):
+            operator.background_check(self.layout)
+        result = operator.installed_check_status
+        saved = json.loads(operator.check_paths(self.layout)[1].read_text())
+        self.assertEqual(saved["state"], "available")
+        self.assertEqual(saved["candidate"], "node-" + self.version2)
+        self.assertEqual(saved["verification"], "catalogue-only")
+        self.assertNotIn("launchdPid", saved)
+        self.assertNotIn("currentEntrypoint", saved)
+        self.assertEqual(operator.check_paths(self.layout)[1].stat().st_mode & 0o077, 0)
+
+    def test_background_checker_reports_offline_and_pending_without_fake_success(self):
+        operator.initial_install(self.layout, self.version1)
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), self.mock_updater_discover(lambda _: (_ for _ in ()).throw(
+            OSError("private path /Users/test/.env.node")
+        )), patch.object(operator.importlib.util, "module_from_spec",
+                         return_value=SimpleNamespace()):
+            operator.background_check(self.layout)
+        record = operator.check_paths(self.layout)[1]
+        data = json.loads(record.read_text())
+        self.assertEqual(data["state"], "unavailable")
+        self.assertNotIn("private path", record.read_text())
+        self.layout.pending.parent.mkdir(parents=True, exist_ok=True)
+        self.layout.pending.write_text("{}")
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), patch.object(operator.importlib.util, "spec_from_file_location",
+                         side_effect=AssertionError("Must not query while recovering")):
+            operator.background_check(self.layout)
+        self.assertEqual(json.loads(record.read_text())["state"], "needs-attention")
+
+    def test_background_checker_refuses_mutated_signed_source_and_result_symlink(self):
+        operator.initial_install(self.layout, self.version1)
+        path = operator.check_paths(self.layout)[1]
+        path.symlink_to(Path(self.temp.name) / "unknown")
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), self.mock_updater_discover(lambda _: {
+            "state": "current", "installed": self.version1,
+            "candidate": "node-" + self.version1,
+        }), patch.object(operator.importlib.util, "module_from_spec",
+                          return_value=SimpleNamespace()):
+            with self.assertRaisesRegex(operator.Refused, "symlinked"):
+                operator.background_check(self.layout)
+        path.unlink()
+        (self.first / "scripts/macos-node-update.py").write_text("tampered")
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )):
+            with self.assertRaisesRegex(operator.Refused, "digest mismatch"):
+                operator.background_check(self.layout)
+        self.assertFalse(path.exists())
 
     def test_install_creates_self_contained_cli_without_launchd_mutation(self):
         with patch.object(operator.lifecycle, "command", side_effect=AssertionError("launchctl contacted")):
