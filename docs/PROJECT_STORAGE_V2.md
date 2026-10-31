@@ -489,8 +489,15 @@ refuses missing/extra Projects, duplicate runs, corrupt/missing bytes,
 truncated inventory or unacknowledged empty owner groups. Read-only R2
 and restored-DB SELECT access only.
 
-The suite is bounded to 25 Projects, 2,000 total Project/Portfolio objects
-and 2,000 legacy Workspace/Application Files. A verified object-scope
+The suite is bounded to 25 Projects, **1,000 total Project/Portfolio source
+objects** and 2,000 legacy Workspace/Application Files. An immutable
+Project recovery manifest can contain both original and versioned entries
+(up to 2,000 manifest entries for 1,000 source objects). The lower-level
+key-ledger/recovery limits are unchanged. Going beyond 1,000 Project/Portfolio
+source rows requires a separate reviewed capacity extension; the suite fails
+before R2 GET rather than claiming unreachable coverage. The report field
+`projectEntriesVerified` is the number of SHA-256-verified recovery manifest
+entries, **not a byte count**. A verified object-scope
 report is deliberately not disasterRecoveryReady, production cutover
 approval or replacement Atlas application readiness. See
 RECOVERY_ACCEPTANCE.md section 10 for command, acceptance and separate
