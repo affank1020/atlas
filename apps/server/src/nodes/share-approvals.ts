@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { AtlasError } from '../shared/errors.js';
+import { toolAuditOrigin } from './audit-origin.js';
 
 export type NodeShareApproval = { sourceNodeId: string; targetNodeId: string; origin: 'managed' | 'environment' };
 /** Assigned by the transport, never parsed from a tool argument or request header. */
@@ -85,12 +86,14 @@ export class NodeShareApprovals {
                 if (environmentGranted && !removed.rowCount)
                     throw new AtlasError('Only the server environment grants this pair; remove that setting and restart the Server.', 'SHARE_ENV_MANAGED');
             }
-            // Only UUIDs in the audit trail, never shared content.
+            // Only UUIDs and trusted transport provenance, never shared
+            // content or an unverified human operator identity.
+            const origin = toolAuditOrigin(caller);
             await db.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at)
                 VALUES(gen_random_uuid(),$1,$2,$3,now())`, [
-                caller,
+                origin.client,
                 input.enabled ? 'node.share.approved' : 'node.share.revoked',
-                { sourceNodeId, targetNodeId },
+                { sourceNodeId, targetNodeId, transport: origin.transport, actorKind: origin.actorKind },
             ]);
             await db.query('COMMIT');
             return { sourceNodeId, targetNodeId, enabled: input.enabled };
