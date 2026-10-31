@@ -94,3 +94,13 @@ test('a Node directory that never settles returns unknown within the independent
     await Promise.resolve(); // Late failures remain handled and cannot alter the returned response.
     assert.ok(!JSON.stringify(response).includes('secret'));
 });
+
+
+test('far-future heartbeat cannot make a Node appear healthy', async () => {
+    const future = await subject([node('wrong-clock', 'online', '2026-10-22T12:10:00.000Z')]).service.read();
+    assert.equal(future.overall, 'unknown');
+    assert.equal(future.nodes.items[0]?.state, 'unknown');
+    assert.equal(future.nodes.items[0]?.ageSeconds, null);
+    const minorSkew = await subject([node('minor-skew', 'online', '2026-10-22T12:00:10.000Z')]).service.read();
+    assert.equal(minorSkew.nodes.items[0]?.state, 'healthy');
+});
