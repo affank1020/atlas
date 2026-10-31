@@ -143,6 +143,23 @@ class MacUpdateTests(unittest.TestCase):
                 update.apply_update(self.layout, migrate=False)
             stage.assert_not_called()
 
+    def test_freshly_staged_bytes_must_match_approved_digest(self):
+        root = self.layout.releases / self.tag2.removeprefix("node-")
+
+        def signed_stage(*_args):
+            root.mkdir()
+            (root / update.staging.RECEIPT).write_text(json.dumps({
+                "source": "d" * 40, "archiveSha256": "0" * 64
+            }))
+
+        with patch.object(update.staging, "stage", side_effect=signed_stage), patch.object(
+            update.lifecycle, "release_path", return_value=root
+        ):
+            with self.assertRaisesRegex(update.Refused, "does not match"):
+                update.prepared_release(self.layout, {
+                    "tag": self.tag2, "commit": "d" * 40, "digest": "b" * 64
+                })
+
     def test_signed_staged_release_mismatch_fails_before_activation(self):
         root = self.layout.releases / self.tag2.removeprefix("node-")
         root.mkdir()
