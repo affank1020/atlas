@@ -131,6 +131,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var pushRevocation: PushRevocationGate? = null
     private var pushRevocationTimeout: Runnable? = null
     private val pushRevocationCallbacks = mutableListOf<(PushRevocationResult) -> Unit>()
+    private val receiverIntent = BackgroundReceiveIntentGate()
+    var backgroundReceivingDesired by mutableStateOf(pushEnabled)
+        private set
+    var pushRevocationPending by mutableStateOf(false)
+        private set
     var forgetInProgress by mutableStateOf(false)
         private set
     private val recentIncoming = RecentIncomingShares()
@@ -232,6 +237,25 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
+    /**
+     * All service and Activity starts/stops go through this revision gate.
+     * An older Stop callback must not turn off a later Start; a Start received
+     * while unregistering runs only after the previous gate completes.
+     */
+    fun requestBackgroundStart(start: () -> Unit) {
+        if (forgetInProgress) return
+        receiverIntent.start(pushRevocation != null, start)
+        backgroundReceivingDesired = receiverIntent.desiredEnabled
+        if (pushRevocation != null)
+            pushRegistrationStatus = "Finishing push opt-out before enabling again."
+    }
+
+    fun requestBackgroundStop(stop: () -> Unit) {
+        val guardedStop = receiverIntent.stop(stop)
+        backgroundReceivingDesired = receiverIntent.desiredEnabled
+        revokePushBeforeShutdown { guardedStop() }
+    }
+
     /** Explicit user intent takes priority over a pending earlier request.
      * The gateway applies the sent commands in order; stale replies are ignored. */
     fun updatePushConsent(enabled: Boolean) {
@@ -240,6 +264,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             return
         }
         if (pushRevocation != null) {
+            // Only the queued, guarded service start may re-enable consent.
+            // Calling here while an unregister is in flight must not race it.
             pushRegistrationStatus = "Finishing previous push opt-out."
             return
         }
@@ -271,6 +297,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             pushRevocationTimeout?.let(handler::removeCallbacks)
             pushRevocationTimeout = null
             pushRevocation = null
+            pushRevocationPending = false
             if (result.serverConfirmed) {
                 AtlasPush.markRevocationPending(getApplication(), false)
                 pushRegistrationStatus = "Push disabled; Atlas Server removed registration."
@@ -284,11 +311,15 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             val callbacks = pushRevocationCallbacks.toList()
             pushRevocationCallbacks.clear()
             callbacks.forEach { it(result) }
+            // Resume only the latest requested ON, after all old OFF
+            // completions have been checked against their intent revision.
+            receiverIntent.completeRevocation()
             // The Activity can leave while Forget or Stop awaits the ack.
             // The temporary gate owns the socket until the operation finishes.
             if (owners.mayReleaseSocket(revocationPending = false) && socket != null) disconnect()
         }
         pushRevocation = gate
+        pushRevocationPending = true
         val deadline = Runnable { if (pushRevocation === gate) gate.deadlineExpired() }
         pushRevocationTimeout = deadline
         handler.postDelayed(deadline, 8_000L)
@@ -943,6 +974,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun forget() {
         if (forgetInProgress) return
         forgetInProgress = true
+        // Forget overrides any queued re-enable, including a prior quick ON.
+        receiverIntent.stop {}
+        backgroundReceivingDesired = false
         revokePushBeforeShutdown { result ->
             forgetInProgress = false
             // Never destroy the only credential with which we can revoke an
