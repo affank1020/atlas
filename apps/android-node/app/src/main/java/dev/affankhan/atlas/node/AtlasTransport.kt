@@ -101,7 +101,7 @@ internal class AtlasTransport {
                     shareReply?.let(onShareReply)
                     directoryReply?.let(onRecipientsReply)
                     inboxReply?.let(onInboxReply)
-                    if (pushReply.isNotBlank()) onPushReply(pushReply)
+                    pushReply?.let(onPushReply)
                     return
                 }
                 // Reject malformed deliveries and all Workspace/unsupported commands.
