@@ -33,7 +33,18 @@ test('Code Reviews placeholder matches four KPI tiles and the PR table row anato
     expect(container.querySelectorAll('.cr-pr .cr-pr-main')).toHaveLength(5);
     expect(container.querySelectorAll('.cr-pr .cr-number')).toHaveLength(10);
     expect(container.querySelectorAll('button, a, input, textarea, select')).toHaveLength(0);
-    expect(screen.getAllByRole('status')).toHaveLength(1);
+    const rows = Array.from(container.querySelectorAll('.cr-pr-main'));
+    for (const row of rows) {
+        // These exact six children are placed/hidden by Code Reviews' real
+        // @media <=1050px and <=720px grid rules, not generic grid defaults.
+        expect(Array.from(row.children).map(cell => cell.classList[0])).toEqual([
+            'cr-pr-identity', 'cr-number', 'cr-number', 'cr-verdict', 'cr-date', 'cr-expand',
+        ]);
+        expect(row.querySelector('.cr-expand')).toHaveClass('cr-loading-expand');
+        expect(row.querySelector('.cr-expand')).not.toHaveAttribute('tabindex');
+    }
+    expect(container.querySelectorAll('.cr-pr-main > .cr-date')).toHaveLength(5);
+    expect(container.querySelectorAll('.cr-pr-main > .cr-verdict')).toHaveLength(5);
 });
 
 test('mounted Code Reviews list and its detail tabs use their own data skeletons', () => {

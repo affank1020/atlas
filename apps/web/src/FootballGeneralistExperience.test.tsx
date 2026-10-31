@@ -429,3 +429,39 @@ test('a cached unavailable manifest does not break navigation on revisit', async
     expect(screen.getByRole('button', { name:'Home' })).toBeInTheDocument();
     await screen.findByText('football-generalist-v2');
 });
+
+
+test.each(['unavailable', 'invalid contract'] as const)(
+    'keeps successful Football runs and evaluation activity visible when the manifest is %s',
+    async failure => {
+        vi.mocked(callTool).mockImplementation(async name => {
+            if (name === 'football_generalist_manifest') {
+                if (failure === 'unavailable') throw new Error('Manifest service offline');
+                return { available: true, contract: { contract_id: 'unsupported-contract' } } as never;
+            }
+            if (name === 'football_generalist_runs') return [{
+                id: 'surviving-run', family: 'generalist', state: 'completed',
+            }] as never;
+            if (name === 'football_generalist_activity') return [{
+                action: 'generalist_evaluate', ticket: 'surviving-evaluation', status: 'completed',
+                policy_id: 'saved-policy', scenario: 's0-contact-easy-v1', result: { episodes: 2 },
+            }] as never;
+            if (name === 'football_generalist_policies') return [] as never;
+            if (name === 'football_generalist_assessments') return { policies: [] } as never;
+            throw new Error('Unexpected tool: ' + name);
+        });
+        render(<FootballGeneralistExperience />);
+        expect(await screen.findByRole('button', { name: 'surviving-run →' })).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent('Refresh incomplete: contract could not be updated');
+        expect(screen.getByRole('heading', { name: 'Active activity' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Recent runs' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Evaluations' })).toBeInTheDocument();
+        expect(screen.getByText('s0-contact-easy-v1')).toBeInTheDocument();
+        expect(screen.getByText('Unavailable')).toBeInTheDocument();
+        expect(screen.queryByRole('status', { name: 'Loading Football Generalist' })).not.toBeInTheDocument();
+        expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
+            'football_generalist_manifest', 'football_generalist_runs',
+            'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
+        ]);
+    },
+);

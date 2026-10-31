@@ -224,7 +224,6 @@ export function FootballGeneralistExperience() {
             <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>
         {tab === 'home' && (loading && !manifest && !error
             ? <FootballGeneralistContentLoading />
-            : !manifest && error ? null
             : <div className="fg-stack">
             <section className="fg-panel fg-active-panel" aria-label="Active training and evaluations">
                 <div className="fg-panel-title"><h2>Active activity</h2>

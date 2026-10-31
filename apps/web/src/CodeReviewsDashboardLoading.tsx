@@ -22,9 +22,9 @@ export function CodeReviewsListLoading({ decorative = false }: { decorative?: bo
                     <div className="cr-number"><Skeleton width={25} height={19} /></div>
                     <div className="cr-number"><Skeleton width={29} height={19} />
                         <Skeleton width={52} height={11} /></div>
-                    <Skeleton width={105} height={13} />
-                    <Skeleton width={78} height={12} />
-                    <Skeleton width={25} height={25} />
+                    <span className="cr-verdict"><Skeleton width={105} height={13} /></span>
+                    <span className="cr-date"><Skeleton width={78} height={12} /></span>
+                    <span className="cr-expand cr-loading-expand"><Skeleton width={25} height={25} /></span>
                 </div>
             </article>)}
     </div>;
