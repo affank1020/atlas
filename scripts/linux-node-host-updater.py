@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -22,6 +23,7 @@ REPO = "affank1020/atlas"
 RELEASES_API = "repos/affank1020/atlas/releases?per_page=100"
 PUBLIC_RELEASES_URL = "https://api.github.com/" + RELEASES_API
 MAX_CATALOGUE_BYTES = 8 * 1024 * 1024
+CATALOGUE_DEADLINE_SECONDS = 20.0
 ROOT = Path("/opt/atlas-node")
 LIFECYCLE = Path("/usr/local/libexec/atlas-node-lifecycle.sh")
 TRUSTED_STAGE = Path("/usr/local/libexec/linux-node-trusted-stage.sh")
@@ -62,12 +64,29 @@ def read_public_release_catalogue() -> str:
                  "User-Agent": "atlas-node-update-check"},
         method="GET",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        if response.geturl() != PUBLIC_RELEASES_URL:
-            raise Refused("Release catalogue redirected away from the pinned GitHub API URL.")
-        data = response.read(MAX_CATALOGUE_BYTES + 1)
-    if len(data) > MAX_CATALOGUE_BYTES:
-        raise Refused("GitHub release catalogue exceeds bounded input size.")
+    # urllib's timeout only bounds each socket operation, not the full fetch.
+    # A peer that drip-feeds bytes can otherwise keep read() alive forever.
+    # This Linux-only CLI uses a SIGALRM wall-clock deadline for connect and
+    # the complete response, independently of the per-socket idle timeout.
+    if any(signal.getitimer(signal.ITIMER_REAL)):
+        raise Refused("Cannot check releases while another real-time alarm is active.")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def deadline_expired(_signum, _frame):
+        raise Refused("GitHub release catalogue exceeded the wall-clock deadline.")
+
+    try:
+        signal.signal(signal.SIGALRM, deadline_expired)
+        signal.setitimer(signal.ITIMER_REAL, CATALOGUE_DEADLINE_SECONDS)
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.geturl() != PUBLIC_RELEASES_URL:
+                raise Refused("Release catalogue redirected away from the pinned GitHub API URL.")
+            data = response.read(MAX_CATALOGUE_BYTES + 1)
+            if len(data) > MAX_CATALOGUE_BYTES:
+                raise Refused("GitHub release catalogue exceeds bounded input size.")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:

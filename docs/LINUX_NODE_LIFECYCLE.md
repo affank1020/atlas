@@ -106,7 +106,11 @@ The JSON contains `schema`, `installed`, `candidate`, `state` and
 `current` or `available`, both with exit code 0. A network failure,
 invalid/truncated catalogue, unknown installed same-version build, or
 unparseable metadata exits nonzero, never reporting an update as installed.
-The check is bounded (20-second HTTPS timeout and 8 MiB response limit).
+The check is bounded by a **hard 20-second wall-clock deadline** for the
+entire HTTPS connection and response body, alongside an 8 MiB response
+limit. The Python socket timeout alone would not stop a slow-drip response;
+the Linux CLI also uses a real-time process alarm and refuses an expired
+check without treating the result as a completed update.
 Systemd's `RandomizedDelaySec` spreads polls and the timer retains scheduled
 checks across host restarts.
 

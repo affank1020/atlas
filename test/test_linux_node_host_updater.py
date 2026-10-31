@@ -3,6 +3,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import signal
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -118,6 +120,39 @@ class CatalogTests(unittest.TestCase):
              patch.object(updater.urllib.request, "urlopen",
                           return_value=PublicResponse(b"0123456789")):
             with self.assertRaisesRegex(updater.Refused, "bounded"):
+                updater.read_public_release_catalogue()
+
+    def test_slow_drip_cannot_extend_wall_clock_deadline(self):
+        class SlowDripResponse(io.BytesIO):
+            def geturl(self):
+                return updater.PUBLIC_RELEASES_URL
+
+            def read(self, _size=-1):
+                # Simulates a peer continually making progress before a
+                # socket idle timeout, without ever completing the payload.
+                while True:
+                    time.sleep(0.01)
+
+        prior_handler = signal.getsignal(signal.SIGALRM)
+        with patch.object(updater, "CATALOGUE_DEADLINE_SECONDS", 0.05), \
+             patch.object(updater.urllib.request, "urlopen",
+                          return_value=SlowDripResponse(b"")):
+            started = time.monotonic()
+            with self.assertRaisesRegex(updater.Refused, "wall-clock deadline"):
+                updater.read_public_release_catalogue()
+            self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        self.assertEqual(signal.getsignal(signal.SIGALRM), prior_handler)
+
+    def test_slow_connect_also_obeys_the_full_deadline(self):
+        def slow_urlopen(_request, *, timeout):
+            self.assertEqual(timeout, 20)
+            time.sleep(0.3)
+            raise AssertionError("Slow connection should have been interrupted")
+
+        with patch.object(updater, "CATALOGUE_DEADLINE_SECONDS", 0.05), \
+             patch.object(updater.urllib.request, "urlopen", side_effect=slow_urlopen):
+            with self.assertRaisesRegex(updater.Refused, "wall-clock deadline"):
                 updater.read_public_release_catalogue()
 
     def test_public_check_json_never_invokes_gh_or_sudo(self):
