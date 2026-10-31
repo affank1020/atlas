@@ -82,26 +82,31 @@ export async function shareFromMacClipboard() {
     }
     const recipients = directory.result?.recipients;
     if (!Array.isArray(recipients)) throw Error('Unexpected recipient list.');
-    const ready = recipients.filter(recipient => recipient && recipient.available === true &&
+    const choices = recipients.filter(recipient => recipient &&
+        (recipient.available === true || recipient.queueAvailable === true) &&
         typeof recipient.nodeId === 'string' && typeof recipient.name === 'string');
-    if (!ready.length) {
-        console.log('No approved receiving devices are online. Check Mac → Android approval in Atlas Web → Nodes.');
+    if (!choices.length) {
+        console.log('No approved receiving devices can accept live or queued shares.');
         return;
     }
     console.log('Share clipboard text (' + text.length + ' characters) to an approved Atlas Node:');
-    ready.forEach((item, i) => console.log(formatShareRecipientOption(item, i)));
+    choices.forEach((item, i) => console.log(formatShareRecipientOption(item, i) +
+        (item.available === true ? ' · online (Copy confirmation)' : ' · offline (queue for later)')));
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
         const answer = (await rl.question('Choose device number (Enter to cancel): ')).trim();
         if (!/^[1-9]\d*$/.test(answer)) { console.log('Cancelled.'); return; }
         const index = Number(answer) - 1;
-        if (!Number.isSafeInteger(index) || index >= ready.length) {
+        if (!Number.isSafeInteger(index) || index >= choices.length) {
             console.log('Cancelled.'); return;
         }
-        const target = ready[index];
-        console.log('Confirm Send in the native Atlas dialog on your Mac.');
+        const target = choices[index];
+        console.log(target.available === true
+            ? 'Confirm Send in the native Atlas dialog on your Mac.'
+            : 'This will be ENCRYPTED and QUEUED for up to 24 hours, NOT copied now. Confirm in the native Atlas dialog.');
         const receipt = await localRequest({
-            action: 'send', targetNodeId: target.nodeId, text,
+            action: target.available === true ? 'send' : 'queue',
+            targetNodeId: target.nodeId, text,
         });
         if (!receipt.ok) {
             throw Error('Atlas did not confirm delivery (' + (receipt.code || 'SHARE_UNAVAILABLE') +
@@ -109,6 +114,10 @@ export async function shareFromMacClipboard() {
         }
         if (receipt.result?.cancelled === true)
             console.log('Cancelled on Mac; nothing sent.');
+        else if (receipt.result?.state === 'queued')
+            console.log('Queued on Atlas until ' + receipt.result.expiresAt + '. NOT yet copied to the device.');
+        else if (['copied', 'declined', 'expired'].includes(receipt.result?.state))
+            console.log('Prior queued delivery status: ' + receipt.result.state + '.');
         else if (receipt.result?.accepted === true)
             console.log('Accepted. The receiving device confirmed the copy.');
         else if (receipt.result?.accepted === false)

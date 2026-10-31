@@ -5,7 +5,7 @@ import { AtlasError } from '@atlas/protocol/errors';
 import { MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION, nodeRequestSchema, registeredSchema, validateNodeOperation } from '@atlas/protocol/node-protocol';
 import { requiredCapability } from '@atlas/protocol/runtime';
 import { deviceShareDeliverySchema, deviceShareReceiptSchema,
-    deviceShareRecipientsResultSchema, deviceShareTextSchema } from '@atlas/protocol/device-protocol';
+    deviceShareRecipientsResultSchema, deviceShareTextSchema, deviceShareQueueReceiptSchema } from '@atlas/protocol/device-protocol';
 import { z } from 'zod';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 
@@ -220,6 +220,19 @@ export class StandaloneNode extends EventEmitter {
             type: 'device.share.submit', deliveryId: randomUUID(), targetNodeId: id, text: payload,
         });
         return deviceShareReceiptSchema.parse(result);
+    }
+
+    /** Server confirms durable queue admission, not clipboard delivery. */
+    async queueDeviceShare(targetNodeId: string, text: string): Promise<{
+        state: 'queued' | 'copied' | 'declined' | 'expired'; expiresAt: string;
+    }> {
+        const id = z.string().uuid().parse(targetNodeId);
+        const payload = deviceShareTextSchema.parse(text);
+        if (!payload.trim()) throw new AtlasError('Share text cannot be blank.', 'SHARE_INVALID');
+        const result = await this.requestOutbound('share', {
+            type: 'device.share.queue', deliveryId: randomUUID(), targetNodeId: id, text: payload,
+        });
+        return deviceShareQueueReceiptSchema.parse(result);
     }
 
     private rejectOutbound(code: string) {

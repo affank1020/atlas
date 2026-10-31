@@ -25,7 +25,7 @@ export const deviceShareRecipientSchema = z.object({
     nodeId: z.string().uuid(), name: z.string().min(1).max(200),
     platform: z.string().min(1).max(80),
     status: z.enum(['online', 'offline', 'unavailable']),
-    available: z.boolean(),
+    available: z.boolean(), queueAvailable: z.boolean().optional(),
 }).strict();
 export const deviceShareRecipientsResultSchema = z.object({
     recipients: z.array(deviceShareRecipientSchema).max(64),
