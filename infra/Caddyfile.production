@@ -10,7 +10,7 @@
     route {
         # Atlas Nodes authenticate themselves with a Server-issued Bearer credential.
         # Keep these routes outside the human-facing Basic Auth layer.
-        @node path /node/connect /node/enrol /node/files/upload /node/files/resumable/* /node/update-intents/claim /node/update-intents/report
+        @node path /node/connect /node/enrol /node/files/upload /node/files/resumable/* /node/update-intents/claim /node/update-intents/report /node/images/upload /node/images/*
         reverse_proxy @node server:3000 {
             # Atlas is always externally HTTPS: after cutover it receives
             # HTTP from the standalone proxy over a private Docker bridge.
