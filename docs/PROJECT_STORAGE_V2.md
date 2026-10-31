@@ -338,3 +338,57 @@ legacy Workspace/Application Files coverage or a production cutover.
 Capture, seed and isolated verification must be explicitly run by a trusted
 operator and linked to one separately verified encrypted PostgreSQL snapshot.
 See RECOVERY_ACCEPTANCE.md for the manual commands and outstanding gates.
+
+
+## Stage 7 — read-only versioned-key cutover assessment
+
+This is **operator-only read-only assessment**, not versioned-key activation.
+It reconciles the current Project catalogue with three sources of evidence:
+
+- A fully receipted Stage 4B key-copy run covering every Project File and
+  Portfolio original and derivative, including archived items.
+- A Stage 5/6 immutable Project recovery manifest tied to that *exact* key
+  run, covering **both legacy and versioned keys**, with complete independent
+  R2 verification receipts.
+- An optional bounded byte check of **four objects per catalogue entry**:
+  effective primary legacy source (R2/confirmed-missing local fallback),
+  primary versioned R2 destination, independent recovery legacy bytes, and
+  independent recovery versioned bytes. Hash and size must agree with the
+  persisted manifests and copy receipts.
+
+The entire bounded metadata catalogue is reconciled before any R2 read,
+but each explicit verify operation reads at most **five** catalogue entries
+(20 bounded reads, each capped at 25 MiB). Each successful result describes
+only its page; a final page is not evidence that earlier pages were checked.
+
+Operator example (no live cutover or object writes):
+
+~~~sh
+npm run build:server
+
+# Default/explicit plan: DB metadata only, no R2 credentials required.
+npm run files:r2:project-cutover-check -- \
+  --plan --project=PROJECT_UUID --key-run=KEY_COPY_RUN_UUID \
+  --recovery-run=PROJECT_RECOVERY_RUN_UUID --max-files=5
+
+# Explicit bounded primary + independent R2 GET verification.
+npm run files:r2:project-cutover-check -- \
+  --verify --project=PROJECT_UUID --key-run=KEY_COPY_RUN_UUID \
+  --recovery-run=PROJECT_RECOVERY_RUN_UUID --from=0 --max-files=5
+~~~
+
+When the result has remaining=true, repeat at its nextOrdinal. The report
+describes catalogue identity, old/new keys, exact authoritative table,
+copy/backup receipt status, bounded byte evidence and any blockers.
+Source table identities differ: atlas_files and media_assets use file ID,
+whereas media_variants is identified by asset ID plus variant name. Public
+Portfolio URLs still depend on stable media IDs, not R2 key paths.
+
+Every result unconditionally reports cutoverAuthorized=false,
+noDatabaseWrites=true and noObjectWrites=true. No apply flag, key switch,
+automatic backup, deletion, retention, owner reassignment or production
+credential exposure is introduced. This does **not** prove PostgreSQL/R2
+snapshot atomicity, physical recovery-host isolation or a working restored
+Atlas service. Actual reversible cutover needs independent recovery
+acceptance, a writer-quiescence boundary, new-upload handling, tested
+rollback and separate operator approval before any keys are changed.
