@@ -67,17 +67,53 @@ internal object AtlasPush {
         return runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false)
     }
 
-    /** Do not relax the strict Node message parser for arbitrary responses. */
-    fun parseRegistrationAck(raw: String): String? = runCatching {
+    /** Responses contain no command discriminator; the ViewModel correlates
+     * this strictly bounded envelope with its own outstanding request UUID. */
+    fun parseRegistrationReply(raw: String): PushRegistrationReply? = runCatching {
         val envelope = JSONObject(raw)
-        if (envelope.length() != 4 || envelope.optString("type") != "response" ||
-            envelope.opt("ok") != true) return@runCatching null
-        val result = envelope.optJSONObject("result") ?: return@runCatching null
-        if (result.length() != 1 || result.opt("registered") !is Boolean)
+        if (envelope.length() != 4 || envelope.optString("type") != "response")
             return@runCatching null
         val id = envelope.getString("requestId")
-        id.takeIf { UUID.fromString(it).toString() == it }
+        if (UUID.fromString(id).toString() != id) return@runCatching null
+        when (envelope.opt("ok")) {
+            true -> {
+                val result = envelope.optJSONObject("result") ?: return@runCatching null
+                if (result.length() != 1 || result.opt("registered") !is Boolean)
+                    return@runCatching null
+                PushRegistrationReply(id, result.getBoolean("registered"), null)
+            }
+            false -> {
+                val error = envelope.optJSONObject("error") ?: return@runCatching null
+                if (error.length() != 2) return@runCatching null
+                val code = error.getString("code")
+                val message = error.getString("message")
+                if (!code.matches(Regex("[A-Z_]{1,80}")) || message.length > 200)
+                    return@runCatching null
+                PushRegistrationReply(id, null, code)
+            }
+            else -> null
+        }
     }.getOrNull()
+}
+
+internal data class PushRegistrationReply(
+    val requestId: String,
+    val registered: Boolean?,
+    val errorCode: String?,
+)
+
+/** Bounded retry policy used for both failed registration and opt-out.
+ * Authentication and configuration errors require user/operator action.
+ */
+internal class PushRetryPolicy {
+    private var retries = 0
+    fun reset() { retries = 0 }
+    fun nextDelay(errorCode: String): Long? {
+        if (errorCode in setOf("SHARE_DENIED", "NODE_AUTH_INVALID", "INVALID_REQUEST",
+                "NODE_DISCONNECTED", "SHARE_REPLAY")) return null
+        if (retries >= 5) return null
+        return (1_000L shl retries++).coerceAtMost(16_000L)
+    }
 }
 
 class AtlasFirebaseMessagingService : FirebaseMessagingService() {
