@@ -30,7 +30,7 @@ export class DeviceOfflineInbox {
         if (source === target || !(await this.allowed(source,target)))
             throw new AtlasError('Offline share not authorised.', 'SHARE_DENIED');
         validateInboxText(input.text);
-        const digest = digestInboxSubmission(target, input.text);
+        const digest = digestInboxSubmission(this.key,target, input.text);
         const envelope = sealInboxText(this.key,source,target,id,input.text);
         const client = await this.pool.connect();
         try {
