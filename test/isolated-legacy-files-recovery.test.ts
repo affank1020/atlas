@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after,test } from "node:test";
 import { Pool } from "pg";
+import {isolatedLegacyVerificationExitCode} from "../apps/server/src/server/isolated-legacy-files-args.js";
 import { AtlasFilesService } from "../apps/server/src/server/atlas-files.js";
 import { LocalObjectStore,ObjectNotFound } from "../apps/server/src/server/file-storage.js";
 import {
@@ -58,6 +59,7 @@ test("Restored legacy Workspace and Application Files include archived bytes and
                 restoredDatabase:separate,backup:ctx.recovery,maxRecords:10});
             assert.equal(result.status,"passed");
             assert.equal(result.entireLegacyCatalogVerified,true);
+            assert.equal(isolatedLegacyVerificationExitCode(result),0);
             assert.equal(result.checked,2);
             assert.equal(result.activeChecked,1);
             assert.equal(result.archivedChecked,1);
@@ -125,6 +127,8 @@ test("An empty legacy inventory is distinct from a passing nonempty backup",asyn
         assert.equal(result.status,"empty");
         assert.equal(result.checked,0);
         assert.equal(result.entireLegacyCatalogVerified,false);
+        assert.equal(isolatedLegacyVerificationExitCode(result),2,
+            "actual empty restored database must cause non-success operator exit");
         assert.equal(ctx.reads.length,0);
     }finally{await ctx.close();}
 });
