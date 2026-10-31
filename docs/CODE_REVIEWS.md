@@ -1044,6 +1044,81 @@ until deliberate rollout and a real authenticated GitHub integration test.
 Never enable both the legacy review publisher and this bot workflow without
 first selecting one authoritative publication path.
 
+### End-to-end rollout and Code Reviews UI verification
+
+The Code Reviews Application includes two **separate, read-only** evidence layers:
+
+1. **Saved Atlas receipts:** Expand *View findings* for one recorded review
+   to inspect existing managed-summary, inline root/reply, fix-evidence and
+   conversation-resolution claim states. A saved `published` receipt means
+   Atlas recorded publication; it is **not** a fresh GitHub ownership, content
+   or conversation-state check. `claimed` and unsupported receipts are
+   displayed explicitly rather than being treated as completed publication.
+2. **On-demand GitHub verification:** Expand *PR status* and select *Check
+   GitHub conversations*. The UI invokes
+   `code_reviews_review_thread_state` only on that action. It shows verified
+   Atlas Bot-owned root discussion links, separate GitHub open/resolved/outdated
+   status, unknown/unmapped cases, and the independent reviewer-assessed
+   resolutions. It **never** calls `resolveReviewThread` or any other
+   publication mutation. REST comment IDs are used in discussion URLs;
+   GraphQL node IDs are not confused with REST URLs.
+
+#### Acceptance and publisher authority
+
+For the current rollout, the existing independent Code Reviewer skill's
+GitHub review submission is the **authoritative live review publisher**.
+The Atlas-native COMMENT review publisher and the newer managed summary,
+inline root, persisting/fix reply and conversation resolution operations
+remain separate, **disabled-by-default** alternatives. A code merge or a
+plugin recording structured evidence **does not** authorise duplicate GitHub
+publication, enable a repository allowlist or update the deployed Server.
+Before activating Atlas-native publication, explicitly choose the migration
+point and disable the old publishing path for the same review. Do not use
+both publishers for one review round.
+
+Acceptance sequence (perform only expressly authorised writes):
+
+1. Confirm the connected Atlas MCP actually exposes
+   `code_reviews_overview`, `code_reviews_list_runs`,
+   `code_reviews_submit_structured`, `code_reviews_pr_summary`,
+   `code_reviews_pr_timeline` and
+   `code_reviews_review_thread_state`. The first three being exposed
+   does **not** prove the later operations are deployed or present in the
+   client's cached tool catalogue. Refresh/reconnect the connector and
+   verify the runtime before attributing the gap to missing source code.
+2. Check Code Reviews Project and Store provisioning and inspect a real
+   saved structured run in the Application. Compare its reviewed SHA
+   against GitHub's current head using the PR-status panel, and confirm
+   missing/partial history never displays a falsely clean result.
+3. Preview `code_reviews_review_thread_state` against a **known**
+   permitted PR with an existing Atlas-managed root. Verify the App Bot
+   identity, exact REST root to GraphQL thread mapping, read token
+   permissions, and status UI. An empty list or GitHub authentication
+   failure is **not** proof that a discussion is resolved.
+4. In a deliberately approved test PR, review two distinct commits.
+   Verify that Atlas retains both source rounds and explicit stable
+   finding keys, one managed summary (if native publication was
+   explicitly enabled), new findings on verified inline roots,
+   persisting findings as replies on existing roots, and reviewer-verified
+   fixes as distinct fix-evidence replies. Reopen a resolved GitHub
+   conversation and verify the read-only UI does not silently reclose it.
+5. For each selected `apply:true` publisher action, record the
+   allowlist, exact reviewer/caller identity, GitHub App permissions,
+   candidate SHA, claim/reconciliation status and independent readback.
+   Never infer publication from a mere test preview or retry an uncertain
+   GitHub POST/GraphQL mutation. Human-authored legacy reviews remain
+   separate and are not retroactively adopted as Atlas Bot roots.
+6. Verify ChatGPT's connected MCP independently after a server deploy;
+   its advertised tools can lag source and Server API availability.
+   Only when real app history, native GitHub presentation and ownership
+   controls work as expected should Code Reviews workflow affordances
+   be handed over to ChatFlow.
+
+**Operational limitation:** The Application can show stored receipts
+without checking GitHub, and the on-demand GraphQL panel may be unavailable
+because of deployment/catalogue staleness, GitHub App permissions or API
+errors. These are distinct conditions and must not be conflated.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some

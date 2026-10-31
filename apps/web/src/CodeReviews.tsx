@@ -1,16 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApplicationRead } from './atlasApi';
 import type { AtlasRecord, Page } from './types';
+import { CodeReviewThreads } from './CodeReviewThreads';
 import './code-reviews.css';
 
 type Overview = { projectId: string; reviewRuns: number; findingObservations: number };
 type Counts = { sev1?: number; sev2?: number; sev3?: number; sev4?: number };
+type SavedReceipt = { state: 'claimed' | 'published' | 'unsupported'; commentId?: number };
+type SavedClaimCounts = { claimed: number; published: number; unsupported: number };
+type SavedPublications = {
+    summary?: SavedReceipt;
+    fixReplies?: SavedClaimCounts;
+    threadResolutions?: SavedClaimCounts;
+};
 type ReviewRun = {
     id: string; repository: string; prNumber: number; headSha: string; verdict: string;
     reviewedAt: string; reviewer: string; counts?: Counts;
     source: 'historical' | 'structured' | 'unknown';
     publication?: 'claimed' | 'published';
     githubReviewId?: string;
+    savedPublications?: SavedPublications;
 };
 type PrSummary = {
     recordedRounds: number;
@@ -44,6 +53,7 @@ type PrTimeline = {
 type ReviewFinding = {
     id: string; key: string; severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
     title: string; description: string; state: string; filePath?: string; line?: number;
+    initialRoot?: SavedReceipt; persistingReply?: SavedReceipt;
 };
 
 const validRepo = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -65,6 +75,35 @@ function safeCount(value: unknown) {
     return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+const recordObject = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+const positiveId = (n: unknown): n is number =>
+    typeof n === 'number' && Number.isSafeInteger(n) && n > 0;
+
+/** Stored metadata is not an independent GitHub verification. Unsupported
+ * receipts are explicitly reported rather than silently called published.
+ */
+function savedReceipt(value: unknown, idField: string): SavedReceipt | undefined {
+    if (value === undefined) return undefined;
+    if (!recordObject(value) || !['claimed', 'published'].includes(String(value.state)))
+        return { state: 'unsupported' };
+    if (value.state === 'published' && !positiveId(value[idField]))
+        return { state: 'unsupported' };
+    return { state: value.state as 'claimed' | 'published',
+        ...(positiveId(value[idField]) && { commentId: value[idField] as number }) };
+}
+function savedClaimCounts(raw: unknown, idField: string): SavedClaimCounts | undefined {
+    if (raw === undefined) return undefined;
+    if (!recordObject(raw) || Object.keys(raw).length > 30)
+        return { claimed: 0, published: 0, unsupported: 1 };
+    const counts = { claimed: 0, published: 0, unsupported: 0 };
+    for (const value of Object.values(raw)) {
+        const receipt = savedReceipt(value, idField);
+        if (receipt) counts[receipt.state]++;
+    }
+    return counts;
+}
+
 function parsedRun(record: AtlasRecord): ReviewRun | undefined {
     const d = record.data;
     if (typeof d.repository !== 'string' || !validRepo.test(d.repository) ||
@@ -76,11 +115,18 @@ function parsedRun(record: AtlasRecord): ReviewRun | undefined {
         ? d.coverage as Record<string, unknown> : undefined;
     const publication = coverage?.githubPublication && typeof coverage.githubPublication === 'object'
         ? coverage.githubPublication as Record<string, unknown> : undefined;
+    const managedSummary = savedReceipt(coverage?.githubManagedSummary, 'commentId');
+    const fixReplies = savedClaimCounts(coverage?.githubFixReplies, 'replyCommentId');
+    // GraphQL thread-resolution claims intentionally have no comment ID.
+    const threadResolutions = savedClaimCounts(coverage?.githubThreadResolutions, 'rootCommentId');
+    const savedPublications = managedSummary || fixReplies || threadResolutions
+        ? { summary: managedSummary, fixReplies, threadResolutions } : undefined;
     return { id: record.id, repository: d.repository, prNumber: d.prNumber,
         headSha: d.headSha, reviewedAt: d.reviewedAt, verdict: d.verdict,
         reviewer: typeof d.reviewer === 'string' ? d.reviewer : 'Unknown',
         counts: d.counts && typeof d.counts === 'object' && !Array.isArray(d.counts)
             ? d.counts as Counts : undefined,
+        savedPublications,
         source: coverage?.source === 'github_pull_request_review' ? 'historical'
             : coverage?.source === 'atlas_structured_submission' ? 'structured' : 'unknown',
         publication: publication?.state === 'published' || publication?.state === 'claimed'
@@ -96,9 +142,12 @@ function parsedFinding(record: AtlasRecord): ReviewFinding | undefined {
         typeof d.title !== 'string' || !d.title.trim() || d.title.length > 200 ||
         typeof d.description !== 'string' || typeof d.state !== 'string' ||
         !findingStates.has(d.state)) return;
+    const evidence = recordObject(d.evidence) ? d.evidence : {};
     return { id: record.id, key: typeof d.findingKey === 'string' ? d.findingKey : record.id,
         severity: d.severity as ReviewFinding['severity'], title: d.title,
         description: d.description, state: d.state,
+        initialRoot: savedReceipt(evidence.githubInlineThread, 'rootCommentId'),
+        persistingReply: savedReceipt(evidence.githubInlineReply, 'replyCommentId'),
         filePath: typeof d.filePath === 'string' && d.filePath.length <= 1024 ? d.filePath : undefined,
         line: typeof d.line === 'number' && Number.isSafeInteger(d.line) && d.line > 0 ? d.line : undefined };
 }
@@ -107,6 +156,7 @@ function parsedFinding(record: AtlasRecord): ReviewFinding | undefined {
 function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVersion: number }) {
     const lastRefresh = useRef(refreshVersion);
     const [timelineOffset, setTimelineOffset] = useState(0);
+    const [showGithubThreads, setShowGithubThreads] = useState(false);
     const timeline = useApplicationRead<PrTimeline>('code_reviews_pr_timeline',
         { repository: entry.repository, prNumber: entry.prNumber, limit: 5, offset: timelineOffset }, true);
     const status = useApplicationRead<PrSummary>('code_reviews_pr_summary',
@@ -150,6 +200,18 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                     : ' Full severity totals unavailable.'}
             </p>}
         </>}
+        <div className="code-reviews-remote-toggle">
+            <button type="button" className="ghost" aria-expanded={showGithubThreads}
+                aria-controls={`code-reviews-github-threads-${entry.id}`}
+                onClick={() => setShowGithubThreads(value => !value)}>
+                {showGithubThreads ? 'Hide GitHub conversations' : 'Check GitHub conversations'}
+            </button>
+            <span className="code-reviews-subtitle">Makes an independent GitHub API request; it never publishes or resolves a thread.</span>
+        </div>
+        {showGithubThreads && <div id={`code-reviews-github-threads-${entry.id}`}>
+            <CodeReviewThreads repository={entry.repository} prNumber={entry.prNumber}
+                refreshVersion={refreshVersion} />
+        </div>}
         <div className="code-reviews-timeline" aria-label="Saved PR review timeline">
             <h4>Saved review timeline</h4>
             {(timeline.isLoading || timeline.isFetching && !timeline.data) &&
@@ -262,6 +324,27 @@ function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVe
             <span>{entry.source === 'historical' ? 'Imported from GitHub'
                 : entry.source === 'structured' ? 'Submitted to Atlas' : 'Source not recorded'}</span>
         </div>
+        {entry.savedPublications && <div className="code-reviews-saved-receipts">
+            <h4>Saved GitHub workflow receipts</h4>
+            {entry.savedPublications.summary && <p>
+                Managed PR summary: {entry.savedPublications.summary.state === 'published'
+                    ? 'Atlas receipt published' : entry.savedPublications.summary.state === 'claimed'
+                        ? 'Atlas claim pending / outcome uncertain' : 'Unsupported claim metadata'}.
+                {entry.savedPublications.summary.state === 'published' &&
+                    entry.savedPublications.summary.commentId && <> {' '}<a
+                    href={`https://github.com/${entry.repository}/pull/${entry.prNumber}#issuecomment-${entry.savedPublications.summary.commentId}`}
+                    target="_blank" rel="noopener noreferrer">View saved comment ↗</a></>}
+            </p>}
+            {([
+                ['Fix-evidence replies', entry.savedPublications.fixReplies],
+                ['Conversation-resolution attempts', entry.savedPublications.threadResolutions],
+            ] as const).map(([label, counts]) => counts && <p key={label}>
+                {label}: {counts.published} stored published · {counts.claimed} claimed/uncertain
+                {counts.unsupported > 0 ? ` · ${counts.unsupported} unsupported` : ''}.
+            </p>)}
+            <p className="code-reviews-subtitle">These are saved Atlas receipts, not a fresh GitHub check.
+                A published fix reply does not mean the GitHub discussion was resolved.</p>
+        </div>}
         {entry.publication === 'claimed' && <p role="status">GitHub publication is uncertain; check its claim before retrying.</p>}
         {entry.publication === 'published' && <p>Published on GitHub{entry.githubReviewId
             ? <> · <a href={`https://github.com/${entry.repository}/pull/${entry.prNumber}#pullrequestreview-${entry.githubReviewId}`}
@@ -279,6 +362,17 @@ function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVe
             </div>
             {f.filePath && <div className="code-reviews-subtitle">{f.filePath}{f.line ? `:${f.line}` : ''}</div>}
             <p>{f.description}</p>
+            {f.initialRoot && <p className="code-reviews-subtitle">
+                Inline root: {f.initialRoot.state === 'published' ? 'Atlas published receipt'
+                    : f.initialRoot.state === 'claimed' ? 'Claimed / uncertain' : 'Unsupported receipt'}.
+                {f.initialRoot.state === 'published' && f.initialRoot.commentId && <> {' '}<a
+                    href={`https://github.com/${entry.repository}/pull/${entry.prNumber}#discussion_r${f.initialRoot.commentId}`}
+                    target="_blank" rel="noopener noreferrer">View inline root ↗</a></>}
+            </p>}
+            {f.persistingReply && <p className="code-reviews-subtitle">
+                Persisting reply: {f.persistingReply.state === 'published' ? 'Atlas published receipt'
+                    : f.persistingReply.state === 'claimed' ? 'Claimed / uncertain' : 'Unsupported receipt'}.
+            </p>}
         </article>)}
         {findings.data && findings.data.total > findingPageSize && <div className="code-reviews-pagination">
             <button type="button" className="ghost" disabled={offset === 0 || findings.isFetching}

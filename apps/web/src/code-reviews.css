@@ -43,3 +43,19 @@
 .code-reviews-round summary{cursor:pointer;line-height:1.5;overflow-wrap:anywhere}
 .code-reviews-round .code-reviews-finding:last-child{padding-bottom:0}
 .code-reviews-timeline .code-reviews-pagination{padding:12px 0 0;justify-content:space-between}
+
+/* Remote GitHub state is loaded only on request inside one PR status panel. */
+.code-reviews-remote-toggle{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:18px}
+.code-reviews-remote{border-top:1px solid var(--border,#4446);margin-top:16px;padding-top:16px;display:grid;gap:10px}
+.code-reviews-remote h4,.code-reviews-remote h5{font-size:14px;margin:0}
+.code-reviews-remote p{margin:0;line-height:1.5}
+.code-reviews-thread-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px}
+.code-reviews-thread{border:1px solid var(--border,#4446);border-radius:8px;padding:12px;display:grid;gap:6px;overflow-wrap:anywhere;font-size:13px}
+.code-reviews-thread span{color:var(--text-muted,#84909c)}
+.code-reviews-thread a{font-weight:500}
+.code-reviews-remote-resolutions{border-top:1px solid var(--border,#4446);padding-top:12px;display:grid;gap:8px;overflow-wrap:anywhere}
+.code-reviews-remote-resolutions code{overflow-wrap:anywhere}
+
+.code-reviews-saved-receipts{border:1px solid var(--border,#4446);border-radius:8px;padding:12px;margin:14px 0;display:grid;gap:8px}
+.code-reviews-saved-receipts h4{font-size:14px;margin:0}
+.code-reviews-saved-receipts p{margin:0;line-height:1.5;overflow-wrap:anywhere}
