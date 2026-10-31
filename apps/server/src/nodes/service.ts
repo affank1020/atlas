@@ -52,15 +52,25 @@ export class NodeService {
     async shareRecipients(sourceId: string) {
         const approved = await this.requireShareApprovals().targetsFor(sourceId);
         if (!approved.size) return [];
-        const nodes = await this.list();
+        // Live send requires an attached receiver, but offline enqueue uses
+        // the last registered capability retained in the durable registry.
+        // This is only a picker hint: inbox.enqueue independently validates
+        // the receiving capability and directional approval at admission.
+        if (this.local) await this.registerLocalNode();
+        const nodes = await this.repository.list();
         return nodes.filter(node => approved.has(node.id.toLowerCase())
             && node.id.toLowerCase() !== sourceId.toLowerCase()
             && node.credentialState === 'active')
-            .map(node => ({
-                nodeId: node.id, name: node.name, platform: node.platform,
-                status: node.status,
-                available: node.status === 'online' && node.capabilities.includes('device.share.receive'),
-            })).slice(0,64);
+            .map(node => {
+                const live = this.effective(node);
+                return {
+                    nodeId: node.id, name: node.name, platform: node.platform,
+                    status: live.status,
+                    available: live.status === 'online' &&
+                        live.capabilities.includes('device.share.receive'),
+                    queueCapable: node.capabilities.includes('device.share.receive'),
+                };
+            }).slice(0,64);
     }
     async call(name: NodeToolName, input: unknown, caller: ShareAuditClient = 'atlas-server') {
         const parsed = nodeSchemas[name].safeParse(input);
