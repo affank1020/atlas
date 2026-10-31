@@ -19,6 +19,10 @@ const safeInteger = (n: unknown): n is number =>
 const safeRootId = (n: unknown): n is number => safeInteger(n) && n > 0;
 const keyPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const graphNodeId = /^[A-Za-z0-9_+/=-]{8,256}$/;
+const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const validRepository = (name: unknown): name is string =>
+    typeof name === 'string' && repositoryName.test(name) &&
+    name.split('/').every(part => part !== '.' && part !== '..');
 function validStatus(input: unknown, repository: string, prNumber: number): input is ThreadState {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const value = input as Partial<ThreadState>;
@@ -26,7 +30,8 @@ function validStatus(input: unknown, repository: string, prNumber: number): inpu
         ? value.ownedThreads.filter(t => t?.mappingState === 'verified').length : -1;
     return mapped === value.mappedOwnedRoots &&
         value.mappingComplete === (mapped === value.ownedRootCount) &&
-        value.repository === repository && value.prNumber === prNumber &&
+        validRepository(value.repository) &&
+        value.repository.toLowerCase() === repository && value.prNumber === prNumber &&
         value.readOnly === true && value.resolutionSupported === false &&
         safeInteger(value.totalGitHubThreads) && safeInteger(value.ownedRootCount) &&
         safeInteger(value.mappedOwnedRoots) && value.mappedOwnedRoots <= value.ownedRootCount &&
@@ -52,15 +57,20 @@ export function CodeReviewThreads({ repository, prNumber, refreshVersion }: {
     repository: string; prNumber: number; refreshVersion: number;
 }) {
     const previous = useRef(refreshVersion);
+    // Legacy GitHub imports retained original repository casing. The Server
+    // always returns canonical owner/repo, so both the lookup and comparison
+    // must use the same validated identity without adopting a different repo.
+    const canonicalRepository = repository.toLowerCase();
     const query = useApplicationRead<ThreadState>('code_reviews_review_thread_state',
-        { repository, prNumber }, true);
+        { repository: canonicalRepository, prNumber }, true);
     useEffect(() => {
         if (previous.current !== refreshVersion) {
             previous.current = refreshVersion;
             void query.refetch();
         }
     }, [refreshVersion, query.refetch]);
-    const valid = validStatus(query.data, repository, prNumber);
+    const valid = validRepository(repository) &&
+        validStatus(query.data, canonicalRepository, prNumber);
     const state = valid ? query.data : null;
     const resolved = state?.ownedThreads.filter(t => t.resolutionState === 'resolved_on_github').length ?? 0;
     const open = state?.ownedThreads.filter(t => t.resolutionState === 'open_on_github').length ?? 0;
@@ -93,7 +103,7 @@ export function CodeReviewThreads({ repository, prNumber, refreshVersion }: {
                             {thread.isOutdated ? ' · Outdated anchor' : ''}
                             {thread.mappingState === 'unmapped' ? ' · ID unmapped' : ''}</span>
                         {safeRootId(thread.rootCommentId) && <a
-                            href={`https://github.com/${repository}/pull/${prNumber}#discussion_r${thread.rootCommentId}`}
+                            href={`https://github.com/${canonicalRepository}/pull/${prNumber}#discussion_r${thread.rootCommentId}`}
                             target="_blank" rel="noopener noreferrer">Open discussion ↗</a>}
                     </article>)}
             </div>}
