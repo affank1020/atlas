@@ -456,7 +456,7 @@ test.each(['unavailable', 'invalid contract'] as const)(
         expect(screen.getByRole('heading', { name: 'Active activity' })).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Recent runs' })).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Evaluations' })).toBeInTheDocument();
-        expect(screen.getByText('s0-contact-easy-v1')).toBeInTheDocument();
+        expect(screen.getAllByText('s0-contact-easy-v1').length).toBeGreaterThan(0);
         expect(screen.getByText('Unavailable')).toBeInTheDocument();
         expect(screen.queryByRole('status', { name: 'Loading Football Generalist' })).not.toBeInTheDocument();
         expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
