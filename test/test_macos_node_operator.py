@@ -74,7 +74,7 @@ class MacOperatorTests(unittest.TestCase):
             operator.initial_install(self.layout, self.version1)
         op, pointer, wrapper = operator.paths(self.layout)
         self.assertEqual(operator.current_target(self.layout), self.first / "scripts")
-        self.assertEqual(pointer.resolve(), self.first / "scripts")
+        self.assertEqual(pointer.resolve(), (self.first / "scripts").resolve())
         self.assertEqual(wrapper.read_text(), operator.WRAPPER)
         self.assertEqual(wrapper.stat().st_mode & 0o077, 0)
         self.assertEqual(op.stat().st_mode & 0o077, 0)
