@@ -94,11 +94,8 @@ internal class AtlasTransport {
                 val shareReply = parseShareReply(text)
                 val directoryReply = parseRecipientsReply(text)
                 val inboxReply = parseInboxReply(text)
-                val pushReply = runCatching {
-                    val json=JSONObject(text)
-                    if(json.optString("type")=="response") json.optString("requestId") else ""
-                }.getOrDefault("")
-                if (shareReply != null || directoryReply != null || inboxReply != null || pushReply.isNotBlank()) {
+                val pushReply = AtlasPush.parseRegistrationAck(text)
+                if (shareReply != null || directoryReply != null || inboxReply != null || pushReply != null) {
                     // Error envelopes share the same wire shape. Callers correlate
                     // requestId to their pending operation and ignore other replies.
                     shareReply?.let(onShareReply)
