@@ -86,7 +86,8 @@ export function renderManagedSummary(repository: string, prNumber: number, round
         '',
         '**Reviewed head:** ' + inlineCode(round.headSha.slice(0, 7), 7) +
             ' · **Saved rounds:** ' + savedRounds +
-            ' · **Source:** ' + (full ? 'Structured review' : 'Partial / historical'),
+            ' · **Source:** ' + (full ? 'Structured review' :
+                round.source === 'historical' ? 'Historical import — partial' : 'Partial / unknown'),
         ...(full ? [
             ...(round.resolutions.length ?
                 ['**Reviewer-asserted fixes:** ' + round.resolutions.length] : []),
