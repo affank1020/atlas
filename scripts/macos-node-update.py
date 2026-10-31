@@ -205,7 +205,10 @@ def apply_update(layout, *, migrate: bool) -> int:
                               "--expect-entrypoint", selected_state["currentEntrypoint"]])
     try:
         sync_installed_operator(layout, tag.removeprefix("node-"))
-    except (Refused, lifecycle.Refused, OSError, ValueError, RuntimeError) as exc:
+    except Exception as exc:
+        # Runtime activation is already committed. Any independent operator
+        # promotion error must be reported as a partial success, not as a
+        # failed Node update that encourages another immediate cutover.
         print("Node activated but standalone updater could not be advanced:", exc,
               file=sys.stderr)
         print("Use the signed release operator sync command after inspection.",
