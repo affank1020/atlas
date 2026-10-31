@@ -155,7 +155,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         projectId: z.string().uuid().optional(), workspaceId: z.string().uuid().optional(), checkoutId: z.string().uuid().optional(),
         logicalWorkspaceId: z.string().uuid().optional(),
         storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), nodeId: z.string().uuid().optional(),
-        operation: z.string().max(120).optional(), category: z.enum(['core','view','node','workspace','files','git','dev','unity']).optional(),
+        operation: z.string().max(120).optional(), category: z.enum(['core','view','node','workspace','files','backup','git','dev','unity']).optional(),
         client: z.string().max(200).optional(), outcome: z.enum(['completed','pending','failed']).optional(),
         search: z.string().max(200).optional(), from: z.string().datetime().optional(), to: z.string().datetime().optional(),
         limit: z.number().int().min(1).max(100).default(30), offset: z.number().int().min(0).max(10000).default(0),
