@@ -894,7 +894,7 @@ test('Git actions use compact inspector placeholders until Git inspection resolv
     openWorkspaceCheckout(browser, 'Atlas');
     const inspector = screen.getByRole('region', { name: 'Checkout details' });
     fireEvent.click(within(inspector).getByText('Git actions'));
-    expect(within(inspector).getByRole('status', { name: 'Loading Git actions' })).toHaveAttribute('aria-busy', 'true');
+    expect(await within(inspector).findByRole('status', { name: 'Loading Git actions' })).toHaveAttribute('aria-busy', 'true');
     expect(within(inspector).queryByRole('button', { name: 'Create worktree' })).not.toBeInTheDocument();
     status.resolve({ available: true, branch: 'atlas/feature', head: sha,
         dirty: false, originRepository: 'example/atlas' });
