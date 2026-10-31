@@ -99,7 +99,8 @@ def current_target(layout) -> Path | None:
             raise Refused("Installed operator release target is malformed.")
         # Check it still resolves to the recorded signed scripts, not a
         # replaceable alternate directory selected through a symlink.
-        if not target.is_dir() or target.is_symlink():
+        if (not target.is_dir() or target.is_symlink() or
+            target.parent.is_symlink() or layout.releases.is_symlink()):
             raise Refused("Installed operator release is unavailable.")
         return target
     if link.exists():
@@ -111,6 +112,8 @@ def current_target(layout) -> Path | None:
 
 def operator_status(layout) -> dict:
     current = current_target(layout)
+    if current is not None:
+        validate_signed_operator(layout, current.parent.name)
     return {"installedOperator": current.parent.name if current else None,
             "wrapper": str(paths(layout)[2]),
             "checkoutRequired": False if current else True}
@@ -134,6 +137,10 @@ def promote(layout, version: str, *, require_existing: bool = False) -> None:
         lifecycle.require_private(wrapper, layout.uid, directory=False)
         if wrapper.read_text() != WRAPPER:
             raise Refused("Installed macOS operator entrypoint differs; manual inspection required.")
+        if not wrapper.stat().st_mode & stat.S_IXUSR:
+            # Complete a previously interrupted first-time bootstrap only
+            # after verifying the exact expected user-owned wrapper content.
+            wrapper.chmod(0o700)
     else:
         lifecycle.atomic_write(wrapper, WRAPPER.encode())
         wrapper.chmod(0o700)
