@@ -89,7 +89,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     // Missing secret leaves existing live device shares unchanged.
     const offlineInbox = config.deviceInboxKey
         ? new DeviceOfflineInbox(repository.pool, readInboxKey(config.deviceInboxKey),
-            (source,target) => shareApprovals.allowed(source,target))
+            (source,target,client) => shareApprovals.allowedForInbox(source,target,client))
         : undefined;
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
