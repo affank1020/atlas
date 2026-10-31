@@ -238,7 +238,9 @@ export async function seedProjectRecovery(input:{
         await assertCatalog(input.database,m);
     }
     const end=from+page.length;
-    return {mode:input.apply?"apply":"dry-run",status:end<m.entries.length?"partial":
+    // An end-of-pagination page is not evidence that earlier pages were
+    // seeded or verified. Only a complete uncursored run can be "completed".
+    return {mode:input.apply?"apply":"dry-run",status:from>0||end<m.entries.length?"partial":
         input.apply?"completed":"ready",
         checked:page.length,existingVerified:verified,planned:missing.length,
         createdVerified:created,racedVerified:raced,bytesVerified,
