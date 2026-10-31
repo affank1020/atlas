@@ -188,11 +188,11 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
         assert.equal((await stat(path)).mode & 0o077, 0);
         assert.equal((await ipc(path, { action: 'recipients' })).result.recipients[0].name, 'Samsung');
         const live = (await ipc(path,{action:'recipients'})).result.recipients[0];
-        const queued = (await ipc(path,{action:'queueRecipients'})).result.recipients[0];
+        const queuedRecipient = (await ipc(path,{action:'queueRecipients'})).result.recipients[0];
         assert.equal(Object.hasOwn(live,'queueCapable'),false);
         assert.equal(live.available,true);
-        assert.equal(queued.queueCapable,true);
-        assert.equal(queued.available,false);
+        assert.equal(queuedRecipient.queueCapable,true);
+        assert.equal(queuedRecipient.available,false);
         assert.deepEqual(await ipc(path, { action: 'send', targetNodeId: target, text: 'secret message' }),
             { ok: true, result: { accepted: true } });
         assert.equal(delivered, 1);
