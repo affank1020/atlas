@@ -82,7 +82,10 @@ export class MonitoringHealthService {
         const directoryRead = withinDeadline(Promise.resolve().then(() => this.registry.list()), this.deadlineMs);
         const archiveRead = this.archive
             ? withinDeadline(Promise.resolve().then(() => this.archive!.status()), this.deadlineMs)
-            : Promise.reject(new Error('Archive status source not configured'));
+            : Promise.resolve({
+                state: 'disabled' as const, coverage: 'incomplete-possible' as const,
+                retentionDays: 14 as const, droppedSinceStart: 0, pending: 0, writePaused: false,
+            });
         const [db, directory, archive] = await Promise.allSettled([probe, directoryRead, archiveRead]);
         const database = db.status === 'fulfilled'
             ? { status: 'reachable' as const, latencyMs: databaseLatencyMs ?? 0 }
