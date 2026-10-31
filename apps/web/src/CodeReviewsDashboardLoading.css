@@ -1,0 +1,5 @@
+.cr-loading-round{min-height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.cr-finding>.atlas-load-skeleton{margin-top:10px}
+
+/* Keep placeholder expansion cells inert while inheriting the real grid slot. */
+.cr-loading-expand { pointer-events:none; cursor:default; }

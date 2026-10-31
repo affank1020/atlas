@@ -4,6 +4,8 @@ import { IS_MOCK_MODE } from './api';
 import { CodeReviewThreads } from './CodeReviewThreads';
 import type { AtlasRecord, Page } from './types';
 import './code-reviews-dashboard.css';
+import { Skeleton } from './Skeletons';
+import { CodeReviewsListLoading, CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
 
 type Counts = Partial<Record<'sev1' | 'sev2' | 'sev3' | 'sev4', number>>;
 const severities = ['sev1', 'sev2', 'sev3', 'sev4'] as const;
@@ -99,7 +101,7 @@ function FindingList({ run, olderPage }: { run: Run; olderPage: boolean }) {
     }).filter((v): v is Finding => v !== null);
     return <section aria-label={olderPage ? 'Findings in selected round' : 'Latest round findings'} className="cr-detail-section">
         <div className="cr-detail-heading"><h3>{olderPage ? 'Findings in selected round' : 'Latest round findings'}</h3><span>{run.headSha.slice(0, 7)}</span></div>
-        {query.isLoading && <p role="status">Loading findings…</p>}
+        {query.isLoading && !query.data && !query.error && <CodeReviewsDetailLoading variant="findings" />}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data && !query.error && query.data.total === 0 && <p className="cr-quiet">No recorded findings in this round.</p>}
         {query.data && valid.length !== query.data.items.length && <p role="status">Some findings could not be displayed.</p>}
@@ -120,7 +122,7 @@ function RoundHistory({ group }: { group: Group }) {
     return <section className="cr-detail-section" aria-label="Review rounds">
         <div className="cr-detail-heading"><h3>Review rounds</h3>
             <span>{query.data?.recordedRounds ?? '—'} saved</span></div>
-        {query.isLoading && <p role="status">Loading review rounds…</p>}
+        {query.isLoading && !query.data && !query.error && <CodeReviewsDetailLoading variant="rounds" />}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data?.rounds.map((round, index) => <details className="cr-round" key={round.runId}>
             <summary><span className="cr-quiet">#{offset + index + 1}</span>
@@ -157,7 +159,7 @@ function GithubStatus({ group, refreshVersion }: { group: Group; refreshVersion:
         { repository: group.repository.toLowerCase(), prNumber: group.prNumber }, true);
     return <section className="cr-detail-section" aria-label="GitHub status">
         <div className="cr-detail-heading"><h3>GitHub status</h3></div>
-        {query.isLoading && <p role="status">Checking GitHub…</p>}
+        {query.isLoading && !query.data && !query.error && <CodeReviewsDetailLoading variant="github" />}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data && <div className="cr-status-grid">
             <div><span>PR state</span><strong>{query.data.currentHead.state}</strong></div>
@@ -203,6 +205,8 @@ export function CodeReviewsDashboard() {
             filter === 'revisited' && group.rounds.length > 1) &&
         (!needle || (group.repository + ' #' + group.prNumber).toLowerCase().includes(needle)));
     const overview = summary.data;
+    const loadingOverview = summary.isLoading && !overview && !summary.error;
+    const loadingRuns = runs.isLoading && !runs.data && !runs.error;
     const average = overview && overview.reviewRuns > 0
         ? (overview.findingObservations / overview.reviewRuns).toFixed(2) : '—';
     const incomplete = !!(runs.data && (offset > 0 || offset + runs.data.items.length < runs.data.total));
@@ -215,13 +219,13 @@ export function CodeReviewsDashboard() {
                 Refresh</button></header>
         {IS_MOCK_MODE && <span className="cr-demo">Demo data</span>}
         <div className="cr-metrics" aria-label="Review metrics">
-            <article><span>Review rounds</span><strong>{overview ? overview.reviewRuns.toLocaleString() : '—'}</strong></article>
-            <article><span>Findings recorded</span><strong>{overview ? overview.findingObservations.toLocaleString() : '—'}</strong></article>
+            <article><span>Review rounds</span><strong>{overview ? overview.reviewRuns.toLocaleString() : loadingOverview ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
+            <article><span>Findings recorded</span><strong>{overview ? overview.findingObservations.toLocaleString() : loadingOverview ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
             <article title="Finding observations divided by saved review rounds; repeated issues count in every round where observed.">
-                <span>Findings / review</span><strong>{average}</strong></article>
+                <span>Findings / review</span><strong>{loadingOverview ? <Skeleton width={65} height={29} /> : average}</strong></article>
             <article title="Distinct PRs in the displayed review rounds; may exclude older PRs if history spans multiple pages.">
                 <span>{runs.data && offset === 0 && runs.data.total <= 100 ? 'PRs reviewed' : 'PRs on page'}</span>
-                <strong>{runs.data ? groups.length : '—'}</strong></article>
+                <strong>{runs.data ? groups.length : loadingRuns ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
         </div>
         {error && <div className="notice error" role="alert">{error}</div>}
         <section className="cr-list" aria-label="Pull request reviews">
@@ -241,7 +245,7 @@ export function CodeReviewsDashboard() {
                 Rounds {offset + 1}–{Math.min(offset + runs.data.items.length, runs.data.total)} of {runs.data.total}.
                 PR counts, search and filters cover this page only{olderPage ? '; verdicts may be older than the PR’s latest review.' : '.'}
             </p>}
-            {runs.isLoading && <p className="cr-quiet cr-loading" role="status">Loading reviews…</p>}
+            {loadingRuns && <CodeReviewsListLoading />}
             {!runs.isLoading && runs.data?.total === 0 && <p className="cr-empty">No reviews recorded.</p>}
             {runs.data && entries.length !== runs.data.items.length && <p role="status" className="cr-page-note">
                 Some review records could not be displayed.</p>}

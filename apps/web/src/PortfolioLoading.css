@@ -1,0 +1,15 @@
+/* Inert versions of Portfolio's own browser/editor shapes. */
+.portfolio-loading-type { min-width:0;display:flex;align-items:center;justify-content:space-between;gap:7px;padding:10px 11px;min-height:39px; }
+.portfolio-loading-tab { height:100%;display:grid;place-items:center;font-size:.82rem;font-weight:650;color:var(--text-muted); }
+.portfolio-loading-tab.active { border-bottom:2px solid var(--text-primary);color:var(--text-primary); }
+.portfolio-loading-field { display:grid;gap:9px;min-width:0; }
+.portfolio-loading-fold { display:flex;align-items:center;justify-content:space-between;padding:21px 0;border-bottom:1px solid var(--border); }
+.portfolio-entry-copy .atlas-load-skeleton + .atlas-load-skeleton { margin-top:8px; }
+.portfolio-loading-field .atlas-load-skeleton { border-radius:7px; }
+
+/* Use MediaLibrary's own card, preview, toolbar and responsive grid classes. */
+.portfolio-media-archived-loading { display:flex;align-items:center;min-height:39px; }
+.portfolio-media-preview .atlas-load-skeleton { border-radius:0; }
+.portfolio-media-card-content > .atlas-load-skeleton + .atlas-load-skeleton { margin-top:8px; }
+.portfolio-media-card-actions .atlas-load-skeleton { max-width:45%; }
+.portfolio-media-search-loading { min-height:41px; }

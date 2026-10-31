@@ -10,6 +10,7 @@ import { isActive, nameOfPolicy, type PolicyAssessment } from './football-skill-
 import './football-training.css';
 import './football-generalist-experience.css';
 import { SkeletonRows } from './Skeletons';
+import { FootballGeneralistContentLoading } from './FootballGeneralistLoading';
 
 type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string; initialization_available?: boolean; initialization?: { source_run_id?: string; checkpoint_sha256?: string } | null };
 type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
@@ -216,13 +217,14 @@ export function FootballGeneralistExperience() {
                     }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
             </div>
         </header>
-        {loading && !manifest && !error && <SkeletonRows label="Connecting to generalist workspace" variant="metrics" rows={3} />}
-        {error && <p className="fg-error" role="alert">{error}</p>}
+         {error && <p className="fg-error" role="alert">{error}</p>}
         {assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
         {notice && <p className="fg-notice" role="status">{notice}</p>}
         <nav className="fg-nav" aria-label="Football sections">{tabs.map(t =>
             <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>
-        {tab === 'home' && <div className="fg-stack">
+        {tab === 'home' && (loading && !manifest && !error
+            ? <FootballGeneralistContentLoading />
+            : <div className="fg-stack">
             <section className="fg-panel fg-active-panel" aria-label="Active training and evaluations">
                 <div className="fg-panel-title"><h2>Active activity</h2>
                     <span>{activeRuns.length + activeEvaluations.length} running or launching</span></div>
@@ -259,7 +261,7 @@ export function FootballGeneralistExperience() {
                 </button>)}
                 {!evaluations.length && <p className="fg-muted">No generalist evaluation receipts found.</p>}
             </section>
-        </div>}
+        </div>)}
         {tab === 'drills' && <GeneralistDrillCatalog manifest={manifest} selected={selectedDrillScenario} onSelect={setSelectedDrillScenario} onTrain={id => { setScenario(id); setTab('train'); }}/>} 
         {tab === 'train' && <section className="fg-panel">
             <h2>New training run</h2><p className="fg-muted">Starts a new PPO learner. S1 rehearsal samples 75% dribbling and 25% S0 contact episodes; it requires a compatible recorded checkpoint as the initial weights, not a resume of the old run.</p>
