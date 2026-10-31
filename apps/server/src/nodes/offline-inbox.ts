@@ -1,4 +1,5 @@
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
+import type { NodeShareApprovals } from './share-approvals.js';
 import { AtlasError } from '../shared/errors.js';
 import {
     DEVICE_INBOX_TTL_MS, digestInboxSubmission, openInboxText,
@@ -15,8 +16,9 @@ export class DeviceOfflineInbox {
     constructor(
         private readonly pool: Pool,
         private readonly key: Buffer,
-        /** Trusted ACL — caller must authenticate node credentials separately. */
-        private readonly allowed: (source: string, target: string, transaction?: PoolClient) => Promise<boolean>,
+        /** One trusted policy owns both managed and environment grant semantics. */
+        private readonly approvals: Pick<NodeShareApprovals,
+            'allowedForInbox' | 'retireInaccessibleInboxRows'>,
     ) {
         if (key.length !== 32) throw new Error('Missing device inbox encryption key.');
     }
@@ -27,7 +29,7 @@ export class DeviceOfflineInbox {
      */
     async enqueue(input: { sourceId: string; targetId: string; deliveryId: string; text: string }) {
         const source = this.uuid(input.sourceId), target = this.uuid(input.targetId), id = this.uuid(input.deliveryId);
-        if (source === target || !(await this.allowed(source,target)))
+        if (source === target || !(await this.approvals.allowedForInbox(source,target)))
             throw new AtlasError('Offline share not authorised.', 'SHARE_DENIED');
         validateInboxText(input.text);
         const digest = digestInboxSubmission(this.key,target, input.text);
@@ -44,13 +46,18 @@ export class DeviceOfflineInbox {
             const lockKeys = ['inbox-source:' + source, 'inbox-target:' + target].sort();
             for (const lockKey of lockKeys)
                 await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
+            // Retire inaccessible items *under the admission locks* before
+            // quota accounting and before checking an idempotent retry.
+            // Old ciphertext is erased, but the delivery ID remains a
+            // terminal tombstone until its original retention expiry.
+            await this.approvals.retireInaccessibleInboxRows(client,source,target);
             const peers = await client.query(
                 "SELECT id,credential_state,credential_updated_at,capabilities FROM nodes WHERE id IN ($1,$2) FOR SHARE",
                 [source,target]);
             if (peers.rowCount !== 2 || peers.rows.some(p => p.credential_state !== 'active') ||
                 !peers.rows.some(p => String(p.id).toLowerCase() === target &&
                     Array.isArray(p.capabilities) && p.capabilities.includes('device.share.receive')) ||
-                !(await this.allowed(source,target,client)))
+                !(await this.approvals.allowedForInbox(source,target,client)))
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
             if (peers.rows.some(p => !p.credential_updated_at))
                 throw new AtlasError('Node credential generation unavailable.', 'SHARE_DENIED');
@@ -114,7 +121,7 @@ export class DeviceOfflineInbox {
         // Do not expose metadata for sources whose directional permission
         // was revoked after they queued their item.
         const allowed = await Promise.all(result.rows.map(r =>
-            this.allowed(String(r.source_node_id),target)));
+            this.approvals.allowedForInbox(String(r.source_node_id),target)));
         return result.rows.filter((_,i) => allowed[i]).map(r => ({
             deliveryId:String(r.id),sourceNodeId:String(r.source_node_id),
             createdAt:new Date(r.created_at).toISOString(),
@@ -138,7 +145,7 @@ export class DeviceOfflineInbox {
         if (!row.rowCount) throw new AtlasError('Device inbox item unavailable.', 'NOT_FOUND');
         const item = row.rows[0];
         const source = String(item.source_node_id);
-        if (!(await this.allowed(source,target)))
+        if (!(await this.approvals.allowedForInbox(source,target)))
             throw new AtlasError('Offline share permission revoked.', 'SHARE_DENIED');
         const text = openInboxText(this.key,source,target,id,{
             ciphertext:item.payload_ciphertext,nonce:item.payload_nonce,tag:item.payload_tag,
