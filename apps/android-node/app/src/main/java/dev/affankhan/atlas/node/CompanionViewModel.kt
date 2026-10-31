@@ -528,15 +528,32 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun receive(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
         val type = intent.type ?: return
-        if (type != "text/plain" && type != "image/png" && type != "image/jpeg") return
+        if (type != "text/plain" && !type.startsWith("image/")) return
         val nextId = ++importSequence
-        if (type == "image/png" || type == "image/jpeg") {
+        if (type.startsWith("image/")) {
             @Suppress("DEPRECATION")
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
                 ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
             if (uri?.scheme != "content") {
                 session = session.receiveShare(
                     ShareDelivery(nextId, error = "The shared image must use a readable content URI."),
+                    sending = sharePending,
+                )
+                return
+            }
+            // Some Sharesheet producers use image/* rather than the concrete
+            // subtype; consult the granted provider, never infer from a filename.
+            val providerType = getApplication<Application>().contentResolver.getType(uri)
+            val specificType = when {
+                type == "image/png" || type == "image/jpeg" -> type
+                type == "image/jpg" -> "image/jpeg"
+                providerType == "image/png" -> "image/png"
+                providerType == "image/jpeg" || providerType == "image/jpg" -> "image/jpeg"
+                else -> null
+            }
+            if (specificType == null) {
+                session = session.receiveShare(
+                    ShareDelivery(nextId, error = "Only PNG and JPEG images are supported."),
                     sending = sharePending,
                 )
                 return
@@ -548,10 +565,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 val delivery = try {
                     val image = withContext(Dispatchers.IO) {
                         getApplication<Application>().contentResolver.openInputStream(uri)?.use {
-                            readSharedImage(it, type)
+                            readSharedImage(it, specificType)
                         } ?: throw IllegalArgumentException("The image could not be opened.")
                     }
                     ShareDelivery(nextId, image = image)
+                } catch (error: CancellationException) {
+                    throw error
                 } catch (_: Exception) {
                     ShareDelivery(nextId, error = "Could not read this image (PNG/JPEG, maximum 8 MB).")
                 }
