@@ -103,7 +103,7 @@ export function createHttpTransport(services: ServerServices) {
                 // never turn the transport's x-atlas-client attribution into an
                 // implicit filter that hides other agents' audit history.
                 // Other read-only diagnostics expose strict input schemas.
-                if (!Object.hasOwn(nodeSchemas,toolMatch[1]!) && toolMatch[1]!=="execute_view_action" && toolMatch[1]!=="read_server_diagnostics" && toolMatch[1]!=="get_monitoring_health" && toolMatch[1]!=="query_monitoring_activity" && (!Object.hasOwn(workspaceSchemas,toolMatch[1]!) || "client" in workspaceSchemas[toolMatch[1] as WorkspaceToolName].shape) && !input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
+                if (!Object.hasOwn(nodeSchemas,toolMatch[1]!) && toolMatch[1]!=="execute_view_action" && toolMatch[1]!=="read_server_diagnostics" && toolMatch[1]!=="read_server_diagnostic_history" && toolMatch[1]!=="get_monitoring_health" && toolMatch[1]!=="query_monitoring_activity" && (!Object.hasOwn(workspaceSchemas,toolMatch[1]!) || "client" in workspaceSchemas[toolMatch[1] as WorkspaceToolName].shape) && !input.client && request.headers["x-atlas-client"]) input.client = String(request.headers["x-atlas-client"]);
                 const value = await services.dispatch(toolMatch[1]!, input, 'atlas-http');
                 response.writeHead(200, { ...cors, "content-type": "application/json" }); response.end(JSON.stringify(value));
             } catch (error) {

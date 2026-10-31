@@ -30,7 +30,9 @@ function withinDeadline<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
 const STALE_MS = 90_000; // Gateway closes missed heartbeats after 45 s; allow scheduling jitter.
 function state(node: AtlasNode, nowMs: number): { state: NodeHealthState; ageSeconds: number | null } {
     const seenMs = node.lastSeen === null ? NaN : Date.parse(node.lastSeen);
-    const ageSeconds = Number.isFinite(seenMs) ? Math.max(0, Math.floor((nowMs - seenMs) / 1000)) : null;
+    // Allow slight clock skew, but far-future heartbeats are not evidence of connectivity.
+    const ageSeconds = Number.isFinite(seenMs) && seenMs <= nowMs + 30_000
+        ? Math.max(0, Math.floor((nowMs - seenMs) / 1000)) : null;
     if (node.credentialState === 'revoked') return { state: 'revoked', ageSeconds };
     if (node.status === 'offline') return { state: 'offline', ageSeconds };
     if (node.status !== 'online') return { state: 'unavailable', ageSeconds };

@@ -15,17 +15,24 @@ const label: Record<ServerDiagnosticCode, { level: 'info' | 'warning'; message: 
     background_task_failed: { level: 'warning', message: 'Background operation failed' },
 };
 
+export function serverDiagnosticDescription(code: string): { level: 'info' | 'warning'; message: string } | undefined {
+    return Object.hasOwn(label, code) ? label[code as ServerDiagnosticCode] : undefined;
+}
+
 export class ServerDiagnostics {
     private readonly entries: ServerDiagnosticEvent[] = [];
     private readonly startedAt: string;
     private discarded = 0;
-    constructor(private readonly enabled = true, private readonly now: () => Date = () => new Date()) {
+    constructor(private readonly enabled = true, private readonly now: () => Date = () => new Date(),
+        private readonly onRecord?: (event: ServerDiagnosticEvent) => void) {
         this.startedAt = now().toISOString();
     }
     record(code: ServerDiagnosticCode): void {
         if (!this.enabled) return;
         const event: ServerDiagnosticEvent = { at: this.now().toISOString(), code, level: label[code].level };
         this.entries.push(event);
+        // Persistence is best-effort and cannot interrupt an application operation.
+        try { this.onRecord?.(event); } catch { /* operational signals must not break tool dispatch */ }
         if (this.entries.length > MAX_EVENTS) { this.entries.shift(); this.discarded++; }
     }
     read(raw: unknown = {}) {

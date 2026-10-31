@@ -20,6 +20,7 @@ import { WorkspaceService } from '../workspaces/application.js';
 import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
 import { ServerDiagnostics } from './diagnostics.js';
+import { ServerDiagnosticHistory } from './diagnostic-history.js';
 import { MonitoringHealthService } from './monitoring-health.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
@@ -55,7 +56,15 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         connectionTimeoutMillis: 1_250, query_timeout: 1_500, statement_timeout: 1_500,
     });
     const catalog = new CoreService(repository);
-    const diagnostics = new ServerDiagnostics(config.serverDiagnosticsEnabled);
+    // A dedicated bounded connection avoids starving health checks or normal writes
+    // when diagnostic history is unavailable.
+    const diagnosticPool = new Pool({
+        connectionString: config.databaseUrl, max: 1,
+        connectionTimeoutMillis: 1_000, query_timeout: 1_500, statement_timeout: 1_500,
+    });
+    const diagnosticHistory = new ServerDiagnosticHistory(diagnosticPool, config.serverDiagnosticsEnabled);
+    const diagnostics = new ServerDiagnostics(config.serverDiagnosticsEnabled, undefined,
+        event => diagnosticHistory.record(event));
     const storageUsage = new StorageUsageService(repository.pool, config.storageAnalytics);
     const fabric = createFabric(config.databaseUrl, new OllamaEmbeddingProvider(config.retrieval.embeddingModel, config.ai.baseUrl));
     const retrieval = new RetrievalService(fabric.search, fabric.context, fabric.authority);
@@ -74,7 +83,11 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
-    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await healthPool.end(); } finally { await repository.close(); } } } }, fabric.repository, portfolio, media, files],
+    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
+                    try { await diagnosticPool.end(); } finally {
+                        try { await healthPool.end(); } finally { await repository.close(); }
+                    }
+                } } } }, fabric.repository, portfolio, media, files],
         message => { diagnostics.record('background_task_failed'); console.error(message); });
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const githubBroker = new GitHubBroker();
@@ -99,7 +112,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         inlinePreflight, inlineInventory, inlineRootPublisher, inlineReplyPublisher, inlineFixPublisher);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
-    const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;
