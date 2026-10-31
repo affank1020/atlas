@@ -30,6 +30,7 @@ class FakeLaunchd:
         self.test = test
         self.loaded = True
         self.recovery_loaded = False
+        self.fail_watchdog_bootstrap = False
         self.pid = 12345
         self.commands = []
         self.online = True
@@ -49,6 +50,8 @@ class FakeLaunchd:
             return ""
         if args[:2] == ("launchctl", "bootstrap"):
             if args[3] == str(self.test.layout.recovery_plist):
+                if self.fail_watchdog_bootstrap:
+                    raise subprocess.CalledProcessError(5, args)
                 self.recovery_loaded = True
             else:
                 self.loaded = True
@@ -126,6 +129,51 @@ class MacLifecycleTests(unittest.TestCase):
 
     def plist(self):
         return plistlib.loads(self.layout.plist.read_bytes())
+
+    def test_pid_disappears_after_preflight_no_unrecoverable_journal(self):
+        self.with_watchdog()
+        commands_before = len(self.fake.commands)
+        with patch.object(lifecycle, "launch_pid", side_effect=[12345, None]):
+            with self.assertRaisesRegex(lifecycle.Refused, "exited before activation"):
+                lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        self.assertFalse(self.layout.pending.exists())
+        self.assertEqual(self.layout.plist.read_bytes(), self.existing)
+        self.assertFalse(any(cmd[:2] == ("launchctl", "bootout")
+                             for cmd in self.fake.commands[commands_before:]))
+        # A subsequent legitimate activation may proceed without repairing a
+        # malformed journal; the watchdog is still installed and loaded.
+        lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        self.assertFalse(self.layout.pending.exists())
+        self.assertEqual(self.plist()["ProgramArguments"][1],
+                         str(self.release / lifecycle.ENTRYPOINT))
+
+    def test_watchdog_bootstrap_failure_can_retry_existing_identical_files(self):
+        self.fake.fail_watchdog_bootstrap = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            lifecycle.manage(self.layout, ["install-watchdog"])
+        self.assertFalse(self.fake.recovery_loaded)
+        self.assertTrue(self.layout.recovery_plist.is_file())
+        self.assertTrue(self.layout.recovery_script.is_file())
+        old_plist = self.layout.recovery_plist.read_bytes()
+        old_script = self.layout.recovery_script.read_bytes()
+        self.fake.fail_watchdog_bootstrap = False
+        lifecycle.manage(self.layout, ["install-watchdog"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertEqual(self.layout.recovery_plist.read_bytes(), old_plist)
+        self.assertEqual(self.layout.recovery_script.read_bytes(), old_script)
+        self.assertFalse(self.layout.pending.exists())
+
+    def test_watchdog_retry_refuses_modified_unloaded_files(self):
+        self.fake.fail_watchdog_bootstrap = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            lifecycle.manage(self.layout, ["install-watchdog"])
+        self.fake.fail_watchdog_bootstrap = False
+        self.layout.recovery_plist.write_bytes(b"changed")
+        self.fake.commands.clear()
+        with self.assertRaisesRegex(lifecycle.Refused, "differs"):
+            lifecycle.manage(self.layout, ["install-watchdog"])
+        self.assertFalse(any(c[:2] == ("launchctl", "bootstrap") for c in self.fake.commands))
+        self.assertEqual(self.layout.recovery_plist.read_bytes(), b"changed")
 
     def test_operator_preflight_only_preserves_node_identity_and_session(self):
         before = self.layout.plist.read_bytes()

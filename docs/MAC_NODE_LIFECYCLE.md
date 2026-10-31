@@ -79,8 +79,13 @@ State files and the copied recovery script live under the private
 The watchdog plist is a separate user LaunchAgent
 `~/Library/LaunchAgents/com.affank1020.atlas.node.recover.plist`.
 The tool refuses a missing/unloaded/outdated watchdog before attempting to
-switch the existing Node; replacing an already-installed watchdog needs a
-separately inspected maintenance action.
+switch the existing Node. If an initial watchdog `launchctl bootstrap` fails,
+run `install-watchdog` again after fixing the macOS login session: the CLI
+can retry only when both existing files match the expected current script and
+plist exactly, under the same user. It refuses to overwrite a loaded watchdog
+or a modified installation; those cases require operator inspection. If the
+currently running Node exits between preflight and journalling, activation
+refuses before creating any pending transaction.
 
 ## Operational caveats and acceptance
 

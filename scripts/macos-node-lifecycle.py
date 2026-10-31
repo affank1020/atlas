@@ -317,6 +317,11 @@ def clear_pending(layout: Layout) -> None:
 
 def complete(layout: Layout, candidate: bytes, current: bytes, action: str) -> None:
     prior_pid = launch_pid(layout)
+    # The earlier preflight PID can disappear before we acquire this value.
+    # Refuse before journalling: recovery requires a positive oldPid to
+    # distinguish the original Node from any detached/orphaned process.
+    if prior_pid is None:
+        raise Refused("Current launchd Node exited before activation; no journal written.")
     # Recovery always points at a safe, chosen working target. On an
     # interrupted explicit rollback we must NOT restore rejected code.
     restore = candidate if action == "rollback" else current
@@ -404,16 +409,32 @@ def require_watchdog(layout: Layout) -> None:
 def install_watchdog(layout: Layout) -> None:
     # Explicit action only. The watchdog executes with the same user, never
     # root. Provision no unattended installer or update policy.
-    if layout.pending.exists():
-        raise Refused("Cannot replace a watchdog while recovery is pending.")
-    if layout.recovery_plist.exists() or layout.recovery_plist.is_symlink() or launch_loaded(layout, layout.recovery_target):
-        raise Refused("Recovery LaunchAgent already installed; no overwrite of an existing job.")
+    if layout.pending.exists() or layout.pending.is_symlink():
+        raise Refused("Cannot repair a watchdog while recovery is pending.")
+    if launch_loaded(layout, layout.recovery_target):
+        raise Refused("Recovery LaunchAgent is already loaded; refusing to overwrite it.")
+    # A prior bootstrap may fail after the private files were installed.
+    # Only resume an identical, owned on-disk installation. Never replace
+    # unexpected watchdog bytes or a different user's LaunchAgent.
     src = Path(__file__).read_bytes()
-    atomic_write(layout.recovery_script, src)
+    script = layout.recovery_script
+    if script.exists() or script.is_symlink():
+        require_private(script, layout.uid, directory=False)
+        if script.read_bytes() != src:
+            raise Refused("Existing recovery script differs; manual inspection required.")
+    else:
+        atomic_write(script, src)
     layout.recovery_plist.parent.mkdir(parents=True, exist_ok=True)
     logs = layout.home / "Library/Logs/Atlas"
     logs.mkdir(parents=True, exist_ok=True)
-    atomic_write(layout.recovery_plist, watchdog_plist(layout, layout.recovery_script))
+    expected_plist = watchdog_plist(layout, script)
+    if layout.recovery_plist.exists() or layout.recovery_plist.is_symlink():
+        if exact_plist_bytes(layout.recovery_plist, layout.uid) != expected_plist:
+            raise Refused("Existing recovery plist differs; manual inspection required.")
+    else:
+        atomic_write(layout.recovery_plist, expected_plist)
+    # If bootstrap fails, leave these exact files available for a safe retry.
+    # Never delete or overwrite a potentially running watchdog.
     command("launchctl", "bootstrap", f"gui/{layout.uid}", str(layout.recovery_plist))
     require_watchdog(layout)
 
