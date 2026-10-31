@@ -82,8 +82,15 @@ test('fail closed on GraphQL errors, incomplete data, cursor stalls, and bounded
         page([graphThread(73)],true,null),
     ])await assert.rejects(mockGraph([payload]).reader.inspect(repository,prNumber),
         /incomplete|stalled/);
-    const repeat=mockGraph([page([graphThread(73)],true,'same-cursor')]);
-    await assert.rejects(repeat.reader.inspect(repository,prNumber),/ambiguous|stalled/);
+    // Distinct thread/root IDs on page two are essential: otherwise
+    // duplicate-ID validation fails first and the cursor guard is untested.
+    const repeat=mockGraph([
+        page([graphThread(73)],true,'same-cursor'),
+        page([graphThread(74,'PRRT_987654321')],true,'same-cursor'),
+    ]);
+    await assert.rejects(repeat.reader.inspect(repository,prNumber),/pagination is stalled/);
+    assert.equal(repeat.requests.length,2);
+    assert.equal(repeat.requests[1]!.body.variables.after,'same-cursor');
     const pages=Array.from({length:5},(_,i)=>
         page([graphThread(73+i,'PRRT_'+String(i+1).repeat(9))],true,'page-'+i));
     await assert.rejects(mockGraph(pages).reader.inspect(repository,prNumber),
