@@ -5,6 +5,7 @@ import { LiveImageRelay, isImage } from '../apps/server/src/nodes/live-image-rel
 import { RemoteNodeRuntime } from '../apps/server/src/infrastructure/nodes/remote-runtime.js';
 import { MacImageReceiver, imagePasteboardScript } from '../apps/node/src/capabilities/device-share/mac-image-receiver.js';
 import { deviceImageDeliverySchema, MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
+import { loadDeviceImageConfig } from '../apps/server/src/server/config.js';
 import type { NodeService } from '../apps/server/src/nodes/service.js';
 import type { NodeShareApprovals } from '../apps/server/src/nodes/share-approvals.js';
 
@@ -40,8 +41,9 @@ function harness() {
             : {platform:'darwin',credentialState:'active',capabilities:['device.image.receive']},
     } as unknown as NodeService;
     const approvals={allowedForInbox:async()=>permitted} as unknown as NodeShareApprovals;
-    const relay=new LiveImageRelay(nodes,approvals);
-    return {relay,remote,runtimes,setPermission:(value:boolean)=>{permitted=value;},
+    const imagePairs=new Set([source+':'+target]);
+    const relay=new LiveImageRelay(nodes,approvals,imagePairs);
+    return {relay,remote,runtimes,imagePairs,setPermission:(value:boolean)=>{permitted=value;},
         setCredentials:(value:boolean)=>{credentialsValid=value;}};
 }
 
@@ -107,4 +109,17 @@ test('image pasteboard writes a native image type, not a plain-text pasteboard',
     assert.ok(script.includes('public.png'));
     assert.ok(script.includes('setDataForType'));
     assert.equal(script.includes('NSPasteboardTypeString'),false);
+});
+
+test('text sharing approval cannot implicitly authorize image transfer',async()=>{
+    const {relay,imagePairs}=harness();
+    imagePairs.clear();
+    await assert.rejects(relay.admit(source,target,'x'.repeat(40)),/not authorised/);
+});
+test('image pair config is separate, directional and fail closed',()=>{
+    assert.equal(loadDeviceImageConfig({} as NodeJS.ProcessEnv).approvedPairs.size,0);
+    const config=loadDeviceImageConfig({ATLAS_DEVICE_IMAGE_PAIRS:source+':'+target} as NodeJS.ProcessEnv);
+    assert.equal(config.approvedPairs.has(source+':'+target),true);
+    assert.equal(config.approvedPairs.has(target+':'+source),false);
+    assert.throws(()=>loadDeviceImageConfig({ATLAS_DEVICE_IMAGE_PAIRS:source+':'+source} as NodeJS.ProcessEnv));
 });
