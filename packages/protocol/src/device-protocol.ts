@@ -50,3 +50,24 @@ export const deviceShareReceiptSchema = z.object({
 export type DeviceShareSubmission = z.infer<typeof deviceShareSubmissionSchema>;
 export type DeviceShareDelivery = z.infer<typeof deviceShareDeliverySchema>;
 export type DeviceShareReceipt = z.infer<typeof deviceShareReceiptSchema>;
+
+/** Separately requested offline queue: never change live share.submit receipt semantics. */
+export const deviceInboxEnqueueSchema = z.object({
+    type: z.literal('device.inbox.enqueue'),
+    requestId: z.string().uuid(),
+    deliveryId: z.string().uuid(),
+    targetNodeId: z.string().uuid(),
+    text: deviceShareTextSchema,
+}).strict();
+export const deviceInboxListSchema = z.object({
+    type: z.literal('device.inbox.list'), requestId: z.string().uuid(),
+}).strict();
+export const deviceInboxReadSchema = z.object({
+    type: z.literal('device.inbox.read'), requestId: z.string().uuid(),
+    deliveryId: z.string().uuid(),
+}).strict();
+export const deviceInboxDecideSchema = z.object({
+    type: z.literal('device.inbox.decide'), requestId: z.string().uuid(),
+    deliveryId: z.string().uuid(), decision: z.enum(['user_copied','declined']),
+}).strict();
+
