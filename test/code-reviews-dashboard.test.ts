@@ -63,15 +63,18 @@ test('inconsistent history remains an error instead of inventing complete counts
     } as any, runsId), /incomplete/i);
 });
 
-test('101 distinct PRs remain usable with explicit truncation metadata', async () => {
+test('the 101st, oldest distinct PR is still discoverable and verified open', async () => {
     const all = Array.from({ length: 101 }, (_, i) =>
         run(i + 1, 'example/atlas', i + 1, stamp(101 - i), { sev3: 1 }));
-    const result = await readReviewDashboard(catalog(all).reader, runsId);
+    const result = await readReviewDashboard(catalog(all).reader, runsId, async (_repo, numbers) =>
+        Object.fromEntries(numbers.map(n => [n, { open: n === 101, headSha: 'a'.repeat(40) }])));
     assert.equal(result.totalRuns, 101);
     assert.equal(result.scannedRuns, 101);
-    assert.equal(result.groups.length, 100);
+    assert.equal(result.groups.length, 101);
     assert.equal(result.windowComplete, true);
-    assert.equal(result.truncatedPrs, true);
+    assert.equal(result.truncatedPrs, false);
+    assert.equal(result.hasMore, false);
+    assert.equal(result.groups.find(g => g.prNumber === 101)?.status, 'open');
     assert.ok(result.groups.every(g => g.roundsComplete && g.countsComplete));
 });
 
@@ -84,11 +87,49 @@ test('2001 stored runs show most recent 500, never masquerading as complete PR h
     assert.equal(result.totalRuns, 2001);
     assert.equal(result.scannedRuns, 500);
     assert.equal(result.windowComplete, false);
+    assert.equal(result.runOffset, 0);
+    assert.equal(result.hasMore, true);
     assert.equal(result.groups.length, 1);
     assert.equal(result.groups[0]!.rounds, 500);
     assert.equal(result.groups[0]!.findings, 500);
     assert.equal(result.groups[0]!.roundsComplete, false);
     assert.equal(result.groups[0]!.countsComplete, false);
+    const older = await readReviewDashboard(reader, runsId, undefined, undefined, 500);
+    assert.equal(older.scannedRuns, 500);
+    assert.equal(older.runOffset, 500);
+    assert.equal(older.hasMore, true);
+    assert.equal(older.groups[0]!.roundsComplete, false);
+});
+
+test('an older still-open PR beyond 500 reviews is reachable on the next page', async () => {
+    const all = Array.from({ length: 501 }, (_, i) =>
+        run(i + 1, 'example/atlas', i + 1, stamp(501 - i), { sev3: 1 }));
+    const { reader, queries } = catalog(all);
+    const recent = await readReviewDashboard(reader, runsId);
+    assert.equal(recent.groups.length, 500);
+    assert.equal(recent.groups.some(g => g.prNumber === 501), false);
+    assert.equal(recent.hasMore, true);
+    const older = await readReviewDashboard(reader, runsId, async (_repo, numbers) =>
+        Object.fromEntries(numbers.map(n => [n, { open: n === 501, headSha: 'a'.repeat(40) }])),
+        undefined, 500);
+    assert.equal(older.runOffset, 500);
+    assert.equal(older.scannedRuns, 1);
+    assert.equal(older.hasMore, false);
+    assert.equal(older.windowComplete, false);
+    assert.equal(older.groups.length, 1);
+    assert.equal(older.groups[0]!.prNumber, 501);
+    assert.equal(older.groups[0]!.status, 'open');
+    assert.equal(older.groups[0]!.roundsComplete, false);
+    assert.equal(older.groups[0]!.reviewFreshness, 'current');
+    assert.equal(queries.at(-1)?.offset, 500);
+});
+
+test('page offsets are validated and cannot be used for unbounded scans', async () => {
+    const { reader } = catalog([]);
+    for (const offset of [-1, 1, 499, 1_000_000_500]) {
+        await assert.rejects(readReviewDashboard(reader, runsId, undefined, undefined, offset),
+            /Invalid review dashboard page offset/);
+    }
 });
 
 test('status checks have an overall deadline; a hung repository never blocks saved aggregates', async () => {

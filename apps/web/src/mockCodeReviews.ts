@@ -111,7 +111,11 @@ export function mockCodeReviewTool(name: string, input: Record<string, unknown>)
                 status: 'open' | 'closed' | 'unavailable';
                 reviewFreshness: 'current' | 'outdated' | 'unknown';
             }>();
-            for (const run of runs) {
+            const runOffset = typeof input.runOffset === 'number' ? input.runOffset : 0;
+            if (!Number.isSafeInteger(runOffset) || runOffset < 0 || runOffset > 1_000_000_000 || runOffset % 500 !== 0)
+                throw new Error('Invalid review dashboard page offset.');
+            const window = runs.slice(runOffset, runOffset + 500);
+            for (const run of window) {
                 const n = Number(run.data.prNumber);
                 const key = repository.toLowerCase() + '#' + n;
                 let group = groups.get(key);
@@ -131,8 +135,10 @@ export function mockCodeReviewTool(name: string, input: Record<string, unknown>)
                     group.findings += counts[severity] ?? 0;
                 }
             }
-            return { totalRuns: runs.length, scannedRuns: runs.length, windowComplete: true,
-                truncatedPrs: false, groups: [...groups.values()] };
+            return { totalRuns: runs.length, scannedRuns: window.length,
+                windowComplete: runOffset === 0 && window.length === runs.length,
+                truncatedPrs: false, runOffset, hasMore: runOffset + window.length < runs.length,
+                groups: [...groups.values()] };
         }
         case 'code_reviews_list_runs':
             return page(runs, input);

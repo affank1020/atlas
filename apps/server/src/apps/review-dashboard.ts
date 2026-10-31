@@ -11,7 +11,6 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SHA = /^[a-f0-9]{40}$/i;
 // Recent bounded window; exceeding it is expected growth, not an outage.
 const MAX_SCANNED_RUNS = 500;
-const MAX_VISIBLE_PRS = 100;
 const MAX_REPO_CONCURRENCY = 3;
 const STATUS_DEADLINE_MS = 4_500;
 const validCount = (value: unknown): value is number =>
@@ -32,18 +31,20 @@ type ReviewGroup = {
 };
 const counts = (): SeverityCounts => ({ sev1: 0, sev2: 0, sev3: 0, sev4: 0 });
 
-/** Read recent stored review runs in a bounded window.
- * Never present a recent-window aggregate as a complete PR lifetime count.
+/** Read a bounded, navigable window of stored review runs.
+ * Never present one window's aggregate as a complete PR lifetime count.
  * Missing GitHub status remains unavailable and never means closed.
  */
 export async function readReviewDashboard(catalog: Reader, storeId: string, statuses?: DashboardStatusReader,
-    deadlineMs = STATUS_DEADLINE_MS) {
+    deadlineMs = STATUS_DEADLINE_MS, runOffset = 0) {
+    if (!Number.isSafeInteger(runOffset) || runOffset < 0 || runOffset > 1_000_000_000 || runOffset % MAX_SCANNED_RUNS !== 0)
+        throw new AtlasError('Invalid review dashboard page offset.', 'INVALID_REQUEST');
     const groups = new Map<string, ReviewGroup>();
     const seenIds = new Set<string>();
     let total: number | null = null;
     let scannedRuns = 0;
-    let truncatedPrs = false;
-    for (let offset = 0; offset < MAX_SCANNED_RUNS; offset += 100) {
+    for (let pageOffset = 0; pageOffset < MAX_SCANNED_RUNS; pageOffset += 100) {
+        const offset = runOffset + pageOffset;
         const page = await catalog.queryRecords({
             projectId: CODE_REVIEWS_PROJECT_ID, storeId,
             sort: [{ field: 'reviewedAt', direction: 'desc' }], limit: 100, offset,
@@ -71,7 +72,6 @@ export async function readReviewDashboard(catalog: Reader, storeId: string, stat
             const run = { id: record.id, repository: d.repository, prNumber: d.prNumber as number,
                 headSha: d.headSha, reviewedAt: d.reviewedAt, verdict: d.verdict as string };
             if (!group) {
-                if (groups.size >= MAX_VISIBLE_PRS) { truncatedPrs = true; continue; }
                 group = { key, repository: d.repository.toLowerCase(), prNumber: run.prNumber,
                     latest: run, rounds: 0, findings: 0, countsComplete: true, roundsComplete: true,
                     severities: counts(), status: 'unavailable', reviewFreshness: 'unknown' };
@@ -94,7 +94,7 @@ export async function readReviewDashboard(catalog: Reader, storeId: string, stat
         }
         if (offset + expected >= total) break;
     }
-    const windowComplete = scannedRuns === (total ?? 0);
+    const windowComplete = runOffset === 0 && scannedRuns === (total ?? 0);
     if (!windowComplete) for (const group of groups.values()) {
         group.roundsComplete = false;
         group.countsComplete = false;
@@ -141,6 +141,7 @@ export async function readReviewDashboard(catalog: Reader, storeId: string, stat
         }
     }
     return {
-        totalRuns: total ?? 0, scannedRuns, windowComplete, truncatedPrs, groups: ordered,
+        totalRuns: total ?? 0, scannedRuns, windowComplete, truncatedPrs: false,
+        runOffset, hasMore: runOffset + scannedRuns < (total ?? 0), groups: ordered,
     };
 }

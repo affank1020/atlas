@@ -161,7 +161,7 @@ export class GitHubReviewHistoryReader {
      */
     async dashboardHeads(repository: string, prNumbers: number[], signal?: AbortSignal) {
         if (!repoName.test(repository) || !Array.isArray(prNumbers) ||
-            prNumbers.length > 100 || prNumbers.some(n =>
+            prNumbers.length > 500 || prNumbers.some(n =>
                 !Number.isSafeInteger(n) || n < 1 || n > 1_000_000) ||
             new Set(prNumbers).size !== prNumbers.length)
             throw new AtlasError('Invalid GitHub dashboard status request.', 'INVALID_REQUEST');

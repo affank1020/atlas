@@ -291,12 +291,12 @@ export class CodeReviewsService {
         return readPrTimeline(this.catalog, ids, repository.toLowerCase(), prNumber, limit, offset, true);
     }
 
-    async dashboard() {
+    async dashboard(runOffset = 0) {
         const ids = await this.storeIds();
         const verify = this.history?.dashboardHeads
             ? (repository: string, prNumbers: number[], signal: AbortSignal) => this.history!.dashboardHeads!(repository, prNumbers, signal)
             : undefined;
-        return readReviewDashboard(this.catalog, ids.runs, verify);
+        return readReviewDashboard(this.catalog, ids.runs, verify, undefined, runOffset);
     }
 
     async overview() {
@@ -517,8 +517,9 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
             },
             {
                 name: 'code_reviews_dashboard',
-                description: 'Read all bounded saved PR review aggregates with independently checked GitHub open/closed status. Unverifiable state is unavailable, never closed. No writes.',
-                inputSchema: {}, invoke: () => service.dashboard(),
+                description: 'Read a navigable bounded window of saved PR reviews with independently checked GitHub open/closed status. Counts and verdicts are window-scoped; no writes.',
+                inputSchema: { runOffset: z.number().int().min(0).max(1_000_000_000).multipleOf(500).default(0) },
+                invoke: ({ runOffset }: { runOffset: number }) => service.dashboard(runOffset),
             },
             {
                 name: 'code_reviews_list_findings',

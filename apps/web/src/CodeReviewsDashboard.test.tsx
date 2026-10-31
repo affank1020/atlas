@@ -31,7 +31,8 @@ beforeEach(() => {
             isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_dashboard') return {
-            data: { totalRuns: 4, scannedRuns: 4, windowComplete: true, truncatedPrs: false, groups },
+            data: { totalRuns: 4, scannedRuns: 4, windowComplete: true, truncatedPrs: false,
+                runOffset: 0, hasMore: false, groups },
             isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_list_findings') return {
@@ -109,7 +110,7 @@ test('failed lifecycle checks remain unavailable and are not counted as closed',
         name === 'code_reviews_overview'
             ? { data: { reviewRuns: 1, findingObservations: 0 }, refetch } as never
             : { data: { totalRuns: 1, scannedRuns: 1, windowComplete: true,
-                truncatedPrs: false, groups: [groups[2]] }, refetch } as never);
+                truncatedPrs: false, runOffset: 0, hasMore: false, groups: [groups[2]] }, refetch } as never);
     render(<CodeReviewsDashboard />);
     expect(screen.getByText('No open reviewed PRs.')).toBeInTheDocument();
     expect(screen.getByText('No closed reviewed PRs.')).toBeInTheDocument();
@@ -121,15 +122,54 @@ test('large histories remain visible with explicit recent-window and minimum-cou
         name === 'code_reviews_overview'
             ? { data: { reviewRuns: 2001, findingObservations: 2001 }, refetch } as never
             : { data: { totalRuns: 2001, scannedRuns: 500, windowComplete: false,
-                truncatedPrs: true, groups: [{
+                truncatedPrs: false, runOffset: 0, hasMore: true, groups: [{
                     ...groups[0], rounds: 500, roundsComplete: false, findings: 500, countsComplete: false,
                 }] }, refetch } as never);
     render(<CodeReviewsDashboard />);
     expect(screen.getByText('PRs shown').parentElement).toHaveTextContent('1');
-    expect(screen.getByText(/Showing 500 of 2001 recent review rounds/)).toBeInTheDocument();
+    expect(screen.getByText(/Rounds 1–500 of 2001/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Older reviews' })).toBeEnabled();
     const open = screen.getByRole('region', { name: 'Open pull requests' });
     expect(open).toHaveTextContent('500+');
     expect(open).toHaveTextContent('#59');
+});
+
+test('older reviewed PRs remain accessible via dashboard pagination and can be expanded', () => {
+    const oldOpen = group(501, 'open', 1, 1, 'changes_requested');
+    const oldClosed = group(502, 'closed', 1, 0, 'no_findings');
+    const offsets: number[] = [];
+    vi.mocked(useApplicationRead).mockImplementation((name: string, input: Record<string, unknown> = {}) => {
+        if (name === 'code_reviews_overview') return {
+            data: { reviewRuns: 502, findingObservations: 2 }, isLoading: false, isFetching: false, refetch,
+        } as never;
+        if (name === 'code_reviews_dashboard') {
+            const offset = Number(input.runOffset ?? 0);
+            offsets.push(offset);
+            return { data: {
+                totalRuns: 502, scannedRuns: offset ? 2 : 500,
+                windowComplete: false, runOffset: offset, hasMore: offset === 0, truncatedPrs: false,
+                groups: offset ? [oldOpen, oldClosed] : [groups[0]],
+            }, isLoading: false, isFetching: false, refetch } as never;
+        }
+        if (name === 'code_reviews_list_findings') return {
+            data: { total: 0, items: [] }, isLoading: false, isFetching: false, refetch,
+        } as never;
+        throw new Error('Unexpected tool ' + name);
+    });
+    render(<CodeReviewsDashboard />);
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).not.toHaveTextContent('#501');
+    fireEvent.click(screen.getByRole('button', { name: 'Older reviews' }));
+    expect(offsets).toContain(500);
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).toHaveTextContent('#501');
+    expect(screen.getByRole('region', { name: 'Closed pull requests' })).toHaveTextContent('#502');
+    expect(screen.getByText('Result in window')).toBeInTheDocument();
+    expect(screen.getByText(/Rounds 501–502 of 502/)).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Find pull request' })).toHaveAttribute('placeholder', 'Find in window…');
+    fireEvent.click(screen.getByRole('button', { name: 'Details for example/atlas-demo #501' }));
+    expect(screen.getByRole('tab', { name: 'Findings in window' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Newer reviews' }));
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).toHaveTextContent('#59');
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).not.toHaveTextContent('#501');
 });
 
 test('refresh rechecks both saved aggregates and GitHub lifecycle without publishing', () => {

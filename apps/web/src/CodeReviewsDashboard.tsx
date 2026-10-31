@@ -22,7 +22,7 @@ type Group = {
     reviewFreshness: 'current' | 'outdated' | 'unknown'; checkedAt?: string;
 };
 type Dashboard = { totalRuns: number; scannedRuns: number; windowComplete: boolean;
-    truncatedPrs: boolean; groups: Group[] };
+    truncatedPrs: boolean; runOffset: number; hasMore: boolean; groups: Group[] };
 type Overview = { reviewRuns: number; findingObservations: number };
 type Finding = { id: string; severity: string; title: string; description: string; state: string;
     filePath?: string; line?: number };
@@ -144,7 +144,7 @@ function PrDetails({ group, refreshVersion, olderPage }: { group: Group; refresh
             {(['findings', 'rounds', 'github'] as const).map(name =>
                 <button type="button" role="tab" key={name} className={tab === name ? 'active' : ''}
                     aria-selected={tab === name} onClick={() => setTab(name)}>
-                    {name === 'findings' ? (olderPage ? 'Findings on page' : 'Latest findings') : name === 'rounds' ? 'Review rounds' : 'GitHub'}</button>)}
+                    {name === 'findings' ? (olderPage ? 'Findings in window' : 'Latest findings') : name === 'rounds' ? 'Review rounds' : 'GitHub'}</button>)}
         </div>
         <div role="tabpanel">
             {tab === 'findings' && <FindingList run={group.latest} olderPage={olderPage}/>} 
@@ -154,8 +154,8 @@ function PrDetails({ group, refreshVersion, olderPage }: { group: Group; refresh
     </div>;
 }
 
-function PrRow({ group, expanded, toggle, refreshVersion }: {
-    group: Group; expanded: boolean; toggle: () => void; refreshVersion: number;
+function PrRow({ group, expanded, toggle, refreshVersion, olderPage }: {
+    group: Group; expanded: boolean; toggle: () => void; refreshVersion: number; olderPage: boolean;
 }) {
     return <article className="cr-pr" key={group.key}>
         <div className="cr-pr-main">
@@ -179,12 +179,12 @@ function PrRow({ group, expanded, toggle, refreshVersion }: {
             </button>
         </div>
         {expanded && <PrDetails key={group.key + ':' + refreshVersion} group={group}
-            refreshVersion={refreshVersion} olderPage={false}/>}
+            refreshVersion={refreshVersion} olderPage={olderPage}/>}
     </article>;
 }
 
-function OpenPrCard({ group, expanded, toggle, refreshVersion }: {
-    group: Group; expanded: boolean; toggle: () => void; refreshVersion: number;
+function OpenPrCard({ group, expanded, toggle, refreshVersion, olderPage }: {
+    group: Group; expanded: boolean; toggle: () => void; refreshVersion: number; olderPage: boolean;
 }) {
     return <article className="cr-open-card">
         <div className="cr-card-top">
@@ -207,17 +207,18 @@ function OpenPrCard({ group, expanded, toggle, refreshVersion }: {
                 onClick={toggle}>{expanded ? 'Hide' : 'Details'}</button>
         </div>
         {expanded && <PrDetails key={group.key + ':' + refreshVersion} group={group}
-            refreshVersion={refreshVersion} olderPage={false}/>}
+            refreshVersion={refreshVersion} olderPage={olderPage}/>}
     </article>;
 }
 
 export function CodeReviewsDashboard() {
+    const [runOffset, setRunOffset] = useState(0);
     const [filter, setFilter] = useState<'all' | 'findings' | 'revisited'>('all');
     const [search, setSearch] = useState('');
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
     const [refreshVersion, setRefreshVersion] = useState(0);
     const summary = useApplicationRead<Overview>('code_reviews_overview', {}, true);
-    const dashboard = useApplicationRead<Dashboard>('code_reviews_dashboard', {}, true);
+    const dashboard = useApplicationRead<Dashboard>('code_reviews_dashboard', { runOffset }, true);
     const groups = dashboard.data?.groups ?? [];
     const needle = search.trim().toLowerCase();
     const visible = groups.filter(group =>
@@ -231,9 +232,17 @@ export function CodeReviewsDashboard() {
     const average = overview && overview.reviewRuns > 0
         ? (overview.findingObservations / overview.reviewRuns).toFixed(2) : '—';
     const error = summary.error?.message || dashboard.error?.message;
+    const paged = runOffset > 0 || !!dashboard.data && !dashboard.data.windowComplete;
+    const movePage = (offset: number) => {
+        setRunOffset(offset);
+        setExpandedKey(null);
+        setSearch('');
+        setFilter('all');
+    };
     const toggle = (key: string) => setExpandedKey(previous => previous === key ? null : key);
     const row = (group: Group) => <PrRow key={group.key} group={group}
-        expanded={expandedKey === group.key} toggle={() => toggle(group.key)} refreshVersion={refreshVersion}/>;
+        expanded={expandedKey === group.key} toggle={() => toggle(group.key)}
+        refreshVersion={refreshVersion} olderPage={runOffset > 0}/>;
     return <section className="code-reviews cr-dashboard" aria-label="Code Reviews">
         <header className="cr-header"><h1>Code Reviews</h1>
             <button type="button" className="ghost" disabled={summary.isFetching || dashboard.isFetching}
@@ -252,13 +261,13 @@ export function CodeReviewsDashboard() {
         {error && <div className="notice error" role="alert">{error}</div>}
         {dashboard.data && (!dashboard.data.windowComplete || dashboard.data.truncatedPrs) &&
             <p className="cr-quiet cr-window-notice" role="status">
-                {dashboard.data.windowComplete ? 'Showing the 100 most recently reviewed PRs.' :
-                    `Showing ${dashboard.data.scannedRuns} of ${dashboard.data.totalRuns} recent review rounds.`}
-                {!dashboard.data.windowComplete && ' Per-PR counts may be partial.'}
-                {' Older reviewed PRs may be omitted.'}
+                {dashboard.data.windowComplete ? 'Complete saved review history.' :
+                    `Rounds ${dashboard.data.runOffset + 1}–${dashboard.data.runOffset + dashboard.data.scannedRuns} of ${dashboard.data.totalRuns}.`}
+                {!dashboard.data.windowComplete && ' PR counts, verdicts and search are scoped to this window.'}
+                {dashboard.data.hasMore && ' Use Older reviews to reach earlier PRs.'}
             </p>}
         <div className="cr-overview-tools">
-            <input type="search" aria-label="Find pull request" placeholder="Find PR…" value={search}
+            <input type="search" aria-label="Find pull request" placeholder={paged ? 'Find in window…' : 'Find PR…'} value={search}
                 onChange={e => setSearch(e.target.value)}/>
             <span className="cr-filter-select">
                 <select aria-label="Filter pull requests" value={filter}
@@ -275,14 +284,14 @@ export function CodeReviewsDashboard() {
                 {open.length ? <div className="cr-open-grid">
                     {open.map(group => <OpenPrCard key={group.key} group={group}
                         expanded={expandedKey === group.key} toggle={() => toggle(group.key)}
-                        refreshVersion={refreshVersion}/>)}
+                        refreshVersion={refreshVersion} olderPage={runOffset > 0}/>)}
                 </div> : <p className="cr-empty">No open reviewed PRs{search || filter !== 'all' ? ' match.' : '.'}</p>}
             </section>
             <section className="cr-list" aria-label="Closed pull requests">
                 <div className="cr-list-head"><h2>Closed PRs</h2><span className="cr-list-count">{closed.length}</span></div>
                 {closed.length > 0 && <>
                     <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>Rounds</span>
-                        <span>Findings</span><span>Latest result</span><span>Reviewed</span><span/></div>
+                        <span>Findings</span><span>{runOffset > 0 ? 'Result in window' : 'Latest result'}</span><span>Reviewed</span><span/></div>
                     {closed.map(row)}
                 </>}
                 {closed.length === 0 && <p className="cr-empty">No closed reviewed PRs{search || filter !== 'all' ? ' match.' : '.'}</p>}
@@ -290,9 +299,17 @@ export function CodeReviewsDashboard() {
             {unknown.length > 0 && <section className="cr-list" aria-label="Unverified pull requests">
                 <div className="cr-list-head"><h2>Status unavailable</h2><span className="cr-list-count">{unknown.length}</span></div>
                 <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>Rounds</span>
-                    <span>Findings</span><span>Latest result</span><span>Reviewed</span><span/></div>
+                    <span>Findings</span><span>{runOffset > 0 ? 'Result in window' : 'Latest result'}</span><span>Reviewed</span><span/></div>
                 {unknown.map(row)}
             </section>}
+            {(runOffset > 0 || dashboard.data.hasMore) && <nav className="cr-pagination" aria-label="Review history pages">
+                <button type="button" className="ghost" disabled={runOffset === 0 || dashboard.isFetching}
+                    onClick={() => movePage(Math.max(0, runOffset - 500))}>Newer reviews</button>
+                <span>Rounds {dashboard.data.scannedRuns ? dashboard.data.runOffset + 1 : 0}–
+                    {dashboard.data.runOffset + dashboard.data.scannedRuns} of {dashboard.data.totalRuns}</span>
+                <button type="button" className="ghost" disabled={!dashboard.data.hasMore || dashboard.isFetching}
+                    onClick={() => movePage(runOffset + 500)}>Older reviews</button>
+            </nav>}
         </>}
     </section>;
 }
