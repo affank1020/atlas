@@ -159,6 +159,7 @@ class MainActivity : ComponentActivity() {
                 onDeclineIncoming = model::declineIncomingShare,
                 backgroundReceiving = model.pushEnabled,
                 backgroundReceiveError = model.backgroundReceiveError,
+                pushRegistrationStatus = model.pushRegistrationStatus,
                 onToggleBackgroundReceiving = ::setBackgroundReceiving,
                 onOpenNotificationSettings = ::openNotificationSettings,
             )
@@ -248,6 +249,7 @@ internal fun AtlasCompanion(
     onDeclineIncoming: () -> Unit = {},
     backgroundReceiving: Boolean = false,
     backgroundReceiveError: String? = null,
+    pushRegistrationStatus: String = "",
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
 ) {
@@ -297,6 +299,7 @@ internal fun AtlasCompanion(
                             onOpenQueuedInboxItem = onOpenQueuedInboxItem,
                             backgroundReceiving = backgroundReceiving,
                             backgroundReceiveError = backgroundReceiveError,
+                            pushRegistrationStatus = pushRegistrationStatus,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
                             onOpenNotificationSettings = onOpenNotificationSettings,
                             modifier = Modifier.weight(1f),
@@ -334,6 +337,7 @@ internal fun AtlasCompanion(
                             onOpenQueuedInboxItem = onOpenQueuedInboxItem,
                             backgroundReceiving = backgroundReceiving,
                             backgroundReceiveError = backgroundReceiveError,
+                            pushRegistrationStatus = pushRegistrationStatus,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
                             onOpenNotificationSettings = onOpenNotificationSettings,
                             modifier = Modifier.weight(1f),
@@ -437,6 +441,7 @@ private fun CompanionContent(
     onOpenQueuedInboxItem: (String) -> Unit = {},
     backgroundReceiving: Boolean = false,
     backgroundReceiveError: String? = null,
+    pushRegistrationStatus: String = "",
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -509,6 +514,9 @@ private fun CompanionContent(
                         "Queued text remains available from Inbox while connected.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (pushRegistrationStatus.isNotEmpty()) {
+                    InfoCard("Push registration", pushRegistrationStatus)
+                }
                 if (backgroundReceiveError != null) {
                     InfoCard("Background receiving unavailable", backgroundReceiveError)
                     Button(
