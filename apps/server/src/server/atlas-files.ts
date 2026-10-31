@@ -3,7 +3,7 @@ import { Pool, type PoolClient } from "pg";
 import { AtlasError } from "../shared/errors.js";
 import { ProjectFileFolders, folderId as parseFolderId } from "./project-file-folders.js";
 import { listPortfolioProjectMedia, type ProjectPortfolioMedia } from "./project-storage-catalog.js";
-import { createObjectStore, ObjectNotFound, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
+import { createObjectStore, ObjectNotFound, projectStorageKey, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
 
 export type FileOwner = { kind: "project" | "workspace" | "application"; id: string };
 export type FileVisibility = "private" | "public";
@@ -45,7 +45,8 @@ export class AtlasFilesService {
     readonly pool: Pool;
     readonly objects: ObjectStore;
     readonly folders: ProjectFileFolders;
-    constructor(databaseUrl: string, root: string, r2: R2StorageConfig | null = null, objects?: ObjectStore) {
+    constructor(databaseUrl: string, root: string, r2: R2StorageConfig | null = null, objects?: ObjectStore,
+        readonly versionedProjectWrites = false) {
         this.pool = new Pool({ connectionString: databaseUrl });
         this.folders = new ProjectFileFolders(this.pool);
         this.objects = objects ?? createObjectStore(root, r2);
@@ -98,7 +99,11 @@ export class AtlasFilesService {
         if (visibility !== "private" && visibility !== "public") throw new AtlasError("Invalid Atlas file visibility.");
         const id = randomUUID();
         const checksum = createHash("sha256").update(input.bytes).digest("hex");
-        const storageKey = `files-${id.replaceAll("-", "")}-${checksum}`;
+        // Existing legacy reads and Workspace/Application uploads stay unchanged.
+        // Enable only after migration of existing Project-owned objects, since
+        // the historical immutable copy ledger captures legacy source keys.
+        const storageKey = this.versionedProjectWrites && owner.kind === "project"
+            ? projectStorageKey(owner.id,id) : `files-${id.replaceAll("-", "")}-${checksum}`;
         try {
             await this.objects.put(storageKey, input.bytes, input.mimeType);
             const result = await (input.database ?? this.pool).query(
@@ -110,7 +115,7 @@ export class AtlasFilesService {
             // A PUT or INSERT may have committed despite a lost acknowledgement.
             // Verify durable metadata before deleting; on database uncertainty
             // retain the object rather than risking destruction of a valid file.
-            try { await this.discardUncommitted({ id, checksum }); }
+            try { await this.discardUncommitted({ id, checksum, owner }); }
             catch { console.error("Atlas Files could not confirm/clean an uncommitted object."); }
             if ((error as { code?: string })?.code === "23514" && destination !== null)
                 throw new AtlasError("Project folder is no longer available.");
@@ -121,10 +126,13 @@ export class AtlasFilesService {
     /** Call only after the caller's transaction has completed or rolled back.
      *  A failed/ambiguous COMMIT may have succeeded: never delete if metadata
      *  exists, and never delete if the database cannot prove its absence. */
-    async discardUncommitted(file: Pick<AtlasFile, "id" | "checksum">): Promise<boolean> {
+    async discardUncommitted(file: Pick<AtlasFile, "id" | "checksum"> & {owner?:FileOwner}): Promise<boolean> {
         if (!UUID.test(file.id) || !/^[a-f0-9]{64}$/.test(file.checksum))
             throw new AtlasError("Invalid pending Atlas file.");
-        const storageKey = `files-${file.id.replaceAll("-", "")}-${file.checksum}`;
+        const owner = file.owner === undefined ? undefined : ownerScope(file.owner);
+        const storageKey = this.versionedProjectWrites && owner?.kind === "project"
+            ? projectStorageKey(owner.id,file.id)
+            : `files-${file.id.replaceAll("-", "")}-${file.checksum}`;
         const result = await this.pool.query(
             "SELECT id FROM atlas_files WHERE id=$1 OR storage_key=$2",
             [file.id, storageKey]);

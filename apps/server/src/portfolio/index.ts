@@ -1,4 +1,5 @@
 import { loadPortfolioConfig } from "../server/config.js";
+import { projectStorageKey } from "../server/file-storage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import sharp from "sharp";
@@ -334,7 +335,9 @@ const extensionFor = (mime: string) => ({ "image/jpeg":"jpg", "image/png":"png",
 export class PortfolioMediaService {
     readonly pool: Pool;
     readonly objects: MediaObjectStore;
-    constructor(databaseUrl: string, readonly root = loadPortfolioConfig().mediaRoot, r2: R2MediaConfig | null = loadPortfolioConfig().r2) {
+    constructor(databaseUrl: string, readonly root = loadPortfolioConfig().mediaRoot,
+        r2: R2MediaConfig | null = loadPortfolioConfig().r2,
+        readonly versionedProjectWrites = false) {
         this.pool = new Pool({ connectionString: databaseUrl });
         this.objects = createMediaObjectStore(root, r2);
     }
@@ -368,12 +371,16 @@ export class PortfolioMediaService {
         const checksum = createHash("sha256").update(bytes).digest("hex");
         const existing = await this.pool.query(`SELECT id FROM media_assets WHERE checksum=$1 AND status='active' LIMIT 1`, [checksum]);
         if (existing.rows[0]) return (await this.list()).find(asset => asset.id === existing.rows[0].id);
-        const id = randomUUID(), originalKey = `${checksum}.${extensionFor(input.mimeType)}`;
+        const id = randomUUID(), originalKey = this.versionedProjectWrites
+            ? projectStorageKey(PORTFOLIO_PROJECT_ID,id)
+            : `${checksum}.${extensionFor(input.mimeType)}`;
         let width: number | undefined, height: number | undefined;
         const variants: { name:string; key:string; mime:string; bytes:Buffer; width?:number; height?:number }[] = [];
         if (input.mimeType.startsWith("image/")) {
             const image = sharp(bytes, { animated: false }); const metadata = await image.metadata(); width = metadata.width; height = metadata.height;
-            for (const [name, size] of [["thumbnail",480],["preview",1600]] as const) { const output = await sharp(bytes).rotate().resize({ width:size, height:size, fit:"inside", withoutEnlargement:true }).webp({ quality:82 }).toBuffer({ resolveWithObject:true }); variants.push({ name, key:`${checksum}-${name}.webp`, mime:"image/webp", bytes:output.data, width:output.info.width, height:output.info.height }); }
+            for (const [name, size] of [["thumbnail",480],["preview",1600]] as const) { const output = await sharp(bytes).rotate().resize({ width:size, height:size, fit:"inside", withoutEnlargement:true }).webp({ quality:82 }).toBuffer({ resolveWithObject:true }); variants.push({ name, key:this.versionedProjectWrites
+                ? projectStorageKey(PORTFOLIO_PROJECT_ID,id,name)
+                : `${checksum}-${name}.webp`, mime:"image/webp", bytes:output.data, width:output.info.width, height:output.info.height }); }
         } else if (!bytes.subarray(0,5).equals(Buffer.from("%PDF-"))) throw new AtlasError("The uploaded file is not a valid PDF.");
         await this.objects.put(originalKey, bytes, input.mimeType);
         for (const variant of variants) await this.objects.put(variant.key, variant.bytes, variant.mime);
