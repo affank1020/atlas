@@ -98,7 +98,15 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private val vault = NodeVault(application)
     private val transport = AtlasTransport()
     private val handler = Handler(Looper.getMainLooper())
-    private var foreground = false
+    private var owners = ConnectionOwners()
+    var backgroundReceivingRunning by mutableStateOf(false)
+        private set
+    var backgroundReceiveError by mutableStateOf<String?>(null)
+        private set
+
+    fun reportBackgroundError(message: String?) {
+        backgroundReceiveError = message
+    }
     private var importSequence = 0L
     private var connectionGeneration = 0L
     private var reconnectDelayMs = 1_000L
@@ -175,7 +183,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 recoveryNodeId = null
                 unrecoverableIdentity = false
                 connectionStatus = "Offline"
-                if (foreground) connect()
+                if (owners.connected) connect()
             } catch (error: PairingPersistenceException) {
                 recoveryNodeId = error.nodeId
                 pairingError = "Atlas issued a Node credential, but Android could not save it. " +
@@ -193,12 +201,39 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun startConnection() {
-        foreground = true
+        owners = owners.copy(activityVisible = true)
+        BackgroundReceiverService.cancelIncoming(getApplication())
         if (pairedNode != null && socket == null) connect()
     }
 
     fun stopConnection() {
-        foreground = false
+        owners = owners.copy(activityVisible = false)
+        if (owners.connected) {
+            if (incomingShare != null) {
+                val remaining = incomingDeadlineElapsedMs - SystemClock.elapsedRealtime()
+                if (!BackgroundReceiverService.notifyIncoming(getApplication(), remaining)) {
+                    finishIncomingShare(IncomingShareOutcome.DECLINED)
+                }
+            }
+            return
+        }
+        disconnect()
+    }
+
+    fun startBackgroundReceiving() {
+        owners = owners.copy(serviceRunning = true)
+        backgroundReceivingRunning = true
+        backgroundReceiveError = null
+        if (pairedNode != null && socket == null) connect()
+    }
+
+    fun stopBackgroundReceiving() {
+        owners = owners.copy(serviceRunning = false)
+        backgroundReceivingRunning = false
+        if (!owners.connected) disconnect()
+    }
+
+    private fun disconnect() {
         connectionGeneration++
         pendingRetry?.let(handler::removeCallbacks)
         pendingRetry = null
@@ -211,18 +246,18 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             sharePending = false
             shareStatus = "Connection closed; delivery was not confirmed."
         }
-        connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · app in background"
+        connectionStatus = if (pairedNode == null) "Not enrolled" else "Offline · no active receiver"
     }
 
     private fun connect() {
         val node = pairedNode ?: return
-        if (!foreground || socket != null) return
+        if (!owners.connected || socket != null) return
         val generation = ++connectionGeneration
         connectionStatus = "Connecting"
         socket = try {
             transport.connect(node, BuildConfig.VERSION_NAME, { event ->
                 handler.post {
-                    if (!foreground || generation != connectionGeneration) return@post
+                    if (!owners.connected || generation != connectionGeneration) return@post
                     when (event) {
                         ConnectionEvent.Online -> {
                             reconnectDelayMs = 1_000
@@ -247,7 +282,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 }
             }, { reply ->
                 handler.post {
-                    if (!foreground || generation != connectionGeneration) return@post
+                    if (!owners.connected || generation != connectionGeneration) return@post
                     if (reply.requestId != pendingShareRequestId) return@post
                     pendingShareRequestId = null
                     sharePending = false
@@ -266,7 +301,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 }
             }, { reply ->
                 handler.post {
-                    if (!foreground || generation != connectionGeneration ||
+                    if (!owners.connected || generation != connectionGeneration ||
                         !directoryLookup.finish(reply.requestId)) return@post
                     recipientTimeoutTask?.let(handler::removeCallbacks)
                     recipientTimeoutTask = null
@@ -289,7 +324,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 // cannot extend the 15-second decision window.
                 val receivedAtElapsedMs = SystemClock.elapsedRealtime()
                 handler.post {
-                    if (!foreground || generation != connectionGeneration ||
+                    if (!owners.connected || generation != connectionGeneration ||
                         connectionStatus != "Online") {
                         respond(IncomingShareOutcome.DECLINED)
                         return@post
@@ -321,6 +356,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                     }
                     incomingTimeoutTask = expires
                     handler.postDelayed(expires, remaining)
+                    if (!owners.activityVisible &&
+                        !BackgroundReceiverService.notifyIncoming(getApplication(), remaining)) {
+                        finishIncomingShare(IncomingShareOutcome.DECLINED)
+                    }
                 }
             })
         } catch (_: Exception) {
@@ -334,7 +373,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     /** A share counts as accepted only after a human clicks Copy and Android writes it. */
     fun copyIncomingShare(copyText: (String) -> Unit) {
         val share = incomingShare ?: return
-        if (!foreground || connectionStatus != "Online" ||
+        if (!owners.canApproveClipboard || connectionStatus != "Online" ||
             SystemClock.elapsedRealtime() >= incomingDeadlineElapsedMs) {
             finishIncomingShare(IncomingShareOutcome.DECLINED)
             return
@@ -374,14 +413,15 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val reply = pendingIncomingResponse
         pendingIncomingResponse = null
         incomingShare = null // No inbox disk storage or retained message content.
+        BackgroundReceiverService.cancelIncoming(getApplication())
         if (decline) reply?.invoke(IncomingShareOutcome.DECLINED)
     }
 
     private fun scheduleRetry() {
-        if (!foreground || pairedNode == null || pendingRetry != null) return
+        if (!owners.connected || pairedNode == null || pendingRetry != null) return
         val retry = Runnable {
             pendingRetry = null
-            if (foreground && socket == null && pairedNode != null) connect()
+            if (owners.connected && socket == null && pairedNode != null) connect()
         }
         pendingRetry = retry
         handler.postDelayed(retry, reconnectDelayMs)
@@ -408,7 +448,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun refreshRecipients() {
-        if (!foreground || connectionStatus != "Online" || sharePending || recipientsLoading) return
+        if (!owners.connected || connectionStatus != "Online" || sharePending || recipientsLoading) return
         val ws = socket ?: return
         val requestId = UUID.randomUUID().toString()
         // Reject premature refresh *before* modifying a valid directory or selection.
@@ -418,7 +458,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         recipientsCooldown = true
         recipientCooldownTask?.let(handler::removeCallbacks)
         val cooldownTask = Runnable {
-            if (foreground && generation == connectionGeneration) {
+            if (owners.connected && generation == connectionGeneration) {
                 recipientsCooldown = false
                 recipientCooldownTask = null
             }
@@ -434,7 +474,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         recipientTimeoutTask?.let(handler::removeCallbacks)
         val timeoutTask = Runnable {
             // Ignore a late timer from an earlier socket or a completed request.
-            if (!foreground || generation != connectionGeneration ||
+            if (!owners.connected || generation != connectionGeneration ||
                 !directoryLookup.finish(requestId)) return@Runnable
             recipientTimeoutTask = null
             recipientsLoading = false
@@ -469,7 +509,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val target = shareTarget.trim()
         val text = session.draft
         val ws = socket
-        if (!foreground || connectionStatus != "Online" || pairedNode == null ||
+        if (!owners.connected || connectionStatus != "Online" || pairedNode == null ||
             pendingShareRequestId != null || pendingRecipientsRequestId != null ||
             recipientsLoading || recipientsError != null ||
             recipients.none { it.nodeId.equals(target, ignoreCase = true) && it.available } ||
@@ -492,8 +532,13 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun forget() {
-        val wasForeground = foreground
-        stopConnection()
+        val wasVisible = owners.activityVisible
+        // Stop the independently running receiver before deleting its identity.
+        getApplication<AtlasNodeApp>().stopService(Intent(
+            getApplication(), BackgroundReceiverService::class.java))
+        owners = ConnectionOwners()
+        backgroundReceivingRunning = false
+        disconnect()
         vault.clear()
         pairedNode = null
         pairingError = null
@@ -508,7 +553,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         session = CompanionSession()
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
-        foreground = wasForeground
+        owners = ConnectionOwners(activityVisible = wasVisible)
     }
 
     fun clearRecoveryNotice() {
@@ -520,7 +565,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     override fun onCleared() {
-        stopConnection()
+        owners = ConnectionOwners()
+        disconnect()
         transport.close()
         super.onCleared()
     }
