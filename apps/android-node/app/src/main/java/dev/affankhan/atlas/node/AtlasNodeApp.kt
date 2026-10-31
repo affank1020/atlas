@@ -16,6 +16,6 @@ class AtlasNodeApp : Application(), ViewModelStoreOwner {
 
     internal val model: CompanionViewModel by lazy {
         ViewModelProvider(this, ViewModelProvider.AndroidViewModelFactory.getInstance(this))
-            [CompanionViewModel::class.java]
+            .get(CompanionViewModel::class.java)
     }
 }
