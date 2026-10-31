@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { AtlasError } from '../shared/errors.js';
+import type { ShareAuditClient } from './share-approvals.js';
+import { enrolmentOrigin, toolAuditOrigin, type NodeAuditOrigin } from './audit-origin.js';
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
 /** Secrets enter only this boundary; public Node records and audit snapshots never contain them. */
@@ -12,10 +14,18 @@ export class NodeIdentity {
         try { await db.query('BEGIN'); const value = await fn(db); await db.query('COMMIT'); return value; }
         catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
     }
-    async audit(db: Pool | PoolClient, operation: string, state: object) {
-        await db.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at) VALUES(gen_random_uuid(),'atlas-node',$1,$2,now())`, [operation, state]);
+    async audit(db: Pool | PoolClient, operation: string, state: object,
+        origin: NodeAuditOrigin = toolAuditOrigin('atlas-server'),
+        scope: { projectId?: string; workspaceId?: string } = {}) {
+        // Scope and provenance are supplied by trusted service code, never the
+        // request body or x-atlas-client. Human identity is not inferred.
+        await db.query(`INSERT INTO audit_events
+            (id,client,operation,project_id,workspace_id,after_state,created_at)
+            VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,now())`,
+            [origin.client, operation, scope.projectId ?? null, scope.workspaceId ?? null,
+                { ...state, transport: origin.transport, actorKind: origin.actorKind }]);
     }
-    async ticket(nodeId?: string, rotate = false) {
+    async ticket(nodeId?: string, rotate = false, caller: ShareAuditClient = 'atlas-server') {
         const token = secret();
         const result = await this.transaction(async db => {
             if (nodeId) {
@@ -26,7 +36,7 @@ export class NodeIdentity {
                 await db.query('UPDATE node_enrolments SET used_at=now() WHERE node_id=$1 AND used_at IS NULL', [nodeId]);
             }
             const ticket = await db.query("INSERT INTO node_enrolments(token_hash,node_id,expires_at) VALUES($1,$2,now()+interval '10 minutes') RETURNING expires_at", [hash(token), nodeId ?? null]);
-            await this.audit(db, rotate ? 'node.credential_rotated' : 'node.enrolment_created', { nodeId: nodeId ?? null });
+            await this.audit(db, rotate ? 'node.credential_rotated' : 'node.enrolment_created', { nodeId: nodeId ?? null }, toolAuditOrigin(caller));
             return { enrolmentToken: token, expiresAt: ticket.rows[0].expires_at, nodeId: nodeId ?? null };
         });
         if (nodeId) this.disconnect(nodeId);
@@ -43,7 +53,7 @@ export class NodeIdentity {
             if (!ticket.node_id) await db.query("INSERT INTO nodes(id,name,status) VALUES($1,$2,'offline')", [id, input.name]);
             await db.query(`UPDATE nodes SET platform=$2,version=$3,credential_hash=$4,credential_state='active',credential_updated_at=now(),updated_at=now(),metadata=metadata || '{"runtime":"remote"}'::jsonb WHERE id=$1`, [id, input.platform, input.version ?? null, hash(credential)]);
             await db.query('UPDATE node_enrolments SET used_at=now() WHERE id=$1', [ticket.id]);
-            await this.audit(db, 'node.enrolled', { nodeId: id });
+            await this.audit(db, 'node.enrolled', { nodeId: id }, enrolmentOrigin);
             return { nodeId: id, credential };
         });
     }
@@ -53,7 +63,7 @@ export class NodeIdentity {
         if (node?.credential_state === 'revoked') throw new AtlasError('Node credential revoked.', 'NODE_REVOKED');
         if (!node || node.credential_state !== 'active' || node.credential_hash !== hash(token)) throw new AtlasError('Invalid Node identity or credential.', 'NODE_AUTH_INVALID');
     }
-    async revoke(id: string) {
+    async revoke(id: string, caller: ShareAuditClient = 'atlas-server') {
         await this.transaction(async db => {
             const result = await db.query("UPDATE nodes SET credential_hash=NULL,credential_state='revoked',credential_updated_at=now(),updated_at=now() WHERE id=$1 RETURNING id", [id]);
             if (!result.rowCount) throw new AtlasError('Node not found.', 'NOT_FOUND');
@@ -61,27 +71,28 @@ export class NodeIdentity {
             // Revocation also removes persistent incoming/outgoing share approvals.
             // Avoid silently re-enabling grants if this identity is later re-enrolled.
             await db.query('DELETE FROM node_share_approvals WHERE source_node_id=$1 OR target_node_id=$1', [id]);
-            await this.audit(db, 'node.credential_revoked', { nodeId: id });
+            await this.audit(db, 'node.credential_revoked', { nodeId: id }, toolAuditOrigin(caller));
         });
         this.disconnect(id);
         return { nodeId: id, credentialState: 'revoked' };
     }
-    async update(id: string, name: string) {
+    async update(id: string, name: string, caller: ShareAuditClient = 'atlas-server') {
         return this.transaction(async db => {
             const result = await db.query('UPDATE nodes SET name=$2,updated_at=now() WHERE id=$1 RETURNING id', [id, name]);
             if (!result.rowCount) throw new AtlasError('Node not found.', 'NOT_FOUND');
-            await this.audit(db, 'node.updated', { nodeId: id, name });
+            await this.audit(db, 'node.updated', { nodeId: id, name }, toolAuditOrigin(caller));
             return { nodeId: id, name };
         });
     }
-    async assign(input: {nodeId: string; workspaceId: string; projectId: string; expectedNodeId: string}) {
+    async assign(input: {nodeId: string; workspaceId: string; projectId: string; expectedNodeId: string}, caller: ShareAuditClient = 'atlas-server') {
         return this.transaction(async db => {
             const node = await db.query("SELECT id FROM nodes WHERE id=$1 AND credential_state='active' FOR SHARE", [input.nodeId]);
             if (!node.rowCount) throw new AtlasError('Target Node does not exist or has no active credential.', 'NODE_UNAVAILABLE');
             await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [input.workspaceId]);
             const result = await db.query(`UPDATE workspaces w SET node_id=$1,updated_at=now() WHERE w.id=$2 AND w.project_id=$3 AND w.node_id=$4 AND w.archived_at IS NULL AND EXISTS(SELECT 1 FROM projects p WHERE p.id=w.project_id AND p.archived_at IS NULL) RETURNING w.id`, [input.nodeId,input.workspaceId,input.projectId,input.expectedNodeId]);
             if (!result.rowCount) throw new AtlasError('Workspace missing or placement changed. Refresh and retry.', 'CONFLICT');
-            await this.audit(db, 'workspace.node_assigned', { ...input, previousNodeId: input.expectedNodeId });
+            await this.audit(db, 'workspace.node_assigned', { ...input, previousNodeId: input.expectedNodeId },
+                toolAuditOrigin(caller), { projectId: input.projectId, workspaceId: input.workspaceId });
             return { workspaceId: input.workspaceId, nodeId: input.nodeId };
         });
     }
