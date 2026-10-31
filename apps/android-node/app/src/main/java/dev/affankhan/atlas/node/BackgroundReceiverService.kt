@@ -12,7 +12,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 
 /**
  * An explicit, user-started remote-messaging foreground service. This keeps
@@ -32,8 +33,43 @@ class BackgroundReceiverService : Service() {
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
 
+        /**
+         * Re-create missing channels, but never bypass user-disabled channels.
+         * Android retains the user's channel settings after createNotificationChannel.
+         */
+        private fun ensureChannels(manager: NotificationManager) {
+            manager.createNotificationChannel(NotificationChannel(
+                CHANNEL_STATUS, "Atlas background receiving", NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Atlas Node's user-enabled connection to approved devices"
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+            })
+            manager.createNotificationChannel(NotificationChannel(
+                CHANNEL_INCOMING, "Incoming Atlas transfers", NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Review a short-lived transfer from an approved Atlas Node"
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+            })
+        }
+
+        fun hasUsableNotifications(context: Context): Boolean {
+            if (!hasNotificationPermission(context)) return false
+            return try {
+                val manager = context.getSystemService(NotificationManager::class.java)
+                ensureChannels(manager)
+                backgroundNotificationsUsable(
+                    permissionGranted = true,
+                    appNotificationsEnabled = manager.areNotificationsEnabled(),
+                    statusImportance = manager.getNotificationChannel(CHANNEL_STATUS)?.importance,
+                    incomingImportance = manager.getNotificationChannel(CHANNEL_INCOMING)?.importance,
+                )
+            } catch (_: RuntimeException) {
+                false
+            }
+        }
+
         fun notifyIncoming(context: Context, remainingMs: Long): Boolean {
-            if (!hasNotificationPermission(context) || remainingMs <= 0) return false
+            if (!hasUsableNotifications(context) || remainingMs <= 0) return false
             return try {
                 val manager = context.getSystemService(NotificationManager::class.java)
                 val open = PendingIntent.getActivity(
@@ -63,21 +99,26 @@ class BackgroundReceiverService : Service() {
         }
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+
+    private val verifyChannels = object : Runnable {
+        override fun run() {
+            if (!hasUsableNotifications(this@BackgroundReceiverService)) {
+                (application as AtlasNodeApp).model.reportBackgroundError(
+                    "Atlas notifications are blocked. Enable both Atlas channels in Android Settings.")
+                stopSelf()
+                return
+            }
+            // Android does not notify this Service when the user blocks its
+            // channels. Poll only while explicitly enabled to avoid a hidden
+            // indefinitely-running receiver with no usable Stop notification.
+            handler.postDelayed(this, 10_000L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(
-            CHANNEL_STATUS, "Atlas background receiving", NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "Atlas Node's user-enabled connection to approved devices"
-            lockscreenVisibility = Notification.VISIBILITY_SECRET
-        })
-        manager.createNotificationChannel(NotificationChannel(
-            CHANNEL_INCOMING, "Incoming Atlas transfers", NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "Review a short-lived transfer from an approved Atlas Node"
-            lockscreenVisibility = Notification.VISIBILITY_SECRET
-        })
+        // Channels are provisioned by hasUsableNotifications before enabling.
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -87,10 +128,10 @@ class BackgroundReceiverService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (model.pairedNode == null || !hasNotificationPermission(this)) {
+        if (model.pairedNode == null || !hasUsableNotifications(this)) {
             model.stopBackgroundReceiving()
             model.reportBackgroundError(
-                "Pair the Node and allow notifications before enabling background receiving.")
+                "Pair the Node and enable Atlas notifications and both channels in Android Settings.")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -128,12 +169,15 @@ class BackgroundReceiverService : Service() {
             return START_NOT_STICKY
         }
         model.startBackgroundReceiving()
+        handler.removeCallbacks(verifyChannels)
+        handler.postDelayed(verifyChannels, 10_000L)
         // No automatic restart after process death. The user must launch Atlas
         // again; a durable offline queue/push remains a separate implementation.
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(verifyChannels)
         (application as AtlasNodeApp).model.stopBackgroundReceiving()
         cancelIncoming(this)
         super.onDestroy()
