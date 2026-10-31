@@ -127,3 +127,99 @@ checklist alone.
 Once the exercise succeeds, schedule repeat drills, decide realistic
 RPO/RTO, add backup automation/retention/alerting and monitor that new
 restorable recovery points continue to exist.
+
+
+## 6. Project and Portfolio independent recovery (operator-only)
+
+These Stage 5/6 commands are **tools, not production acceptance evidence**.
+Use them only after a trusted operator has confirmed environment isolation,
+independent Cloudflare ownership, a verified PostgreSQL snapshot and a
+documented application write-quiescence boundary. The legacy Files tools
+still cover Workspace/Application-owned Files excluded from Project storage.
+
+On a reviewed source checkout with the primary PostgreSQL/R2 configuration
+and legacy Files mount, build then capture immutable, SHA-256 verified
+Project/Portfolio metadata without making any R2 backup PUT:
+
+~~~sh
+npm run build:server
+
+ATLAS_PROJECT_RECOVERY_CAPTURE_ENABLED=1 \
+npm run files:r2:project-recovery -- \
+  --capture --project=PROJECT_UUID --confirm=CAPTURE_PROJECT_RECOVERY
+
+# Optional only after EVERY Stage 4B key copy has a verified receipt:
+ATLAS_PROJECT_RECOVERY_CAPTURE_ENABLED=1 \
+npm run files:r2:project-recovery -- \
+  --capture --project=PROJECT_UUID --versioned-run=KEY_RUN_UUID \
+  --confirm=CAPTURE_PROJECT_RECOVERY
+
+# Read-only preview. Maximum five objects per batch:
+npm run files:r2:project-recovery -- \
+  --dry-run --project=PROJECT_UUID --run=RECOVERY_RUN_UUID --max-files=5
+
+# Only after separate explicit approval to populate offsite R2:
+ATLAS_PROJECT_RECOVERY_SEED_ENABLED=1 \
+npm run files:r2:project-recovery -- \
+  --seed --project=PROJECT_UUID --run=RECOVERY_RUN_UUID \
+  --confirm=SEED_PROJECT_RECOVERY --max-files=5
+~~~
+
+Every authorised seed batch stores immutable, per-object SHA-256/size
+verification receipts **after** independent recovery R2 readback. On a
+six-object manifest, the first five-object invocation is partial; the final
+one-object invocation reports completed only when all six durable receipts
+are present and match the manifest. The receipts survive process restarts.
+To inspect complete coverage across all prior batches, without R2 access:
+
+~~~sh
+npm run files:r2:project-recovery -- \
+  --status --project=PROJECT_UUID --run=RECOVERY_RUN_UUID
+~~~
+
+This read-only, metadata-only status reports totalEntries, verifiedEntries,
+the earliest unverified nextOrdinal, and complete/incomplete. It requires no
+primary or backup R2 credentials. It **does not** re-read current offsite
+bytes, assert current recoverability, or replace the separate isolated
+restoration drill. Dry-run writes no receipts. A failed/ambiguous PUT leaves
+its batch unreceipted until the objects are reverified on retry.
+
+Continue with --from=NEXT_ORDINAL when a run reports missing receipts;
+review each batch before an approved seed. The implementation preflights
+all source and existing recovery bytes before any atomic create-only PUT,
+then re-reads the remote object. It never overwrites a corrupt recovery copy
+or deletes source bytes. Preserve the privately recorded run ID, Project,
+catalogue digest, manifest digest, all page reports and exceptions. A
+legacy-only manifest does NOT certify already-copied versioned keys.
+
+For isolated verification, separately obtain an offsite encrypted
+PostgreSQL archive, verify it and restore onto a physically separate
+recovery host. The existing one-shot postgres-restore-drill script removes
+its disposable container: the combined check requires an independently
+reviewed, accessible disposable restored database. Do not relax the
+existing Docker daemon isolation checks to expose that container.
+
+The offline host must have ONLY ATLAS_RESTORED_DATABASE_URL, the recovery
+R2 endpoint/bucket/scoped credentials, ATLAS_R2_PRIMARY_ACCOUNT_ID (public
+account identity only), and ATLAS_RECOVERY_HOST_APPROVED=1. No DATABASE_URL,
+primary R2 keys, server .env or production R2 mounts are permitted.
+On that recovery host, verify the entire saved manifest:
+
+~~~sh
+npm run files:r2:project-recovery -- \
+  --isolated-verify --project=PROJECT_UUID --run=RECOVERY_RUN_UUID \
+  --max-files=2000
+~~~
+
+Only a nonempty full run with status passed and no missing or corrupt
+object bytes is an object-recovery verification. A page beginning after
+ordinal 0 reports partial even when the sampled bytes are valid.
+The restored database must contain the exact recovery-run rows: a snapshot
+captured before those rows exist fails, as does catalogue drift. No primary
+bucket access or R2 PUT is permitted in this mode.
+
+**Not yet proven by code or CI:** live offsite custody of ciphertext and age
+identity, a matching PostgreSQL/R2 consistency boundary, physical recovery
+host isolation, the excluded legacy Workspace/Application Files inventory,
+full backup coverage for each Project, replacement Atlas startup, measured
+RPO/RTO, and approval for metadata cutover or retention. Keep these gated.
