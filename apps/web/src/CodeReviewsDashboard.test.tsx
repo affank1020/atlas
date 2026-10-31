@@ -156,3 +156,27 @@ test('refreshes the dashboard without changing GitHub state', () => {
     expect(refetch).toHaveBeenCalledTimes(2);
     expect(calls).not.toContain('code_reviews_pr_summary');
 });
+
+test('Code Reviews initial queries use KPI and PR-list geometry, not zero counts or loading prose', () => {
+    vi.mocked(useApplicationRead).mockImplementation(() => ({
+        data: undefined, isLoading: true, isFetching: true, error: null, refetch,
+    } as never));
+    const view = render(<CodeReviewsDashboard />);
+    expect(screen.getByRole('status', { name: 'Loading Code Reviews pull requests' })).toHaveAttribute('aria-busy', 'true');
+    expect(view.container.querySelectorAll('.cr-metrics .atlas-load-skeleton')).toHaveLength(4);
+    expect(view.container.querySelectorAll('.cr-pr')).toHaveLength(5);
+    expect(screen.queryByText('No reviews recorded.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading reviews…')).not.toBeInTheDocument();
+    expect(view.container.querySelector('.cr-list button[aria-label^="Details for"]')).not.toBeInTheDocument();
+});
+
+test('Code Reviews refresh keeps cached rows and does not overlay an initial skeleton', () => {
+    const original = vi.mocked(useApplicationRead).getMockImplementation()!;
+    vi.mocked(useApplicationRead).mockImplementation((name, args) => {
+        const result = original(name, args);
+        return { ...result, isLoading: false, isFetching: true } as never;
+    });
+    render(<CodeReviewsDashboard />);
+    expect(screen.queryByRole('status', { name: 'Loading Code Reviews pull requests' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(2);
+});
