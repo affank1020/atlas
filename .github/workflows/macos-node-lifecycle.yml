@@ -6,6 +6,8 @@ on:
     paths:
       - "scripts/macos-node-lifecycle.py"
       - "scripts/macos-node-update.py"
+      - "scripts/macos-node-operator.py"
+      - "test/test_macos_node_operator.py"
       - "scripts/macos-node-stage.py"
       - "scripts/linux-node-host-updater.py"
       - "test/test_macos_node_update.py"
@@ -16,6 +18,8 @@ on:
     paths:
       - "scripts/macos-node-lifecycle.py"
       - "scripts/macos-node-update.py"
+      - "scripts/macos-node-operator.py"
+      - "test/test_macos_node_operator.py"
       - "scripts/macos-node-stage.py"
       - "scripts/linux-node-host-updater.py"
       - "test/test_macos_node_update.py"
@@ -39,4 +43,5 @@ jobs:
         run: |
           python3 -m unittest discover -s test -p 'test_macos_node_lifecycle.py' -v
           python3 -m unittest discover -s test -p 'test_macos_node_update.py' -v
-          python3 -m py_compile scripts/macos-node-lifecycle.py scripts/macos-node-update.py
+          python3 -m unittest discover -s test -p 'test_macos_node_operator.py' -v
+          python3 -m py_compile scripts/macos-node-lifecycle.py scripts/macos-node-update.py scripts/macos-node-operator.py
