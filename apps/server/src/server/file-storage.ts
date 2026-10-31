@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import { mkdir, readFile, writeFile, unlink, open, stat } from "node:fs/promises";
+import { mkdir, writeFile, unlink, open, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
