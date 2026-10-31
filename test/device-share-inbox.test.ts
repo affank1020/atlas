@@ -73,8 +73,8 @@ test('offline encrypted shares preserve queued-vs-copied states, replay safety, 
             targetNodeId: receiver.nodeId, enabled: true });
         // Simulate an enrolled tablet that is running the inbox-capable APK.
         // Older Android 0.5/0.6 clients have no inbox retrieval API.
-        await services.nodes.repository.registerRemote(receiver.nodeId, 'Android 0.7',
-            ['device.share.receive'], 'test-inbox-version', 'android', '0.7.0');
+        await fixture.store.pool.query("UPDATE nodes SET version='0.7.0' WHERE id=$1",
+            [receiver.nodeId]);
         const offline = once(receiverSocket, 'close'); receiverSocket.terminate(); await offline;
         for (let i = 0; i < 60 && (await services.nodes.get(receiver.nodeId)).status === 'online'; i++)
             await new Promise(resolve => setTimeout(resolve, 20));
