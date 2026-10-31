@@ -11,7 +11,7 @@ Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not**
 - Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or background receiver.
 - No Workspace capabilities, persistent inbox/history, file transfer, automatic send, blanket clipboard permission or background service.
 
-This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, Android inbound physical acceptance, Mac sender, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
+This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, Mac → Android physical acceptance, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
 ## Develop / sideload
 
@@ -37,8 +37,8 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 2. One-time ticket enrolment, encrypted identity and foreground Node registration — implemented.
 3. Opt-in Mac receiver, directional managed approvals and explicit Android text send — implemented; first real Samsung → Mac copy confirmed.
 4. Approved receiver discovery by name — implemented in Android 0.4.0.
-5. Foreground Android Copy/Decline receiver — implemented in 0.5.0; requires physical device tests and a new Mac-side sender to complete the reverse path.
-6. **Next gate:** Mac → Android explicit sender and physical acceptance; complete the remaining Samsung → Mac [E2E cases](../../docs/MOBILE_SHARE_E2E.md). Durable inbox, background delivery and file transfers remain outside this slice.
+5. Foreground Android Copy/Decline receiver — implemented in 0.5.0. Mac-side sender is merged in PR #82; reverse-direction physical acceptance remains outstanding.
+6. **Next gate:** physically verify Mac → Android text with Android 0.5.0 and merged Mac sender; complete the remaining Samsung → Mac [E2E cases](../../docs/MOBILE_SHARE_E2E.md). A screenshot-intake draft adds preview-only image import, not image transfer.
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
@@ -161,5 +161,5 @@ keep the Android Node enrollment and credentials intact. Bumping
 `versionCode` to 5 is required for this installable update. Do not reinstall
 a CI-signed APK over the enrolled device.
 
-A Mac-side explicit sender has **not** yet been implemented, so the reverse
-direction is not end-to-end ready merely because Android advertises receiving.
+A Mac-side explicit sender was subsequently merged in PR #82, but the reverse
+direction still requires physical acceptance; do not infer it from advertised capabilities.
