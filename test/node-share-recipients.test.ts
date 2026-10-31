@@ -25,6 +25,7 @@ test('authenticated recipient directory only shows sender-approved and active pe
     const config = loadServerConfig({
         DATABASE_URL:f.databaseUrl, ATLAS_NODE_EXECUTION:'remote', ATLAS_HOST:'127.0.0.1',
         ATLAS_DEVICE_SHARE_PAIRS: sender!.nodeId + ':' + revoked!.nodeId,
+        ATLAS_DEVICE_INBOX_KEY: Buffer.alloc(32,7).toString('base64'),
     });
     const services = composeServer(config);
     const http = createHttpTransport(services);
@@ -40,9 +41,9 @@ test('authenticated recipient directory only shows sender-approved and active pe
         assert.equal((await message).type,'registered');
         return ws;
     };
-    const lookup = async (ws: WebSocket) => {
+    const lookup = async (ws: WebSocket, type: 'device.share.recipients'|'device.inbox.recipients' = 'device.share.recipients') => {
         const pending = reply(ws), requestId = randomUUID();
-        ws.send(JSON.stringify({type:'device.share.recipients',requestId}));
+        ws.send(JSON.stringify({type,requestId}));
         const response = await pending;
         assert.equal(response.requestId,requestId);
         return response;
@@ -59,10 +60,25 @@ test('authenticated recipient directory only shows sender-approved and active pe
             [mac!.nodeId,revoked!.nodeId].sort(), 'No full Node registry or unapproved peers leak');
         assert.deepEqual(first.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId),
             {nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'online',
-                available:true,queueCapable:true});
+                available:true});
         assert.deepEqual(first.result.recipients.find((x:any)=>x.nodeId===revoked!.nodeId),
             {nodeId:revoked!.nodeId,name:'Revoked Mac',platform:'darwin',status:'offline',
-                available:false,queueCapable:false});
+                available:false});
+        // Old Android 0.6 and old Mac clients parse exactly five fields.
+        for (const recipient of first.result.recipients)
+            assert.deepEqual(Object.keys(recipient).sort(),
+                ['available','name','nodeId','platform','status']);
+        await new Promise(resolve=>setTimeout(resolve,2100));
+        const queuedOnline = await lookup(source,'device.inbox.recipients');
+        assert.equal(queuedOnline.ok,true,JSON.stringify(queuedOnline));
+        assert.deepEqual(queuedOnline.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId),{
+            nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'online',
+            available:true,queueCapable:true,
+        });
+        assert.deepEqual(queuedOnline.result.recipients.find((x:any)=>x.nodeId===revoked!.nodeId),{
+            nodeId:revoked!.nodeId,name:'Revoked Mac',platform:'darwin',status:'offline',
+            available:false,queueCapable:false,
+        });
         assert.deepEqual((await lookup(other)).result,{recipients:[]},
             'Unapproved registered senders cannot discover any other Node');
         const throttled = await lookup(source);
@@ -76,7 +92,7 @@ test('authenticated recipient directory only shows sender-approved and active pe
         receiver.terminate();
         await disconnected;
         await new Promise(resolve=>setTimeout(resolve,2100));
-        const offlineCapable = await lookup(source);
+        const offlineCapable = await lookup(source,'device.inbox.recipients');
         assert.equal(offlineCapable.ok,true,JSON.stringify(offlineCapable));
         assert.deepEqual(offlineCapable.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId),{
             nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'offline',
