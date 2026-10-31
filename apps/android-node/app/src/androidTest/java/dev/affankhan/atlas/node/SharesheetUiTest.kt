@@ -1,11 +1,14 @@
 package dev.affankhan.atlas.node
 
+import android.graphics.Bitmap
+import java.io.ByteArrayOutputStream
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
@@ -113,6 +116,28 @@ class SharesheetUiTest {
         compose.onNodeWithTag("tab-settings").performClick()
         compose.onNodeWithTag("tab-send").performClick()
         compose.onNodeWithTag("share-draft").assertTextContains("local draft")
+    }
+
+    @Test fun imageShareShowsPreviewButCannotSubmitThroughTextRelay() {
+        mount(ready = true)
+        val png = ByteArrayOutputStream().use { output ->
+            val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+            try {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+                output.toByteArray()
+            } finally {
+                bitmap.recycle()
+            }
+        }
+        compose.runOnIdle {
+            state = state.importShare(ShareDelivery(1,
+                image = SharedImageDraft("image/png", png)))
+            selected = mac.nodeId
+        }
+        compose.onNodeWithTag("shared-image-preview").assertExists()
+        compose.onNodeWithTag("share-submit").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("share-draft").performTextReplacement("send text instead")
+        compose.onNodeWithTag("share-submit").performScrollTo().assertIsEnabled()
     }
 
     @Test fun incomingCopyRequiresExplicitConsentAndDeclineDoesNotCopy() {
