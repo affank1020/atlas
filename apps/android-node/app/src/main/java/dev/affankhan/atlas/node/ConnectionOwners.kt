@@ -13,6 +13,9 @@ internal data class ConnectionOwners(
     val connected: Boolean get() = activityVisible || serviceRunning
     val canApproveClipboard: Boolean get() = activityVisible
 
+    /** A pending authenticated opt-out temporarily owns the Node socket. */
+    fun mayReleaseSocket(revocationPending: Boolean): Boolean = !connected && !revocationPending
+
     fun activityStarted(): ConnectionOwners = copy(visibleActivities = visibleActivities + 1)
     fun activityStopped(): ConnectionOwners = copy(
         visibleActivities = (visibleActivities - 1).coerceAtLeast(0),
