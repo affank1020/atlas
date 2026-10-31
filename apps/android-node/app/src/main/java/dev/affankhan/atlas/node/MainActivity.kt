@@ -340,7 +340,8 @@ internal fun AtlasCompanion(
                             "\n\n" + queuedInboxPreview.text.take(180)
                                 .replace(Regex("[\\u0000-\\u001f\\u007f]"), " ") +
                             (if(queuedInboxPreview.text.length>180) "…" else "") +
-                            "\n\nCopy requires an explicit tap.")
+                            "\n\nCopy requires an explicit tap.",
+                            modifier=Modifier.testTag("queued-inbox-preview"))
                     },
                     confirmButton = {
                         TextButton(onClick=onCopyQueuedInbox,
