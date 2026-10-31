@@ -946,6 +946,46 @@ multi-SHA integration test and a deliberate one-authoritative-publisher
 transition from the existing human Code Reviewer plugin. GitHub's
 `resolveReviewThread` mutation is *not implemented or invoked* by this PR.
 
+### GitHub GraphQL review-thread state (read-only prerequisite)
+
+`code_reviews_review_thread_state({repository,prNumber})` performs an
+**independent, read-only** GitHub GraphQL thread inventory and joins it with
+the existing Atlas Code Reviews inventory of App Bot-owned REST inline
+comments and the latest saved reviewer lifecycle.
+
+The REST reply/root comment ID is **not** the GraphQL review-thread node ID.
+The GraphQL reader gets the *first comment* of each GitHub review thread via
+its `fullDatabaseId` (not the deprecated `databaseId`), then maps that
+numeric ID to a separately verified App Bot-owned REST root. It checks the
+original path/line match too. A copied marker or unauthorised GitHub comment
+cannot become an Atlas-managed conversation. No thread is inferred from a
+similar title or position after code moves.
+
+GitHub GraphQL returns `thread.id`, `isResolved`, `isOutdated` and
+`viewerCanResolve`. These represent GitHub's **remote conversation state**,
+not proof of the code finding's correctness or source-code fix. A reviewer
+resolution assertion and GitHub's manually resolved state remain separate
+and are reported as such. The viewer permission field is specifically the
+**read-scoped** GitHub App installation token's view; a later write-capable
+operation must re-query permissions with its own write-scoped token.
+
+The implementation reads all available pages up to a strict **500-thread
+ceiling**, rejects GraphQL errors even with HTTP 200, missing root IDs,
+duplicate GraphQL thread/root IDs, unsafe 64-bit comment IDs, stalled
+pagination and disagreed original file path/line. No partial page or missing
+thread is reported as resolved. Missing mappings are explicitly `unknown`.
+
+This PR deliberately does **not** call `resolveReviewThread` or use an App
+write token. The next separately gated milestone may introduce an explicit
+resolution operation *only after* verified recent fix-publication receipts,
+the same thread-node mapping, current commit/head and permissions under the
+write token, durable one-shot claim/reconciliation and fresh remote read-back.
+Even then, a human choosing to reopen a GitHub thread must not be silently
+overridden by an old reviewer assertion.
+
+GitHub schema: <https://docs.github.com/en/graphql/reference/objects#pullrequestreviewthread>
+and <https://docs.github.com/en/graphql/reference/pulls#resolvereviewthread>.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some

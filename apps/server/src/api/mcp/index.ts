@@ -56,6 +56,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         'code_reviews_managed_summary_publish',
         'code_reviews_inline_thread_preflight',
         'code_reviews_inline_thread_inventory',
+        'code_reviews_review_thread_state',
         'code_reviews_publish_initial_inline_root',
         'code_reviews_publish_inline_reply',
         'code_reviews_publish_fix_evidence',
