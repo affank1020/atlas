@@ -246,7 +246,12 @@ def main(argv: list[str]) -> int:
     layout = lifecycle.Layout(Path.home(), os.getuid())
     if monitor:
         operator = load_helper("macos-node-operator.py")
-        return operator.monitor_manage(layout, argv[1:])
+        try:
+            return operator.monitor_manage(layout, argv[1:])
+        except operator.Refused as exc:
+            # Operator helpers are loaded as separate modules, with a
+            # distinct Refused class. Preserve the normal CLI refusal path.
+            raise Refused(str(exc)) from exc
     if argv[0] == "rollback":
         if not sys.stdin.isatty() or input("Type ROLLBACK to restore the prior Node: ") != "ROLLBACK":
             raise Refused("Rollback requires explicit interactive confirmation.")
