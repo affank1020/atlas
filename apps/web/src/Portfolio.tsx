@@ -4,7 +4,7 @@ import { API_BASE, callTool } from "./api";
 import "./Portfolio.css";
 import { useApplicationRead } from "./atlasApi";
 import { Skeleton } from "./Skeletons";
-import { PortfolioWorkspaceLoading } from "./PortfolioLoading";
+import { PortfolioWorkspaceLoading, PortfolioMediaLoading } from "./PortfolioLoading";
 const EMPTY: never[] = [];
 
 type ContentType = "profile" | "contact" | "projects" | "experience" | "posts" | "collections";
@@ -73,7 +73,7 @@ export function Portfolio(){
   </nav>
   {[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.error)&&<div role="alert" className="portfolio-notice error">Portfolio data unavailable. <button onClick={()=>void load()}>Retry</button></div>}{error&&<div role="alert" className="portfolio-notice error">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
   {notice&&<div role="status" className="portfolio-notice success">{notice}<button onClick={()=>setNotice("")} aria-label="Dismiss message">×</button></div>}
-  {initialLoading && !loadError ? <PortfolioWorkspaceLoading /> : view==="content"?<div className="portfolio-workspace">
+  {initialLoading && !loadError ? (view==="media" ? <PortfolioMediaLoading /> : <PortfolioWorkspaceLoading />) : view==="content"?<div className="portfolio-workspace">
    <aside className="portfolio-sidebar" aria-label="Content browser">
     <div className="portfolio-types" aria-label="Content types">
      {(Object.keys(TITLES) as ContentType[]).map(key=>{const counts=dashboard?.contentTypes.find(x=>x.contentType===key);return <button key={key} className={type===key?"active":""} aria-current={type===key?"page":undefined} onClick={()=>{if(type===key||leaveEditor()){setType(key);setCreating(false);setSelectedId(undefined);setSearch("");setNotice("");}}}><span>{TITLES[key]}</span><small>{counts?.total??0}</small></button>;})}

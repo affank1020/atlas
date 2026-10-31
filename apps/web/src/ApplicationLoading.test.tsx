@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { PortfolioApplicationLoading, PortfolioWorkspaceLoading } from './PortfolioLoading';
+import { PortfolioApplicationLoading, PortfolioWorkspaceLoading, PortfolioMediaLoading } from './PortfolioLoading';
 import { CodeReviewsApplicationLoading, CodeReviewsListLoading, CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
 import { FootballGeneralistApplicationLoading, FootballGeneralistContentLoading } from './FootballGeneralistLoading';
 
@@ -77,4 +77,30 @@ test('mounted Football initial data skeleton has no duplicate application headin
     expect(screen.getByRole('status', { name: 'Loading Football Generalist' })).toHaveAttribute('aria-busy', 'true');
     expect(container.querySelector('.fg-heading')).not.toBeInTheDocument();
     expect(container.querySelectorAll('.fg-stats > div')).toHaveLength(5);
+});
+
+test('Portfolio Media skeleton matches the full-width asset manager, not the entry editor', () => {
+    const { container } = render(<PortfolioMediaLoading />);
+    expect(screen.getByRole('status', { name: 'Loading Portfolio media library' })).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelector('.portfolio-media-header')).toBeInTheDocument();
+    expect(container.querySelector('.portfolio-media-toolbar .portfolio-media-search')).toBeInTheDocument();
+    expect(container.querySelectorAll('.portfolio-media-grid article')).toHaveLength(6);
+    expect(container.querySelectorAll('.portfolio-media-grid .portfolio-media-preview')).toHaveLength(6);
+    expect(container.querySelector('.portfolio-workspace, .portfolio-sidebar, .portfolio-editor')).toBeNull();
+    expect(container.querySelectorAll('button, input, a, select, textarea')).toHaveLength(0);
+});
+
+test('Portfolio lazy fallback selects media layout and active tab from a media deep link', () => {
+    const previousHash = window.location.hash;
+    window.location.hash = '#/applications/portfolio?tab=media';
+    try {
+        const { container } = render(<PortfolioApplicationLoading />);
+        expect(screen.getByRole('status', { name: 'Loading Portfolio' })).toBeInTheDocument();
+        expect(container.querySelectorAll('.portfolio-media-grid article')).toHaveLength(6);
+        expect(container.querySelector('.portfolio-workspace')).not.toBeInTheDocument();
+        expect(container.querySelector('.portfolio-loading-tab.active')).toHaveTextContent('Media library');
+        expect(screen.getAllByRole('status')).toHaveLength(1);
+    } finally {
+        window.location.hash = previousHash;
+    }
 });

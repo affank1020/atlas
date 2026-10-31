@@ -61,7 +61,40 @@ export function PortfolioWorkspaceLoading({ decorative = false }: { decorative?:
     </div>;
 }
 
+/** The media view uses a full-width asset grid, not the content editor/sidebar. */
+export function PortfolioMediaLoading({ decorative = false }: { decorative?: boolean }) {
+    return <section className="portfolio-media" role={decorative ? undefined : 'status'}
+        aria-label={decorative ? undefined : 'Loading Portfolio media library'}
+        aria-busy={decorative ? undefined : true} aria-hidden={decorative || undefined}>
+        <header className="portfolio-media-header">
+            <div><h2>Media library</h2><Skeleton width={275} height={13} /></div>
+            <Skeleton width={135} height={36} />
+        </header>
+        <div className="portfolio-media-toolbar">
+            <div className="portfolio-media-search"><Skeleton width="70%" height={13} /></div>
+            <div className="portfolio-media-archived-loading"><Skeleton width={105} height={15} /></div>
+            <span className="portfolio-media-count"><Skeleton width={52} height={13} /></span>
+        </div>
+        <div className="portfolio-media-grid">
+            {Array.from({ length: 6 }, (_, index) =>
+                <article key={index}>
+                    <div className="portfolio-media-preview"><Skeleton width="100%" height="100%" /></div>
+                    <div className="portfolio-media-card-content">
+                        <Skeleton width={index % 2 ? '73%' : '89%'} height={14} />
+                        <Skeleton width="41%" height={11} />
+                        <div className="portfolio-media-card-actions">
+                            <Skeleton width={92} height={13} /><Skeleton width={58} height={13} />
+                        </div>
+                    </div>
+                </article>)}
+        </div>
+    </section>;
+}
+
 export function PortfolioApplicationLoading() {
+    // The host renders this before the lazy Portfolio bundle has loaded.
+    // Read the same hash parameter that Portfolio uses to choose its first view.
+    const mediaSelected = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('tab') === 'media';
     return <div className="portfolio-app" role="status" aria-label="Loading Portfolio" aria-busy="true">
         <header className="portfolio-head" aria-hidden="true">
             <div className="portfolio-head-copy"><h1>Portfolio</h1>
@@ -72,10 +105,10 @@ export function PortfolioApplicationLoading() {
             </div>
         </header>
         <nav className="portfolio-tabs" aria-hidden="true">
-            <div className="portfolio-tab-group"><span className="portfolio-loading-tab">Content</span>
-                <span className="portfolio-loading-tab">Media library</span></div>
+            <div className="portfolio-tab-group"><span className={'portfolio-loading-tab' + (!mediaSelected ? ' active' : '')}>Content</span>
+                <span className={'portfolio-loading-tab' + (mediaSelected ? ' active' : '')}>Media library</span></div>
             <Skeleton width={93} height={15} />
         </nav>
-        <PortfolioWorkspaceLoading decorative />
+        {mediaSelected ? <PortfolioMediaLoading decorative /> : <PortfolioWorkspaceLoading decorative />}
     </div>;
 }

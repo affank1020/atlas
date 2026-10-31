@@ -106,3 +106,20 @@ test('an unrecognised Application does not impersonate a known Application durin
     expect(screen.getByRole('status', { name: 'Loading application interface' })).toBeInTheDocument();
     expect(view.container.querySelector('.cr-dashboard, .portfolio-app, .fg')).not.toBeInTheDocument();
 });
+
+
+test('Portfolio media route reserves media grid before the Application manifest resolves', () => {
+    const previousHash = window.location.hash;
+    window.location.hash = '#/applications/portfolio?tab=media';
+    vi.mocked(callTool).mockImplementation(async name =>
+        name === 'get_application' ? await new Promise<never>(() => {}) : [] as never);
+    try {
+        const view = render(<ApplicationWindow slug="portfolio" />);
+        expect(screen.getByRole('status', { name: 'Loading Portfolio' })).toBeInTheDocument();
+        expect(view.container.querySelectorAll('.portfolio-media-grid article')).toHaveLength(6);
+        expect(view.container.querySelector('.portfolio-workspace')).not.toBeInTheDocument();
+        expect(view.container.querySelector('.portfolio-loading-tab.active')).toHaveTextContent('Media library');
+    } finally {
+        window.location.hash = previousHash;
+    }
+});
