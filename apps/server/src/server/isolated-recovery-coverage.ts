@@ -113,8 +113,12 @@ export async function verifyIsolatedRecoveryCoverage(input:{
             });
             projects.push({projectId,runId,status:result.status,verified:result.verified,
                 expected:manifest.entries.length,versionedIncluded:manifest.versionedCopyRunId!==null});
+            // Count actual SHA-256-verified manifest entries even when a
+            // different entry in the same Project failed. This is a count
+            // of objects/entries, never an aggregate byte-size figure.
+            projectEntriesVerified+=result.verified;
             if(result.status==="passed"&&result.verified===manifest.entries.length){
-                projectVerified++;projectEntriesVerified+=result.verified;
+                projectVerified++;
             }else block("incomplete-or-failed-project-recovery-bytes");
         }
     }
