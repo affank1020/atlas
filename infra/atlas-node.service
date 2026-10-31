@@ -23,7 +23,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/srv/atlas/workspaces /var/lib/atlas-node
+# Private Atlas-only runtime output. Provision the root-owned log directory and
+# atlas-node-owned service.log before installing this unit. The service user
+# cannot replace the file/path; systemd retains the fixed output descriptor.
+StandardOutput=append:/var/log/atlas-node/service.log
+StandardError=inherit
+ReadWritePaths=/srv/atlas/workspaces /var/lib/atlas-node /var/log/atlas-node/service.log
 StateDirectory=atlas-node
 UMask=0077
 CapabilityBoundingSet=
