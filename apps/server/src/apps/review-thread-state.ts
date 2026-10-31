@@ -13,7 +13,7 @@ const object = (x: unknown): x is Record<string, unknown> =>
 const positive = (x: unknown): x is number =>
     typeof x === 'number' && Number.isSafeInteger(x) && x > 0;
 const nodeId = (x: unknown): x is string =>
-    typeof x === 'string' && /^[A-Za-z0-9_=-]{8,256}$/.test(x);
+    typeof x === 'string' && /^[A-Za-z0-9_+/=-]{8,256}$/.test(x);
 const rootId = (x: unknown): number | null => {
     if (positive(x)) return x;
     if (typeof x !== 'string' || !/^[1-9][0-9]{0,19}$/.test(x)) return null;
