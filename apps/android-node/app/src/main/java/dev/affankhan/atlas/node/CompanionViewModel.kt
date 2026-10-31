@@ -502,6 +502,96 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         shareStatus = "New draft loaded. It has not been sent."
     }
 
+    /** All decrypted inbox content stays volatile; never persist in SavedState. */
+    private fun clearQueuedInbox() {
+        inboxTimeoutTask?.let(handler::removeCallbacks)
+        inboxTimeoutTask=null
+        inboxPendingRequestId=null
+        inboxPendingAction=null
+        queuedInboxBusy=false
+        queuedInboxItems=emptyList()
+        queuedInboxPreview=null
+    }
+
+    /** One bounded authenticated inbox operation at a time, rate-limited to the
+     * Server's 500ms floor. No unattended polling or background clipboard writes.
+     */
+    private fun requestInbox(action:String, payload:(String)->String):Boolean {
+        val ws=socket ?: return false
+        if (!owners.activityVisible || pairedNode==null || connectionStatus!="Online" ||
+            queuedInboxBusy || SystemClock.elapsedRealtime()-lastInboxCommandAt<650L) {
+            return false
+        }
+        val id=UUID.randomUUID().toString()
+        val generation=connectionGeneration
+        lastInboxCommandAt=SystemClock.elapsedRealtime()
+        queuedInboxBusy=true
+        inboxPendingRequestId=id
+        inboxPendingAction=action
+        val timeout=Runnable {
+            if(generation==connectionGeneration && inboxPendingRequestId==id) {
+                inboxPendingRequestId=null
+                inboxPendingAction=null
+                inboxTimeoutTask=null
+                queuedInboxBusy=false
+                queuedInboxPreview=null
+                inboxStatus="Inbox request unconfirmed. Refresh before another action."
+            }
+        }
+        inboxTimeoutTask=timeout
+        handler.postDelayed(timeout,12_000L)
+        if (!ws.send(payload(id))) {
+            handler.removeCallbacks(timeout)
+            inboxTimeoutTask=null
+            inboxPendingRequestId=null
+            inboxPendingAction=null
+            queuedInboxBusy=false
+            inboxStatus="Could not reach Atlas inbox."
+            return false
+        }
+        return true
+    }
+
+    fun refreshQueuedInbox() {
+        if (!requestInbox("list",::inboxListRequest)) {
+            if (!queuedInboxBusy) inboxStatus="Reconnect or retry inbox refresh."
+        } else {
+            queuedInboxPreview=null
+            inboxStatus="Checking queued text…"
+        }
+    }
+
+    fun openQueuedInboxItem(deliveryId:String) {
+        if(queuedInboxItems.none {it.deliveryId==deliveryId} || queuedInboxBusy) return
+        if (requestInbox("read",{id->inboxReadRequest(id,deliveryId)})) {
+            queuedInboxPreview=null
+            inboxStatus="Loading queued text for review…"
+        }
+    }
+
+    /** Clipboard changes only after a visible user's Copy tap. A network
+     * failure after the write is reported as an unconfirmed server receipt;
+     * never claim that the server committed the decision before replying.
+     */
+    fun decideQueuedInboxItem(copied:Boolean, copy:(String)->Unit) {
+        val preview=queuedInboxPreview ?: return
+        if(!owners.activityVisible || queuedInboxBusy || connectionStatus!="Online") return
+        if(copied) {
+            try { copy(preview.text) } catch (_:Exception) {
+                inboxStatus="Clipboard write failed. Nothing confirmed."
+                return
+            }
+        }
+        queuedInboxPreview=null
+        if(requestInbox("decide",{id->inboxDecideRequest(id,preview.deliveryId,copied)})) {
+            inboxStatus=if(copied) "Copied locally; awaiting Atlas receipt…" else
+                "Decline requested; awaiting Atlas receipt…"
+        } else {
+            inboxStatus=if(copied) "Copied locally; server receipt unconfirmed. Refresh inbox." else
+                "Decline not confirmed. Refresh inbox."
+        }
+    }
+
     private fun clearRecipientLookup() {
         recipientTimeoutTask?.let(handler::removeCallbacks)
         recipientTimeoutTask = null
