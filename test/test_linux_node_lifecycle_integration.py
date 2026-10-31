@@ -200,6 +200,23 @@ class DisposableHost(unittest.TestCase):
         self.assertEqual(self.previous(), RELEASES[1])
         self.assertFalse(self.journal().exists())
 
+    def test_failed_explicit_rollback_stays_pending_until_recovery(self):
+        self.assert_success(self.lifecycle("activate", RELEASES[1]))
+        self.env["FAKE_FAIL_ON"] = RELEASES[0]
+        failed = self.lifecycle("rollback")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.current(), RELEASES[0])
+        self.assertEqual(self.previous(), RELEASES[0])
+        self.assertEqual(self.journal().read_text().splitlines(),
+                         [RELEASES[1], RELEASES[0], "rollback"])
+        self.assertIn("host recovery will retry", failed.stderr)
+        del self.env["FAKE_FAIL_ON"]
+        self.assert_success(self.lifecycle("recover"))
+        self.assertEqual(self.current(), RELEASES[0])
+        self.assertEqual(self.previous(), RELEASES[1])
+        self.assertFalse(self.journal().exists())
+        self.assertEqual(self.restarts()[-1], "restart:" + RELEASES[0])
+
     def test_stale_expected_current_refuses_restart_and_journal(self):
         result = self.lifecycle("activate", RELEASES[1], "--expect-current", RELEASES[2])
         self.assertNotEqual(result.returncode, 0)
