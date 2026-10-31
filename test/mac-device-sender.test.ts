@@ -42,11 +42,11 @@ test('Mac terminal recipient labels cannot execute ANSI, OSC 52, C1 or multiline
 
 test('queue picker excludes unsupported and legacy recipients but preserves offline-capable peers', () => {
     const targets = [
-        { nodeId:randomUUID(), name:'Offline Samsung',status:'offline',available:false,queueCapable:true },
-        { nodeId:randomUUID(), name:'Live Mac',status:'online',available:true,queueCapable:true },
-        { nodeId:randomUUID(), name:'Unsupported Linux Node',status:'online',available:false,queueCapable:false },
-        { nodeId:randomUUID(), name:'Old Directory Entry',status:'offline',available:false },
-        { nodeId:randomUUID(), name:'Invalid metadata',status:'offline',available:false,queueCapable:true },
+        { nodeId:randomUUID(), name:'Offline Samsung',platform:'android',status:'offline',available:false,queueCapable:true },
+        { nodeId:randomUUID(), name:'Live Mac',platform:'darwin',status:'online',available:true,queueCapable:true },
+        { nodeId:randomUUID(), name:'Unsupported Linux Node',platform:'linux',status:'online',available:false,queueCapable:false },
+        { nodeId:randomUUID(), name:'Old Directory Entry',platform:'android',status:'offline',available:false },
+        { nodeId:randomUUID(), name:'Invalid metadata',platform:'android',status:'offline',available:false,queueCapable:'true' },
     ];
     const result=queueEligibleRecipients(targets);
     assert.deepEqual(result.map(x=>x.name),['Offline Samsung','Live Mac'],
