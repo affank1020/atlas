@@ -40,7 +40,9 @@ export function loadNodeConfig(env: NodeJS.ProcessEnv = process.env) {
 export function loadDeviceShareConfig(env: NodeJS.ProcessEnv = process.env) {
     const approvedPairs = new Set<string>();
     const value = env.ATLAS_DEVICE_SHARE_PAIRS?.trim() ?? '';
-    if (!value) return { approvedPairs };
+    if (!value) return { approvedPairs,
+        queuePairs: parseDeviceQueuePairs(env.ATLAS_DEVICE_SHARE_QUEUE_PAIRS),
+        queueKey: env.ATLAS_DEVICE_SHARE_QUEUE_KEY?.trim() || undefined };
     const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
     for (const item of value.split(',')) {
         const pair = item.trim().split(':').map(x => x.trim().toLowerCase());
@@ -49,7 +51,28 @@ export function loadDeviceShareConfig(env: NodeJS.ProcessEnv = process.env) {
         approvedPairs.add(pair[0] + ':' + pair[1]);
     }
     if (approvedPairs.size > 64) throw new Error('ATLAS_DEVICE_SHARE_PAIRS permits at most 64 explicit pairs.');
-    return { approvedPairs };
+    return { approvedPairs,
+        queuePairs: parseDeviceQueuePairs(env.ATLAS_DEVICE_SHARE_QUEUE_PAIRS),
+        queueKey: env.ATLAS_DEVICE_SHARE_QUEUE_KEY?.trim() || undefined };
+}
+
+/** A distinct operator consent boundary; an ordinary device-sharing grant
+ * does NOT permit background persistence by itself.
+ */
+function parseDeviceQueuePairs(raw: string | undefined): ReadonlySet<string> {
+    const value = raw?.trim() ?? '';
+    const pairs = new Set<string>();
+    if (!value) return pairs;
+    const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+    for (const item of value.split(',')) {
+        const pair = item.trim().split(':').map(x => x.trim().toLowerCase());
+        if (pair.length !== 2 || !uuid.test(pair[0]!) || !uuid.test(pair[1]!) ||
+            pair[0] === pair[1] || pairs.has(pair.join(':')))
+            throw new Error('ATLAS_DEVICE_SHARE_QUEUE_PAIRS must contain distinct directional sourceUUID:targetUUID pairs.');
+        pairs.add(pair[0] + ':' + pair[1]);
+    }
+    if (pairs.size > 64) throw new Error('ATLAS_DEVICE_SHARE_QUEUE_PAIRS permits at most 64 pairs.');
+    return pairs;
 }
 
 

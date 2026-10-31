@@ -25,7 +25,7 @@ export const deviceShareRecipientSchema = z.object({
     nodeId: z.string().uuid(), name: z.string().min(1).max(200),
     platform: z.string().min(1).max(80),
     status: z.enum(['online', 'offline', 'unavailable']),
-    available: z.boolean(),
+    available: z.boolean(), queueAvailable: z.boolean().optional(),
 }).strict();
 export const deviceShareRecipientsResultSchema = z.object({
     recipients: z.array(deviceShareRecipientSchema).max(64),
@@ -50,3 +50,27 @@ export const deviceShareReceiptSchema = z.object({
 export type DeviceShareSubmission = z.infer<typeof deviceShareSubmissionSchema>;
 export type DeviceShareDelivery = z.infer<typeof deviceShareDeliverySchema>;
 export type DeviceShareReceipt = z.infer<typeof deviceShareReceiptSchema>;
+
+/** Explicit asynchronous text queue: queued NEVER means copied. */
+export const deviceShareQueueSubmissionSchema = deviceShareSubmissionSchema.extend({
+    type: z.literal('device.share.queue'),
+});
+export const deviceShareQueueReceiptSchema = z.object({
+    state: z.enum(['queued','copied','declined','expired']),
+    expiresAt: z.iso.datetime({ offset: true }),
+}).strict();
+export const deviceShareInboxListSchema = z.object({
+    type: z.literal('device.share.inbox.list'), requestId: z.string().uuid(),
+}).strict();
+export const deviceShareInboxResolveSchema = z.object({
+    type: z.literal('device.share.inbox.resolve'), requestId: z.string().uuid(),
+    deliveryId: z.string().uuid(), sourceNodeId: z.string().uuid(),
+    accepted: z.boolean(),
+}).strict();
+export const deviceShareInboxItemSchema = z.object({
+    deliveryId: z.string().uuid(), sourceNodeId: z.string().uuid(),
+    text: deviceShareTextSchema, expiresAt: z.iso.datetime({ offset: true }),
+}).strict();
+export const deviceShareInboxListResultSchema = z.object({
+    items: z.array(deviceShareInboxItemSchema).max(20),
+}).strict();

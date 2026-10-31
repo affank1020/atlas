@@ -28,6 +28,9 @@ class SharesheetUiTest {
     private var backgroundRunning by mutableStateOf(false)
     private var backgroundError by mutableStateOf<String?>(null)
     private var notificationSettingsOpened = false
+    private var queuedItems by mutableStateOf<List<QueuedShareItem>>(emptyList())
+    private var queuedCopied = false
+    private var queuedDeclined = false
     private var incoming by mutableStateOf<IncomingDeviceShare?>(null)
     private var copied = false
     private var declined = false
@@ -63,6 +66,9 @@ class SharesheetUiTest {
                 onSend = {},
                 onLoadDeferredShare = { state = state.loadDeferredShare() },
                 incomingShare = incoming,
+                queuedInboxItems = queuedItems,
+                onCopyQueued = { _, _ -> queuedCopied = true },
+                onDeclineQueued = { _, _ -> queuedDeclined = true },
                 onCopyIncoming = { copied = true; incoming = null },
                 onDeclineIncoming = { declined = true; incoming = null },
                 backgroundReceiving = backgroundRunning,
@@ -166,6 +172,23 @@ class SharesheetUiTest {
             .performScrollTo().assertIsEnabled().performClick()
         compose.runOnIdle { org.junit.Assert.assertTrue(notificationSettingsOpened) }
         compose.runOnIdle { backgroundError = null }
+    }
+
+    @Test fun queuedInboxRendersExplicitCopyAndDecline() {
+        queuedCopied = false
+        queuedDeclined = false
+        mount(ready = true)
+        val id = "123e4567-e89b-42d3-a456-426614174090"
+        compose.runOnIdle {
+            queuedItems = listOf(QueuedShareItem(id, mac.nodeId, "queued text",
+                System.currentTimeMillis() + 30_000))
+            state = state.navigate(Section.INBOX)
+        }
+        compose.onNodeWithTag("queued-inbox-" + mac.nodeId + "-" + id).assertExists()
+        compose.onNodeWithTag("queued-copy-" + mac.nodeId + "-" + id).performScrollTo().performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(queuedCopied) }
+        compose.onNodeWithTag("queued-decline-" + mac.nodeId + "-" + id).performScrollTo().performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(queuedDeclined) }
     }
 
     @Test fun incomingCopyRequiresExplicitConsentAndDeclineDoesNotCopy() {

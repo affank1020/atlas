@@ -1,15 +1,15 @@
-# Atlas Android Node (0.6.0 development build)
+# Atlas Android Node (0.7.0 development build)
 
 Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not** an Android port of the Atlas Web UI.
 
-## Current scope (v0.6.0)
+## Current scope (v0.7.0)
 
 - Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
 - One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated WSS (foreground by default, optional background service).
 - Android Sharesheet text/link import with memory-only draft. Since merged PR #161, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images cannot yet be sent**: the image Send button stays disabled until a separately authorized binary transport is implemented. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
 - Advertises `device.share.send` and `device.share.receive`; the Node disconnects on backgrounding unless the operator turns on Background receiving in Settings. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
 - Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or background receiver.
-- No Workspace capabilities, persistent inbox/history, file transfer, automatic send or blanket clipboard permission. The optional remote-messaging foreground service provides best-effort live receiving; it is not offline delivery.
+- No Workspace capabilities, automatic send, blanket clipboard permission or binary file transfer. The 0.7.0 **server-encrypted queued text inbox** is separately opt-in and fetched after reconnect; see [queue runbook](../../docs/MOBILE_DURABLE_INBOX.md). The optional remote-messaging foreground service provides best-effort live receiving; it is not offline delivery.
 
 This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, the negative-case Mac → Android physical acceptance matrix, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
@@ -142,6 +142,13 @@ explicit and re-authorised against current policy by the relay.
 The server rate-limits directory reads per authenticated socket and never
 persists contents or directory responses. Re-enrolment and Node updates still
 require normal trusted APK signing and end-to-end device testing.
+
+## 0.7.0 — Explicit queued Android text inbox
+
+- An additive, **separately authorized** Mac → Android queue keeps text encrypted at rest on Atlas Server for up to 24 hours, even while Android is disconnected. Server receipt means **queued**, not copied.
+- Android Inbox lists decrypted items only after authenticated Node reconnect; each has Copy/Decline controls with explicit receipts. On a lost acknowledgment, the UI does not claim success or copy again.
+- Queue availability requires the Server key and distinct queue pair configuration; it is **off by default**. A running foreground service can show a generic notification after discovering queued items. This version does not use Firebase/FCM and cannot wake a force-stopped or sleeping tablet. See [queue runbook](../../docs/MOBILE_DURABLE_INBOX.md).
+- Installable Android versionCode is **7**; use the same retained debug APK signer as earlier enrolled builds.
 
 ## 0.6.0 — Opt-in background receiver (foreground service only)
 

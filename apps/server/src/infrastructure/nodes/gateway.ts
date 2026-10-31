@@ -5,14 +5,17 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { registrationSchema, registeredSchema, MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION } from '../../nodes/protocol.js';
 import type { NodeService } from '../../nodes/service.js';
 import { RemoteNodeRuntime } from './remote-runtime.js';
-import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema } from '@atlas/protocol/device-protocol';
+import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema,
+    deviceShareQueueSubmissionSchema, deviceShareInboxListSchema, deviceShareInboxResolveSchema } from '@atlas/protocol/device-protocol';
 import { DeviceShareRelay } from './share-relay.js';
+import { supportsAndroidInbox, type DurableDeviceShareInbox } from './durable-share-inbox.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
 const DEFAULT_TIMING: GatewayTiming = { heartbeatMs: 15_000, staleMs: 45_000, registrationMs: 5_000, persistMs: 60_000 };
-type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean };
+type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean;
+    lastInboxRead: number; inboxPending: boolean; inboxResolveWindow: number; inboxResolveCount: number };
 /** HTTP upgrade boundary. All Workspace execution still flows through NodeRouter. */
 export class RemoteNodeGateway {
     private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_NODE_FRAME_BYTES });
@@ -22,8 +25,16 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals) {
+    private readonly inboxMaintenance: ReturnType<typeof setInterval> | undefined;
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals,
+        private readonly inbox?: DurableDeviceShareInbox) {
         this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
+        if (inbox?.enabled) {
+            this.inboxMaintenance = setInterval(() => {
+                this.track(inbox.prune().catch(() => undefined));
+            }, 60 * 60 * 1000);
+            this.inboxMaintenance.unref();
+        }
     }
     private track(task: Promise<unknown>) {
         this.pendingLifecycle.add(task);
@@ -90,6 +101,8 @@ export class RemoteNodeGateway {
                     const runtime = new RemoteNodeRuntime(socket, registration.capabilities);
                     const now = Date.now();
                     session = { id: sessionId, socket, runtime, lastPong: now, lastPersisted: now, lastDirectoryRead: 0, directoryPending: false,
+                        lastInboxRead: 0, inboxPending: false,
+                        inboxResolveWindow: 0, inboxResolveCount: 0,
                         heartbeat: setInterval(() => this.heartbeat(registration.nodeId, session!), this.timing.heartbeatMs) };
                     const previous = this.sessions.get(registration.nodeId);
                     this.sessions.set(registration.nodeId, session);
@@ -135,7 +148,29 @@ export class RemoteNodeGateway {
                         await this.nodes.identity!.authenticate(originId, credential);
                         if (this.sessions.get(originId) !== current)
                             throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
-                        const recipients = await this.nodes.shareRecipients(originId);
+                        // Older Android sender builds expect an exact five-field
+                        // directory entry. Queue mode is currently a Mac-only
+                        // explicit CLI workflow; never send the optional field
+                        // to legacy Android senders.
+                        const sender = await this.nodes.repository.get(originId);
+                        const macQueueSender = sender.platform === 'darwin';
+                        const recipients = await Promise.all((await this.nodes.shareRecipients(originId)).map(async recipient => {
+                            let queueAvailable = false;
+                            if (macQueueSender && recipient.platform === 'android' &&
+                                this.inbox?.allowsQueue(originId, recipient.nodeId) === true &&
+                                recipient.status !== 'unavailable') {
+                                // Live NodeService.get masks stored capabilities
+                                // when offline. The queue is specifically for that
+                                // condition, so inspect the durable registration.
+                                const node = await this.nodes.repository.get(recipient.nodeId).catch(() => null);
+                                queueAvailable = !!node && node.credentialState === 'active' &&
+                                    supportsAndroidInbox(node.version) &&
+                                    node.capabilities.includes('device.share.receive');
+                            }
+                            // Optional extension must not alter older directory
+                            // responses unless queueing really is available.
+                            return queueAvailable ? { ...recipient, queueAvailable: true } : recipient;
+                        }));
                         respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
                     } catch (error) {
                         const known = error instanceof AtlasError;
@@ -143,6 +178,88 @@ export class RemoteNodeGateway {
                             message: known ? error.message.slice(0, 200) : 'Recipient directory is unavailable.' });
                     } finally {
                         current.directoryPending = false;
+                    }
+                })();
+                this.track(task);
+                return;
+            }
+            const queued = deviceShareQueueSubmissionSchema.safeParse(message);
+            if (queued.success) {
+                const originId = id, current = session, submission = queued.data;
+                const task = (async () => {
+                    try {
+                        if (!this.inbox) throw new AtlasError('Queued delivery unavailable.', 'SHARE_QUEUE_DISABLED');
+                        const result = await this.inbox.queue({
+                            sourceId: originId, runtime: current?.runtime, credential, submission,
+                        });
+                        if (socket.readyState === WebSocket.OPEN && this.sessions.get(originId) === current)
+                            socket.send(JSON.stringify({ type: 'response', requestId: submission.requestId, ok: true, result }));
+                    } catch (error) {
+                        if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                        const known = error instanceof AtlasError;
+                        socket.send(JSON.stringify({ type: 'response', requestId: submission.requestId, ok: false,
+                            error: { code: known ? error.code : 'SHARE_UNAVAILABLE',
+                                message: known ? error.message.slice(0,200) : 'Queued delivery is unavailable.' } }));
+                    }
+                })();
+                this.track(task);
+                return;
+            }
+            const inboxList = deviceShareInboxListSchema.safeParse(message);
+            const inboxResolve = deviceShareInboxResolveSchema.safeParse(message);
+            const resolution = inboxResolve.success ? inboxResolve.data : null;
+            if (inboxList.success || resolution) {
+                const originId = id, current = session;
+                const requestId = inboxList.success ? inboxList.data.requestId : resolution!.requestId;
+                const respondError = (code: string, message: string) => {
+                    if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                    socket.send(JSON.stringify({ type: 'response', requestId, ok: false,
+                        error: { code, message } }));
+                };
+                if (!current || this.sessions.get(originId) !== current ||
+                    !current.runtime.getCapabilities().includes('device.share.receive')) {
+                    respondError('SHARE_DENIED', 'Inbox operation is not permitted.');
+                    return;
+                }
+                const now = Date.now();
+                if (inboxList.success) {
+                    if (current.inboxPending || now - current.lastInboxRead < 2_000) {
+                        respondError('SHARE_RATE_LIMIT', 'Refresh the inbox less frequently.');
+                        return;
+                    }
+                    current.inboxPending = true;
+                    current.lastInboxRead = now;
+                } else {
+                    if (now - current.inboxResolveWindow >= 60_000) {
+                        current.inboxResolveWindow = now;
+                        current.inboxResolveCount = 0;
+                    }
+                    if (current.inboxResolveCount >= 40) {
+                        respondError('SHARE_RATE_LIMIT', 'Too many inbox decisions.');
+                        return;
+                    }
+                    current.inboxResolveCount++;
+                }
+                const task = (async () => {
+                    try {
+                        if (!this.inbox) throw new AtlasError('Queued delivery unavailable.', 'SHARE_QUEUE_DISABLED');
+                        const auth = { targetId: originId, runtime: current?.runtime, credential };
+                        const result = inboxList.success
+                            ? await this.inbox.list(auth)
+                            : await this.inbox.resolve({ ...auth,
+                                deliveryId: resolution!.deliveryId,
+                                sourceNodeId: resolution!.sourceNodeId,
+                                accepted: resolution!.accepted });
+                        if (socket.readyState === WebSocket.OPEN && this.sessions.get(originId) === current)
+                            socket.send(JSON.stringify({ type: 'response', requestId, ok: true, result }));
+                    } catch (error) {
+                        if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                        const known = error instanceof AtlasError;
+                        socket.send(JSON.stringify({ type: 'response', requestId, ok: false,
+                            error: { code: known ? error.code : 'SHARE_UNAVAILABLE',
+                                message: known ? error.message.slice(0,200) : 'Inbox unavailable.' } }));
+                    } finally {
+                        if (inboxList.success) current.inboxPending = false;
                     }
                 })();
                 this.track(task);
@@ -199,6 +316,7 @@ export class RemoteNodeGateway {
     }
     async close() {
         this.closed = true;
+        if (this.inboxMaintenance) clearInterval(this.inboxMaintenance);
         const sessions = [...this.sessions]; this.sessions.clear();
         await Promise.all(sessions.map(async ([id, session]) => {
             clearInterval(session.heartbeat); session.runtime.dispose(); session.socket.terminate();

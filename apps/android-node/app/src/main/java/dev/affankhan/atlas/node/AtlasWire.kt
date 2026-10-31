@@ -243,3 +243,82 @@ internal fun parseShareReply(raw: String): ShareReply? = runCatching {
         else -> null
     }
 }.getOrNull()
+
+/** Server-persisted, expiring text inbox. Only an explicit foreground Copy
+ * action changes the Android clipboard. Queued is not an accepted receipt.
+ */
+internal data class QueuedShareItem(
+    val deliveryId: String, val sourceNodeId: String,
+    val text: String, val expiresAtMs: Long,
+)
+internal data class InboxListReply(
+    val requestId: String,
+    val items: List<QueuedShareItem>? = null,
+    val errorCode: String? = null,
+)
+internal data class InboxResolutionReply(
+    val requestId: String,
+    val state: String? = null,
+    val errorCode: String? = null,
+)
+internal fun inboxListRequest(id: String): String {
+    require(validNodeId(id))
+    return JSONObject().put("type", "device.share.inbox.list")
+        .put("requestId", id).toString()
+}
+internal fun inboxResolutionRequest(
+    id: String, deliveryId: String, sourceNodeId: String, accepted: Boolean,
+): String {
+    require(validNodeId(id) && validNodeId(deliveryId) && validNodeId(sourceNodeId))
+    return JSONObject().put("type", "device.share.inbox.resolve")
+        .put("requestId", id).put("deliveryId", deliveryId)
+        .put("sourceNodeId", sourceNodeId).put("accepted", accepted).toString()
+}
+internal fun parseInboxListReply(raw: String): InboxListReply? = runCatching {
+    val json = JSONObject(raw)
+    if (json.optString("type") != "response") return@runCatching null
+    val id = json.opt("requestId") as? String ?: return@runCatching null
+    if (!validNodeId(id)) return@runCatching null
+    if (json.opt("ok") == false) {
+        val code = json.getJSONObject("error").opt("code") as? String ?: return@runCatching null
+        if (!code.matches(Regex("[A-Z_]{1,80}"))) return@runCatching null
+        return@runCatching InboxListReply(id, errorCode = code)
+    }
+    if (json.opt("ok") != true) return@runCatching null
+    val result = json.getJSONObject("result")
+    if (result.length() != 1 || !result.has("items")) return@runCatching null
+    val array = result.getJSONArray("items")
+    if (array.length() > 20) return@runCatching null
+    val seen = mutableSetOf<String>()
+    val items = (0 until array.length()).map { i ->
+        val item = array.getJSONObject(i)
+        if (item.length() != 4) return@runCatching null
+        val deliveryId = item.getString("deliveryId")
+        val sourceId = item.getString("sourceNodeId")
+        val text = item.getString("text")
+        val expiry = Instant.parse(item.getString("expiresAt")).toEpochMilli()
+        if (!validNodeId(deliveryId) || !validNodeId(sourceId) ||
+            !seen.add(sourceId.lowercase() + ":" + deliveryId.lowercase()) || text.isBlank() ||
+            text.length > MAX_SHARE_CHARACTERS) return@runCatching null
+        QueuedShareItem(deliveryId, sourceId, text, expiry)
+    }
+    InboxListReply(id, items = items)
+}.getOrNull()
+
+internal fun parseInboxResolutionReply(raw: String): InboxResolutionReply? = runCatching {
+    val json = JSONObject(raw)
+    if (json.optString("type") != "response") return@runCatching null
+    val id = json.opt("requestId") as? String ?: return@runCatching null
+    if (!validNodeId(id)) return@runCatching null
+    if (json.opt("ok") == false) {
+        val code = json.getJSONObject("error").opt("code") as? String ?: return@runCatching null
+        if (!code.matches(Regex("[A-Z_]{1,80}"))) return@runCatching null
+        return@runCatching InboxResolutionReply(id, errorCode = code)
+    }
+    if (json.opt("ok") != true) return@runCatching null
+    val result = json.getJSONObject("result")
+    if (result.length() != 1) return@runCatching null
+    val state = result.opt("state") as? String ?: return@runCatching null
+    if (state !in setOf("queued", "copied", "declined", "expired")) return@runCatching null
+    InboxResolutionReply(id, state = state)
+}.getOrNull()
