@@ -183,8 +183,9 @@ def promote(layout, version: str, *, require_existing: bool = False) -> None:
     # stays unchanged. A process killed between alignment and os.replace
     # leaves the old CLI operable: its confirmed rollback path repairs its
     # own watchdog before touching the Node.
-    target = signed_lifecycle(scripts)
-    align_recovery_watchdog(layout, target)
+    if require_existing:
+        target = signed_lifecycle(scripts)
+        align_recovery_watchdog(layout, target)
     if link.is_symlink() and Path(os.readlink(link)) == scripts:
         return
     temp = operator / (".current." + str(os.getpid()) + ".tmp")
