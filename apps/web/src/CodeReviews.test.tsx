@@ -307,3 +307,81 @@ test('Timeline shows evidence-backed reviewer assertions without treating missin
     expect(screen.getByText(/Reproduced against the new head with a focused test/)).toBeInTheDocument();
     expect(screen.getByText(/Lifecycle outcomes are reviewer assertions/)).toBeInTheDocument();
 });
+
+test('GitHub thread inventory is a separate opt-in PR status request, never a hidden background query', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
+        if (name === 'code_reviews_overview') return { data: { reviewRuns: 1, findingObservations: 1 },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_runs') return { data: { total: 1, items: [makeRun(runId, 137)] },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_summary') return { data: {
+            recordedRounds: 1, latestReviewHead: 'current', latest: null,
+            currentHead: { state: 'open', sha: 'a'.repeat(40) },
+        }, isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_timeline') return {
+            data: emptyTimeline, isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_review_thread_state') return { data: {
+            repository: 'affank1020/atlas', prNumber: 137, readOnly: true,
+            resolutionSupported: false, totalGitHubThreads: 1, ownedRootCount: 1,
+            mappedOwnedRoots: 1, mappingComplete: true,
+            ownedThreads: [{ rootCommentId: 73, mappingState: 'verified',
+                threadId: 'PRRT_123456789', resolutionState: 'open_on_github' }],
+            resolutions: [],
+        }, isLoading: false, isFetching: false, refetch } as never;
+        throw Error('Unexpected tool: ' + name);
+    });
+    render(<CodeReviews />);
+    expect(vi.mocked(useApplicationRead).mock.calls.map(([name]) => name))
+        .not.toContain('code_reviews_review_thread_state');
+    fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
+    expect(vi.mocked(useApplicationRead).mock.calls.map(([name]) => name))
+        .not.toContain('code_reviews_review_thread_state');
+    fireEvent.click(screen.getByRole('button', { name: 'Check GitHub conversations' }));
+    expect(vi.mocked(useApplicationRead)).toHaveBeenCalledWith(
+        'code_reviews_review_thread_state', { repository: 'affank1020/atlas', prNumber: 137 }, true);
+    expect(screen.getByText(/1 Atlas-owned root:/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide GitHub conversations' }));
+    expect(screen.queryByText(/1 Atlas-owned root:/)).not.toBeInTheDocument();
+});
+
+test('Displays saved publication receipts separately from live GitHub thread state', () => {
+    const withClaims = {
+        ...makeRun(runId, 137),
+        data: { ...makeRun(runId, 137).data,
+            coverage: {
+                source: 'atlas_structured_submission',
+                githubManagedSummary: { state: 'published', commentId: 880 },
+                githubFixReplies: { 'root-a': { state: 'claimed' } },
+                githubThreadResolutions: { 'root-a': { state: 'published', rootCommentId: 73 } },
+            },
+        },
+    };
+    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
+        if (name === 'code_reviews_overview') return { data: { reviewRuns: 1, findingObservations: 1 },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_runs') return { data: { total: 1, items: [withClaims] },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_findings') return { data: { total: 1, items: [{
+            id: 'finding-receipt', data: { severity: 'sev3', title: 'Original problem',
+                description: 'Finding with managed root', state: 'new',
+                evidence: { githubInlineThread: { state: 'published', rootCommentId: 72 },
+                    githubInlineReply: { state: 'claimed' } },
+            },
+        }] }, isLoading: false, isFetching: false, refetch } as never;
+        throw Error('Unexpected tool: ' + name);
+    });
+    render(<CodeReviews />);
+    fireEvent.click(screen.getByRole('button', { name: 'View findings' }));
+    expect(screen.getByRole('heading', { name: 'Saved GitHub workflow receipts' })).toBeInTheDocument();
+    expect(screen.getByText(/Managed PR summary:/)).toHaveTextContent('Atlas receipt published');
+    expect(screen.getByText(/Fix-evidence replies:/)).toHaveTextContent('1 claimed/uncertain');
+    expect(screen.getByText(/Conversation-resolution attempts:/)).toHaveTextContent('1 stored published');
+    expect(screen.getByText(/These are saved Atlas receipts, not a fresh GitHub check/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /View saved comment/ }))
+        .toHaveAttribute('href', 'https://github.com/affank1020/atlas/pull/137#issuecomment-880');
+    expect(screen.getByRole('link', { name: /View inline root/ }))
+        .toHaveAttribute('href', 'https://github.com/affank1020/atlas/pull/137#discussion_r72');
+    expect(screen.getByText(/Persisting reply:/)).toHaveTextContent('Claimed / uncertain');
+    expect(vi.mocked(useApplicationRead).mock.calls.map(([name]) => name))
+        .not.toContain('code_reviews_review_thread_state');
+});
