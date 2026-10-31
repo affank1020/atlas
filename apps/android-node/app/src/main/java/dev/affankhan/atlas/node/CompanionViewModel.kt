@@ -215,7 +215,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     /** Consent survives process death. A stopped service is not automatically restarted. */
-    fun setPushEnabled(enabled: Boolean) {
+    fun updatePushConsent(enabled: Boolean) {
         AtlasPush.setEnabled(getApplication(), enabled)
         pushEnabled = enabled
         if (!enabled) sendPushUnregister()
@@ -770,7 +770,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun forget() {
-        setPushEnabled(false)
+        updatePushConsent(false)
         val visibleActivities = owners.visibleActivities
         // Stop the independently running receiver before deleting its identity.
         getApplication<AtlasNodeApp>().stopService(Intent(
