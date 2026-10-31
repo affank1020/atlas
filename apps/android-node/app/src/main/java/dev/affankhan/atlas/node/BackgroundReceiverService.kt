@@ -52,11 +52,20 @@ class BackgroundReceiverService : Service() {
             })
         }
 
+        /** Create channels only at service/opt-in setup, never while polling.
+         * The OS preserves user-selected importance for already-created channels.
+         */
+        fun prepareChannels(context: Context): Boolean = try {
+            ensureChannels(context.getSystemService(NotificationManager::class.java))
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
+
         fun hasUsableNotifications(context: Context): Boolean {
             if (!hasNotificationPermission(context)) return false
             return try {
                 val manager = context.getSystemService(NotificationManager::class.java)
-                ensureChannels(manager)
                 backgroundNotificationsUsable(
                     permissionGranted = true,
                     appNotificationsEnabled = manager.areNotificationsEnabled(),
@@ -89,7 +98,7 @@ class BackgroundReceiverService : Service() {
                     .build()
                 manager.notify(INCOMING_ID, message)
                 true
-            } catch (_: SecurityException) {
+            } catch (_: RuntimeException) {
                 false
             }
         }
@@ -118,7 +127,7 @@ class BackgroundReceiverService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // Channels are provisioned by hasUsableNotifications before enabling.
+        prepareChannels(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
