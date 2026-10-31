@@ -151,7 +151,7 @@ export async function assessProjectCutover(input:{
             }
         }
     }
-    const metadataMatched=blockers.length===0;
+    let metadataMatched=blockers.length===0;
     const page=catalog.items.slice(from,from+count),end=from+page.length;
     const remaining=end<catalog.items.length;
     const counts={valid:0,missing:0,corrupt:0};
@@ -169,11 +169,16 @@ export async function assessProjectCutover(input:{
             await readBounded(input.independentBackup!,item.target,size,digest,
                 "missing-recovery-versioned","corrupt-recovery-versioned",blockers,counts);
         }
-        // Detect fresh uploads/archives that appeared during remote reads.
-        const after=await readProjectKeySnapshot(input.database,project);
-        if(after.sha256!==catalog.sha256||after.items.length!==catalog.items.length)
-            block("catalogue-changed-during-verification");
         verified=blockers.length?"failed-page":"passed-page";
+    }
+    // A final metadata read is required in BOTH plan and verify modes:
+    // a concurrently inserted or archived object must never receive a
+    // misleading metadataMatched=true, even without any object GET.
+    const after=await readProjectKeySnapshot(input.database,project);
+    if(after.sha256!==catalog.sha256||after.items.length!==catalog.items.length){
+        block("catalogue-changed-during-assessment");
+        metadataMatched=false;
+        if(input.mode==="verify")verified="failed-page";
     }
     return {
         mode:input.mode,projectId:project,keyRunId,recoveryRunId,
