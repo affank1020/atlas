@@ -3,8 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import type { Pool } from "pg";
+import { AtlasFilesService } from "../apps/server/src/server/atlas-files.js";
+import { databaseFixture, cleanupDatabases } from "./database.js";
+
+after(cleanupDatabases);
 import {
     LocalObjectStore, ObjectNotFound, R2ObjectStore, projectStorageKey, isProjectObjectKey, isLegacyObjectKey,
 } from "../apps/server/src/server/file-storage.js";
@@ -224,4 +228,45 @@ test("Page cursor only advances after complete verification; ambiguous PUT is sa
     assert.equal(continued.status,"completed");
     assert.equal(continued.createdVerified,1);
     assert.equal(values.size,2);
+});
+
+test("Real PostgreSQL view provides a bounded ordered copy plan without DB mutations", async () => {
+    const fixture=await databaseFixture();
+    const root=await mkdtemp(path.join(os.tmpdir(),"project-copy-db-"));
+    const files=new AtlasFilesService(fixture.databaseUrl,root);
+    try {
+        await files.pool.query("INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,'Migration project',now(),now())",
+            [projectId]);
+        const bytes=Buffer.from("committed private bytes");
+        const uploaded=await files.upload({owner:{kind:"project",id:projectId},fileName:"sample.bin",
+            mimeType:"application/octet-stream",bytes});
+        const output=await copyProjectKeys({database:files.pool,
+            source:new LocalObjectStore(root),destination:store(new Map()),projectId,maxFiles:2});
+        assert.equal(output.status,"ready");
+        assert.equal(output.checked,1);
+        assert.equal(output.planned,1);
+        assert.equal(decodeKeyCopyCursor(output.nextCursor!).fileId,uploaded.id);
+        assert.deepEqual((await files.list({kind:"project",id:projectId})).map(x=>x.id),[uploaded.id]);
+        assert.deepEqual((await files.download({kind:"project",id:projectId},uploaded.id)).bytes,bytes);
+    } finally {
+        await files.close();
+        await rm(root,{recursive:true,force:true});
+    }
+});
+
+test("A competing conditional PUT winner is read back and verified rather than overwritten", async () => {
+    const bytes=Buffer.from("race copy source"),entry=row(bytes,"atlas-file");
+    const objects=new Map<string,Buffer>();
+    let attempts=0;
+    const remote:BoundedCopyStore={
+        ...store(objects),
+        async putIfAbsent(key,value) { attempts++;objects.set(key,Buffer.from(value));return false; },
+    };
+    const result=await copyProjectKeys({database:database([entry]).db,
+        source:store(new Map([[entry.storage_key,bytes]])),destination:remote,projectId,apply:true});
+    assert.equal(result.status,"completed");
+    assert.equal(result.racedVerified,1);
+    assert.equal(result.createdVerified,0);
+    assert.equal(attempts,1);
+    assert.deepEqual(objects.get(projectStorageKey(projectId,entry.file_id)),bytes);
 });
