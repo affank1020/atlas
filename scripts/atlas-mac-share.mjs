@@ -86,7 +86,7 @@ export async function shareFromMacClipboard(mode = 'live') {
     } catch { throw Error('Could not read plain text from Mac clipboard.'); }
     if (!text || text.trim().length === 0 || text.length > 16_384)
         throw Error('Clipboard must contain 1–16,384 non-blank text characters.');
-    const directory = await localRequest({ action: 'recipients' });
+    const directory = await localRequest({ action: mode === 'queue' ? 'queueRecipients' : 'recipients' });
     if (directory.ok !== true) {
         throw Error('Approved devices could not be loaded (' + (directory.code || 'SHARE_UNAVAILABLE') + ').');
     }
