@@ -74,15 +74,15 @@ test('Nodes without log capability fall back to activity, never a privileged rea
     assert.match(result.results[0]?.description || '', /raw logs unavailable/);
 });
 
-test('Linux log search selects only the fixed unit journal while preserving requested count', async () => {
+test('Linux log search selects the private service file while preserving requested count', async () => {
     const deps = dependencies();
     deps.nodes.call = async (name: string) => name === 'list_nodes'
         ? [{ ...node, platform: 'linux', name: 'Atlas Linux VPS' }]
         : { workspaces: [] };
     const result = await searchEverywhere(deps, { query: 'show the last 37 error lines from my Linux node' });
     const hit = result.results.find(item => item.kind === 'node');
-    assert.equal(hit?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=37');
-    assert.match(hit?.description || '', /systemd journal/);
+    assert.equal(hit?.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=service&lines=37');
+    assert.match(hit?.description || '', /private Atlas Node output/);
 });
 
 test('journal and systemd search vocabulary resolves Linux Node links even without journal in the Node name', async () => {
@@ -99,8 +99,8 @@ test('journal and systemd search vocabulary resolves Linux Node links even witho
         const result = await searchEverywhere(deps, { query: phrase });
         const link = result.results.find(item => item.kind === 'node');
         assert.ok(link, phrase);
-        assert.equal(link.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=' + count, phrase);
-        assert.match(link.description, /systemd journal/);
+        assert.equal(link.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=service&lines=' + count, phrase);
+        assert.match(link.description, /private Atlas Node output/);
     }
 });
 
