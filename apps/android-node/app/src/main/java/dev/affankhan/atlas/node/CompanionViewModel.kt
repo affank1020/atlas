@@ -114,7 +114,18 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var reconnectDelayMs = 1_000L
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
-    private var pendingPushRequestId: String? = null
+    private data class PendingPushCommand(
+        val requestId: String, val register: Boolean, val token: String?,
+    )
+    private val pushRetryPolicy = PushRetryPolicy()
+    private var pendingPush: PendingPushCommand? = null
+    private var pushTimeoutTask: Runnable? = null
+    private var pushRetryTask: Runnable? = null
+    private var pushToken: String? = null
+    var pushRegistrationStatus by mutableStateOf(
+        if (pushEnabled) "Push registration pending connection." else "Push disabled."
+    )
+        private set
     private val recentIncoming = RecentIncomingShares()
     private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
     private var incomingTimeoutTask: Runnable? = null
@@ -214,40 +225,125 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
-    /** Consent survives process death. A stopped service is not automatically restarted. */
+    /** Explicit user intent takes priority over a pending earlier request.
+     * The gateway applies the sent commands in order; stale replies are ignored. */
     fun updatePushConsent(enabled: Boolean) {
+        cancelPushTimers()
+        pendingPush = null
+        pushRetryPolicy.reset()
         AtlasPush.setEnabled(getApplication(), enabled)
         pushEnabled = enabled
-        if (!enabled) sendPushUnregister()
-        else refreshPushRegistration()
+        if (!enabled) sendPushUnregister() else refreshPushRegistration()
     }
 
     fun onPushTokenChanged(token: String) {
-        if (!AtlasPush.enabled(getApplication())) return
+        if (!pushEnabled || !AtlasPush.enabled(getApplication())) return
+        if (pushToken != token) {
+            pushToken = token
+            pushRetryPolicy.reset()
+        }
         sendPushRegister(token)
     }
 
     private fun refreshPushRegistration() {
-        if (!AtlasPush.configured(getApplication())) return
+        if (!AtlasPush.configured(getApplication())) {
+            pushRegistrationStatus = "Firebase is not configured in this APK. Manual Inbox remains available."
+            return
+        }
         AtlasPush.currentToken(getApplication()) { token ->
             handler.post { onPushTokenChanged(token) }
         }
     }
 
+    private fun cancelPushTimers() {
+        pushRetryTask?.let(handler::removeCallbacks)
+        pushRetryTask = null
+        pushTimeoutTask?.let(handler::removeCallbacks)
+        pushTimeoutTask = null
+    }
+
     private fun sendPushRegister(token: String) {
-        if (!AtlasPush.enabled(getApplication()) || connectionStatus != "Online") return
-        val ws = socket ?: return
-        val requestId = UUID.randomUUID().toString()
-        pendingPushRequestId = requestId
-        if (!ws.send(AtlasPush.registerRequest(requestId, token))) pendingPushRequestId = null
+        if (!pushEnabled || !AtlasPush.enabled(getApplication())) return
+        sendPushCommand(register = true, token = token)
     }
 
     private fun sendPushUnregister() {
-        if (connectionStatus != "Online") return
-        val ws = socket ?: return
+        sendPushCommand(register = false, token = null)
+    }
+
+    private fun sendPushCommand(register: Boolean, token: String?) {
+        cancelPushTimers()
+        val ws = socket
+        if (ws == null || connectionStatus != "Online") {
+            pushRegistrationStatus = if (register)
+                "Push registration pending connection."
+            else "Notifications disabled locally; server token removal pending reconnect."
+            return
+        }
         val requestId = UUID.randomUUID().toString()
-        pendingPushRequestId = requestId
-        if (!ws.send(AtlasPush.unregisterRequest(requestId))) pendingPushRequestId = null
+        val command = PendingPushCommand(requestId, register, token)
+        pendingPush = command
+        pushRegistrationStatus = if (register)
+            "Registering push notifications…" else "Removing push registration…"
+        val generation = connectionGeneration
+        val timeout = Runnable {
+            if (generation == connectionGeneration && pendingPush?.requestId == requestId) {
+                pendingPush = null
+                pushTimeoutTask = null
+                schedulePushRetry(command, "SHARE_UNAVAILABLE", generation)
+            }
+        }
+        pushTimeoutTask = timeout
+        handler.postDelayed(timeout, 12_000L)
+        val payload = if (register) AtlasPush.registerRequest(requestId, requireNotNull(token))
+            else AtlasPush.unregisterRequest(requestId)
+        if (!ws.send(payload)) {
+            handler.removeCallbacks(timeout)
+            pushTimeoutTask = null
+            pendingPush = null
+            schedulePushRetry(command, "SHARE_UNAVAILABLE", generation)
+        }
+    }
+
+    private fun onPushReply(reply: PushRegistrationReply, generation: Int) {
+        if (generation != connectionGeneration) return
+        val command = pendingPush ?: return
+        if (command.requestId != reply.requestId) return
+        pushTimeoutTask?.let(handler::removeCallbacks)
+        pushTimeoutTask = null
+        pendingPush = null
+        if (reply.errorCode == null && reply.registered == command.register) {
+            pushRetryPolicy.reset()
+            pushRegistrationStatus = if (command.register)
+                "Push registered. Delivery is best effort."
+            else "Push disabled; server token removed."
+        } else {
+            schedulePushRetry(command, reply.errorCode ?: "SHARE_UNAVAILABLE", generation)
+        }
+    }
+
+    private fun schedulePushRetry(command: PendingPushCommand, errorCode: String, generation: Int) {
+        if (command.register != pushEnabled || generation != connectionGeneration) return
+        val delay = pushRetryPolicy.nextDelay(errorCode)
+        if (delay == null) {
+            pushRegistrationStatus = if (errorCode in setOf(
+                    "SHARE_DENIED", "NODE_AUTH_INVALID", "INVALID_REQUEST", "NODE_DISCONNECTED", "SHARE_REPLAY"))
+                "Push request rejected ($errorCode). Check Atlas Server permissions/configuration."
+            else "Push request not confirmed after retries. Reopen Settings to try again."
+            return
+        }
+        pushRegistrationStatus = if (command.register)
+            "Push registration unavailable ($errorCode); retrying…"
+        else "Push opt-out awaiting server confirmation ($errorCode); retrying…"
+        val task = Runnable {
+            if (generation == connectionGeneration && command.register == pushEnabled) {
+                pushRetryTask = null
+                if (command.register) sendPushRegister(pushToken ?: command.token ?: return@Runnable)
+                else sendPushUnregister()
+            }
+        }
+        pushRetryTask = task
+        handler.postDelayed(task, delay)
     }
 
     fun startConnection() {
@@ -313,7 +409,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         socket = null
         clearRecipientLookup()
         clearQueuedInbox()
-        pendingPushRequestId = null
+        cancelPushTimers()
+        pendingPush = null
+        pushRetryPolicy.reset()
+        pushRegistrationStatus = if (pushEnabled) "Push registration pending reconnect."
+            else "Push disabled locally; server removal will retry after reconnect."
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -337,7 +437,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             connectionStatus = "Online"
                             refreshRecipients()
                             if (AtlasPush.enabled(getApplication())) refreshPushRegistration()
-                            else if (AtlasPush.configured(getApplication())) sendPushUnregister()
+                            else sendPushUnregister()
                             if (session.section == Section.INBOX) refreshQueuedInbox()
                         }
                         is ConnectionEvent.Offline -> {
@@ -345,7 +445,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             clearRecipientLookup()
                             clearIncomingShare()
                             clearQueuedInbox()
-                            pendingPushRequestId = null
+                            cancelPushTimers()
+                            pendingPush = null
+                            pushRetryPolicy.reset()
+                            pushRegistrationStatus = if (pushEnabled)
+                                "Push registration pending reconnect."
+                            else "Push disabled locally; server removal will retry after reconnect."
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -439,11 +544,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         }
                     }
                 }
-            }, { requestId ->
-                handler.post {
-                    if (generation == connectionGeneration && requestId == pendingPushRequestId)
-                        pendingPushRequestId = null
-                }
+            }, { pushReply ->
+                handler.post { onPushReply(pushReply, generation) }
             }, { incoming, respond ->
                 // Capture receipt time on the socket thread so main-thread delays
                 // cannot extend the 15-second decision window.
