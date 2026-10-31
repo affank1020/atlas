@@ -1,7 +1,9 @@
 """Safe, network-free selection tests for the host-local Linux Node updater."""
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 p = Path(__file__).resolve().parents[1] / "scripts/linux-node-host-updater.py"
 spec = importlib.util.spec_from_file_location("atlas_linux_node_host_updater", p)
@@ -81,9 +83,33 @@ class CatalogTests(unittest.TestCase):
             updater.releases_from_json("[" + ",".join("{}" for _ in range(100)) + "]")
 
     def test_status_is_read_only_and_no_root_main_allowed(self):
-        # Avoid running a real GitHub command in unit tests.
         self.assertFalse(updater.TAG.fullmatch("node-v2.0.0-unsafe;rm"))
         self.assertFalse(updater.DIGEST.fullmatch("sha256:short"))
+
+    def test_github_host_is_pinned_even_if_caller_sets_enterprise_host(self):
+        with patch.dict(updater.os.environ, {"GH_HOST": "malicious.example"}):
+            with patch.object(updater.subprocess, "run") as subprocess_run:
+                subprocess_run.return_value.stdout = "[]"
+                updater.run("gh", "api", "-X", "GET", updater.RELEASES_API, capture=True)
+                self.assertEqual(subprocess_run.call_args.kwargs["env"]["GH_HOST"], "github.com")
+
+    def test_tampered_download_never_reaches_attestation_or_sudo(self):
+        info = updater.verified_catalogue([release(A, 100)])[0]
+        calls = []
+        def fake_run(*argv, **_kwargs):
+            calls.append(argv)
+            if argv[:3] == ("gh", "release", "download"):
+                filename = info["file"]
+                (directory / filename).write_bytes(b"tampered archive")
+                (directory / (filename + ".sha256")).write_text("bad manifest")
+                return ""
+            raise AssertionError("Unverified bytes must not reach privileged or attestation execution.")
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            with patch.object(updater, "run", side_effect=fake_run):
+                with self.assertRaises(updater.Refused):
+                    updater.download_and_verify(info, directory)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

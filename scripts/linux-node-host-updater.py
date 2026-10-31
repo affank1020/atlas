@@ -131,7 +131,12 @@ def choose_latest(releases: list[dict], installed: str) -> tuple[dict, str]:
 
 
 def run(*argv: str, cwd: str | None = None, capture: bool = False) -> str:
-    result = subprocess.run(argv, cwd=cwd, check=True, text=True,
+    # Never allow GH_HOST from the caller to redirect release discovery to
+    # an Enterprise host with a matching owner/repository name.
+    env = os.environ.copy()
+    if argv[0] == "gh":
+        env["GH_HOST"] = "github.com"
+    result = subprocess.run(argv, cwd=cwd, check=True, text=True, env=env,
                             stdout=subprocess.PIPE if capture else None,
                             timeout=120)
     return result.stdout or ""
