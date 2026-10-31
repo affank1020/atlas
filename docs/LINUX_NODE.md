@@ -37,6 +37,17 @@ the target Linux host before enabling the service.
 - No project builds/tests until a separate sandbox is implemented.
 - No public listening socket, arbitrary command MCP tool or dev server.
 
+## Private service log rollout
+
+For the least-privilege Monitoring log source, **do not** add the service user to
+`systemd-journal` or `adm`. The new Node reads a fixed, Node-owned log file
+inside a **root-controlled** directory; operator provisioning and reviewed
+systemd/logrotate deployment are required before switching the unit. See
+[LINUX_NODE_PRIVATE_LOGS.md](LINUX_NODE_PRIVATE_LOGS.md) for the exact
+permissions, safe installation sequence, rolling-upgrade expectations and
+rollback. An otherwise functional Node can report logs as unavailable until
+that operator step is completed.
+
 ## Verification
 ```bash
 sudo systemctl daemon-reload
