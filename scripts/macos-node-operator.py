@@ -341,6 +341,10 @@ def enable_check(layout) -> None:
         plist.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         desired = check_plist(layout)
         existing = check_existing_plist(layout)
+        if existing is not None and not Path(
+            plistlib.loads(existing)["ProgramArguments"][0]
+        ).is_file():
+            raise Refused("Old checker Python interpreter is missing; disable and re-enable checks.")
         if lifecycle.launch_loaded(layout, check_target(layout)):
             if existing is None:
                 raise Refused("Unrecognized loaded release-checker job.")
@@ -348,8 +352,6 @@ def enable_check(layout) -> None:
             return
         if existing is None:
             lifecycle.atomic_write(plist, desired)
-        elif not Path(plistlib.loads(existing)["ProgramArguments"][0]).is_file():
-            raise Refused("Old checker Python interpreter is missing; disable and re-enable checks.")
         # Preserve a valid prior interpreter path on retry; do not overwrite
         # a plist from a previous attempt or a user-owned job unexpectedly.
         lifecycle.command("launchctl", "bootstrap", f"gui/{layout.uid}", str(plist))
