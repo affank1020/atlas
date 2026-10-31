@@ -1063,7 +1063,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
     fun editDraft(value: String) {
         // The reducer cancels a loading *active* image. A separate deferred
-        // screenshot keeps loading while the user edits the sent text draft.
+        // image keeps loading while the user edits the sent text draft.
         session = session.editDraft(value)
         if (!sharePending) shareStatus = "Nothing sent yet"
     }
@@ -1111,7 +1111,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         BitmapFactory.decodeByteArray(imported.bytes, 0, imported.bytes.size, bounds)
                         require(bounds.outWidth in 1..MAX_IMAGE_DIMENSION &&
                             bounds.outHeight in 1..MAX_IMAGE_DIMENSION &&
-                            bounds.outWidth.toLong() * bounds.outHeight.toLong() <= 64_000_000L) {
+                            bounds.outWidth.toLong() * bounds.outHeight.toLong() <= 36_000_000L) {
                             "The shared image has invalid or excessive dimensions."
                         }
                         imported
