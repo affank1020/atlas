@@ -26,9 +26,11 @@ describe('Monitoring deep links', () => {
         expect(parseMonitoringHash('#/monitoring?tab=logs&source=secrets&lines=999&nodeId=n'))
             .toEqual({ tab: 'logs', filters: { nodeId: 'n' } });
     });
-    it('preserves the approved fixed journal source in a bookmark', () => {
+    it('preserves legacy fixed journal bookmarks and new private service logs', () => {
         expect(parseMonitoringHash('#/monitoring?tab=logs&nodeId=linux-node&source=journal&lines=25'))
             .toEqual({ tab: 'logs', filters: { nodeId: 'linux-node', source: 'journal', lines: '25' } });
+        expect(parseMonitoringHash(monitoringHash('logs', { nodeId: 'linux-node', source: 'service', lines: '25' })))
+            .toEqual({ tab: 'logs', filters: { nodeId: 'linux-node', source: 'service', lines: '25' } });
     });
     it('round-trips Atlas Server diagnostics without permitting an arbitrary log target', () => {
         expect(parseMonitoringHash(monitoringHash('logs', { target: 'server', lines: '12' })))
