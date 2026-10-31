@@ -219,3 +219,77 @@ credentials, source objects, cleanup and retention remain unchanged. The
 existing R2 Files inventory tool remains **legacy-prefix-only**; do not infer
 that it inventories Project-versioned objects until Stage 5 implements a
 unified catalog-based verifier.
+
+
+## Stage 4B — durable copy manifest, checkpoint receipts and independent re-audit
+
+Migration **037_project_key_checkpoints.sql** adds three separate operator-only
+tables: **atlas_project_key_runs**, **atlas_project_key_manifest** and
+**atlas_project_key_receipts**. These do not change Atlas Files, Portfolio media,
+public URLs, old storage keys, Node uploads or application APIs.
+
+A bounded immutable metadata manifest (maximum **1,000 objects per Project**)
+is captured inside a repeatable-read PostgreSQL transaction. The digest
+includes Atlas Files and every Portfolio original and variant (including
+archived assets), source and destination keys, checksum when known, size,
+MIME type and status. Empty, malformed, oversized, cross-Project or
+duplicate catalogues fail closed. The entire manifest commits atomically.
+
+Each explicit apply batch starts at the first missing **durable receipt**,
+rather than relying on an operator to remember an untrusted cursor. The
+current catalogue must match the captured digest before copying. The ledger
+supplies the **exact immutable manifest rows** to the copy engine; it never
+reselects a mutable live-catalogue page to decide which keys can be copied.
+After bounded source/destination preflight, the current catalogue fingerprint
+is checked again **before the first create-only PUT**. Detected drift aborts
+without copy or checkpoint. The check cannot exclude later concurrent
+metadata edits, but any resulting copy remains scoped to the saved manifest;
+subsequent drift checks and the independent byte audit remain mandatory.
+After completion, the ledger re-reads source and destination for actual
+SHA-256 and size and commits the receipts together. An inconclusive copy
+does not advance the ledger. A retry rechecks any previously copied R2
+object and does not overwrite it. Conflicting concurrent checkpoint progress
+fails closed.
+
+Operator-only command (never scheduled; no HTTP or MCP API):
+
+~~~sh
+npm run build:server
+
+# Explicit metadata snapshot (writes only the operator checkpoint tables).
+ATLAS_PROJECT_KEY_LEDGER_ENABLED=1 npm run files:r2:project-checkpoint -- \
+  --capture --project=PROJECT_UUID --confirm=CAPTURE_PROJECT_KEY_MANIFEST
+
+# Read-only checkpoint and catalogue drift status.
+npm run files:r2:project-checkpoint -- --status --run=RUN_UUID
+
+# Bounded read-only preview, without receipt or object writes.
+npm run files:r2:project-checkpoint -- \
+  --dry-run --run=RUN_UUID --project=PROJECT_UUID --max-files=3
+
+# Only after separate approval and recovery-backup verification:
+ATLAS_PROJECT_KEY_LEDGER_ENABLED=1 ATLAS_PROJECT_KEY_COPY_ENABLED=1 \
+npm run files:r2:project-checkpoint -- \
+  --apply --run=RUN_UUID --project=PROJECT_UUID \
+  --confirm=CREATE_PROJECT_KEY_COPIES --max-files=3
+
+# Read-only byte re-audit against source and target, paginated by ordinal:
+npm run files:r2:project-checkpoint -- \
+  --audit --run=RUN_UUID --project=PROJECT_UUID --from=0 --max-files=3
+~~~
+
+Status is **metadata-only**. Even **allCopied=true** proves only that all
+manifest items have recorded byte-verified copy receipts, NOT that the
+independent backup, current live bytes, matching database snapshot or
+production cutover have been verified. Audit explicitly re-reads source and
+target bytes, including legacy variants with no historical checksum; a
+**passed-page** applies only to that bounded page. All pages must be audited,
+and catalogue drift must remain absent.
+
+A fresh upload, archive or replaced derivative invalidates the manifest.
+Create a new manifest and copy idempotently; occupied version-1 keys with
+different bytes fail closed until a separately reviewed new-version plan
+exists. Installation or running a default command never performs R2 writes
+or cuts over old storage keys. Unified independent R2 recovery and an isolated
+matching-PostgreSQL restore (issue #109, Stages 5–6) remain mandatory before
+any destructive cleanup, automatic cutover or retention.

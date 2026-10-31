@@ -30,6 +30,7 @@
     "files:r2:verify-catalog": "node apps/server/dist/server/r2-recovery-catalog-cli.js --dry-run",
     "files:r2:seed": "node apps/server/dist/server/r2-backup-seed-cli.js",
     "files:r2:project-key-copy": "node apps/server/dist/server/project-key-copy-cli.js",
+    "files:r2:project-checkpoint": "node apps/server/dist/server/project-key-ledger-cli.js",
     "files:staging:maintenance": "node apps/server/dist/server/node-transfer-maintenance-cli.js",
     "files:node:enqueue": "node apps/node/dist/core/file-queue-cli.js enqueue",
     "files:node:queue-status": "node apps/node/dist/core/file-queue-cli.js status",
