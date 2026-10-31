@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AuditEvent } from './types';
-import { clientName, filterActivity, presentActivity, readable } from './activity';
+import { activityEvidence, clientName, filterActivity, presentActivity, readable } from './activity';
 import { monitoringHash } from './monitoringLinks';
 import './activity.css';
 import { SkeletonRows } from './Skeleton';
@@ -22,9 +22,15 @@ function ActivityRow({ item, scopeLinks = false }: { item: ReturnType<typeof pre
     const distinctSource = sourceNodeId && sourceNodeId !== nodeId ? sourceNodeId : undefined;
     const distinctTarget = targetNodeId && targetNodeId !== nodeId && targetNodeId !== sourceNodeId ? targetNodeId : undefined;
     const storeId = typeof item.details.storeId === 'string' ? item.details.storeId : undefined;
+    const evidence = scopeLinks ? activityEvidence(item) : [];
     return <details className={`activity-item activity-${item.status}`} data-activity-id={item.id}>
         <summary><div className="activity-action"><small>{clientName(item.client)} · {readable(item.category)}{item.workspaceName && ` · ${item.workspaceName}`}</small><strong>{item.title}</strong>{item.description && <span className="activity-error">{item.description}</span>}</div><div className="activity-state"><span>{readable(item.status)}</span><small>{readable(item.kind)}</small><time dateTime={item.timestamp} title={item.timestamp}>{new Date(item.timestamp).toLocaleString()}</time></div></summary>
-        <div className="activity-details"><dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl>{scopeLinks && (item.projectId || item.workspaceId || nodeId || distinctPrevious || distinctSource || distinctTarget || storeId) && <nav aria-label="Related monitoring scopes" className="actions">
+        <div className="activity-details">{scopeLinks && <div className="activity-evidence" role="group" aria-label="Recorded operation provenance">
+            <div className="activity-evidence-header"><strong>Operation provenance</strong>
+                <small>Recorded metadata only. Client, transport and credential class do not establish a human operator.</small>
+            </div>
+            <dl>{evidence.map(({ label, value }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+        </div>}<dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl>{scopeLinks && (item.projectId || item.workspaceId || nodeId || distinctPrevious || distinctSource || distinctTarget || storeId) && <nav aria-label="Related monitoring scopes" className="actions">
             {item.projectId && <a href={monitoringHash('activity', { projectId: item.projectId })}>Project activity</a>}
             {item.workspaceId && <a href={monitoringHash('activity', { workspaceId: item.workspaceId })}>Workspace activity</a>}
             {nodeId && <a href={monitoringHash('activity', { nodeId })}>Node activity</a>}
