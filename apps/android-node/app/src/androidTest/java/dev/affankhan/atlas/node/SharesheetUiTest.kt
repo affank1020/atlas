@@ -29,6 +29,12 @@ class SharesheetUiTest {
     private var backgroundError by mutableStateOf<String?>(null)
     private var notificationSettingsOpened = false
     private var incoming by mutableStateOf<IncomingDeviceShare?>(null)
+    private var inboxItems by mutableStateOf<List<PendingInboxItem>>(emptyList())
+    private var inboxPreview by mutableStateOf<InboxReply.Content?>(null)
+    private var inboxRefreshed = false
+    private var inboxReviewed = false
+    private var inboxCopied = false
+    private var inboxDeclined = false
     private var copied = false
     private var declined = false
     private val senderNode = StoredNode("https://atlas.example.com",
@@ -63,6 +69,12 @@ class SharesheetUiTest {
                 onSend = {},
                 onLoadDeferredShare = { state = state.loadDeferredShare() },
                 incomingShare = incoming,
+                queuedInboxItems = inboxItems,
+                queuedInboxPreview = inboxPreview,
+                onRefreshQueuedInbox = { inboxRefreshed = true },
+                onOpenQueuedInboxItem = { inboxReviewed = true },
+                onCopyQueuedInbox = { inboxCopied = true; inboxPreview=null },
+                onDeclineQueuedInbox = { inboxDeclined = true; inboxPreview=null },
                 onCopyIncoming = { copied = true; incoming = null },
                 onDeclineIncoming = { declined = true; incoming = null },
                 backgroundReceiving = backgroundRunning,
@@ -166,6 +178,33 @@ class SharesheetUiTest {
             .performScrollTo().assertIsEnabled().performClick()
         compose.runOnIdle { org.junit.Assert.assertTrue(notificationSettingsOpened) }
         compose.runOnIdle { backgroundError = null }
+    }
+
+    @Test fun queuedInboxRequiresReviewAndExplicitCopyOrDecline() {
+        inboxRefreshed=false; inboxReviewed=false; inboxCopied=false; inboxDeclined=false
+        mount(ready=true)
+        val id="123e4567-e89b-42d3-a456-426614174012"
+        val source="123e4567-e89b-42d3-a456-426614174013"
+        compose.onNodeWithTag("tab-inbox").performClick()
+        compose.onNodeWithTag("queued-inbox-refresh").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertTrue(inboxRefreshed)
+            inboxItems=listOf(PendingInboxItem(id,source,"2026-11-02T00:00:00Z","2026-10-31T00:00:00Z"))
+        }
+        compose.onNodeWithTag("queued-inbox-open-"+id).performScrollTo().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertTrue(inboxReviewed)
+            org.junit.Assert.assertFalse(inboxCopied)
+            inboxPreview=InboxReply.Content(id,id,source,"Unicode 🎉 notes")
+        }
+        compose.onNodeWithTag("queued-inbox-decline").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertTrue(inboxDeclined)
+            org.junit.Assert.assertFalse(inboxCopied)
+            inboxPreview=InboxReply.Content(id,id,source,"Another note")
+        }
+        compose.onNodeWithTag("queued-inbox-copy").assertIsEnabled().performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(inboxCopied) }
     }
 
     @Test fun incomingCopyRequiresExplicitConsentAndDeclineDoesNotCopy() {
