@@ -104,3 +104,54 @@ test('far-future heartbeat cannot make a Node appear healthy', async () => {
     const minorSkew = await subject([node('minor-skew', 'online', '2026-10-22T12:00:10.000Z')]).service.read();
     assert.equal(minorSkew.nodes.items[0]?.state, 'healthy');
 });
+
+
+test('diagnostic archive availability adds independent uncertainty but does not overwrite database or Node failures', async () => {
+    const status = (state: 'available' | 'unavailable' | 'disabled', drops = 0, paused = false) => ({
+        state, coverage: 'incomplete-possible' as const, retentionDays: 14 as const,
+        droppedSinceStart: drops, pending: 0, writePaused: paused,
+    });
+    const archive = (value: ReturnType<typeof status>) => ({ status: async () => value });
+    const read = async (value: ReturnType<typeof status>, dbOk = true, nodes: AtlasNode[] = []) =>
+        new MonitoringHealthService(
+            { query: async () => { if (!dbOk) throw new Error('secret db URL'); return {}; } },
+            { list: async () => nodes }, () => now, () => 100, 100, archive(value),
+        ).read();
+    const healthy = await read(status('available'));
+    assert.equal(healthy.overall, 'healthy');
+    assert.equal(healthy.diagnostics.status, 'available');
+    assert.equal(healthy.diagnostics.coverage, 'incomplete-possible');
+    assert.equal(healthy.diagnostics.droppedSinceStart, 0);
+    assert.equal((await read(status('disabled'))).overall, 'healthy',
+        'deliberately disabled optional history does not mean database is unhealthy');
+    assert.equal((await read(status('unavailable'))).overall, 'unknown',
+        'archive unavailable should never be presented as fully healthy');
+    assert.equal((await read(status('available', 2))).overall, 'unknown',
+        'known lost writes must be reflected in snapshot uncertainty');
+    assert.equal((await read(status('available', 0, true))).overall, 'unknown',
+        'diagnostic writer in backoff may be losing evidence');
+    assert.equal((await read(status('unavailable'), false)).overall, 'degraded',
+        'database failure takes precedence');
+    assert.equal((await read(status('unavailable'), true, [node('x', 'offline', null)])).overall,
+        'degraded', 'Node failures take precedence');
+});
+
+test('archive probe failures or a never-ending probe settle to unknown without leaking private diagnostics', async () => {
+    const broken = new MonitoringHealthService(
+        { query: async () => ({}) }, { list: async () => [] }, () => now, () => 100, 15,
+        { status: async () => { throw new Error('credential=secret'); } },
+    );
+    const result = await broken.read();
+    assert.equal(result.diagnostics.status, 'unknown');
+    assert.equal(result.overall, 'unknown');
+    assert.ok(!JSON.stringify(result).includes('credential=secret'));
+    const stalled = new MonitoringHealthService(
+        { query: async () => ({}) }, { list: async () => [] }, () => now, () => 100, 15,
+        { status: () => new Promise(() => {}) },
+    );
+    const before = performance.now();
+    const timed = await stalled.read();
+    assert.ok(performance.now() - before < 1000);
+    assert.equal(timed.diagnostics.status, 'unknown');
+    assert.equal(timed.overall, 'unknown');
+});

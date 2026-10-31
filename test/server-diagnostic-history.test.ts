@@ -72,3 +72,64 @@ test('disabled Server history does not write and cannot show stored data', async
     assert.equal((await archive.read()).available, false);
     assert.equal(queried, false);
 });
+
+
+test('archive status probes only the fixed table and distinguishes unavailable, disabled, and write backoff', async () => {
+    const statements: string[] = [];
+    const archive = new ServerDiagnosticHistory({
+        query: async (sql: string) => {
+            statements.push(sql);
+            if (sql.startsWith('INSERT')) throw new Error('postgres://SECRET at internal host');
+            if (sql.startsWith('SELECT 1')) return { rows: [] };
+            throw new Error('Unexpected operation');
+        },
+    }, true, () => 1000);
+    const before = await archive.status();
+    assert.equal(before.state, 'available');
+    assert.equal(before.coverage, 'incomplete-possible');
+    assert.equal(before.pending, 0);
+    assert.equal(before.writePaused, false);
+    archive.record({ code: 'background_task_failed', level: 'warning', at: new Date().toISOString() });
+    await archive.flush();
+    const after = await archive.status();
+    assert.equal(after.state, 'available', 'reads can work while writes are backing off');
+    assert.equal(after.droppedSinceStart, 1);
+    assert.equal(after.writePaused, true);
+    assert.deepEqual(statements.filter(sql => sql.startsWith('SELECT')), [
+        'SELECT 1 FROM atlas_server_diagnostic_events LIMIT 1',
+        'SELECT 1 FROM atlas_server_diagnostic_events LIMIT 1',
+    ]);
+    assert.ok(!JSON.stringify(after).includes('SECRET'));
+    await archive.close();
+
+    let disabledQueries = 0;
+    const disabled = new ServerDiagnosticHistory({
+        query: async () => { disabledQueries++; throw new Error('secret'); },
+    }, false);
+    assert.equal((await disabled.status()).state, 'disabled');
+    assert.equal(disabledQueries, 0);
+
+    const unavailable = new ServerDiagnosticHistory({
+        query: async () => { throw new Error('secret hostname and password'); },
+    });
+    const status = await unavailable.status();
+    assert.equal(status.state, 'unavailable');
+    assert.equal(status.coverage, 'incomplete-possible');
+    assert.ok(!JSON.stringify(status).includes('secret'));
+    await unavailable.close();
+});
+
+test('retained fixed-code history ignores far-future entries rather than treating them as current evidence', async () => {
+    const { store } = await databaseFixture();
+    await store.pool.query(
+        "INSERT INTO atlas_server_diagnostic_events (occurred_at,instance_id,code) VALUES " +
+        "(now(),gen_random_uuid(),'server_initialised')," +
+        "(now() + interval '7 days',gen_random_uuid(),'tool_request_failed')",
+    );
+    const history = new ServerDiagnosticHistory(store.pool);
+    const read = await history.read({ limit: 10 });
+    assert.deepEqual(read.events.map(event => event.code), ['server_initialised']);
+    assert.equal(read.truncated, false);
+    assert.equal((await history.status()).state, 'available');
+    await history.close();
+});
