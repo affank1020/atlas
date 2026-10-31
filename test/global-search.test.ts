@@ -99,8 +99,8 @@ test('journal and systemd search vocabulary resolves Linux Node links even witho
         const result = await searchEverywhere(deps, { query: phrase });
         const link = result.results.find(item => item.kind === 'node');
         assert.ok(link, phrase);
-        assert.equal(link.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=service&lines=' + count, phrase);
-        assert.match(link.description, /private Atlas Node output/);
+        assert.equal(link.href, '#/monitoring?tab=logs&nodeId=' + node.id + '&source=journal&lines=' + count, phrase);
+        assert.match(link.description, /systemd journal/);
     }
 });
 
