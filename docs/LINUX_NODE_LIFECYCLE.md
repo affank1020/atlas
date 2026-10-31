@@ -4,7 +4,59 @@ The Linux Node runs independently of Atlas Server and PostgreSQL. Install and
 audit a checksum-verified release first with \`scripts/linux-node-release.sh\`.
 Each immutable release is stored beneath \`/opt/atlas-node/releases\`.
 
-## One-command, operator-initiated upgrade (recommended)
+## VPS-local upgrade without a Mac checkout (staged rollout)
+
+The standalone host-local `scripts/linux-node-host-updater.py` replaces routine
+Mac → SCP → VPS steps with a **VPS-side** update command. It uses the existing
+immutable GitHub Release channel and requires a verified GitHub build-provenance
+attestation. An operator must explicitly confirm activation; **no unattended
+updates, Atlas Web install button, host service, or production configuration
+are enabled by merging this script**.
+
+After inspecting the helper scripts from a reviewed checkout on the VPS, install
+the operator CLI and its required trusted, root-owned lifecycle helpers:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/linux-node-host-updater.py /usr/local/bin/atlas-node-update
+sudo install -o root -g root -m 0755 scripts/linux-node-trusted-stage.sh /usr/local/libexec/linux-node-trusted-stage.sh
+sudo install -o root -g root -m 0755 scripts/linux-node-release.sh /usr/local/libexec/linux-node-release.sh
+# Keep /usr/local/libexec/atlas-node-lifecycle.sh and its recovery watchdog
+# installed exactly as documented below; do not replace the lifecycle with
+# an arbitrary copy after validating the host.
+```
+
+As the **normal non-root** VPS account, authenticate a recent GitHub CLI
+(`gh` >= 2.102.0) to access the public releases and attestations. Then:
+
+```bash
+atlas-node-update status
+atlas-node-update check
+atlas-node-update update
+# Only after inspecting a failed deployment or deliberately rolling back:
+atlas-node-update rollback
+```
+
+`check` is read-only. It lists the installed version and newest eligible
+immutable stable release; same-version ordering is based on the CI release
+sequence rather than GitHub publication date. It deliberately refuses an
+unknown same-version installed build or a truncated release list instead of
+guessing. `update` downloads exact fixed release assets as the non-root user,
+checks the GitHub digest and sidecar, pins Sigstore source repo/workflow/ref/SHA,
+asks for an explicit typed confirmation, and delegates to root-owned verified
+staging and the existing lifecycle activate/rollback watchdog. Credentials,
+workspaces, Server/Web, and PostgreSQL are not modified. A missing watchdog,
+invalid helper ownership, unverified artifact or failed reconnect stops the
+update (with lifecycle recovery/rollback where applicable).
+
+**Acceptance gate:** run healthy, wrong-signature, corrupt-release,
+interrupted-update and failed-reconnect drills on a disposable Linux host before
+provisioning this on the live VPS. Unattended update policies, scheduled checks,
+host-root evidence reconciliation and Atlas Software UI integration remain
+tracked in [#111](https://github.com/affank1020/atlas/issues/111),
+[#167](https://github.com/affank1020/atlas/issues/167) and
+[#168](https://github.com/affank1020/atlas/issues/168).
+
+## Previous Mac-initiated one-command upgrade
 
 From a Mac checkout with GitHub CLI authenticated and the existing SSH alias
 `ovh` configured:

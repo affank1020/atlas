@@ -114,6 +114,11 @@ jobs:
                   process.exit(1);
                 }
               });'
+      - name: Validate host-local Linux Node updater
+        run: |
+          python3 -m unittest discover -s test -p 'test_linux_node_host_updater.py' -v
+          python3 -m py_compile scripts/linux-node-host-updater.py
+
       - name: Install dependencies
         run: npm ci
       - name: Test server, node, and web
