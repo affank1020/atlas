@@ -5,6 +5,7 @@ import { FootballValidation } from './FootballValidation';
 import { FootballGeneralistDashboard } from './FootballGeneralistDashboard';
 import { FootballGeneralistRuns } from './FootballGeneralistRuns';
 import './football-training.css';
+import { SkeletonRows } from './Skeletons';
 
 type CurriculumStage = { id: string; preset: string; stage: number; title: string; description: string; metric: string; training_spawn?: string; observation_transform?: string; reward_mode?: string; stage2_reward_mode?: string; parent_policy_id?: string };
 type Drill = { id: string; behavior: string; scene: string; observation_size: number; continuous_actions: number; configs: Record<string, string>; curriculum?: { version: number; mode: string; stages: CurriculumStage[]; variants?: CurriculumStage[] } };
@@ -235,7 +236,7 @@ export function FootballTraining() {
         </header>
         {error && <div role="alert" className="football-alert error">{error}<small>Ensure the AI Football Workspace is connected and the hosted Mac Node is running the updated football capability.</small></div>}
         {notice && <div role="status" className="football-alert">{notice}</div>}
-        {loading && <p role="status" className="football-muted">Connecting to the AI Football Workspace…</p>}
+        {loading && !error && <SkeletonRows label="Connecting to AI Football" variant="metrics" rows={3} />}
         <nav className="football-navigation" aria-label="Football Training sections">
             {screens.map(item => <button type="button" key={item.id} className={screen === item.id ? 'selected' : ''} aria-current={screen === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}
         </nav>
