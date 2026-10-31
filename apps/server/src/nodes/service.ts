@@ -48,14 +48,30 @@ export class NodeService {
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
     async listForMonitoring() { if (this.local) await this.registerLocalNode(); return (await (this.repository.listForMonitoring?.() ?? this.repository.list())).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
-    /** Minimal sender-scoped directory; never return unrelated registry details. */
+    /** Legacy five-field directory. Existing Android 0.6 and older Mac Nodes
+     * parse recipients strictly: do not expand this wire response shape.
+     */
     async shareRecipients(sourceId: string) {
         const approved = await this.requireShareApprovals().targetsFor(sourceId);
         if (!approved.size) return [];
-        // Live send requires an attached receiver, but offline enqueue uses
-        // the last registered capability retained in the durable registry.
-        // This is only a picker hint: inbox.enqueue independently validates
-        // the receiving capability and directional approval at admission.
+        const nodes = await this.list();
+        return nodes.filter(node => approved.has(node.id.toLowerCase())
+            && node.id.toLowerCase() !== sourceId.toLowerCase()
+            && node.credentialState === 'active')
+            .map(node => ({
+                nodeId: node.id, name: node.name, platform: node.platform,
+                status: node.status,
+                available: node.status === 'online' && node.capabilities.includes('device.share.receive'),
+            })).slice(0,64);
+    }
+
+    /** New authenticated opt-in directory; source identity comes from the
+     * registered Node socket. Offline eligibility uses durable last-known
+     * capabilities, not transient runtime attachments.
+     */
+    async inboxRecipients(sourceId: string) {
+        const approved = await this.requireShareApprovals().targetsFor(sourceId);
+        if (!approved.size) return [];
         if (this.local) await this.registerLocalNode();
         const nodes = await this.repository.list();
         return nodes.filter(node => approved.has(node.id.toLowerCase())
