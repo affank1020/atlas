@@ -135,6 +135,19 @@ class MainActivity : ComponentActivity() {
                 onLoadDeferredShare = model::loadDeferredShare,
                 incomingShare = model.incomingShare,
                 inboxStatus = model.inboxStatus,
+                queuedInboxItems = model.queuedInboxItems,
+                queuedInboxLoading = model.queuedInboxLoading,
+                queuedInboxBusyIds = model.queuedInboxBusyIds,
+                onRefreshQueuedInbox = model::refreshQueuedInbox,
+                onCopyQueued = { deliveryId ->
+                    model.decideQueuedShare(deliveryId, true) { text ->
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Atlas queued text", text))
+                    }
+                },
+                onDeclineQueued = { deliveryId ->
+                    model.decideQueuedShare(deliveryId, false) { }
+                },
                 onCopyIncoming = {
                     model.copyIncomingShare { text ->
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -203,6 +216,12 @@ internal fun AtlasCompanion(
     onLoadDeferredShare: () -> Unit,
     incomingShare: IncomingDeviceShare? = null,
     inboxStatus: String = "No incoming shares yet.",
+    queuedInboxItems: List<QueuedShareItem> = emptyList(),
+    queuedInboxLoading: Boolean = false,
+    queuedInboxBusyIds: Set<String> = emptySet(),
+    onRefreshQueuedInbox: () -> Unit = {},
+    onCopyQueued: (String) -> Unit = {},
+    onDeclineQueued: (String) -> Unit = {},
     onCopyIncoming: () -> Unit = {},
     onDeclineIncoming: () -> Unit = {},
     backgroundReceiving: Boolean = false,
@@ -250,6 +269,12 @@ internal fun AtlasCompanion(
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
                             inboxStatus = inboxStatus,
+                            queuedInboxItems = queuedInboxItems,
+                            queuedInboxLoading = queuedInboxLoading,
+                            queuedInboxBusyIds = queuedInboxBusyIds,
+                            onRefreshQueuedInbox = onRefreshQueuedInbox,
+                            onCopyQueued = onCopyQueued,
+                            onDeclineQueued = onDeclineQueued,
                             backgroundReceiving = backgroundReceiving,
                             backgroundReceiveError = backgroundReceiveError,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
@@ -283,6 +308,12 @@ internal fun AtlasCompanion(
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
                             inboxStatus = inboxStatus,
+                            queuedInboxItems = queuedInboxItems,
+                            queuedInboxLoading = queuedInboxLoading,
+                            queuedInboxBusyIds = queuedInboxBusyIds,
+                            onRefreshQueuedInbox = onRefreshQueuedInbox,
+                            onCopyQueued = onCopyQueued,
+                            onDeclineQueued = onDeclineQueued,
                             backgroundReceiving = backgroundReceiving,
                             backgroundReceiveError = backgroundReceiveError,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
@@ -355,6 +386,12 @@ private fun CompanionContent(
     onSend: () -> Unit,
     onLoadDeferredShare: () -> Unit,
     inboxStatus: String = "No incoming shares yet.",
+    queuedInboxItems: List<QueuedShareItem> = emptyList(),
+    queuedInboxLoading: Boolean = false,
+    queuedInboxBusyIds: Set<String> = emptySet(),
+    onRefreshQueuedInbox: () -> Unit = {},
+    onCopyQueued: (String) -> Unit = {},
+    onDeclineQueued: (String) -> Unit = {},
     backgroundReceiving: Boolean = false,
     backgroundReceiveError: String? = null,
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
@@ -376,9 +413,46 @@ private fun CompanionContent(
                 shareTarget, recipients, recipientsLoading, recipientsCooldown, recipientsError, onSelectRecipient,
                 onRefreshRecipients, shareStatus, sharePending, onSend, onLoadDeferredShare)
             Section.INBOX -> {
-                InfoCard("Incoming text", inboxStatus)
-                Text("Incoming shares require an explicit Copy or Decline decision while the app is open. " +
-                    "Atlas does not store an inbox history or copy text automatically.",
+                InfoCard("Delivery status", inboxStatus)
+                Button(onClick = onRefreshQueuedInbox,
+                    enabled = node != null && connection == "Online" &&
+                        !queuedInboxLoading && queuedInboxBusyIds.isEmpty(),
+                    modifier = Modifier.testTag("inbox-refresh"),
+                ) { Text(if (queuedInboxLoading) "Loading…" else "Refresh inbox") }
+                if (queuedInboxItems.isEmpty()) {
+                    Text("No queued transfers. Incoming live shares still require immediate approval.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                queuedInboxItems.forEach { item ->
+                    Card(modifier = Modifier.fillMaxWidth()
+                        .testTag("queued-inbox-" + item.deliveryId)) {
+                        Column(modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("From Node " + item.sourceNodeId.take(8))
+                            Text(item.text.take(180).replace(Regex("[\\u0000-\\u001f\\u007f]"), " ") +
+                                (if (item.text.length > 180) "…" else ""))
+                            Text("Expires " + java.time.Instant.ofEpochMilli(item.expiresAtMs).toString(),
+                                style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Button(
+                                    onClick = { onCopyQueued(item.deliveryId) },
+                                    enabled = connection == "Online" &&
+                                        item.deliveryId !in queuedInboxBusyIds,
+                                    modifier = Modifier.testTag("queued-copy-" + item.deliveryId),
+                                ) { Text("Copy") }
+                                TextButton(
+                                    onClick = { onDeclineQueued(item.deliveryId) },
+                                    enabled = connection == "Online" &&
+                                        item.deliveryId !in queuedInboxBusyIds,
+                                    modifier = Modifier.testTag("queued-decline-" + item.deliveryId),
+                                ) { Text("Decline") }
+                            }
+                        }
+                    }
+                }
+                Text("Queued text is held encrypted on Atlas Server for up to 24 hours. " +
+                    "Nothing is copied automatically. This inbox downloads content only when connected; " +
+                    "notifications cannot wake a sleeping tablet yet.",
                     style = MaterialTheme.typography.bodySmall)
             }
             Section.SETTINGS -> {
