@@ -259,6 +259,50 @@ The integration tests use temporary directories and mocked systemd actions.
 Run on Linux to exercise lifecycle state transitions and rollback. Validate
 health/restart behavior on a nonproduction host before changing live software.
 
+## Disposable lifecycle acceptance: CI simulation versus real-host proof
+
+Before scheduling unattended Linux upgrades, run the lifecycle's non-root
+**integration acceptance** suite on every PR/merge:
+
+```bash
+python3 -m unittest discover -s test -p 'test_linux_node_lifecycle_integration.py' -v
+```
+
+The suite executes the **actual** `linux-node-lifecycle.sh` using disposable
+`/tmp` release trees, valid Node manifests and the real symlink/journal
+filesystem operations. Only external `systemctl` and `npm ls` are simulated
+with test-local executables. Assertions cover successful activation,
+reconnection-gated commit, automatic rollback on a failed heartbeat,
+hard process termination after switching symlinks, watchdog-style recovery,
+interrupted explicit rollback, stale source checks, malformed pending journals
+and missing releases. No host service, root configuration, Node credentials
+or production directory is accessed.
+
+This CI suite **does not replace** the following mandatory disposable
+Linux VM acceptance before opting into automatic installs:
+
+| Host drill | Required independently observed evidence |
+| --- | --- |
+| Verified install | Immutable GitHub asset digest **and** pinned Sigstore source/workflow/commit; root stage receipt and exact installed tree |
+| Successful activation | Old/new versions and release SHAs, systemd main PID, fresh real Node WebSocket registration, journal cleared and rollback target recorded |
+| Invalid artifact | Wrong checksum, signer/workflow/ref, stale commit or untrusted existing target is rejected **before** service restart |
+| Failed registration | Simulated Node service fails to reconnect; previous version runs again; root status and actual Server registration agree |
+| Interrupted activation | Kill the installer after the journal and symlink switch; the **real enabled recovery timer** restores the previous healthy release after restart/reboot |
+| Interrupted rollback | Recovery finishes the chosen rollback, never silently reactivating the rejected version |
+| Root approval and audit | For Server-initiated updates only: root-local approval, one-use claim, signed evidence, and independently verified reconciliation under [#111](https://github.com/affank1020/atlas/issues/111) |
+| Scheduled checker | The `atlas-node-update-check@.timer` actually runs under the selected non-root account and sandbox; `check --json` neither installs anything nor restarts the service |
+
+Record the test host identity, service state, versions, SHA, verification output,
+release signer, command exit status, recovery timer logs and before/after
+Node registration. Do not copy credential files into evidence. A unit-test pass
+must never be presented as completion of these systemd/Sigstore/host-root
+acceptance gates.
+
+**Production gate:** keep the check-only timer optional and unattended
+installation disabled until every host drill has reviewable evidence and the
+operator explicitly authorises rollout. The acceptance harness does not
+install services, alter production, or make an updater privileged by merging.
+
 ## Release discovery (operator-run, nonprivileged)
 
 From a Mac checkout with authenticated GitHub CLI, use
