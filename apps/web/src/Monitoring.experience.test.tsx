@@ -28,6 +28,52 @@ test('common Activity filters are visible; technical scopes remain accessible an
     expect(params.has('offset')).toBe(false);
 });
 
+test('same-tab Activity scope links reopen advanced filters, but other filter edits preserve a manual collapse', async () => {
+    const workspaceId = '11111111-1111-4111-8111-111111111111';
+    const nodeId = '22222222-2222-4222-8222-222222222222';
+    location.hash = '#/monitoring?tab=activity';
+    const event = {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        occurredAt: '2026-10-31T12:00:00Z',
+        operation: 'workspace.dev_invoked',
+        client: 'Atlas Web',
+        workspaceId,
+        resulting: { operation: 'git_status', nodeId },
+    };
+    vi.mocked(callTool).mockResolvedValue({
+        items: [event], total: 1, limit: 30, offset: 0,
+    } as never);
+    render(<MonitoringPage />);
+    const section = screen.getByRole('region', { name: 'Monitoring activity' });
+    const disclosure = screen.getByText('Scope and time filters').closest('details')!;
+    expect(disclosure).not.toHaveAttribute('open');
+    await waitFor(() => expect(section.querySelector('.activity-item summary')).not.toBeNull());
+    fireEvent.click(section.querySelector('.activity-item summary')!);
+    fireEvent.click(screen.getByRole('link', { name: 'Workspace activity' }));
+    fireEvent(window, new Event('hashchange'));
+    expect(location.hash).toContain('workspaceId=' + workspaceId);
+    await waitFor(() => expect(disclosure).toHaveAttribute('open'));
+    expect(screen.getByLabelText('Workspace ID')).toHaveValue(workspaceId);
+
+    // Once the new scope is visible, explicit collapse should survive changing
+    // an unrelated outcome filter on the same in-page Activity route.
+    fireEvent.click(screen.getByText('Scope and time filters · 1 active'));
+    await waitFor(() => expect(disclosure).not.toHaveAttribute('open'));
+    fireEvent.change(screen.getByLabelText('Outcome'), { target: { value: 'failed' } });
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(screen.getByLabelText('Outcome')).toHaveValue('failed'));
+    expect(disclosure).not.toHaveAttribute('open');
+
+    // A different technical scope link is a genuine navigation and reopens it.
+    await waitFor(() => expect(section.querySelector('.activity-item summary')).not.toBeNull());
+    fireEvent.click(section.querySelector('.activity-item summary')!);
+    fireEvent.click(screen.getByRole('link', { name: 'Node activity' }));
+    fireEvent(window, new Event('hashchange'));
+    expect(location.hash).toContain('nodeId=' + nodeId);
+    await waitFor(() => expect(disclosure).toHaveAttribute('open'));
+    expect(screen.getByLabelText('Node ID')).toHaveValue(nodeId);
+});
+
 test('Reset filters also clears search and technical edits that have not been applied', () => {
     location.hash = '#/monitoring?tab=activity';
     vi.mocked(callTool).mockResolvedValue(emptyActivity as never);
