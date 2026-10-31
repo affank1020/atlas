@@ -57,4 +57,62 @@ class AtlasPushTest {
             (1..5).map { policy.nextDelay("SHARE_UNAVAILABLE") })
         assertNull(policy.nextDelay("SHARE_UNAVAILABLE"))
     }
+    @Test fun stopWithoutVisibleActivityKeepsTransportUntilAckAndFirebaseCompletion() {
+        val events = mutableListOf<String>()
+        val gate = PushRevocationGate { result ->
+            events.add("stop-transport")
+            assertTrue(result.serverConfirmed)
+            assertTrue(result.firebaseTokenDeleted)
+        }
+        // A Stop request is sent while the service still owns the socket.
+        events.add("unregister-sent")
+        gate.firebaseDeletionFinished(true)
+        assertEquals(listOf("unregister-sent"), events)
+        gate.serverUnregistered()
+        assertEquals(listOf("unregister-sent", "stop-transport"), events)
+        gate.deadlineExpired()
+        assertEquals(2, events.size)
+    }
+
+    @Test fun forgetMustNotClearCredentialWithoutServerConfirmation() {
+        var forgotIdentity = false
+        var failureVisible = false
+        val gate = PushRevocationGate { result ->
+            if (result.serverConfirmed) forgotIdentity = true
+            else failureVisible = true
+        }
+        gate.firebaseDeletionFinished(true)
+        assertFalse(forgotIdentity)
+        gate.deadlineExpired()
+        assertTrue(failureVisible)
+        assertFalse(forgotIdentity)
+        // A delayed acknowledgement after the timeout cannot masquerade
+        // as success or clear the credential.
+        gate.serverUnregistered()
+        assertFalse(forgotIdentity)
+    }
+
+    @Test fun forgetAfterServerAcknowledgementMayClearIdentity() {
+        var clearCount = 0
+        val gate = PushRevocationGate { result ->
+            if (result.serverConfirmed) clearCount++
+        }
+        gate.serverUnregistered()
+        assertEquals(0, clearCount)
+        gate.firebaseDeletionFinished(false)
+        assertEquals(1, clearCount)
+        gate.deadlineExpired()
+        assertEquals(1, clearCount)
+    }
+
+    @Test fun stopTimeoutIsBoundedAndNeverClaimsServerAcknowledgement() {
+        var completed: PushRevocationResult? = null
+        val gate = PushRevocationGate { completed = it }
+        gate.firebaseDeletionFinished(true)
+        assertNull(completed)
+        gate.deadlineExpired()
+        assertEquals(false, completed?.serverConfirmed)
+        assertEquals(true, completed?.firebaseTokenDeleted)
+    }
+
 }
