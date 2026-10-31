@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
 import { ActivityRows } from './ActivityFeed';
+import { SkeletonRows } from './Skeletons';
 import { monitoringHash, type MonitoringFilters } from './monitoringLinks';
 import type { AuditEvent } from './types';
 import './activity.css';
@@ -71,7 +72,7 @@ function ScopedActivityPreview({
                 <a href={fullActivity}>View all activity →</a>
             </div>
         </div>
-        {loading && !page && <p className="activity-preview-note" role="status">Loading recent activity…</p>}
+        {loading && !page && !error && <SkeletonRows label="Loading recent activity" variant="activity" rows={4} />}
         {loading && page && <p className="activity-preview-note" role="status">Refreshing recent activity…</p>}
         {error && <p className="activity-preview-note activity-error" role="alert">Recent activity unavailable: {error}</p>}
         {page && <div className="activity-preview-rows">
