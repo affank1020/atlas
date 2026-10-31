@@ -108,11 +108,11 @@ export class NodeService {
             const runtime = this.runtimes.get(x.nodeId);
             if (node.status !== 'online' || !runtime) throw new AtlasError('Node is not connected.', 'NODE_OFFLINE');
             if (!node.capabilities.includes('node.logs') || !runtime.readLogs) throw new AtlasError('Node log retrieval is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
-            // Resolve the omitted source *after* determining the selected Node's platform.
-            // Preserve explicitly requested sources: never silently turn stderr into journal.
-            const source = x.source ?? (node.platform === 'linux' ? 'journal' : 'stderr');
-            if ((node.platform === 'linux' && source !== 'journal') ||
-                (node.platform !== 'linux' && source === 'journal'))
+            // New Linux Nodes use the private fixed service output. An explicit
+            // legacy journal request is not translated into another source.
+            const source = x.source ?? (node.platform === 'linux' ? 'service' : 'stderr');
+            if ((node.platform === 'linux' && source !== 'journal' && source !== 'service') ||
+                (node.platform !== 'linux' && (source === 'journal' || source === 'service')))
                 throw new AtlasError('Selected log source is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
             return runtime.readLogs(source, x.lines);
         }
