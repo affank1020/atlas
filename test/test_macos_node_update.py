@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -19,13 +20,13 @@ spec.loader.exec_module(update)
 class LayoutFixture:
     def __init__(self, root: Path):
         self.releases = root / "releases"
-        self.releases.mkdir()
+        self.releases.mkdir(mode=0o700)
         self.pending = root / "pending.json"
         self.previous = root / "previous.plist"
         self.plist = root / "node.plist"
-        self.uid = 501
+        self.uid = os.getuid()
         self.app = root
-        self.target = "gui/501/com.affank1020.atlas.node"
+        self.target = f"gui/{self.uid}/com.affank1020.atlas.node"
         self.recovery_target = self.target + ".recover"
 
 
@@ -110,6 +111,7 @@ class MacUpdateTests(unittest.TestCase):
     def test_cancel_does_not_touch_staging_or_launchd(self):
         candidate = {
             "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
             "installed": self.tag1.removeprefix("node-"), "mode": "release",
             "state": "available", "launchdPid": 123,
             "recoveryPending": False,
@@ -127,6 +129,7 @@ class MacUpdateTests(unittest.TestCase):
     def test_changed_catalogue_refuses_after_confirmation(self):
         candidate = {
             "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
             "installed": self.tag1.removeprefix("node-"), "mode": "release",
             "state": "available", "launchdPid": 123, "recoveryPending": False,
         }
@@ -165,6 +168,7 @@ class MacUpdateTests(unittest.TestCase):
         old = self.tag1.removeprefix("node-")
         candidate = {
             "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
             "installed": old, "mode": "release", "state": "available",
             "launchdPid": 123, "recoveryPending": False,
         }
