@@ -31,6 +31,13 @@ host unit changes.
   secret-free**, and must never be pasted into GitHub or sent as evidence.
   The Monitoring API's redaction is a read-time safeguard, not a guarantee
   that secrets were never written to disk.
+- Linux Node-owned daemon diagnostics (connection, disconnect, retry, queue
+  and related messages) are stamped **at emission** with ISO 8601 UTC by
+  `createNodeRuntimeLogger` before systemd appends stdout/stderr to this file.
+  `journalctl --output=short-iso` previously supplied the timestamp; raw
+  file output has no journal metadata. Native crashes, direct stream writes
+  or output from unrelated libraries may not be timestamped; do not treat
+  all raw lines as having verified event times.
 - Root-owned `logrotate` config performs best-effort size-based rotation,
   keeps four old files, and uses `copytruncate` to preserve the file inode
   held by systemd. It can lose a few log lines while copying/truncating;
