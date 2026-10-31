@@ -18,7 +18,7 @@ import android.os.Looper
 /**
  * An explicit, user-started remote-messaging foreground service. This keeps
  * the existing Node v2 WebSocket open while other apps are visible, but is NOT
- * an offline queue, a push receiver, or a guarantee against Android Doze.
+ * a guarantee against Android Doze. Queued delivery uses a separate FCM receiver.
  */
 class BackgroundReceiverService : Service() {
     companion object {
@@ -27,6 +27,8 @@ class BackgroundReceiverService : Service() {
         private const val CHANNEL_INCOMING = "atlas-node-incoming"
         private const val STATUS_ID = 9401
         private const val INCOMING_ID = 9402
+        private const val QUEUED_ID = 9403
+        const val EXTRA_OPEN_INBOX = "dev.affankhan.atlas.node.OPEN_INBOX"
 
         fun hasNotificationPermission(context: Context): Boolean =
             Build.VERSION.SDK_INT < 33 ||
@@ -103,6 +105,29 @@ class BackgroundReceiverService : Service() {
             }
         }
 
+        fun notifyQueuedInbox(context: Context): Boolean {
+            if (!hasUsableNotifications(context)) return false
+            return try {
+                val open = PendingIntent.getActivity(context, 4,
+                    Intent(context, MainActivity::class.java).apply {
+                        putExtra(EXTRA_OPEN_INBOX, true)
+                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val notification = Notification.Builder(context, CHANNEL_INCOMING)
+                    .setSmallIcon(android.R.drawable.stat_notify_more)
+                    .setContentTitle("Atlas transfer queued")
+                    .setContentText("Open Atlas Inbox to review an incoming transfer.")
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .setVisibility(Notification.VISIBILITY_SECRET)
+                    .setCategory(Notification.CATEGORY_MESSAGE)
+                    .setTimeoutAfter(3_600_000L)
+                    .build()
+                context.getSystemService(NotificationManager::class.java).notify(QUEUED_ID, notification)
+                true
+            } catch (_: RuntimeException) { false }
+        }
+
         fun cancelIncoming(context: Context) {
             context.getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
         }
@@ -133,6 +158,7 @@ class BackgroundReceiverService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val model = (application as AtlasNodeApp).model
         if (intent?.action == ACTION_STOP) {
+            model.setPushEnabled(false)
             model.stopBackgroundReceiving()
             stopSelf()
             return START_NOT_STICKY
@@ -178,6 +204,7 @@ class BackgroundReceiverService : Service() {
             return START_NOT_STICKY
         }
         model.startBackgroundReceiving()
+        model.setPushEnabled(true)
         handler.removeCallbacks(verifyChannels)
         handler.postDelayed(verifyChannels, 10_000L)
         // No automatic restart after process death. The user must launch Atlas
