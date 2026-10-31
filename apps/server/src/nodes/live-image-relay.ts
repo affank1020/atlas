@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { AtlasError } from '../shared/errors.js';
 import type { NodeService } from './service.js';
 import type { NodeShareApprovals } from './share-approvals.js';
 import { RemoteNodeRuntime } from '../infrastructure/nodes/remote-runtime.js';
-import { MAX_DEVICE_IMAGE_BYTES, type DeviceImageDelivery } from '@atlas/protocol/device-protocol';
+import { MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
 
 const LIMIT_CONCURRENT = 4;
 const TTL_MS = 45_000;
@@ -22,10 +22,11 @@ export class LiveImageRelay {
     private active = 0;
     private readonly sourceActive = new Set<string>();
     private readonly entries = new Map<string, Entry>();
+    private readonly seenIds = new Map<string, number>();
     constructor(private readonly nodes: NodeService, private readonly approvals: NodeShareApprovals) {}
 
     async admit(sourceId: string, targetId: string, credential: string): Promise<{
-        target: RemoteNodeRuntime; release: () => void;
+        target: RemoteNodeRuntime; sourceRuntime: object; release: () => void;
     }> {
         const source = sourceId.toLowerCase(), target = targetId.toLowerCase();
         if (!UUID.test(source) || !UUID.test(target) || source === target ||
@@ -56,14 +57,14 @@ export class LiveImageRelay {
                 !targetRuntime.getCapabilities().includes('device.image.receive') ||
                 !(await this.approvals.allowedForInbox(source, target)))
                 throw new AtlasError('Image transfer to that Node is not authorised.', 'SHARE_DENIED');
-            return { target: targetRuntime, release };
+            return { target: targetRuntime, sourceRuntime: senderRuntime, release };
         } catch (error) {
             release();
             throw error;
         }
     }
 
-    async deliver(admitted: {target: RemoteNodeRuntime}, offer: LiveImageOffer): Promise<{accepted: boolean}> {
+    async deliver(admitted: {target: RemoteNodeRuntime; sourceRuntime: object}, offer: LiveImageOffer, credential: string): Promise<{accepted: boolean}> {
         const sourceId = offer.sourceId.toLowerCase(), targetId = offer.targetId.toLowerCase();
         const key = offer.deliveryId.toLowerCase();
         if (!UUID.test(key) || !UUID.test(sourceId) || !UUID.test(targetId) ||
@@ -72,14 +73,23 @@ export class LiveImageRelay {
             !isImage(offer.bytes, offer.mimeType) ||
             createHash('sha256').update(offer.bytes).digest('hex') !== offer.sha256)
             throw new AtlasError('Invalid or corrupt image bytes.', 'SHARE_INVALID');
-        if (this.entries.has(key))
+        for (const [id, expiry] of this.seenIds) if (expiry <= Date.now()) this.seenIds.delete(id);
+        if (this.entries.has(key) || this.seenIds.has(key))
             throw new AtlasError('Image delivery ID was reused.', 'SHARE_REPLAY');
         // Do not allow an older socket to forward after the admission read.
-        if (this.nodes.runtimes.get(targetId) !== admitted.target)
+        if (this.nodes.runtimes.get(sourceId) !== admitted.sourceRuntime ||
+            this.nodes.runtimes.get(targetId) !== admitted.target)
             throw new AtlasError('Image target disconnected.', 'NODE_DISCONNECTED');
+        await this.nodes.identity!.authenticate(sourceId, credential);
         if (!(await this.approvals.allowedForInbox(sourceId, targetId)))
             throw new AtlasError('Image permission was revoked.', 'SHARE_DENIED');
+        if (this.entries.has(key) || this.seenIds.has(key) ||
+            this.nodes.runtimes.get(sourceId) !== admitted.sourceRuntime ||
+            this.nodes.runtimes.get(targetId) !== admitted.target)
+            throw new AtlasError('Image session changed or delivery ID reused.', 'SHARE_REPLAY');
         const expiresAt = Date.now() + TTL_MS;
+        if (this.seenIds.size >= 1024) this.seenIds.delete(this.seenIds.keys().next().value!);
+        this.seenIds.set(key, Date.now() + 300_000);
         const entry: Entry = { ...offer, sourceId, targetId, deliveryId: key,
             expiresAt, claimed: false, targetRuntime: admitted.target };
         this.entries.set(key, entry);
