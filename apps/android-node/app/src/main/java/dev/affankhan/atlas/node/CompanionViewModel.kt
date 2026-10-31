@@ -30,6 +30,7 @@ internal data class ShareDelivery(
     val text: String? = null,
     val error: String? = null,
     val image: SharedImageDraft? = null,
+    val importingImage: Boolean = false,
 )
 
 internal enum class Section(val label: String) {
@@ -41,6 +42,7 @@ internal data class CompanionSession(
     val section: Section = Section.DEVICES,
     val draft: String = "",
     val image: SharedImageDraft? = null,
+    val importingImage: Boolean = false,
     val error: String? = null,
     val lastDeliveryId: Long = 0,
     val deferredShare: ShareDelivery? = null,
@@ -60,16 +62,22 @@ internal data class CompanionSession(
             section = Section.SEND,
             draft = delivery.text.orEmpty(),
             image = delivery.image,
+            importingImage = delivery.importingImage,
             error = delivery.error,
             lastDeliveryId = delivery.id,
             deferredShare = null,
         )
     }
 
-    /** Complete an asynchronous image import only if the placeholder is still current. */
+    /** Only an unfinished image placeholder can be completed. Editing the
+     * active draft must not invalidate a separate deferred import, and a
+     * completed/edited draft must never be resurrected by a late provider read.
+     */
     fun completeImageImport(delivery: ShareDelivery): CompanionSession = when {
-        deferredShare?.id == delivery.id -> copy(deferredShare = delivery)
-        lastDeliveryId == delivery.id -> copy(image = delivery.image, error = delivery.error)
+        deferredShare?.id == delivery.id && deferredShare.importingImage ->
+            copy(deferredShare = delivery)
+        lastDeliveryId == delivery.id && importingImage ->
+            copy(image = delivery.image, error = delivery.error, importingImage = false)
         else -> this
     }
 
@@ -77,6 +85,7 @@ internal data class CompanionSession(
     fun editDraft(value: String): CompanionSession = copy(
         draft = value.take(MAX_SHARE_CHARACTERS),
         image = null,
+        importingImage = false,
         error = null,
     )
 }
@@ -521,7 +530,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     fun navigate(destination: Section) { session = session.navigate(destination) }
     fun editDraft(value: String) {
-        importSequence++ // Discard a still-loading image if the user begins editing text.
+        // The reducer cancels a loading *active* image. A separate deferred
+        // screenshot keeps loading while the user edits the sent text draft.
         session = session.editDraft(value)
         if (!sharePending) shareStatus = "Nothing sent yet"
     }
@@ -544,7 +554,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 return
             }
             session = session.receiveShare(
-                ShareDelivery(nextId, error = "Opening shared image…"), sending = sharePending,
+                ShareDelivery(nextId, error = "Opening shared image…", importingImage = true),
+                sending = sharePending,
             )
             viewModelScope.launch {
                 val delivery = try {
@@ -579,12 +590,18 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 } catch (_: Exception) {
                     ShareDelivery(nextId, error = "Could not read this image (PNG/JPEG, maximum 8 MB).")
                 }
-                // A newer Share event or deliberate edit invalidates this read.
+                // New Sharesheet events supersede older imports. The reducer
+                // independently rejects a late completion after text edits or
+                // after the pending placeholder has been replaced/loaded.
                 if (nextId != importSequence) return@launch
-                session = session.completeImageImport(delivery)
-                if (!sharePending) shareStatus = if (delivery.image != null)
-                    "Image imported locally; sending images is not yet supported."
-                else "Image import failed; nothing was sent."
+                val completed = session.completeImageImport(delivery)
+                if (completed === session) return@launch
+                session = completed
+                if (!sharePending && completed.lastDeliveryId == nextId) {
+                    shareStatus = if (delivery.image != null)
+                        "Image imported locally; sending images is not yet supported."
+                    else "Image import failed; nothing was sent."
+                }
             }
             return
         }
