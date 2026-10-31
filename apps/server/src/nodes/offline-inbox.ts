@@ -37,20 +37,16 @@ export class DeviceOfflineInbox {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            // Remove expired encrypted payloads during authenticated admissions.
-            // A separate scheduled maintenance worker is still required when
-            // the inbox is idle for long periods.
-            await client.query('DELETE FROM device_inbox WHERE expires_at<=now()');
+            // Keep admission lock ordering consistent with managed grant
+            // revocation: acquire the grant row before writing inbox rows.
+            // Expired rows do not count towards quotas; purgeExpired runs
+            // separately from admission so broad cleanup cannot lock other
+            // pairs' inbox rows before our grant lock.
             // Enforce per-source and per-target quotas across server replicas.
             // Sort lock keys to avoid deadlocks between opposite-direction sends.
             const lockKeys = ['inbox-source:' + source, 'inbox-target:' + target].sort();
             for (const lockKey of lockKeys)
                 await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
-            // Retire inaccessible items *under the admission locks* before
-            // quota accounting and before checking an idempotent retry.
-            // Old ciphertext is erased, but the delivery ID remains a
-            // terminal tombstone until its original retention expiry.
-            await this.approvals.retireInaccessibleInboxRows(client,source,target);
             const peers = await client.query(
                 "SELECT id,credential_state,credential_updated_at,capabilities FROM nodes WHERE id IN ($1,$2) FOR SHARE",
                 [source,target]);
@@ -61,6 +57,12 @@ export class DeviceOfflineInbox {
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
             if (peers.rows.some(p => !p.credential_updated_at))
                 throw new AtlasError('Node credential generation unavailable.', 'SHARE_DENIED');
+            // The managed grant's FOR SHARE lock above must precede writes to
+            // device_inbox. revoke() first deletes that grant and then erases
+            // queued rows, using the same lock order to avoid a deadlock.
+            // This also retires unrelated inaccessible rows that consumed the
+            // sender/recipient quotas (credential changes or revoked grants).
+            await this.approvals.retireInaccessibleInboxRows(client,source,target);
             const previous = await client.query(
                 'SELECT submission_hash,state,expires_at FROM device_inbox WHERE source_node_id=$1 AND id=$2',
                 [source,id]);
