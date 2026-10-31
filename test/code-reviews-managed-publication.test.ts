@@ -153,6 +153,44 @@ test('legacy publisher cannot overlap any managed or thread mutation allowlist a
     assert.deepEqual([...isolated.codeReviews.managedSummaryRepositories], [repository]);
 });
 
+test('global native publishing is explicit, validates input and preserves independent permissions', async () => {
+    const base = { DATABASE_URL: 'postgres://localhost:5432/atlas_test' };
+    assert.throws(() => loadServerConfig({
+        ...base, ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: 'TRUE',
+    }), /must be true or false/);
+    assert.throws(() => loadServerConfig({
+        ...base, ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: 'true',
+        ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: 'different/repository',
+    }), /legacy and managed GitHub publishing must not overlap/);
+    assert.throws(() => loadServerConfig({
+        ...base, ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: 'true',
+        ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES: '../invalid',
+    }), /distinct valid owner/);
+
+    const defaults = loadServerConfig(base).codeReviews;
+    assert.equal(defaults.managedSummaryRepositories.has('*'), false);
+    const all = loadServerConfig({
+        ...base, ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: 'true',
+    }).codeReviews;
+    for (const enabled of [
+        all.managedSummaryRepositories, all.inlineRootRepositories,
+        all.inlineReplyRepositories, all.inlineFixRepositories,
+    ]) assert.deepEqual([...enabled], ['*']);
+    assert.equal(all.publishRepositories.size, 0);
+    assert.equal(all.threadResolutionRepositories.size, 0);
+
+    // Wildcard bypasses only the repository allowlist, never authentication.
+    const f = await fixture();
+    const globallyEnabled = new ManagedSummaryPublicationService(
+        f.catalog, f.preview, f.writer, all.managedSummaryRepositories);
+    await assert.rejects(globallyEnabled.publish(repository, prNumber, true),
+        /authenticated MCP OAuth/);
+    const dryRun = await globallyEnabled.publish(repository, prNumber, false, subject);
+    assert.equal(dryRun.status, 'ready');
+    assert.equal(dryRun.dryRun, true);
+    assert.deepEqual([f.events.head, f.events.token, f.events.post], [0, 0, 0]);
+});
+
 test('managed publication is separately disabled, requires OAuth and preflights without GitHub writes', async () => {
     assert.equal(loadManagedSummaryRepositories({}).size, 0);
     const configured = loadManagedSummaryRepositories({

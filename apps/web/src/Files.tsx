@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useListProjectsQuery } from './atlasApi';
 import {
     archiveFile, archiveProjectFolder, createProjectFolder, downloadFile, listFiles, listProjectFolders,
-    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile,
-    type AtlasFile, type FileOwner, type ProjectFolder,
+    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile, listPortfolioProjectMedia,
+    type AtlasFile, type FileOwner, type ProjectFolder, type PortfolioProjectMedia,
 } from './filesApi';
 import './files.css';
+import { Skeleton } from './Skeletons';
 
 const prettySize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
@@ -43,6 +44,9 @@ export function Files() {
     const [fileStatus, setFileStatus] = useState<AtlasFile['status']>('active');
     const [entries, setEntries] = useState<AtlasFile[]>([]);
     const [folders, setFolders] = useState<ProjectFolder[]>([]);
+    const [mediaEntries, setMediaEntries] = useState<PortfolioProjectMedia[]>([]);
+    const [mediaError, setMediaError] = useState('');
+    const [mediaBusy, setMediaBusy] = useState(false);
     const [busy, setBusy] = useState(false);
     const [mutating, setMutating] = useState(false);
     const [error, setError] = useState('');
@@ -67,8 +71,19 @@ export function Files() {
 
     useEffect(() => {
         let live = true;
-        if (!owner) { setEntries([]); setFolders([]); setBusy(false); return; }
-        setBusy(true); setEntries([]); setFolders([]); setError('');
+        if (!owner) { setEntries([]); setFolders([]); setMediaEntries([]); setMediaBusy(false); setBusy(false); return; }
+        setBusy(true); setEntries([]); setFolders([]); setMediaEntries([]); setError(''); setMediaError('');
+        setMediaBusy(folderId === null);
+        // Portfolio is optional: its latency or failure must never block the
+        // native Project files, folder navigation or write controls.
+        if (folderId === null) {
+            void listPortfolioProjectMedia(owner.id)
+                .then(mediaRows => { if (live) setMediaEntries(mediaRows); })
+                .catch(reason => {
+                    if (live) setMediaError(reason instanceof Error ? reason.message : 'Portfolio media could not be loaded.');
+                })
+                .finally(() => { if (live) setMediaBusy(false); });
+        }
         void Promise.all([listFiles(owner, fileStatus, folderId), listProjectFolders(owner.id)])
             .then(([files, folderRows]) => {
                 if (live) { setEntries(files); setFolders(folderRows); }
@@ -106,6 +121,8 @@ export function Files() {
         item.name.toLocaleLowerCase().includes(searchText));
     const visibleFiles = entries.filter(item =>
         (item.fileName + ' ' + item.mimeType).toLocaleLowerCase().includes(searchText));
+    const visibleMedia = folderId === null ? mediaEntries.filter(item =>
+        item.status === fileStatus && (item.fileName + ' ' + item.mimeType).toLocaleLowerCase().includes(searchText)) : [];
     const totalBytes = entries.reduce((sum, item) => sum + item.byteSize, 0);
     const canWrite = !!owner && fileStatus === 'active' && !busy && !mutating && (folderId === null || currentFolder?.status === 'active');
 
@@ -221,7 +238,7 @@ export function Files() {
         <div className="files-collection-head">
             <div className="files-collection-info">
                 <h2>{currentFolder?.name ?? 'Project files'}</h2>
-                <span>{entries.length} files · {prettySize(totalBytes)}</span>
+                <span>{busy || (!owner && projects.isLoading) ? <Skeleton width={90} height={12} /> : !owner ? "—" : `${entries.length} files · ${prettySize(totalBytes)}`}</span>
             </div>
             <div className="files-collection-controls">
                 <label className="files-status-control">Status
@@ -238,7 +255,7 @@ export function Files() {
                     value={search} onChange={event => setSearch(event.target.value)} />
             </div>
         </div>
-        {busy && <div className="files-skeleton-list" role="status" aria-label="Loading files">
+        {(busy || (projects.isLoading && !owner && !projects.error)) && <div className="files-skeleton-list" role="status" aria-label={owner ? "Loading files" : "Loading projects"} aria-busy="true">
             {[1, 2, 3].map(value => <div className="files-skeleton-row" key={value}><span /><div><i /><i /></div></div>)}
         </div>}
         {!busy && owner && (visibleFolders.length > 0 || visibleFiles.length > 0) && <div className="files-list" aria-label="Project folder contents">
@@ -289,13 +306,44 @@ export function Files() {
                 </div>}
             </div>)}
         </div>}
-        {!busy && !error && !owner && <div className="files-empty">{projects.isLoading ? 'Loading Projects…' : 'No Projects available. Create a Project to store files.'}</div>}
-        {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length &&
+        {!busy && owner && folderId === null && mediaBusy && <section className="files-portfolio-section" aria-label="Portfolio media">
+            <div className="files-portfolio-header">
+                <h3>Portfolio media</h3>
+                <span>Read-only · Managed by Portfolio</span>
+            </div>
+            <div className="files-skeleton-list" role="status" aria-label="Loading Portfolio media" aria-busy="true">
+                {[1, 2].map(value => <div className="files-skeleton-row" key={value}><span /><div><i /><i /></div></div>)}
+            </div>
+        </section>}
+        {!busy && owner && folderId === null && mediaError && <p className="notice error" role="alert">
+            Portfolio media catalogue unavailable: {mediaError}
+        </p>}
+        {!busy && owner && visibleMedia.length > 0 && <section className="files-portfolio-section" aria-label="Portfolio media">
+            <div className="files-portfolio-header">
+                <h3>Portfolio media</h3>
+                <span>Read-only · Managed by Portfolio · {visibleMedia.length} items</span>
+            </div>
+            <div className="files-list">
+                {visibleMedia.map(item => <div className="files-list-row" key={'portfolio-' + item.id}>
+                    <FileGlyph mimeType={item.mimeType} />
+                    <div className="files-item-details"><strong title={item.fileName}>{item.fileName}</strong>
+                        <span>{prettySize(item.byteSize)} · {item.mimeType} · {item.variants.length} variants · {prettyDate(item.createdAt)}</span>
+                    </div>
+                    <span className="files-privacy">{item.status === 'archived' ? 'Archived' : 'Portfolio'}</span>
+                    <div className="files-item-actions">
+                        {item.url && <a className="files-media-link" href={item.url} target="_blank"
+                            rel="noopener noreferrer" aria-label={'Open Portfolio media ' + item.fileName}>Open media</a>}
+                    </div>
+                </div>)}
+            </div>
+        </section>}
+        {!busy && !error && !owner && !projects.isLoading && !projects.error && <div className="files-empty">No Projects available. Create a Project to store files.</div>}
+        {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length && !visibleMedia.length && !mediaBusy &&
             <div className="files-empty">{searchText
                 ? 'Nothing matches your search in this folder.'
                 : fileStatus === 'archived'
                     ? <><h3>No archived items here</h3><p>Archived files and folders can be restored while their original bytes are retained.</p></>
-                    : <><h3>This folder is empty</h3><p>Create a folder or upload files to {currentFolder?.name ?? projectName}. Portfolio media remains available in its own application.</p></>}
+                    : <><h3>This folder is empty</h3><p>Create a folder or upload files to {currentFolder?.name ?? projectName}. Existing Portfolio assets appear here as read-only media.</p></>}
             </div>}
     </section>;
 }

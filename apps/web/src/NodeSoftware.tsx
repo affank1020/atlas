@@ -5,6 +5,7 @@ import { releaseForPlatform, releaseUpdateState } from './node-software-model';
 export { releaseForPlatform, releaseUpdateState } from './node-software-model';
 import type { AtlasNode } from './Nodes';
 import './node-software.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 export type NodeRelease = {
     component: 'desktop-node';
@@ -243,7 +244,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         <h3>Software</h3>
         <dl className="node-software-summary">
             <div><dt>Installed</dt><dd>{node.version || 'Not reported'}</dd></div>
-            <div><dt>Latest compatible</dt><dd>{loading ? 'Checking…' : latest ? latest.version + '+' + latest.commit : 'Not available'}</dd></div>
+            <div><dt>Latest compatible</dt><dd>{loading && !catalogue ? <Skeleton width={96} height={14} /> : latest ? latest.version + '+' + latest.commit : 'Not available'}</dd></div>
             <div><dt>Update</dt><dd>{status === 'available' ? 'Newer release available' : status === 'current' ? 'Current release' : status === 'newer' ? 'Newer than catalogue' : 'Cannot confirm'}</dd></div>
             <div><dt>Last successful update</dt><dd>Not recorded</dd></div>
             <div><dt>Update control</dt><dd>Not enabled for this Node</dd></div>
@@ -255,7 +256,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             </button>
             {currentPreflight?.result && <p role="status"><strong>{currentPreflight.result.status === 'candidate' ? 'Candidate identified' : 'No update approved'}:</strong> {currentPreflight.result.reason} <span>Update execution is not enabled.</span></p>}
             {currentPreflight?.error && <p role="alert">Unable to check update eligibility: {currentPreflight.error}</p>}
-            {currentIntent?.loading && <p role="status">Loading saved update requests…</p>}
+            {currentIntent?.loading && !currentIntent.result && <SkeletonRows label="Loading saved update requests" variant="list" rows={2} />}
             {currentPreflight?.result?.status === 'candidate' && currentPreflight.result.candidate &&
                 !hasPendingIntent && !currentIntent?.loading &&
                 <button className="ghost" type="button" onClick={prepareIntent} disabled={currentIntent?.busy === true || Boolean(currentIntent?.error)}>
@@ -323,11 +324,11 @@ export function NodeSoftware() {
         <section className="node-software-downloads" id="node-software-downloads" aria-label="Published Node software">
             <div className="node-software-section-heading"><div><p className="eyebrow">Distribution</p><h2>Published releases and installation guides</h2>
                 <p className="node-software-muted">Archives do not perform upgrades. Validate both the checksum and the build provenance before installation.</p></div></div>
-        {loading && <p role="status">Checking published GitHub releases…</p>}
+        {loading && !catalogue && !error && <SkeletonRows label="Loading published GitHub releases" variant="cards" rows={2} />}
         {(error || catalogue?.state === 'unavailable') && <p className="node-page-notice" role="alert">{error || catalogue?.error || 'Release catalogue unavailable.'}</p>}
         <div className="node-software-grid">
-            <PlatformRelease title="macOS Node" platform="darwin" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />
-            <PlatformRelease title="Linux Node" platform="linux" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />
+            {!(loading && !catalogue && !error) && <PlatformRelease title="macOS Node" platform="darwin" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />}
+            {!(loading && !catalogue && !error) && <PlatformRelease title="Linux Node" platform="linux" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />}
             <section className="node-software-card" aria-label="Android Node">
                 <div className="node-software-card-title"><div><p className="eyebrow">Coming later</p><h2>Android Node</h2></div><span className="badge muted">Unavailable</span></div>
                 <p className="node-software-muted">Android development APKs are not production-signed. Atlas will offer a direct APK and QR download only after a stable signing identity, verified release and install testing exist.</p>

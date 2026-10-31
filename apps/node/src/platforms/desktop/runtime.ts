@@ -1,6 +1,7 @@
 import { runDevTask } from '../../capabilities/dev/runner.js';
 import { readAtlasNodeLog } from '../../capabilities/node-logs.js';
 import { readAtlasLinuxJournal } from '../../capabilities/linux-journal.js';
+import { readAtlasLinuxServiceLog } from '../../capabilities/linux-service-logs.js';
 import { discoverAutoScripts } from '../../capabilities/dev/auto-scripts.js';
 import { devTasksSchema, displayCommand } from '@atlas/protocol/dev-tasks';
 import { WorkspaceFiles, git } from '../../capabilities/workspace-files/files.js';
@@ -48,14 +49,16 @@ export class LocalNodeRuntime implements NodeRuntime {
         if (!this.shareReceiver) throw new AtlasError('Mac sharing approval not enabled.', 'CAPABILITY_UNAVAILABLE');
         return this.shareReceiver.receive(input, this.shutdown.signal);
     }
-    async readLogs(source: 'stdout' | 'stderr' | 'journal', lines: number) {
+    async readLogs(source: 'stdout' | 'stderr' | 'journal' | 'service', lines: number) {
         if (this.platform === 'linux') {
-            if (source !== 'journal')
-                throw new AtlasError('Linux Nodes expose only the fixed Atlas systemd journal.', 'CAPABILITY_UNAVAILABLE');
-            return readAtlasLinuxJournal(lines);
+            if (source === 'service') return readAtlasLinuxServiceLog(lines);
+            // Explicit legacy requests remain journal-only; never silently
+            // substitute a different log source for an older Web/Server.
+            if (source === 'journal') return readAtlasLinuxJournal(lines);
+            throw new AtlasError('Linux Nodes expose only fixed Atlas service and legacy journal tails.', 'CAPABILITY_UNAVAILABLE');
         }
-        if (source === 'journal')
-            throw new AtlasError('Atlas systemd journal access is unavailable on this platform.', 'CAPABILITY_UNAVAILABLE');
+        if (source === 'journal' || source === 'service')
+            throw new AtlasError('Atlas Linux service logs are unavailable on this platform.', 'CAPABILITY_UNAVAILABLE');
         return readAtlasNodeLog(source, lines, this.platform);
     }
     async execute(workspace: Workspace, name: WorkspaceOperation, x: Record<string, any>) {

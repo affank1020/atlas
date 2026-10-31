@@ -44,7 +44,7 @@ test('A launched Application renders a dedicated page without the project View h
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
     expect(screen.getByRole('main')).toHaveClass('application-window-main');
     expect(readRecentWork()[0]).toMatchObject({ name: 'Portfolio', kind: 'Application', href: '#/projects/project-portfolio/applications/portfolio' });
-    expect(screen.getByRole('link', { name: /Project Applications/ })).toHaveAttribute('href', '#/projects/project-portfolio/applications');
+    expect(screen.getByRole('link', { name: '← Applications' })).toHaveAttribute('href', '#/applications');
     expect(callTool).toHaveBeenCalledWith('get_application', { projectId: 'project-portfolio', slug: 'portfolio' }, expect.any(AbortSignal));
 });
 
@@ -72,9 +72,54 @@ test('Standalone Application opens with a global back link and no Project scope'
     vi.mocked(callTool).mockImplementation(async name => (name === 'list_projects' ? [] : standalone) as never);
     render(<ApplicationWindow slug="portfolio" />);
     expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /All Applications/ })).toHaveAttribute('href', '#/applications');
+    expect(screen.getByRole('link', { name: '← Applications' })).toHaveAttribute('href', '#/applications');
     expect(callTool).toHaveBeenCalledWith('get_application', { slug: 'portfolio' }, expect.any(AbortSignal));
     expect(readRecentWork()[0]).toMatchObject({ href: '#/applications/portfolio', projectId: null });
 });
 
 const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };
+
+test('known Application routes use owned placeholders while their Server manifest is unresolved', () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'get_application') return await new Promise<never>(() => {});
+        if (name === 'list_projects') return [] as never;
+        throw new Error('Unexpected tool ' + name);
+    });
+    for (const [slug, label, marker] of [
+        ['portfolio', 'Loading Portfolio', '.portfolio-workspace .portfolio-editor'],
+        ['code-reviews', 'Loading Code Reviews', '.cr-metrics'],
+        ['football-training', 'Loading Football Generalist application', '.fg-stats'],
+    ]) {
+        const view = render(<ApplicationWindow slug={slug} />);
+        expect(screen.getByRole('status', { name: label })).toHaveAttribute('aria-busy', 'true');
+        expect(view.container.querySelector(marker)).toBeInTheDocument();
+        expect(view.container.querySelector('.atlas-skeleton-app-window')).not.toBeInTheDocument();
+        view.unmount();
+    }
+});
+
+test('an unrecognised Application does not impersonate a known Application during manifest lookup', () => {
+    vi.mocked(callTool).mockImplementation(async name => name === 'get_application'
+        ? await new Promise<never>(() => {})
+        : [] as never);
+    const view = render(<ApplicationWindow slug="unregistered-application" />);
+    expect(screen.getByRole('status', { name: 'Loading application interface' })).toBeInTheDocument();
+    expect(view.container.querySelector('.cr-dashboard, .portfolio-app, .fg')).not.toBeInTheDocument();
+});
+
+
+test('Portfolio media route reserves media grid before the Application manifest resolves', () => {
+    const previousHash = window.location.hash;
+    window.location.hash = '#/applications/portfolio?tab=media';
+    vi.mocked(callTool).mockImplementation(async name =>
+        name === 'get_application' ? await new Promise<never>(() => {}) : [] as never);
+    try {
+        const view = render(<ApplicationWindow slug="portfolio" />);
+        expect(screen.getByRole('status', { name: 'Loading Portfolio' })).toBeInTheDocument();
+        expect(view.container.querySelectorAll('.portfolio-media-grid article')).toHaveLength(6);
+        expect(view.container.querySelector('.portfolio-workspace')).not.toBeInTheDocument();
+        expect(view.container.querySelector('.portfolio-loading-tab.active')).toHaveTextContent('Media library');
+    } finally {
+        window.location.hash = previousHash;
+    }
+});

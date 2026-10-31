@@ -3,6 +3,7 @@ import { callTool } from './api';
 import { SKILL_GROUPS, skillForScenario, scenarioPurpose } from './football-skill-model';
 import type { GeneralistManifest, GeneralistScenario } from './FootballGeneralistDashboard';
 import './generalist-drill-catalog.css';
+import { SkeletonRows } from './Skeletons';
 
 type LegacyStage = { id: string; title: string; description: string; metric?: string; preset?: string; stage?: number };
 type LegacyDrill = {
@@ -162,7 +163,7 @@ export function GeneralistDrillCatalog({ manifest, selected, onSelect, onTrain }
                         <span className="fg-drill-list-summary">{item.behavior}</span>
                     </button>)}
                 {scope === 'general' && !manifest && <p className="fg-muted">Connect the Mac Node to load Generalist scenarios.</p>}
-                {scope === 'legacy' && legacy === null && !legacyError && <p role="status" className="fg-muted">Loading archived drills…</p>}
+                {scope === 'legacy' && legacy === null && !legacyError && <SkeletonRows label="Loading archived drills" variant="run" rows={4} />}
                 {legacyError && scope === 'legacy' && <p role="alert">{legacyError}</p>}
                 {visible.length === 0 && (scope === 'general' ? !!manifest : !!legacy) && <p className="fg-muted">No drills match the search.</p>}
             </div>

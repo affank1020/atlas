@@ -1,3 +1,4 @@
+import { SkeletonRows } from './Skeletons';
 import { useEffect, useRef, useState } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
 import type { AuditEvent } from './types';
@@ -147,6 +148,30 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     const changePage = (next: number) => { navigate({
         ...filters, offset: String(next), live: next > 0 ? undefined : filters.live,
     }); };
+    const advancedKeys: (keyof MonitoringFilters)[] = [
+        'projectId', 'logicalWorkspaceId', 'workspaceId', 'checkoutId', 'nodeId',
+        'storeId', 'client', 'operation', 'from', 'to',
+    ];
+    const advancedCount = advancedKeys.filter(key =>
+        Boolean(filters[key]) && !(key === 'projectId' && projectId)).length;
+    // Open a newly selected technical scope even when a same-tab Activity link
+    // reuses this component. Do not override a manual collapse when unrelated
+    // filters or the current scope's page/refresh change.
+    const advancedScopeKey = advancedKeys
+        .filter(key => Boolean(filters[key]) && !(key === 'projectId' && projectId))
+        .map(key => [key, filters[key]]);
+    const advancedScopeSignature = JSON.stringify(advancedScopeKey);
+    const [advancedOpen, setAdvancedOpen] = useState(Boolean(projectId || advancedCount));
+    const previousAdvancedScope = useRef(advancedScopeSignature);
+    useEffect(() => {
+        if (previousAdvancedScope.current === advancedScopeSignature) return;
+        previousAdvancedScope.current = advancedScopeSignature;
+        if (advancedScopeKey.length > 0) setAdvancedOpen(true);
+    }, [advancedScopeSignature]);
+    const hasActiveFilters = Object.entries(filters).some(([key, value]) =>
+        Boolean(value) && key !== 'live' && key !== 'offset' && !(key === 'projectId' && projectId))
+        || search !== (filters.search ?? '')
+        || advancedKeys.some(key => (draft[key] ?? '') !== (filters[key] ?? ''));
     return <section className="panel activity-panel" aria-label={projectId ? 'Project activity' : 'Monitoring activity'}>
         <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>{projectId ? 'Project activity' : 'Activity'}</h2></div><div className="actions">
             {projectId && <a className="monitoring-project-link" href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
@@ -156,32 +181,44 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
                 })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
             <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
         </div></div>
-        <div className="activity-filters monitoring-filters">
-            {projectId && <label>Workspace
-                <select aria-label="Workspace" value={filters.workspaceId ?? ''}
-                    onChange={e => setFilter('workspaceId', e.target.value)}>
-                    <option value="">All workspaces</option>
-                    {(scopedWorkspaces?.items ?? []).map(workspace =>
-                        <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.id.slice(0, 8)})</option>)}
-                    {filters.workspaceId && !scopedWorkspaces?.items.some(item => item.id === filters.workspaceId) &&
-                        <option value={filters.workspaceId}>Workspace {filters.workspaceId}</option>}
-                </select>
-            </label>}
-            {([
-                ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
-                ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
-            ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} readOnly={key === 'projectId' && !!projectId} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
-            <button type="button" className="ghost" onClick={() => { navigate({ ...draft, offset: undefined }); }}>Apply filters</button>
+        <div className="monitoring-primary-filters" role="group" aria-label="Common activity filters">
+            <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}>
+                <label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} placeholder="Find an operation" /></label>
+                <button type="submit">Apply</button>
+            </form>
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
-            <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
-            <label>To<input aria-label="To" type="datetime-local" value={localDateTimeValue(filters.to)} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
-            <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}><label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} /></label><button type="submit">Apply</button></form>
+            <button type="button" className="ghost" disabled={!hasActiveFilters}
+                onClick={() => { setSearch(''); setDraft(projectId ? { projectId } : {});
+                    navigate({ live: filters.live }); }}>Reset filters</button>
         </div>
+        <details className="monitoring-advanced-filters" open={advancedOpen}
+            onToggle={event => setAdvancedOpen(event.currentTarget.open)}>
+            <summary>Scope and time filters{advancedCount ? ' · ' + advancedCount + ' active' : ''}</summary>
+            <div className="activity-filters monitoring-filters">
+                {projectId && <label>Workspace
+                    <select aria-label="Workspace" value={filters.workspaceId ?? ''}
+                        onChange={e => setFilter('workspaceId', e.target.value)}>
+                        <option value="">All workspaces</option>
+                        {(scopedWorkspaces?.items ?? []).map(workspace =>
+                            <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.id.slice(0, 8)})</option>)}
+                        {filters.workspaceId && !scopedWorkspaces?.items.some(item => item.id === filters.workspaceId) &&
+                            <option value={filters.workspaceId}>Workspace {filters.workspaceId}</option>}
+                    </select>
+                </label>}
+                {([
+                    ['projectId', 'Project ID'], ['logicalWorkspaceId', 'Logical Workspace ID'], ['workspaceId', 'Workspace ID'], ['checkoutId', 'Checkout ID'],
+                    ['nodeId', 'Node ID'], ['storeId', 'Store ID'], ['client', 'Client'], ['operation', 'Operation'],
+                ] as const).map(([key, label]) => <label key={key}>{label}<input aria-label={label} readOnly={key === 'projectId' && !!projectId} value={draft[key] ?? ''} onChange={e => setDraft(previous => ({ ...previous, [key]: e.target.value }))} placeholder="All" /></label>)}
+                <label>From<input aria-label="From" type="datetime-local" value={localDateTimeValue(filters.from)} onChange={e => setFilter('from', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
+                <label>To<input aria-label="To" type="datetime-local" value={localDateTimeValue(filters.to)} onChange={e => setFilter('to', e.target.value ? new Date(e.target.value).toISOString() : '')} /></label>
+                <button type="button" className="ghost" onClick={() => navigate({ ...draft, offset: undefined })}>Apply filters</button>
+            </div>
+        </details>
         {projectId && scopedWorkspaces?.unavailable && <p role="status" className="activity-footnote">
             Workspace names unavailable. You can still filter by Workspace ID.
         </p>}
-        {loading && <p role="status" className="empty">Loading audit history…</p>}
+        {loading && !page && !error && <SkeletonRows label="Loading audit history" variant="activity" rows={5} />}
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
         {page && <><div className="activity-scroll"><ActivityRows events={page.items} names={workspaceNames} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
@@ -199,7 +236,7 @@ export function ProjectActivityPanel({ projectId, refreshVersion = 0 }: { projec
 
 type NodeLog = { source: string; available: boolean; lines: string[]; truncated: boolean };
 type LogNode = { id: string; name: string; platform?: string; status: string; capabilities: string[] };
-type ScopedLog = { nodeId: string; source: 'stdout' | 'stderr' | 'journal'; count: number; output: NodeLog };
+type ScopedLog = { nodeId: string; source: 'stdout' | 'stderr' | 'journal' | 'service'; count: number; output: NodeLog };
 function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
     const [nodes, setNodes] = useState<LogNode[]>([]);
     const [error, setError] = useState('');
@@ -212,7 +249,8 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
         ? Number(filters.lines) : 200;
     const nodeId = filters.nodeId ?? '';
     const selected = nodes.find(node => node.id === nodeId);
-    const source: 'stdout' | 'stderr' | 'journal' = selected?.platform === 'linux' ? 'journal'
+    const source: 'stdout' | 'stderr' | 'journal' | 'service' = selected?.platform === 'linux'
+        ? filters.source === 'journal' ? 'journal' : 'service'
         : filters.source === 'stdout' ? 'stdout' : 'stderr';
     const cancel = () => {
         generation.current++;
@@ -264,9 +302,9 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
     return <section className="panel activity-panel" aria-label="Monitoring logs">
         <div className="panel-head"><div><p className="eyebrow">Bounded runtime tails</p><h2>Logs</h2></div><button className="ghost" disabled={!selected || reading || selected.status !== 'online' || !selected.capabilities.includes('node.logs')} onClick={() => void read()}>{reading ? 'Reading…' : 'Refresh logs'}</button></div>
         <div className="activity-filters">
-            <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => { const next = nodes.find(node => node.id === e.target.value); setSelection({ ...filters, nodeId: next?.id, source: next?.platform === 'linux' ? 'journal' : filters.source === 'journal' ? undefined : filters.source }); }}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
+            <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => { const next = nodes.find(node => node.id === e.target.value); setSelection({ ...filters, nodeId: next?.id, source: next?.platform === 'linux' ? 'service' : (filters.source === 'journal' || filters.source === 'service') ? undefined : filters.source }); }}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
             <label>Stream{selected?.platform === 'linux'
-                ? <select aria-label="Log stream" value="journal" disabled><option value="journal">systemd · atlas-node.service</option></select>
+                ? <select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'service' | 'journal' })}><option value="service">Atlas Node · private service log</option><option value="journal">Legacy · systemd journal</option></select>
                 : <select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'stdout' | 'stderr' })}><option value="stderr">stderr</option><option value="stdout">stdout</option></select>}</label>
             <label>Lines<input type="number" aria-label="Log lines" min={1} max={200} value={lines} onChange={e => { const next = Number(e.target.value); if (Number.isInteger(next) && next >= 1 && next <= 200) setSelection({ ...filters, lines: String(next) }); }} /></label>
         </div>
@@ -275,7 +313,7 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
         {selected?.status !== 'online' && selected && <p role="status" className="empty">Node is {selected.status}; live log reads are unavailable.</p>}
         {selected?.status === 'online' && !selected.capabilities.includes('node.logs') && <p className="empty">This Node does not expose approved log access.</p>}
         {error && <p role="alert" className="activity-error">{error}</p>}
-        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable{source === 'journal' ? ' (journal access may be restricted for this service account)' : ''}.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visibleLines.join('\n'))}>Copy visible lines</button></div><pre>{visibleLines.join('\n') || (tailSearch.trim() ? '(no matching lines in loaded tail)' : '(empty)')}</pre></>}</div>}
+        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable{source === 'service' ? ' (private service log is not provisioned or readable on this Node)' : source === 'journal' ? ' (journal access may be restricted for this service account)' : ''}.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visibleLines.join('\n'))}>Copy visible lines</button></div><pre>{visibleLines.join('\n') || (tailSearch.trim() ? '(no matching lines in loaded tail)' : '(empty)')}</pre></>}</div>}
     </section>;
 }
 
@@ -347,7 +385,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
         <p className="activity-footnote">{history
             ? 'PostgreSQL retains up to 14 days of fixed-code Server signals across restarts. Writes are best-effort, so missing events do not prove healthy operation. This is not Docker stdout/stderr, complete historical logs or an audit ledger.'
             : 'Only non-sensitive operational event codes from this Atlas Server process are shown. This is not Docker stdout/stderr or a multi-instance archive.'}</p>
-        {busy && <p role="status" className="empty">Loading server diagnostics…</p>}
+        {busy && !visible && !error && <SkeletonRows label="Loading server diagnostics" variant="metrics" rows={3} />}
         {error && <p role="alert" className="activity-error">Server diagnostics unavailable: {error}</p>}
         {visible && !visible.available && <p className="empty">{history ? 'Retained Server diagnostics unavailable or disabled. Check database migration and connectivity.' : 'Server diagnostics are disabled on this deployment.'}</p>}
         {visible?.available && <div className="monitoring-log-result">
@@ -380,6 +418,10 @@ function LogsPanel({ filters }: { filters: MonitoringFilters }) {
                 e.target.value === 'server' ? { target: 'server' } : { target: 'node' })}>
             <option value="node">Connected Node</option><option value="server">Atlas Server diagnostics</option>
         </select></label></div>
+        <div className="monitoring-source-guide" role="group" aria-label="Log source boundaries">
+            <div><strong>Node tails</strong><span>Approved macOS stdout/stderr or Linux private service output. On-demand, bounded and not a complete archive.</span></div>
+            <div><strong>Server signals</strong><span>Fixed-code diagnostics only: current process or best-effort retained history, not Docker logs.</span></div>
+        </div>
         {target === 'server' ? <ServerDiagnosticsPanel filters={filters} /> : <NodeLogsPanel filters={filters} />}
     </>;
 }
@@ -427,16 +469,22 @@ function MonitoringHealthPanel() {
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
         return () => controller.abort();
     }, [refresh]);
-    const badge = (status: string) => status === 'healthy' || status === 'reachable' ? 'success' : 'muted';
+    const badge = (status: string) => ['healthy', 'reachable', 'available', 'caught-up'].includes(status) ? 'success' : 'muted';
     const displayedOverall = snapshot ? displayedHealthOverall(snapshot) : 'unknown';
     return <section className="workspace-section" aria-label="Live operational health">
         <div className="section-heading"><h2>Live operational health</h2>
             <button className="ghost" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Checking…' : 'Refresh health'}</button>
         </div>
-        {busy && !snapshot && <p role="status">Checking Server and Node health…</p>}
+        {busy && !snapshot && !error && <SkeletonRows label="Checking Server and Node health" variant="metrics" rows={3} />}
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
             <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
+            <div className="monitoring-health-summary" role="group" aria-label="Health signal summary">
+                <div><strong>{snapshot.server.database.status}</strong><small>Database</small></div>
+                <div><strong>{snapshot.diagnostics?.status ?? 'unknown'}</strong><small>Diagnostic archive</small></div>
+                <div><strong>{snapshot.diagnostics?.retentionCleanup ?? 'unknown'}</strong><small>Physical expiry</small></div>
+                <div><strong>{snapshot.nodes.available ? snapshot.nodes.summary.healthy + ' / ' + snapshot.nodes.summary.total : 'unknown'}</strong><small>Healthy Nodes</small></div>
+            </div>
             <div className="workspace-row"><span className="row-copy"><strong>Atlas Server · database</strong>
                 <small>{snapshot.server.database.status === 'reachable'
                     ? `Database query succeeded · ${snapshot.server.database.latencyMs ?? '—'} ms · Server uptime ${Math.floor(snapshot.server.uptimeSeconds / 60)} min`

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useApplicationRead } from './atlasApi';
+import { Skeleton } from './Skeletons';
 
 type GithubThread = {
     rootCommentId?: number; mappingState: 'verified' | 'unmapped';
@@ -80,7 +81,13 @@ export function CodeReviewThreads({ repository, prNumber, refreshVersion }: {
         <p className="code-reviews-subtitle">Read-only, on-demand verification. GitHub conversation state is separate
             from reviewer-assessed code fixes. Only Atlas Bot-owned roots are matched; unrelated GitHub
             review threads are not counted as managed discussions.</p>
-        {(query.isLoading || query.isFetching && !query.data) && <p role="status">Checking GitHub review threads…</p>}
+        {(query.isLoading || query.isFetching && !query.data) && !query.error &&
+            <div className="code-reviews-thread-list" role="status" aria-label="Loading GitHub conversations" aria-busy="true">
+                {Array.from({ length: 2 }, (_, index) => <article className="code-reviews-thread" aria-hidden="true" key={index}>
+                    <Skeleton width="55%" height={16} /><Skeleton width="75%" height={12} />
+                    <Skeleton width="48%" height={12} />
+                </article>)}
+            </div>}
         {query.error && <p role="alert" className="notice error">
             GitHub conversation state is unavailable: {query.error.message}. No thread is assumed resolved.
         </p>}

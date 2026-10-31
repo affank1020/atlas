@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Files } from './Files';
+import { useListProjectsQuery } from './atlasApi';
 import {
     archiveFile, archiveProjectFolder, createProjectFolder, downloadFile, listFiles, listProjectFolders,
-    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile,
+    moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile, listPortfolioProjectMedia,
 } from './filesApi';
 
 const projectId = '00000000-0000-4000-8000-000000000001';
@@ -23,19 +24,25 @@ const saved = {
 } as const;
 
 vi.mock('./atlasApi', () => ({
-    useListProjectsQuery: () => ({
+    useListProjectsQuery: vi.fn(() => ({
         data: [{ id: projectId, name: 'Research' }, { id: otherProject, name: 'University' }],
         isLoading: false, error: null, isFetching: false, refetch: vi.fn(),
-    }),
+    })),
 }));
 vi.mock('./filesApi', () => ({
     listFiles: vi.fn(), listProjectFolders: vi.fn(), uploadFile: vi.fn(), downloadFile: vi.fn(),
     archiveFile: vi.fn(), restoreFile: vi.fn(), createProjectFolder: vi.fn(),
     renameProjectFolder: vi.fn(), archiveProjectFolder: vi.fn(), restoreProjectFolder: vi.fn(), moveProjectFile: vi.fn(),
+    listPortfolioProjectMedia: vi.fn(),
 }));
 
 beforeEach(() => {
+    vi.mocked(useListProjectsQuery).mockImplementation(() => ({
+        data: [{ id: projectId, name: 'Research' }, { id: otherProject, name: 'University' }],
+        isLoading: false, error: null, isFetching: false, refetch: vi.fn(),
+    } as never));
     vi.mocked(listFiles).mockResolvedValue([]);
+    vi.mocked(listPortfolioProjectMedia).mockResolvedValue([]);
     vi.mocked(listProjectFolders).mockResolvedValue([]);
     vi.mocked(downloadFile).mockResolvedValue(undefined);
     vi.mocked(archiveFile).mockResolvedValue(undefined);
@@ -168,4 +175,110 @@ test('Downloads and archives stay scoped to selected Project', async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive research.pdf' }));
     await waitFor(() => expect(archiveFile).toHaveBeenCalledWith(owner, saved.id));
     confirm.mockRestore();
+});
+
+test('Portfolio originals and variants appear read-only under their Project and archived assets have no open link', async () => {
+    const active = { id: '00000000-0000-4000-8000-000000000077', projectId: otherProject,
+        fileName: 'hero.png', mimeType: 'image/png', byteSize: 420, checksum: 'a'.repeat(64),
+        status: 'active' as const, createdAt: firstFolder.createdAt, updatedAt: firstFolder.updatedAt,
+        url: '/api/media/00000000-0000-4000-8000-000000000077/original',
+        variants: [{ name: 'preview', mimeType: 'image/webp', byteSize: 160 }] };
+    const archived = { ...active, id: '00000000-0000-4000-8000-000000000078',
+        fileName: 'old.png', status: 'archived' as const, url: null };
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(async id =>
+        id === otherProject ? [active, archived] : []);
+    render(<Files />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: otherProject } });
+    expect(await screen.findByText('hero.png')).toBeInTheDocument();
+    expect(listPortfolioProjectMedia).toHaveBeenCalledWith(otherProject);
+    expect(screen.getByText(/1 variants/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Portfolio media hero.png' }))
+        .toHaveAttribute('href', active.url);
+    expect(screen.queryByRole('button', { name: 'Move hero.png' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive hero.png' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'File status' }), { target: { value: 'archived' } });
+    expect(await screen.findByText('old.png')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open Portfolio media old.png' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: projectId } });
+    await waitFor(() => expect(screen.queryByText('old.png')).not.toBeInTheDocument());
+});
+
+test('Pending Portfolio catalogue cannot block native files, controls or folder navigation', async () => {
+    vi.mocked(listFiles).mockImplementation(async (_owner, _status, destination) =>
+        destination === null ? [saved] as never : []);
+    vi.mocked(listProjectFolders).mockResolvedValue([firstFolder] as never);
+    // This promise deliberately never settles, simulating a stalled optional request.
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(() => new Promise(() => {}));
+    render(<Files />);
+    expect(await screen.findByText('research.pdf')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Refresh/ })).toBeEnabled();
+    expect(screen.queryByRole('status', { name: 'Loading files' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Modules' }));
+    await waitFor(() => expect(listFiles).toHaveBeenCalledWith(owner, 'active', folderId));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New folder' })).toBeEnabled());
+});
+
+test('Empty native Project has its own ready controls while Portfolio remains pending', async () => {
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(() => new Promise(() => {}));
+    render(<Files />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled());
+    expect(screen.getByRole('status', { name: 'Loading Portfolio media' })).toBeInTheDocument();
+    expect(screen.queryByText('This folder is empty')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading files' })).not.toBeInTheDocument();
+});
+
+test('Late Portfolio response from previous Project is ignored after switching Projects', async () => {
+    let resolveOld: ((rows: Awaited<ReturnType<typeof listPortfolioProjectMedia>>) => void) | undefined;
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(id => id === projectId
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve([]));
+    render(<Files />);
+    await waitFor(() => expect(resolveOld).toBeDefined());
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: otherProject } });
+    await waitFor(() => expect(listPortfolioProjectMedia).toHaveBeenCalledWith(otherProject));
+    await act(async () => {
+        resolveOld?.([{ id: '00000000-0000-4000-8000-000000000099', projectId,
+            fileName: 'stale.png', mimeType: 'image/png', byteSize: 1, checksum: 'a'.repeat(64),
+            status: 'active', createdAt: firstFolder.createdAt, updatedAt: firstFolder.updatedAt,
+            url: null, variants: [] }]);
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled());
+    expect(screen.queryByText('stale.png')).not.toBeInTheDocument();
+});
+
+test('Portfolio projection failures do not hide native Project files', async () => {
+    vi.mocked(listFiles).mockResolvedValue([saved] as never);
+    vi.mocked(listPortfolioProjectMedia).mockRejectedValue(new Error('Media projection unavailable'));
+    render(<Files />);
+    expect(await screen.findByText('research.pdf')).toBeInTheDocument();
+    expect(screen.getByText(/Portfolio media catalogue unavailable/)).toBeInTheDocument();
+});
+
+test('pending Project selection shows a Files skeleton instead of an empty message or zero files', async () => {
+    const previousQuery = vi.mocked(useListProjectsQuery).getMockImplementation()!;
+    vi.mocked(useListProjectsQuery).mockImplementation(() => ({
+        data: undefined, isLoading: true, isFetching: true, error: null, refetch: vi.fn(),
+    } as never));
+    const view = render(<Files />);
+    expect(screen.getByRole('status', { name: 'Loading projects' })).toBeInTheDocument();
+    expect(screen.queryByText('No Projects available. Create a Project to store files.')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 files · 0 B')).not.toBeInTheDocument();
+    expect(listFiles).not.toHaveBeenCalled();
+    vi.mocked(useListProjectsQuery).mockImplementation(previousQuery);
+    view.rerender(<Files />);
+    expect(await screen.findByText('This folder is empty')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading projects' })).not.toBeInTheDocument();
+});
+
+test('failed Project discovery shows an error without a false empty Files state or zero count', () => {
+    vi.mocked(useListProjectsQuery).mockImplementation(() => ({
+        data: undefined, isLoading: false, isFetching: false,
+        error: { message: 'Projects unavailable' }, refetch: vi.fn(),
+    } as never));
+    render(<Files />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load Projects');
+    expect(screen.queryByText('0 files · 0 B')).not.toBeInTheDocument();
+    expect(screen.queryByText('No Projects available. Create a Project to store files.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading projects' })).not.toBeInTheDocument();
 });

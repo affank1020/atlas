@@ -1,14 +1,36 @@
 import { createHash, createHmac } from "node:crypto";
-import { mkdir, readFile, writeFile, unlink, open, stat } from "node:fs/promises";
+import { mkdir, writeFile, unlink, open, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 /** Object keys are generated server-side; callers never choose arbitrary filesystem paths. */
-const validObjectKey = /^(?:[a-f0-9]{64}(?:-(?:thumbnail|preview))?\.(?:jpg|png|webp|gif|avif|pdf)|files-[a-f0-9]{32}-[a-f0-9]{64})$/;
+const legacyObjectKey = /^(?:[a-f0-9]{64}(?:-(?:thumbnail|preview))?\.(?:jpg|png|webp|gif|avif|pdf)|files-[a-f0-9]{32}-[a-f0-9]{64})$/;
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const variantName = /^[a-z][a-z0-9-]{0,63}$/;
+const projectObjectKey = /^projects\/([a-f0-9-]{36})\/objects\/([a-f0-9-]{36})\/(?:v([1-9][0-9]{0,5})|variants\/([a-z][a-z0-9-]{0,63})\/v([1-9][0-9]{0,5}))$/;
+/** Exactly the two approved storage namespaces; no path normalization, dot segments or user-selected paths. */
+export const isLegacyObjectKey = (key: string): boolean => typeof key === "string" && legacyObjectKey.test(key);
+export function isProjectObjectKey(key: string): boolean {
+    if (typeof key !== "string") return false;
+    const match = projectObjectKey.exec(key);
+    return !!match && uuid.test(match[1]!) && uuid.test(match[2]!) && match[4] !== "original";
+}
+export function projectStorageKey(projectId: string, fileId: string, variant = "original", version = 1): string {
+    if (!uuid.test(projectId) || !uuid.test(fileId) || !Number.isSafeInteger(version) ||
+        version < 1 || version > 999999 || (variant !== "original" && !variantName.test(variant)))
+        throw new Error("Invalid versioned Project storage identity.");
+    const key = `projects/${projectId}/objects/${fileId}/` +
+        (variant === "original" ? `v${version}` : `variants/${variant}/v${version}`);
+    if (!isProjectObjectKey(key)) throw new Error("Invalid versioned Project storage key.");
+    return key;
+}
 const safeKey = (key: string) => {
-    if (!validObjectKey.test(key)) throw new Error("Invalid Atlas media object key.");
+    if (!isLegacyObjectKey(key) && !isProjectObjectKey(key))
+        throw new Error("Invalid Atlas media object key.");
     return key;
 };
+/** Keep Project keys as single on-disk filenames; no nested folders or symlinked path components. */
+const localPath = (root: string, key: string) => path.join(root, safeKey(key).replaceAll("/", "%2F"));
 
 export type ListedFileObject = { key: string; size: number; modifiedAt: Date };
 
@@ -27,21 +49,24 @@ export class LocalObjectStore implements ObjectStore {
     constructor(readonly root: string) {}
     async put(key: string, bytes: Buffer, _mimeType?: string) {
         await mkdir(this.root, { recursive: true });
-        await writeFile(path.join(this.root, safeKey(key)), bytes, { flag: "wx" }).catch(error => {
+        await writeFile(localPath(this.root, key), bytes, { flag: "wx" }).catch(error => {
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         });
     }
     async delete(key: string) {
-        await unlink(path.join(this.root, safeKey(key))).catch(error => {
+        await unlink(localPath(this.root, key)).catch(error => {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         });
     }
     async get(key: string) {
-        try { return await readFile(path.join(this.root, safeKey(key))); }
+        let handle;
+        try { handle = await open(localPath(this.root, key), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); }
         catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new ObjectNotFound();
             throw error;
         }
+        try { return await handle.readFile(); }
+        finally { await handle.close(); }
     }
 
     /** Read legacy local Atlas Files for manual backup seeding with a hard
@@ -49,7 +74,7 @@ export class LocalObjectStore implements ObjectStore {
     async getBounded(key: string, maxBytes: number): Promise<Buffer> {
         if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 25 * 1024 * 1024)
             throw new Error("Invalid bounded local Files size.");
-        const filename = path.join(this.root, safeKey(key));
+        const filename = localPath(this.root, key);
         let handle;
         try {
             handle = await open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
@@ -112,7 +137,8 @@ export class R2ObjectStore implements ObjectStore {
     }
 
     private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams, createOnly = false): Promise<Response> {
-        const target = encodeURIComponent(this.config.bucket) + (key === null ? "" : "/" + encodeURIComponent(safeKey(key)));
+        const target = encodeURIComponent(this.config.bucket) +
+            (key === null ? "" : "/" + safeKey(key).split("/").map(segment => encodeURIComponent(segment)).join("/"));
         const requestUrl = new URL(target, this.endpoint);
         // SigV4 requires the actual query bytes to match this canonical encoding.
         const escaped = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g,

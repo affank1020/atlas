@@ -598,6 +598,19 @@ changed by this work.
 
 ### Opt-in managed GitHub PR summary publisher (draft implementation)
 
+**Global native publishing option:** The Server setting
+`ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES=true` allows managed summaries,
+initial inline roots, follow-up inline replies, and fix-evidence replies on
+every repository accessible to the installed GitHub App. It bypasses only the
+four native repository allowlists, **not** the verified OAuth submitter,
+GitHub App write permissions, current PR head, Bot ownership, durability,
+idempotency or explicit `apply:true`. The legacy COMMENT publisher must be
+disabled across *all* repositories; a nonempty legacy allowlist causes a
+configuration startup failure. GitHub GraphQL thread resolution remains on
+its separate per-repository allowlist. The new setting defaults to off and
+requires private production config plus a Server restart; see
+[deployment.md](deployment.md#code-reviews-controlled-github-publisher-opt-in).
+
 `code_reviews_managed_summary_publish({repository,prNumber,apply?})` builds
 on the managed preview. **Default `apply:false` never writes**. A deliberate
 `apply:true` requires the verified MCP OAuth caller to match the latest

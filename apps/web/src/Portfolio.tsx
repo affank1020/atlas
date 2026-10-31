@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE, callTool } from "./api";
 import "./Portfolio.css";
 import { useApplicationRead } from "./atlasApi";
+import { Skeleton } from "./Skeletons";
+import { PortfolioWorkspaceLoading, PortfolioMediaLoading } from "./PortfolioLoading";
 const EMPTY: never[] = [];
 
 type ContentType = "profile" | "contact" | "projects" | "experience" | "posts" | "collections";
@@ -34,6 +36,8 @@ const getEntryMedia=(entry:Entry,assets:Media[])=>{
 export function Portfolio(){
  const schemaQuery=useApplicationRead<Schema[]>('get_portfolio_schemas'),entryQuery=useApplicationRead<Entry[]>('list_portfolio_entries'),dashboardQuery=useApplicationRead<Dashboard>('get_portfolio_dashboard'),mediaQuery=useApplicationRead<Media[]>('list_portfolio_media');
  const schemas=schemaQuery.data??EMPTY,entries=entryQuery.data??EMPTY,dashboard=dashboardQuery.data,media=mediaQuery.data??EMPTY;
+ const initialLoading=[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.isLoading && q.data===undefined);
+ const loadError=[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>!!q.error);
  const [type,setType]=useState<ContentType>("projects"),[selectedId,setSelectedId]=useState<string>(),[draft,setDraft]=useState<Record<string,unknown>>({}),[view,setView]=useState<"content"|"media">(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("tab") === "media" ? "media" : "content");
  const [busy,setBusy]=useState(""),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [creating,setCreating]=useState(false),[search,setSearch]=useState("");
@@ -58,18 +62,18 @@ export function Portfolio(){
   <header className="portfolio-head">
    <div className="portfolio-head-copy"><h1>Portfolio</h1><p>Manage the projects, experience and writing on your site.</p></div>
    <div className="portfolio-summary" aria-label="Portfolio overview">
-    <span><b>{entries.filter(x=>x.status==="published").length}</b><small>Live entries</small></span>
-    <span><b>{entries.filter(x=>x.status!=="published").length}</b><small>In progress</small></span>
-    <span><b>{dashboard?.media.active??0}</b><small>Assets</small></span>
+    <span><b>{entryQuery.data ? entries.filter(x=>x.status==="published").length : initialLoading ? <Skeleton width={36} height={23} /> : "—"}</b><small>Live entries</small></span>
+    <span><b>{entryQuery.data ? entries.filter(x=>x.status!=="published").length : initialLoading ? <Skeleton width={36} height={23} /> : "—"}</b><small>In progress</small></span>
+    <span><b>{dashboard ? dashboard.media.active : initialLoading ? <Skeleton width={36} height={23} /> : "—"}</b><small>Assets</small></span>
    </div>
   </header>
   <nav className="portfolio-tabs" aria-label="Portfolio sections">
    <div className="portfolio-tab-group"><button className={view==="content"?"active":""} aria-current={view==="content"?"page":undefined} onClick={()=>setView("content")}>Content</button><button className={view==="media"?"active":""} aria-current={view==="media"?"page":undefined} onClick={()=>{if(leaveEditor())setView("media");}}>Media library</button></div>
    <div className="portfolio-nav-actions"><a href="#/ask-portfolio">Ask Portfolio <span aria-hidden="true">↗</span></a><button className="portfolio-refresh" onClick={()=>void load()} disabled={!!busy||[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.isFetching)} title="Fetch the latest portfolio content">↻ <span>Refresh</span></button></div>
   </nav>
-  {[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.isLoading)&&<p role="status" className="portfolio-loading">Loading portfolio…</p>}{[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.error)&&<div role="alert" className="portfolio-notice error">Portfolio data unavailable. <button onClick={()=>void load()}>Retry</button></div>}{error&&<div role="alert" className="portfolio-notice error">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
+  {[schemaQuery,entryQuery,dashboardQuery,mediaQuery].some(q=>q.error)&&<div role="alert" className="portfolio-notice error">Portfolio data unavailable. <button onClick={()=>void load()}>Retry</button></div>}{error&&<div role="alert" className="portfolio-notice error">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
   {notice&&<div role="status" className="portfolio-notice success">{notice}<button onClick={()=>setNotice("")} aria-label="Dismiss message">×</button></div>}
-  {view==="content"?<div className="portfolio-workspace">
+  {initialLoading && !loadError ? (view==="media" ? <PortfolioMediaLoading /> : <PortfolioWorkspaceLoading />) : view==="content"?<div className="portfolio-workspace">
    <aside className="portfolio-sidebar" aria-label="Content browser">
     <div className="portfolio-types" aria-label="Content types">
      {(Object.keys(TITLES) as ContentType[]).map(key=>{const counts=dashboard?.contentTypes.find(x=>x.contentType===key);return <button key={key} className={type===key?"active":""} aria-current={type===key?"page":undefined} onClick={()=>{if(type===key||leaveEditor()){setType(key);setCreating(false);setSelectedId(undefined);setSearch("");setNotice("");}}}><span>{TITLES[key]}</span><small>{counts?.total??0}</small></button>;})}

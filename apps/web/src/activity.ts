@@ -90,6 +90,61 @@ export function presentActivity(events: AuditEvent[], names: Record<string, stri
         };
     }).sort((a, b) => b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id));
 }
+/** Evidence labels for the safe Monitoring reader, never an authenticated-human identity. */
+export type ActivityEvidenceRow = { label: string; value: string };
+const evidenceUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const updateOperations = new Set([
+    'node.update_intent_prepared', 'node.update_intent_cancelled',
+    'node.update_intent_claimed', 'node.update_outcome_reported',
+]);
+const choice = (value: unknown, options: readonly string[]) =>
+    typeof value === 'string' && options.includes(value) ? value : undefined;
+
+/**
+ * Separate verified server-side fields from arbitrary audit metadata.
+ * The backend safeDetails allowlist is authoritative; this is only a defensive
+ * presentation allowlist, not a new security boundary or a claim of identity.
+ */
+export function activityEvidence(item: ActivityPresentation): ActivityEvidenceRow[] {
+    const details = item.details;
+    const rows: ActivityEvidenceRow[] = [{ label: 'Recorded client', value: clientName(item.client) }];
+    const operation = typeof details.operation === 'string' ? details.operation : '';
+    const nodeControl = operation.startsWith('node.') || operation === 'workspace.node_assigned';
+    const update = updateOperations.has(operation);
+    const add = (label: string, value: string | undefined) => {
+        if (value) rows.push({ label, value });
+    };
+    const safeId = (value: unknown) =>
+        typeof value === 'string' && evidenceUuid.test(value) ? value.toLowerCase() : undefined;
+    if (nodeControl) {
+        add('Transport', choice(details.transport, ['http', 'mcp', 'server']));
+        add('Credential class', choice(details.actorKind, ['transport', 'node-credential', 'enrolment-token']));
+    }
+    add('Node', safeId(details.nodeId));
+    add('Previous Node', safeId(details.previousNodeId));
+    add('Source Node', safeId(details.sourceNodeId));
+    add('Target Node', safeId(details.targetNodeId));
+    if (update) {
+        add('Update intent', safeId(details.intentId));
+        add('Intent state', choice(details.status, ['requested', 'cancelled', 'expired', 'claimed', 'reconciled']));
+        add('Node-reported activation', choice(details.reportedState, ['activated', 'requires_reconciliation']));
+        for (const [key, label] of [
+            ['approved', 'Approved flag'], ['executable', 'Executable flag'],
+            ['verified', 'Verification flag'], ['clearsClaim', 'Clears-claim flag'],
+        ] as const) {
+            if (typeof details[key] === 'boolean')
+                rows.push({ label, value: details[key] ? 'true' : 'false' });
+        }
+    }
+    if ((operation.startsWith('files.') && item.client === 'atlas-files-db')
+        || (operation === 'backup.r2_seed_observed' && item.client === 'atlas-backup-cli')) {
+        add('Recorded source', choice(details.source, ['database-trigger', 'operator-cli']));
+    }
+    if (operation === 'backup.r2_seed_observed' && item.client === 'atlas-backup-cli')
+        add('Backup run', safeId(details.runId));
+    return rows;
+}
+
 export function filterActivity(items: ActivityPresentation[], category: string, client = '', workspaceId = '') {
     return items.filter(item => (!client || clientName(item.client) === clientName(client)) && (!workspaceId || item.workspaceId === workspaceId) &&
         (!category || (category === 'error' ? item.status === 'failed' : category === 'workspace' ? !!item.workspaceId || item.category === 'workspace' : item.category === category)));

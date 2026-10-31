@@ -4,6 +4,7 @@ import { NodeSharePermissions } from './NodeSharePermissions';
 import { NodeSoftwareSummary } from './NodeSoftware';
 import { ActivityPreview } from './ActivityPreview';
 import './workspaces.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 export type AtlasNode = {
     id: string; name: string; status: 'online' | 'offline' | 'unavailable';
     platform?: string; deviceType?: 'phone' | 'tablet'; version?: string | null; credentialState?: string; credentialUpdatedAt?: string | null;
@@ -26,7 +27,7 @@ export function WorkspaceHost({ nodeId }: { nodeId: string }) {
         callTool<AtlasNode>('get_node', { nodeId }).then(value => { if (live) setNode(value); }).catch(error => { if (live) setError(error.message); });
         return () => { live = false; };
     }, [nodeId]);
-    return <div className="workspace-host"><span className="eyebrow">Host</span>{node ? <><p><a href="#/nodes">{node.name}</a> <NodeStatus status={node.status} /></p><NodeCapabilities capabilities={node.capabilities} /></> : <p>{error ? `Host unavailable: ${error}` : 'Loading host…'}</p>}</div>;
+    return <div className="workspace-host"><span className="eyebrow">Host</span>{node ? <><p><a href="#/nodes">{node.name}</a> <NodeStatus status={node.status} /></p><NodeCapabilities capabilities={node.capabilities} /></> : <p>{error ? `Host unavailable: ${error}` : <Skeleton width={96} height={12} />}</p>}</div>;
 }
 type NodePoint = { x: number; y: number };
 function topologyPoints(count: number): NodePoint[] {
@@ -101,7 +102,7 @@ function NodeSummary({ node, detail, nodes, loading, unavailable, onClear, onCha
             </section>
         </> : <>
             <span className="eyebrow">Status overview</span>
-            <h2>{loading && !nodes.length ? 'Connecting to nodes…' : unavailable ? 'Status unavailable' : !nodes.length ? 'No nodes connected' : !disconnected ? 'All nodes online' : online + ' of ' + nodes.length + ' online'}</h2>
+            <h2>{loading && !nodes.length ? <Skeleton width={180} height={22} /> : unavailable ? 'Status unavailable' : !nodes.length ? 'No nodes connected' : !disconnected ? 'All nodes online' : online + ' of ' + nodes.length + ' online'}</h2>
             <p className="node-summary-description">{unavailable ? 'Unable to load node health. Use Refresh to try again.' : !nodes.length ? 'Enrol a runtime to start monitoring your nodes here.' : disconnected ? 'Some runtimes are offline or unavailable. Select a node to inspect it.' : 'All registered runtimes are currently connected.'}</p>
             <dl className="node-summary-metrics">
                 <div><dt>Online</dt><dd>{unavailable || (loading && !nodes.length) ? '—' : online}</dd></div>
@@ -117,14 +118,14 @@ function NodeDetails({ node, detail, loading, detailError, refreshVersion }: {
     const current = detail || node;
     return <section className="node-details" aria-label="Selected node details">
         <div className="node-details-heading"><h2>Node details</h2><span>{node.name}</span></div>
-        {loading && <p className="node-detail-notice" role="status">Loading node details…</p>}
+        {loading && !detail && !detailError && <SkeletonRows label="Loading node details" variant="list" rows={2} />}
         {detailError && <p className="node-detail-notice" role="alert">Some details could not be loaded: {detailError}</p>}
         <div className="node-detail-grid">
             <section className="node-detail-card node-detail-workspaces">
                 <h3>Hosted workspaces <span>{current.hostedWorkspaceCount}</span></h3>
                 {detail?.workspaces?.length ? <ul className="node-workspace-list">{detail.workspaces.map(workspace => <li key={workspace.id}>
                     <a href={'#/workspaces?workspace=' + encodeURIComponent(workspace.id)}>{workspace.name}</a>
-                </li>)}</ul> : <p className="node-detail-empty">{loading ? 'Loading workspaces…' : detail ? 'No active workspaces.' : detailError ? 'Workspace details unavailable.' : 'Loading workspace details…'}</p>}
+                </li>)}</ul> : loading && !detail ? <SkeletonRows label="Loading hosted workspaces" variant="list" rows={2} /> : <p className="node-detail-empty">{detail ? 'No active workspaces.' : detailError ? 'Workspace details unavailable.' : 'Workspace details pending.'}</p>}
             </section>
             <div className="node-detail-activity">
                 <ActivityPreview nodeId={node.id} title="Recent activity" refreshVersion={refreshVersion} />
@@ -231,7 +232,7 @@ export function Nodes() {
                         <span className="node-graph-info"><strong title={node.name}>{node.name}</strong><small>{nodePlatformLabel(node)}</small></span>
                         <span className={'node-graph-presence ' + node.status} aria-hidden="true" />
                     </button>)}
-                    {busy && !nodes.length && <p className="node-graph-loading" role="status">Loading nodes…</p>}
+                    {busy && !nodes.length && !error && <SkeletonRows label="Loading nodes" variant="cards" rows={3} />}
                     {!busy && !nodes.length && <div className="node-graph-empty"><strong>No nodes registered</strong><span>Enrol a runtime to connect it to Atlas.</span></div>}
                 </div>
                 <footer className="node-network-footer"><span><i className="node-legend-dot online" /> Online</span><span><i className="node-legend-dot offline" /> Offline / unavailable</span></footer>
