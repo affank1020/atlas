@@ -27,18 +27,14 @@ test('expanded Monitoring Activity distinguishes recorded transport, Node direct
     const evidence = screen.getByRole('group', { name: 'Recorded operation provenance' });
     expect(within(evidence).getByText('Operation provenance')).toBeInTheDocument();
     expect(within(evidence).getByText(/do not establish a human operator/)).toBeInTheDocument();
-    const byLabel = (label: string) => {
-        const term = within(evidence).getByText(label);
-        return term.closest('div')?.querySelector('dd')?.textContent;
-    };
-    expect(byLabel('Recorded client')).toBe('atlas-node');
-    expect(byLabel('Transport')).toBe('mcp');
-    expect(byLabel('Credential class')).toBe('node-credential');
-    expect(byLabel('Source Node')).toBe('33333333-3333-4333-8333-333333333333');
-    expect(byLabel('Target Node')).toBe('44444444-4444-4444-8444-444444444444');
-    expect(byLabel('Node-reported activation')).toBe('requires_reconciliation');
-    expect(byLabel('Verification flag')).toBe('false');
-    expect(byLabel('Clears-claim flag')).toBe('false');
+    expect(within(evidence).getByText('Recorded client: atlas-node')).toBeInTheDocument();
+    expect(within(evidence).getByText('Transport: mcp')).toBeInTheDocument();
+    expect(within(evidence).getByText('Credential class: node-credential')).toBeInTheDocument();
+    expect(within(evidence).getByText('Source Node: 33333333-3333-4333-8333-333333333333')).toBeInTheDocument();
+    expect(within(evidence).getByText('Target Node: 44444444-4444-4444-8444-444444444444')).toBeInTheDocument();
+    expect(within(evidence).getByText('Node-reported activation: requires_reconciliation')).toBeInTheDocument();
+    expect(within(evidence).getByText('Verification flag: false')).toBeInTheDocument();
+    expect(within(evidence).getByText('Clears-claim flag: false')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Source Node activity' })).toHaveAttribute('href',
         '#/monitoring?tab=activity&nodeId=33333333-3333-4333-8333-333333333333');
     expect(screen.getByRole('link', { name: 'Target Node activity' })).toHaveAttribute('href',
