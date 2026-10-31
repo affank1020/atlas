@@ -11,7 +11,7 @@ import { LocalObjectStore,ObjectNotFound } from "../apps/server/src/server/file-
 import { PortfolioMediaService,PORTFOLIO_PROJECT_ID } from "../apps/server/src/portfolio/index.js";
 import { captureProjectKeyRun,advanceProjectKeyRun } from "../apps/server/src/server/project-key-ledger.js";
 import { captureProjectRecoveryManifest,loadProjectRecoveryManifest,
-    seedProjectRecovery,verifyIsolatedProjectRecovery } from "../apps/server/src/server/project-independent-recovery.js";
+    seedProjectRecovery,verifyIsolatedProjectRecovery,getProjectRecoverySeedStatus } from "../apps/server/src/server/project-independent-recovery.js";
 import type { RecoveryObjectStore } from "../apps/server/src/server/project-independent-recovery.js";
 import { cleanupDatabases,databaseFixture } from "./database.js";
 after(cleanupDatabases);
@@ -61,10 +61,14 @@ test("Complete legacy Project inventory is captured and restores from recovery-o
         assert.equal(first.createdVerified,1);
         assert.equal(first.remaining,true);
         const final=await seedProjectRecovery({...args,apply:true,fromOrdinal:first.nextOrdinal,maxFiles:1});
-        assert.equal(final.status,"partial","a final page alone cannot establish full-manifest coverage");
+        assert.equal(final.status,"completed","durable earlier receipt plus final page completes manifest");
         assert.equal(final.remaining,false);
+        assert.equal(final.seedComplete,true);
+        const receiptStatus=await getProjectRecoverySeedStatus(ctx.pool,manifest.id,ctx.project);
+        assert.equal(receiptStatus.status,"complete");
+        assert.equal(receiptStatus.verifiedEntries,2);
         const full=await seedProjectRecovery({...args,apply:true,maxFiles:2});
-        assert.equal(full.status,"completed","the full manifest must be checked in one run");
+        assert.equal(full.status,"completed","repeat must independently recheck backup");
         assert.equal(saved.size,2);assert.equal(writes.length,2);
         const offline=new Pool({connectionString:ctx.db});
         try{
@@ -200,5 +204,101 @@ test("Completed Stage 4B receipts allow backup of both legacy and versioned Proj
         assert.equal(seeded.status,"completed");
         assert.equal((await verifyIsolatedProjectRecovery({restoredDatabase:ctx.pool,
             backup,runId:run.id,projectId:ctx.project,maxFiles:2})).status,"passed");
+    }finally{await ctx.close();}
+});
+
+test("Six-object recovery is durably completed across five-object pages and a fresh DB connection",async()=>{
+    const ctx=await fixture();
+    try{
+        for(let n=0;n<6;n++)await upload(ctx,"batch-"+n);
+        const source=new LocalObjectStore(ctx.root);
+        const manifest=await captureProjectRecoveryManifest({database:ctx.pool,source,projectId:ctx.project});
+        assert.equal(manifest.entries.length,6);
+        const objects=new Map<string,Buffer>(),writes:string[]=[];
+        const backup=bucket(objects,writes);
+        const args={database:ctx.pool,source,backup,runId:manifest.id,projectId:ctx.project,apply:true};
+        const before=await getProjectRecoverySeedStatus(ctx.pool,manifest.id,ctx.project);
+        assert.equal(before.status,"incomplete");
+        assert.equal(before.verifiedEntries,0);
+        assert.equal(before.nextOrdinal,0);
+        const first=await seedProjectRecovery({...args,maxFiles:5});
+        assert.equal(first.status,"partial");
+        assert.equal(first.seedComplete,false);
+        assert.equal(first.verifiedManifestEntries,5);
+        assert.equal(first.nextOrdinal,5);
+        assert.equal(first.writesAttempted,5);
+        assert.equal(objects.size,5);
+        const other=new Pool({connectionString:ctx.db});
+        try{
+            const persisted=await getProjectRecoverySeedStatus(other,manifest.id,ctx.project);
+            assert.equal(persisted.verifiedEntries,5,"receipts survive process/database client restart");
+            assert.equal(persisted.nextOrdinal,5);
+            const last=await seedProjectRecovery({...args,database:other,fromOrdinal:5,maxFiles:5});
+            assert.equal(last.checked,1);
+            assert.equal(last.status,"completed");
+            assert.equal(last.seedComplete,true);
+            assert.equal(last.verifiedManifestEntries,6);
+            assert.equal(last.remaining,false);
+            assert.equal(last.nextOrdinal,undefined);
+            assert.equal(objects.size,6);
+            const complete=await getProjectRecoverySeedStatus(other,manifest.id,ctx.project);
+            assert.equal(complete.status,"complete");
+            assert.equal(complete.verifiedEntries,6);
+            assert.equal(complete.totalEntries,6);
+            assert.equal(complete.metadataOnly,true);
+            assert.equal(complete.noWrites,true);
+            assert.equal(writes.length,6);
+            await assert.rejects(
+                getProjectRecoverySeedStatus(other,manifest.id,randomUUID()),/another Project/);
+            const repeat=await seedProjectRecovery({...args,database:other,fromOrdinal:5,maxFiles:1});
+            assert.equal(repeat.status,"completed");
+            assert.equal(repeat.writesAttempted,0);
+            assert.equal(writes.length,6,"re-run never overwrites already verified copy");
+        }finally{await other.end();}
+    }finally{await ctx.close();}
+});
+
+test("Out-of-order seed pages and incomplete attempts never falsely certify whole coverage",async()=>{
+    const ctx=await fixture();
+    try{
+        for(let n=0;n<7;n++)await upload(ctx,"item-"+n);
+        const source=new LocalObjectStore(ctx.root);
+        const manifest=await captureProjectRecoveryManifest({database:ctx.pool,source,projectId:ctx.project});
+        const backing=new Map<string,Buffer>();
+        const backup=bucket(backing);
+        const args={database:ctx.pool,source,backup,runId:manifest.id,projectId:ctx.project,apply:true};
+        const later=await seedProjectRecovery({...args,fromOrdinal:5,maxFiles:2});
+        assert.equal(later.status,"partial");
+        assert.equal(later.seedComplete,false);
+        assert.equal(later.verifiedManifestEntries,2);
+        assert.equal(later.nextOrdinal,0,"earliest unverified page is the resume point");
+        const before=await ctx.pool.query(
+            "SELECT count(*)::int AS count FROM atlas_project_recovery_receipts WHERE run_id=$1",[manifest.id]);
+        assert.equal(before.rows[0]!.count,2);
+        let interrupted=true;
+        const transient={
+            async getBounded(key:string,max:number){return backup.getBounded(key,max);},
+            async putIfAbsent(key:string,bytes:Buffer,mime:string){
+                const wrote=await backup.putIfAbsent!(key,bytes,mime);
+                if(interrupted){interrupted=false;throw new Error("PUT acknowledgment lost");}
+                return wrote;
+            },
+        };
+        await assert.rejects(seedProjectRecovery({...args,backup:transient,maxFiles:5}),
+            /acknowledgment lost/);
+        const after=await getProjectRecoverySeedStatus(ctx.pool,manifest.id,ctx.project);
+        assert.equal(after.verifiedEntries,2,"inconclusive copy has no durable page receipt");
+        assert.equal(after.status,"incomplete");
+        const replay=await seedProjectRecovery({...args,maxFiles:5});
+        assert.equal(replay.status,"completed","retry verifies previously written bytes");
+        assert.equal(replay.verifiedManifestEntries,7);
+        const all=await getProjectRecoverySeedStatus(ctx.pool,manifest.id,ctx.project);
+        assert.equal(all.status,"complete");
+        await ctx.pool.query("DELETE FROM atlas_project_recovery_receipts WHERE run_id=$1 AND ordinal=3",
+            [manifest.id]);
+        const missing=await getProjectRecoverySeedStatus(ctx.pool,manifest.id,ctx.project);
+        assert.equal(missing.status,"incomplete");
+        assert.equal(missing.nextOrdinal,3);
+        assert.equal(missing.verifiedEntries,6);
     }finally{await ctx.close();}
 });
