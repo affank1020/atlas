@@ -50,11 +50,11 @@ async function seededState(ctx:Awaited<ReturnType<typeof setup>>,count:number){
     const created=new Map<string,Buffer>(),writeKeys:string[]=[];
     const liveNew=bucket(created,writeKeys);
     const keyRun=await captureProjectKeyRun(ctx.files.pool,ctx.projectId);
-    for(let i=0;i<count;i+=5){
+    for(let i=0;i<keyRun.objectCount;i+=5){
         const result=await advanceProjectKeyRun({database:ctx.files.pool,
             source:liveOld,destination:liveNew,runId:keyRun.id,projectId:ctx.projectId,
             maxFiles:5,apply:true});
-        assert.equal(result.copiedCount,Math.min(i+5,count));
+        assert.equal(result.copiedCount,Math.min(i+5,keyRun.objectCount));
     }
     const union:BoundedCopyStore={async getBounded(key,max){
         if(created.has(key))return liveNew.getBounded(key,max);
