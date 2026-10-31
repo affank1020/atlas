@@ -359,11 +359,15 @@ test('concurrent summary claims never create two comments', async () => {
     assert.equal(f.events.post, 1, 'concurrent requests cannot both POST');
     assert.equal(f.getRemote()?.id, 73);
     const accepted = settled.filter(x => x.status === 'fulfilled');
-    assert.ok(accepted.length >= 1, 'one concurrent request must publish');
-    assert.ok(accepted.every(x => x.value.status === 'published'),
-        'a later observer can return an already-published receipt');
-    // Depending on which snapshot wins, the other call either detects the
-    // changed claim and conflicts or sees the completed published receipt.
+    assert.ok(accepted.some(x => x.value.status === 'published'),
+        'one concurrent request must publish');
+    assert.ok(accepted.every(x => x.value.status === 'published' ||
+        (x.value.status === 'uncertain' && x.value.postedAgain === false)),
+        'a competing observer may see a still-claimed write, but cannot retry it');
+    // The follower may race after the first claim but before the POST:
+    // 'uncertain' is the safe, intentional read-only outcome in that window.
+    const stored = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID, f.runs.id, f.first.id);
+    assert.equal((stored.data.coverage as any).githubManagedSummary.state, 'published');
 });
 
 test('GitHub issue comment writer verifies base PR, unchanged head, methods and scoped tokens', async () => {
