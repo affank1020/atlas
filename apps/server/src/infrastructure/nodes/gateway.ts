@@ -6,7 +6,8 @@ import { registrationSchema, registeredSchema, MAX_NODE_FRAME_BYTES, NODE_PROTOC
 import type { NodeService } from '../../nodes/service.js';
 import { RemoteNodeRuntime } from './remote-runtime.js';
 import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema,
-    deviceInboxEnqueueSchema, deviceInboxListSchema, deviceInboxReadSchema, deviceInboxDecideSchema } from '@atlas/protocol/device-protocol';
+    deviceInboxEnqueueSchema, deviceInboxListSchema, deviceInboxReadSchema, deviceInboxDecideSchema,
+    deviceInboxRecipientsRequestSchema, deviceInboxRecipientsResultSchema } from '@atlas/protocol/device-protocol';
 import type { DeviceOfflineInbox } from '../../nodes/offline-inbox.js';
 import { DeviceShareRelay } from './share-relay.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
@@ -111,8 +112,10 @@ export class RemoteNodeGateway {
                 return;
             }
             const directory = deviceShareRecipientsRequestSchema.safeParse(message);
-            if (directory.success) {
-                const originId = id, current = session, requestId = directory.data.requestId;
+            const queueDirectory = deviceInboxRecipientsRequestSchema.safeParse(message);
+            if (directory.success || queueDirectory.success) {
+                const originId = id, current = session;
+                const requestId = directory.success ? directory.data.requestId : queueDirectory.data!.requestId;
                 const respond = (ok: boolean, value: unknown) => {
                     if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
                     socket.send(JSON.stringify(ok
@@ -122,7 +125,8 @@ export class RemoteNodeGateway {
                 // Synchronous admission before authentication/database queries.
                 const now = Date.now();
                 if (!current || this.sessions.get(originId) !== current ||
-                    !current.runtime.getCapabilities().includes('device.share.send')) {
+                    !current.runtime.getCapabilities().includes('device.share.send') ||
+                    (queueDirectory.success && !this.offlineInbox)) {
                     respond(false, { code: 'SHARE_DENIED', message: 'Recipient lookup is not permitted.' });
                     return;
                 }
@@ -137,8 +141,15 @@ export class RemoteNodeGateway {
                         await this.nodes.identity!.authenticate(originId, credential);
                         if (this.sessions.get(originId) !== current)
                             throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
-                        const recipients = await this.nodes.shareRecipients(originId);
-                        respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
+                        if (queueDirectory.success) {
+                            const recipients = await this.nodes.inboxRecipients(originId);
+                            respond(true, deviceInboxRecipientsResultSchema.parse({ recipients }));
+                        } else {
+                            // Preserve the exact legacy five-field recipient envelope.
+                            // Older Android clients close sockets on extra fields.
+                            const recipients = await this.nodes.shareRecipients(originId);
+                            respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
+                        }
                     } catch (error) {
                         const known = error instanceof AtlasError;
                         respond(false, { code: known ? error.code : 'SHARE_UNAVAILABLE',
