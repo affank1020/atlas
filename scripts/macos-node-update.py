@@ -140,6 +140,28 @@ def sync_installed_operator(layout, tag: str) -> None:
         operator.promote(layout, tag, require_existing=True)
 
 
+def ensure_compatible_watchdog(layout) -> None:
+    """Repair the loaded previous-version recovery job after user approval.
+
+    An interrupted operator pointer migration can leave CLI A and watchdog
+    B (or vice versa). Both rollback and update must first align the loaded
+    watchdog to the currently executing lifecycle script, using the existing
+    durable watchdog rollback journal and per-user lifecycle lock.
+    """
+    try:
+        lifecycle.require_watchdog(layout)
+    except (lifecycle.Refused, OSError):
+        if layout.pending.exists() or layout.pending.is_symlink():
+            raise Refused("Node recovery is pending; refusing watchdog changes.")
+        if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
+            raise Refused("Watchdog upgrade was interrupted; run restore-watchdog --confirm.")
+        if lifecycle.launch_loaded(layout, layout.recovery_target):
+            lifecycle.manage(layout, ["refresh-watchdog", "--confirm"])
+        else:
+            lifecycle.manage(layout, ["install-watchdog"])
+    lifecycle.require_watchdog(layout)
+
+
 def apply_update(layout, *, migrate: bool) -> int:
     if not sys.stdin.isatty():
         raise Refused("Updates require an interactive terminal and explicit confirmation.")
@@ -184,23 +206,9 @@ def apply_update(layout, *, migrate: bool) -> int:
     }
     prepared_release(layout, selected)
 
-    # The lifecycle owns the exclusive lock for both watchdog installation and
-    # activation. Never bypass its existing checked journal/rollback protocol.
-    try:
-        lifecycle.require_watchdog(layout)
-    except (lifecycle.Refused, OSError):
-        if layout.pending.exists() or layout.pending.is_symlink():
-            raise Refused("Node recovery is pending; refusing watchdog changes.")
-        if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
-            raise Refused("Watchdog upgrade was interrupted; run restore-watchdog --confirm.")
-        if lifecycle.launch_loaded(layout, layout.recovery_target):
-            # The user already confirmed the exact update above. The
-            # lifecycle validates the old per-user watchdog's shape, journals
-            # its bytes, and performs a locked stop/replace/restart with
-            # rollback rather than silently overwriting a loaded process.
-            lifecycle.manage(layout, ["refresh-watchdog", "--confirm"])
-        else:
-            lifecycle.manage(layout, ["install-watchdog"])
+    # The user already confirmed the exact release. Align any previously
+    # loaded watchdog before activation, without bypassing lifecycle locks.
+    ensure_compatible_watchdog(layout)
     lifecycle.manage(layout, ["activate", tag.removeprefix("node-"), "--confirm",
                               "--expect-entrypoint", selected_state["currentEntrypoint"]])
     try:
@@ -231,6 +239,9 @@ def main(argv: list[str]) -> int:
     if argv[0] == "rollback":
         if not sys.stdin.isatty() or input("Type ROLLBACK to restore the prior Node: ") != "ROLLBACK":
             raise Refused("Rollback requires explicit interactive confirmation.")
+        # A killed CLI pointer swap can leave an older operator paired with
+        # a newer recovery watchdog. Restore compatibility before rollback.
+        ensure_compatible_watchdog(layout)
         lifecycle.manage(layout, ["rollback", "--confirm"])
         return 0
     result = local_state(layout) if argv[0] == "status" else (
