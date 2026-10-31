@@ -189,9 +189,44 @@ async function assertCatalog(database:Pick<Pool,"query">,m:ProjectRecoveryManife
         }
     }
 }
+export type ProjectRecoverySeedStatus = {
+    runId:string;projectId:string;manifestSha256:string;
+    status:"complete"|"incomplete";totalEntries:number;verifiedEntries:number;
+    nextOrdinal?:number;metadataOnly:true;noWrites:true;
+};
+/** Read-only whole-manifest checkpoint. Count only correctly matching,
+ * durable verification receipts, not the last successfully visited page.
+ * This is historical evidence, NOT a live backup-byte or DR restore test. */
+export async function getProjectRecoverySeedStatus(database:Pick<Pool,"query">,
+    runId:string,projectId:string):Promise<ProjectRecoverySeedStatus>{
+    const manifest=await loadProjectRecoveryManifest(database,runId);
+    if(manifest.projectId!==id(projectId))
+        throw new Error("Project recovery seed status belongs to another Project.");
+    await assertCatalog(database,manifest);
+    const saved=await database.query<{ordinal:number;sha256:string;byte_size:string}>(
+        "SELECT ordinal,sha256,byte_size FROM atlas_project_recovery_receipts "+
+        "WHERE run_id=$1 ORDER BY ordinal LIMIT $2",[manifest.id,MAX_ENTRIES+1]);
+    if(saved.rows.length>manifest.entries.length)
+        throw new Error("Project recovery receipt count exceeds manifest.");
+    const present=new Set<number>();
+    for(const row of saved.rows){
+        const e=manifest.entries[row.ordinal];
+        if(!e||present.has(row.ordinal)||row.sha256!==e.sha256||
+           Number(row.byte_size)!==e.byteSize)
+            throw new Error("Project recovery receipt does not match immutable manifest.");
+        present.add(row.ordinal);
+    }
+    const next=manifest.entries.find(e=>!present.has(e.ordinal))?.ordinal;
+    return {runId:manifest.id,projectId:manifest.projectId,manifestSha256:manifest.manifestSha256,
+        status:next===undefined?"complete":"incomplete",
+        totalEntries:manifest.entries.length,verifiedEntries:present.size,
+        ...(next===undefined?{}:{nextOrdinal:next}),metadataOnly:true,noWrites:true};
+}
+
 export type SeedRecoveryReport = {mode:"dry-run"|"apply";status:"ready"|"completed"|"partial"|"failed";
     checked:number;existingVerified:number;planned:number;createdVerified:number;
     racedVerified:number;bytesVerified:number;writesAttempted:number;remaining:boolean;
+    verifiedManifestEntries:number;manifestEntries:number;seedComplete:boolean;
     nextOrdinal?:number;noDeletes:true};
 /** A bounded, fail-closed batch. All source and existing destination bytes are
  * preflighted before the first conditional PUT; never substitute current rows
@@ -236,16 +271,41 @@ export async function seedProjectRecovery(input:{
             if(wasCreated)created++;else raced++;
         }
         await assertCatalog(input.database,m);
+        // Record only a complete, reverified bounded batch; a lost PUT or
+        // interrupted process leaves no new receipts and is retry-safe.
+        const client=await input.database.connect();
+        let begun=false;
+        try{
+            await client.query("BEGIN");
+            begun=true;
+            await client.query("SELECT id FROM atlas_project_recovery_runs WHERE id=$1 FOR UPDATE",[m.id]);
+            await assertCatalog(client,m);
+            for(const e of page)
+                await client.query(
+                    "INSERT INTO atlas_project_recovery_receipts (run_id,ordinal,sha256,byte_size) "+
+                    "VALUES ($1,$2,$3,$4) ON CONFLICT (run_id,ordinal) DO NOTHING",
+                    [m.id,e.ordinal,e.sha256,e.byteSize]);
+            await client.query("COMMIT");begun=false;
+        }catch(error){
+            if(begun)await client.query("ROLLBACK").catch(()=>undefined);
+            throw error;
+        }finally{client.release();}
     }
+    // Always aggregate *all* durable receipts. This can be complete after a
+    // final five-object page, without pretending that that page verified
+    // any earlier bytes itself.
+    const checkpoint=await getProjectRecoverySeedStatus(input.database,m.id,m.projectId);
     const end=from+page.length;
-    // An end-of-pagination page is not evidence that earlier pages were
-    // seeded or verified. Only a complete uncursored run can be "completed".
-    return {mode:input.apply?"apply":"dry-run",status:from>0||end<m.entries.length?"partial":
-        input.apply?"completed":"ready",
+    return {mode:input.apply?"apply":"dry-run",
+        status:input.apply?(checkpoint.status==="complete"?"completed":"partial"):
+            from>0||end<m.entries.length?"partial":"ready",
         checked:page.length,existingVerified:verified,planned:missing.length,
         createdVerified:created,racedVerified:raced,bytesVerified,
         writesAttempted:writes,remaining:end<m.entries.length,
-        ...(end<m.entries.length?{nextOrdinal:end}:{}),noDeletes:true};
+        verifiedManifestEntries:checkpoint.verifiedEntries,manifestEntries:checkpoint.totalEntries,
+        seedComplete:checkpoint.status==="complete",
+        ...(checkpoint.nextOrdinal===undefined?{}:{nextOrdinal:checkpoint.nextOrdinal}),
+        noDeletes:true};
 }
 export type RecoveryRestoreReport = {status:"passed"|"failed"|"partial";scope:"restored-db-and-independent-r2";
     runId:string;manifestSha256:string;checked:number;verified:number;
