@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -153,6 +154,42 @@ class MacLifecycleTests(unittest.TestCase):
         self.assertEqual(self.layout.plist.read_bytes(), self.existing)
         self.assertEqual(self.layout.previous.read_bytes(), active)
         self.assertFalse(self.layout.pending.exists())
+
+    def test_crash_after_previous_pointer_write_restores_old_pointer(self):
+        self.with_watchdog()
+        lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        first_running = self.layout.plist.read_bytes()
+        old_previous = self.layout.previous.read_bytes()
+        new_tag = "v2.0.0-" + "b" * 12
+        new_source = "b" * 40
+        second = self.layout.releases / new_tag
+        shutil.copytree(self.release, second)
+        manifest = json.loads((second / "atlas-node-release.json").read_text())
+        manifest["commit"] = new_source
+        (second / "atlas-node-release.json").write_text(json.dumps(manifest))
+        receipt = json.loads((second / ".atlas-signed-staging.json").read_text())
+        receipt["source"], receipt["tag"] = new_source, "node-" + new_tag
+        (second / ".atlas-signed-staging.json").write_text(json.dumps(receipt))
+        with patch.object(lifecycle, "clear_pending", side_effect=KeyboardInterrupt()):
+            with self.assertRaises(KeyboardInterrupt):
+                lifecycle.manage(self.layout, ["activate", new_tag, "--confirm"])
+        self.assertNotEqual(self.layout.plist.read_bytes(), first_running)
+        self.assertEqual(self.layout.previous.read_bytes(), first_running)
+        pending = json.loads(self.layout.pending.read_text())
+        pending["started"] = time.time() - lifecycle.GRACE_SECONDS - 1
+        lifecycle.json_write(self.layout.pending, pending)
+        lifecycle.manage(self.layout, ["recover"])
+        self.assertEqual(self.layout.plist.read_bytes(), first_running)
+        self.assertEqual(self.layout.previous.read_bytes(), old_previous)
+        self.assertFalse(self.layout.pending.exists())
+
+    def test_repeated_activation_of_same_release_refuses_restart(self):
+        self.with_watchdog()
+        lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        before = len(self.fake.commands)
+        with self.assertRaisesRegex(lifecycle.Refused, "already active"):
+            lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        self.assertFalse(any(c[:2] == ("launchctl", "bootout") for c in self.fake.commands[before:]))
 
     def test_activation_failure_automatically_recovers_original_launchagent(self):
         self.with_watchdog()

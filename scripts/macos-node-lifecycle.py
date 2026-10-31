@@ -243,6 +243,15 @@ def recover_record(layout: Layout) -> dict | None:
             raise Refused("Rollback journal is missing its original LaunchAgent.") from exc
         decode_plist(previous_bytes, layout)
         data["_previous"] = previous_bytes
+    else:
+        try:
+            saved = data["previousBefore"]
+            prior_previous = None if saved is None else base64.b64decode(saved, validate=True)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Refused("Activation journal lost its rollback target.") from exc
+        if prior_previous is not None:
+            decode_plist(prior_previous, layout)
+        data["_previous_before"] = prior_previous
     data["_restore"] = target
     return data
 
@@ -311,6 +320,9 @@ def complete(layout: Layout, candidate: bytes, current: bytes, action: str) -> N
     # Recovery always points at a safe, chosen working target. On an
     # interrupted explicit rollback we must NOT restore rejected code.
     restore = candidate if action == "rollback" else current
+    if layout.previous.is_symlink():
+        raise Refused("Previous rollback target must not be a symlink.")
+    previous_before = exact_plist_bytes(layout.previous, layout.uid) if layout.previous.exists() else None
     started = time.time()
     json_write(layout.pending, {
         "schema": 1, "action": action, "started": started,
@@ -318,6 +330,7 @@ def complete(layout: Layout, candidate: bytes, current: bytes, action: str) -> N
         "recoverPlist": base64.b64encode(restore).decode(),
         "recoverSha256": hashlib.sha256(restore).hexdigest(),
         "previousPlist": base64.b64encode(current).decode() if action == "rollback" else None,
+        "previousBefore": base64.b64encode(previous_before).decode() if previous_before is not None else None,
     })
     try:
         cutover(layout, candidate)
@@ -353,6 +366,17 @@ def recover(layout: Layout, *, force: bool = False) -> bool:
         raise Refused("Recovery booted but healthy reconnect is not confirmed; journal preserved.")
     if data["action"] == "rollback":
         atomic_write(layout.previous, data["_previous"])
+    elif data["_previous_before"] is not None:
+        atomic_write(layout.previous, data["_previous_before"])
+    elif layout.previous.exists() or layout.previous.is_symlink():
+        if layout.previous.is_symlink():
+            raise Refused("Unexpected symlinked previous rollback record.")
+        layout.previous.unlink()
+        folder = os.open(layout.state, os.O_RDONLY)
+        try:
+            os.fsync(folder)
+        finally:
+            os.close(folder)
     clear_pending(layout)
     return True
 
@@ -429,7 +453,10 @@ def manage(layout: Layout, argv: list[str]) -> None:
             if launch_pid(layout) is None:
                 raise Refused("Current launchd Node has no live PID.")
             if action == "activate":
-                new = make_plist(current, layout, release_path(layout, argv[1]))
+                selected = release_path(layout, argv[1])
+                if decode_plist(current, layout)["ProgramArguments"][1] == str(selected / ENTRYPOINT):
+                    raise Refused("Selected Node release is already active.")
+                new = make_plist(current, layout, selected)
                 complete(layout, new, current, action)
             else:
                 prior = exact_plist_bytes(layout.previous, layout.uid)
