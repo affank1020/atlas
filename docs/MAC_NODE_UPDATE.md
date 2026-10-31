@@ -42,8 +42,15 @@ recorded source and archive digest must match the catalogue candidate;
 the existing on-disk receipt is *not* a cryptographic trust boundary against
 a compromised local macOS user.
 
-On the first confirmed update, the coordinator installs the existing
-non-root recovery watchdog if absent and unmodified. It then delegates to
+After the exact update is confirmed, the coordinator ensures the non-root
+recovery watchdog is installed. If an older watchdog is already loaded, it
+uses an operator-approved watchdog refresh under the existing lifecycle lock:
+validate the previous per-user LaunchAgent, durably journal its original
+script and plist, boot it out and wait for its process to exit, install the
+new script, then rebootstrap and verify it loaded. A failed bootstrap
+automatically tries to restore the previous loaded watchdog; a killed
+updater leaves an explicit restore operation instead of silently
+overwriting running code. The coordinator then delegates to
 the already-tested launchd lifecycle. That lifecycle uses one exclusive lock,
 journals changes before cutover, checks old PID termination, requires a fresh
 local connected heartbeat with a new PID and rolls back on failure. The
@@ -66,8 +73,9 @@ state. A catalogue entry is **not verified signed code** until staging.
 
 The updater refuses noninteractive updates, unconfirmed migration, an offline
 hosted launchd Node, pending recovery, downgrades, stale or ambiguous
-same-version builds, changed candidates, and modified loaded watchdogs. An
-offline GitHub release check fails without changing the Node.
+same-version builds, changed candidates, unexpected watchdog jobs/plists
+and unfinished watchdog refreshes. An offline GitHub release check fails
+without changing the Node.
 
 If recovery is pending, use:
 
@@ -76,9 +84,20 @@ python3 scripts/macos-node-lifecycle.py recover
 python3 scripts/macos-node-update.py status
 ```
 
-If the watchdog is loaded but outdated or modified, stop and inspect the
-existing installation. Do not delete/replace it while launchd is active.
-The updater will not attempt to force-repair it.
+If a previous watcher refresh was interrupted, **do not manually delete its
+journal or files**. Restore the previous working watchdog explicitly:
+
+```bash
+python3 scripts/macos-node-lifecycle.py restore-watchdog --confirm
+python3 scripts/macos-node-update.py status
+```
+
+The restore command holds the lifecycle lock, checks the durable backup,
+waits for any loaded watchdog process to exit, then reinstalls and loads
+the original plist/script. If its bootstrap fails, the journal remains for
+operator inspection/retry. A loaded watchdog with unexpected job settings,
+symlinked paths or unsafe ownership is rejected rather than overwritten.
+Never manually change the watchdog while the LaunchAgent is loaded.
 
 The scripts currently run from a repository checkout, although the staged
 Node runtime is release-managed. A separately provisioned updater bundle
