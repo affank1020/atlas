@@ -81,7 +81,8 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
     const shareApprovals = new NodeShareApprovals(repository.pool, config.deviceShares.approvedPairs);
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool, healthPool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
-    const health = new MonitoringHealthService(healthPool, { list: () => nodes.listForMonitoring() });
+    const health = new MonitoringHealthService(healthPool, { list: () => nodes.listForMonitoring() },
+        undefined, undefined, undefined, diagnosticHistory);
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));

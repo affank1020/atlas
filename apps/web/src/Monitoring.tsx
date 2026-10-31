@@ -355,9 +355,23 @@ type HealthSnapshot = {
     checkedAt: string; overall: 'healthy' | 'degraded' | 'unknown';
     server: { status: 'healthy' | 'degraded'; uptimeSeconds: number; startedAt: string;
         database: { status: 'reachable' | 'unavailable'; latencyMs?: number } };
+    diagnostics?: { status: 'available' | 'unavailable' | 'disabled' | 'unknown';
+        coverage: 'incomplete-possible'; retentionDays: number;
+        droppedSinceStart: number | null; queuedForWrite: number | null; writePaused: boolean | null };
     nodes: { available: boolean; summary: { total: number; healthy: number; stale: number;
         offline: number; unavailable: number; revoked: number; unknown: number }; items: HealthNode[] };
 };
+
+/** During a rolling deployment an older Server may report healthy without
+ * probing diagnostic history. Never paint that unverified aggregate green.
+ * A confirmed DB/Node failure retains its higher-priority degraded state. */
+function displayedHealthOverall(snapshot: HealthSnapshot): HealthSnapshot['overall'] {
+    if (snapshot.overall !== 'healthy') return snapshot.overall;
+    const archive = snapshot.diagnostics;
+    if (!archive || (archive.status !== 'available' && archive.status !== 'disabled')
+        || archive.writePaused === true || (archive.droppedSinceStart ?? 0) > 0) return 'unknown';
+    return 'healthy';
+}
 function MonitoringHealthPanel() {
     const [snapshot, setSnapshot] = useState<HealthSnapshot>();
     const [busy, setBusy] = useState(false);
@@ -376,6 +390,7 @@ function MonitoringHealthPanel() {
         return () => controller.abort();
     }, [refresh]);
     const badge = (status: string) => status === 'healthy' || status === 'reachable' ? 'success' : 'muted';
+    const displayedOverall = snapshot ? displayedHealthOverall(snapshot) : 'unknown';
     return <section className="workspace-section" aria-label="Live operational health">
         <div className="section-heading"><h2>Live operational health</h2>
             <button className="ghost" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Checking…' : 'Refresh health'}</button>
@@ -383,12 +398,34 @@ function MonitoringHealthPanel() {
         {busy && !snapshot && <p role="status">Checking Server and Node health…</p>}
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
-            <p><span className={`badge ${badge(snapshot.overall)}`}>{snapshot.overall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
+            <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
             <div className="workspace-row"><span className="row-copy"><strong>Atlas Server · database</strong>
                 <small>{snapshot.server.database.status === 'reachable'
                     ? `Database query succeeded · ${snapshot.server.database.latencyMs ?? '—'} ms · Server uptime ${Math.floor(snapshot.server.uptimeSeconds / 60)} min`
                     : 'Database health query failed; Server process is responding'}</small></span>
                 <span className={`badge ${badge(snapshot.server.status)}`}>{snapshot.server.database.status}</span>
+            </div>
+            <div className="workspace-row"><span className="row-copy"><strong>Server diagnostic archive</strong>
+                <small>{!snapshot.diagnostics
+                    ? 'Archive state unknown (older Server revision); check retained diagnostics'
+                    : snapshot.diagnostics.status === 'disabled'
+                        ? 'Fixed-code archive disabled by configuration; no history is being written'
+                    : snapshot.diagnostics.status === 'unavailable' || snapshot.diagnostics.status === 'unknown'
+                        ? 'Archive read not verified; history may be missing'
+                    : `Read probe succeeded · ${snapshot.diagnostics.retentionDays}-day best-effort history`}</small>
+                {snapshot.diagnostics && (snapshot.diagnostics.droppedSinceStart != null || snapshot.diagnostics.queuedForWrite != null) &&
+                    <small role="status">
+                        {snapshot.diagnostics.droppedSinceStart != null
+                            ? `${snapshot.diagnostics.droppedSinceStart} dropped since restart`
+                            : 'Dropped-write count unknown'}
+                        {' · '}
+                        {snapshot.diagnostics.queuedForWrite != null
+                            ? `${snapshot.diagnostics.queuedForWrite} waiting to write`
+                            : 'Pending-write count unknown'}
+                    </small>}
+                {snapshot.diagnostics?.writePaused && <small role="status">Archive writes are backing off after a failure; recent events may be missing.</small>}
+                <small>Historical coverage is never guaranteed. <a href={monitoringHash('logs', { target: 'server', history: '1' })}>View retained diagnostics</a></small></span>
+                <span className={`badge ${badge(snapshot.diagnostics?.status ?? 'unknown')}`}>{snapshot.diagnostics?.status ?? 'unknown'}</span>
             </div>
             {!snapshot.nodes.available && <p role="status">Node registry could not be checked. Node health is unknown.</p>}
             {snapshot.nodes.available && <>

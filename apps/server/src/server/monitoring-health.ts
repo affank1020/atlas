@@ -4,11 +4,21 @@ import type { AtlasNode } from '../nodes/model.js';
 const inputSchema = z.object({}).strict();
 export type MonitoringHealthState = 'healthy' | 'degraded' | 'unknown';
 export type NodeHealthState = 'healthy' | 'stale' | 'offline' | 'unavailable' | 'revoked' | 'unknown';
+export type DiagnosticArchiveState = 'available' | 'unavailable' | 'disabled' | 'unknown';
+export type DiagnosticArchiveHealth = {
+    status: DiagnosticArchiveState;
+    coverage: 'incomplete-possible';
+    retentionDays: 14;
+    droppedSinceStart: number | null;
+    queuedForWrite: number | null;
+    writePaused: boolean | null;
+};
 export type MonitoringHealth = {
     checkedAt: string;
     overall: MonitoringHealthState;
     server: { status: 'healthy' | 'degraded'; startedAt: string; uptimeSeconds: number;
         database: { status: 'reachable' | 'unavailable'; latencyMs?: number } };
+    diagnostics: DiagnosticArchiveHealth;
     nodes: { available: boolean; summary: { total: number; healthy: number; stale: number; offline: number;
         unavailable: number; revoked: number; unknown: number };
         items: Array<{ id: string; name: string; platform: string; version: string | null;
@@ -49,6 +59,11 @@ export class MonitoringHealthService {
         private readonly now: () => Date = () => new Date(),
         private readonly clock: () => number = () => performance.now(),
         private readonly deadlineMs = HEALTH_DEADLINE_MS,
+        private readonly archive?: { status(): Promise<{
+            state: 'available' | 'unavailable' | 'disabled';
+            coverage: 'incomplete-possible'; retentionDays: 14;
+            droppedSinceStart: number; pending: number; writePaused: boolean;
+        }> },
     ) { this.startedAt = now().toISOString(); }
 
     async read(raw: unknown = {}): Promise<MonitoringHealth> {
@@ -65,7 +80,13 @@ export class MonitoringHealthService {
         // In production the dedicated pool separately limits acquisition & query
         // lifetime; this deadline guarantees a conservative snapshot response.
         const directoryRead = withinDeadline(Promise.resolve().then(() => this.registry.list()), this.deadlineMs);
-        const [db, directory] = await Promise.allSettled([probe, directoryRead]);
+        const archiveRead = this.archive
+            ? withinDeadline(Promise.resolve().then(() => this.archive!.status()), this.deadlineMs)
+            : Promise.resolve({
+                state: 'disabled' as const, coverage: 'incomplete-possible' as const,
+                retentionDays: 14 as const, droppedSinceStart: 0, pending: 0, writePaused: false,
+            });
+        const [db, directory, archive] = await Promise.allSettled([probe, directoryRead, archiveRead]);
         const database = db.status === 'fulfilled'
             ? { status: 'reachable' as const, latencyMs: databaseLatencyMs ?? 0 }
             : { status: 'unavailable' as const };
@@ -77,14 +98,29 @@ export class MonitoringHealthService {
         const summary = { total: items.length, healthy: 0, stale: 0, offline: 0,
             unavailable: 0, revoked: 0, unknown: 0 };
         for (const node of items) summary[node.state]++;
+        const diagnostics: DiagnosticArchiveHealth = archive.status === 'fulfilled'
+            ? {
+                status: archive.value.state, coverage: 'incomplete-possible', retentionDays: 14,
+                droppedSinceStart: archive.value.droppedSinceStart,
+                queuedForWrite: archive.value.pending,
+                writePaused: archive.value.writePaused,
+            }
+            : {
+                status: 'unknown', coverage: 'incomplete-possible', retentionDays: 14,
+                droppedSinceStart: null, queuedForWrite: null, writePaused: null,
+            };
         const nodeIssue = summary.stale + summary.offline + summary.unavailable + summary.revoked > 0;
         const overall: MonitoringHealthState = database.status === 'unavailable' || nodeIssue
-            ? 'degraded' : directory.status === 'rejected' || summary.unknown > 0 ? 'unknown' : 'healthy';
+            ? 'degraded' : directory.status === 'rejected' || summary.unknown > 0
+                || diagnostics.status === 'unavailable' || diagnostics.status === 'unknown'
+                || diagnostics.writePaused === true || (diagnostics.droppedSinceStart ?? 0) > 0
+                ? 'unknown' : 'healthy';
         return {
             checkedAt: checkedAt.toISOString(), overall,
             server: { status: database.status === 'reachable' ? 'healthy' : 'degraded',
                 startedAt: this.startedAt, uptimeSeconds: Math.max(0, Math.floor((checkedAt.getTime() - Date.parse(this.startedAt)) / 1000)),
                 database },
+            diagnostics,
             nodes: { available: directory.status === 'fulfilled', summary, items },
         };
     }
