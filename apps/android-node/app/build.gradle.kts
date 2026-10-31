@@ -15,6 +15,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = providers.gradleProperty("atlasMobileVersionCode").get().toInt()
         versionName = providers.gradleProperty("atlasMobileVersionName").get()
+        // Public Firebase app identifiers supplied only for configured Android builds.
+        // CI deliberately builds without Firebase service credentials.
+        val fcmFields = mapOf(
+            "ATLAS_FCM_APP_ID" to "atlasFirebaseAppId",
+            "ATLAS_FCM_SENDER_ID" to "atlasFirebaseSenderId",
+            "ATLAS_FCM_API_KEY" to "atlasFirebaseApiKey",
+            "ATLAS_FCM_PROJECT_ID" to "atlasFirebaseProjectId",
+        )
+        fcmFields.forEach { (field, prop) ->
+            val value = providers.gradleProperty(prop).orNull ?: ""
+            require(value.matches(Regex("[A-Za-z0-9:_-]{0,160}"))) {
+                "Invalid Firebase client configuration property: $prop"
+            }
+            buildConfigField("String",field,"\"$value\"")
+        }
     }
 
     buildFeatures {
@@ -42,6 +57,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation(platform("com.google.firebase:firebase-bom:33.13.0"))
+    implementation("com.google.firebase:firebase-messaging")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.03.00"))
