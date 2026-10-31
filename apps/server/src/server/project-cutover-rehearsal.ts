@@ -3,7 +3,6 @@ import { readProjectKeySnapshot, type SnapshotItem } from "./project-key-ledger.
 import { assessProjectCutover } from "./project-cutover-readiness.js";
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-export const CUTOVER_REHEARSAL_CONFIRM="SIMULATE_PROJECT_CUTOVER_ROLLBACK";
 type Table="atlas_files"|"media_assets"|"media_variants";
 export type CutoverRehearsalReport={
     status:"passed";projectId:string;keyRunId:string;recoveryRunId:string;
@@ -33,9 +32,8 @@ function change(item:SnapshotItem):Change{
     throw new Error("Unknown Project storage source.");
 }
 /** SQL structure is a fixed whitelist; values are always bound parameters.
- * The asset ID + variant name is the identity of a Portfolio derivative. */
-// Project scope is always passed explicitly; never infer it from an object
-// prefix or a media-asset ID.
+ * The asset ID + variant name is the identity of a Portfolio derivative.
+ * Project scope is passed explicitly rather than inferred from a key. */
 async function selectKey(client:PoolClient,c:Change,project:string):Promise<string>{
     const [sql,params]=c.table==="atlas_files"
         ?["SELECT storage_key FROM atlas_files WHERE id=$1 AND owner_kind='project' AND owner_id=$2",[c.fileId,project]]
@@ -78,6 +76,15 @@ export async function rehearseProjectCutover(input:{
     const client=await input.database.connect();
     let begun=false;
     try{
+        // Direct API callers cannot bypass the CLI's disposable-host guard.
+        // Atlas CI creates unique atlas_test_* schemas; manual rehearsals
+        // must use a distinct atlas_cutover_rehearsal database, never atlas.
+        const environment=await client.query<{db:string;schema:string}>(
+            "SELECT current_database() AS db,current_schema() AS schema");
+        const location=environment.rows[0];
+        if(!location||!(/^atlas_test_[a-f0-9]{32}$/.test(location.schema)||
+            /^atlas_cutover_rehearsal(?:_[a-z0-9_]+)?$/.test(location.db)))
+            throw new Error("Only disposable PostgreSQL rehearsal or isolated test schemas are permitted.");
         await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");begun=true;
         await client.query("SET LOCAL lock_timeout='2500ms'");
         await client.query("SET LOCAL statement_timeout='15000ms'");
