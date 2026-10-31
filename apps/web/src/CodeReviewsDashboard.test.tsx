@@ -172,6 +172,30 @@ test('older reviewed PRs remain accessible via dashboard pagination and can be e
     expect(screen.getByRole('region', { name: 'Open pull requests' })).not.toHaveTextContent('#501');
 });
 
+test('Code Reviews initial loads render KPI and open-PR card skeletons', () => {
+    vi.mocked(useApplicationRead).mockImplementation(() => ({
+        data: undefined, isLoading: true, isFetching: true, error: null, refetch,
+    } as never));
+    const view = render(<CodeReviewsDashboard />);
+    expect(screen.getByRole('status', { name: 'Loading Code Reviews pull requests' }))
+        .toHaveAttribute('aria-busy', 'true');
+    expect(view.container.querySelectorAll('.cr-metrics .atlas-load-skeleton')).toHaveLength(4);
+    expect(view.container.querySelectorAll('.cr-open-card')).toHaveLength(3);
+    expect(screen.queryByText('Loading reviewed PRs…')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Details for / })).not.toBeInTheDocument();
+});
+
+test('refresh preserves cached PR cards without overlaying initial skeletons', () => {
+    const original = vi.mocked(useApplicationRead).getMockImplementation()!;
+    vi.mocked(useApplicationRead).mockImplementation((name, args) => {
+        const result = original(name, args);
+        return { ...result, isLoading: false, isFetching: true } as never;
+    });
+    render(<CodeReviewsDashboard />);
+    expect(screen.queryByRole('status', { name: 'Loading Code Reviews pull requests' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(3);
+});
+
 test('refresh rechecks both saved aggregates and GitHub lifecycle without publishing', () => {
     render(<CodeReviewsDashboard />);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));

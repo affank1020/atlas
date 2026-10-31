@@ -4,6 +4,8 @@ import { IS_MOCK_MODE } from './api';
 import { CodeReviewThreads } from './CodeReviewThreads';
 import type { AtlasRecord, Page } from './types';
 import './code-reviews-dashboard.css';
+import { Skeleton } from './Skeletons';
+import { CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
 
 type Counts = Partial<Record<'sev1' | 'sev2' | 'sev3' | 'sev4', number>>;
 const severities = ['sev1', 'sev2', 'sev3', 'sev4'] as const;
@@ -66,7 +68,7 @@ function FindingList({ run, olderPage }: { run: Run; olderPage: boolean }) {
     }).filter((v): v is Finding => v !== null);
     return <section aria-label={olderPage ? 'Findings in selected round' : 'Latest round findings'} className="cr-detail-section">
         <div className="cr-detail-heading"><h3>{olderPage ? 'Findings in selected round' : 'Latest round findings'}</h3><span>{run.headSha.slice(0, 7)}</span></div>
-        {query.isLoading && <p role="status">Loading findings…</p>}
+        {query.isLoading && !query.data && !query.error && <CodeReviewsDetailLoading variant="findings" />}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data && !query.error && query.data.total === 0 && <p className="cr-quiet">No recorded findings in this round.</p>}
         {query.data && valid.length !== query.data.items.length && <p role="status">Some findings could not be displayed.</p>}
@@ -87,7 +89,7 @@ function RoundHistory({ group }: { group: Group }) {
     return <section className="cr-detail-section" aria-label="Review rounds">
         <div className="cr-detail-heading"><h3>Review rounds</h3>
             <span>{query.data?.recordedRounds ?? '—'} saved</span></div>
-        {query.isLoading && <p role="status">Loading review rounds…</p>}
+        {query.isLoading && !query.data && !query.error && <CodeReviewsDetailLoading variant="rounds" />}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data?.rounds.map((round, index) => <details className="cr-round" key={round.runId}>
             <summary><span className="cr-quiet">#{offset + index + 1}</span>
@@ -124,7 +126,7 @@ function GithubStatus({ group, refreshVersion }: { group: Group; refreshVersion:
         { repository: group.repository.toLowerCase(), prNumber: group.prNumber }, true);
     return <section className="cr-detail-section" aria-label="GitHub status">
         <div className="cr-detail-heading"><h3>GitHub status</h3></div>
-        {query.isLoading && <p role="status">Checking GitHub…</p>}
+        {query.isLoading && !query.data && !query.error && <CodeReviewsDetailLoading variant="github" />}
         {query.error && <p role="alert" className="notice error">{query.error.message}</p>}
         {query.data && <div className="cr-status-grid">
             <div><span>PR state</span><strong>{query.data.currentHead.state}</strong></div>
@@ -229,6 +231,8 @@ export function CodeReviewsDashboard() {
     const closed = visible.filter(group => group.status === 'closed');
     const unknown = visible.filter(group => group.status === 'unavailable');
     const overview = summary.data;
+    const loadingOverview = summary.isLoading && !overview && !summary.error;
+    const loadingDashboard = dashboard.isLoading && !dashboard.data && !dashboard.error;
     const average = overview && overview.reviewRuns > 0
         ? (overview.findingObservations / overview.reviewRuns).toFixed(2) : '—';
     const error = summary.error?.message || dashboard.error?.message;
@@ -251,12 +255,12 @@ export function CodeReviewsDashboard() {
         </header>
         {IS_MOCK_MODE && <span className="cr-demo">Demo data</span>}
         <div className="cr-metrics" aria-label="Review metrics">
-            <article><span>Review rounds</span><strong>{overview ? overview.reviewRuns.toLocaleString() : '—'}</strong></article>
-            <article><span>Findings recorded</span><strong>{overview ? overview.findingObservations.toLocaleString() : '—'}</strong></article>
+            <article><span>Review rounds</span><strong>{overview ? overview.reviewRuns.toLocaleString() : loadingOverview ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
+            <article><span>Findings recorded</span><strong>{overview ? overview.findingObservations.toLocaleString() : loadingOverview ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
             <article title="Finding observations divided by saved rounds; repeated issues count again in each reviewed round.">
-                <span>Findings / review</span><strong>{average}</strong></article>
+                <span>Findings / review</span><strong>{loadingOverview ? <Skeleton width={65} height={29} /> : average}</strong></article>
             <article><span>{dashboard.data && (dashboard.data.truncatedPrs || !dashboard.data.windowComplete)
-                ? 'PRs shown' : 'PRs reviewed'}</span><strong>{dashboard.data ? groups.length : '—'}</strong></article>
+                ? 'PRs shown' : 'PRs reviewed'}</span><strong>{dashboard.data ? groups.length : loadingDashboard ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
         </div>
         {error && <div className="notice error" role="alert">{error}</div>}
         {dashboard.data && (!dashboard.data.windowComplete || dashboard.data.truncatedPrs) &&
@@ -277,7 +281,23 @@ export function CodeReviewsDashboard() {
                 </select>
             </span>
         </div>
-        {dashboard.isLoading && <p className="cr-quiet cr-loading" role="status">Loading reviewed PRs…</p>}
+        {loadingDashboard && <div role="status" aria-label="Loading Code Reviews pull requests"
+            aria-busy="true" className="cr-open-section">
+            <div className="cr-section-title"><h2>Open PRs</h2></div>
+            <div className="cr-open-grid" aria-hidden="true">
+                {Array.from({ length: 3 }, (_, i) => <article className="cr-open-card" key={i}>
+                    <div className="cr-card-top"><Skeleton width="70%" height={14} />
+                        <Skeleton width={85} height={13} /></div>
+                    <div className="cr-card-stats">
+                        {Array.from({ length: 3 }, (_, j) =>
+                            <div key={j}><Skeleton width={32} height={22} /><Skeleton width={48} height={11} /></div>)}
+                    </div>
+                    <div className="cr-severity-summary"><Skeleton width={50} height={16}/></div>
+                    <div className="cr-card-bottom"><Skeleton width={75} height={12}/>
+                        <Skeleton width={55} height={30}/></div>
+                </article>)}
+            </div>
+        </div>}
         {dashboard.data && <>
             <section className="cr-open-section" aria-label="Open pull requests">
                 <div className="cr-section-title"><h2>Open PRs</h2><span>{open.length}</span></div>
