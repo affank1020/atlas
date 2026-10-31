@@ -83,9 +83,12 @@ class MainActivity : ComponentActivity() {
 
     private fun setBackgroundReceiving(enabled: Boolean) {
         if (!enabled) {
-            model.updatePushConsent(false)
-            stopService(Intent(this, BackgroundReceiverService::class.java))
-            model.stopBackgroundReceiving()
+            // Do not cancel the only authenticated socket until the server
+            // acknowledges removal, or the bounded revocation gate expires.
+            model.revokePushBeforeShutdown {
+                stopService(Intent(this, BackgroundReceiverService::class.java))
+                model.stopBackgroundReceiving()
+            }
             return
         }
         if (Build.VERSION.SDK_INT >= 33 &&
