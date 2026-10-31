@@ -7,7 +7,7 @@ const MAX_INSTALLATIONS = 100;
 const MAX_REPO_PAGES = 10;
 
 type Transport = typeof fetch;
-type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { workflows?: string; pull_requests?: string } };
+type TokenResponse = { token?: string; repositories?: { full_name: string }[]; permissions?: { contents?: string; workflows?: string; pull_requests?: string } };
 type Installation = { id: number; account?: { login?: string; type?: string } };
 type InstalledRepository = { full_name?: string; private?: boolean; default_branch?: string; archived?: boolean };
 type RepositoryPage = { repositories?: InstalledRepository[]; total_count?: number };
@@ -64,8 +64,12 @@ export class GitHubBroker {
         return result as Installation[];
     }
 
-    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'reviews' | 'publication' | 'pr' | 'push' = 'read') {
-        const permissions = purpose === 'push' ? { contents: 'write', workflows: 'write' }
+    private async tokenForInstallation(installationId: number, repository?: string, purpose: 'read' | 'reviews' | 'publication' | 'resolution' | 'pr' | 'push' = 'read') {
+        // GitHub currently requires repository write authority for resolving
+        // review conversations (including Contents:write in App tokens).
+        // Keep this strictly separate from ordinary comment publication.
+        const permissions = purpose === 'resolution' ? { contents: 'write', pull_requests: 'write' }
+            : purpose === 'push' ? { contents: 'write', workflows: 'write' }
             : purpose === 'pr' ? { contents: 'write', pull_requests: 'write' } : purpose === 'publication' ? { pull_requests: 'write' } : purpose === 'reviews' ? { pull_requests: 'read' } : { contents: 'read' };
         const body = repository ? { repositories: [repository.split('/')[1]], permissions } : { permissions: { contents: 'read' } };
         // HTTP 403 and 422 also cover throttling and validation failures. Do
@@ -76,6 +80,9 @@ export class GitHubBroker {
         if (repository && !result.repositories?.some(item => item.full_name.toLowerCase() === repository.toLowerCase()))
             throw new AtlasError('GitHub App is not installed on the requested repository.', 'WORKSPACE_DENIED');
         // Never publish with a token unless GitHub explicitly confirms the requested scope.
+        if (purpose === 'resolution' &&
+            (result.permissions?.contents !== 'write' || result.permissions?.pull_requests !== 'write'))
+            throw new AtlasError('GitHub thread resolution requires confirmed Contents and Pull requests write permissions.', 'GITHUB_REQUEST_FAILED');
         if (purpose === 'publication' && result.permissions?.pull_requests !== 'write')
             throw new AtlasError('GitHub installation token lacks pull-request write permission.', 'GITHUB_REQUEST_FAILED');
         if (purpose === 'reviews' && !['read', 'write'].includes(result.permissions?.pull_requests ?? ''))
@@ -90,6 +97,8 @@ export class GitHubBroker {
     async repositoryReadToken(repository: string) { return this.scopedToken(repository, 'read'); }
     async pullRequestReadToken(repository: string) { return this.scopedToken(repository, 'reviews'); }
     async pullRequestPublishToken(repository: string) { return this.scopedToken(repository, 'publication'); }
+    /** Scoped exclusively to explicit review-thread GraphQL resolution. */
+    async pullRequestResolutionToken(repository: string) { return this.scopedToken(repository, 'resolution'); }
     /** Resolve the immutable GitHub Bot user ID from the authenticated App itself,
      * never from a caller-controlled login or a review marker.
      */
@@ -110,7 +119,7 @@ export class GitHubBroker {
         return { id: user.id as number, login: user.login };
     }
 
-    private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'publication' | 'pr' | 'push') {
+    private async scopedToken(repository: string, purpose: 'read' | 'reviews' | 'publication' | 'resolution' | 'pr' | 'push') {
         if (!repositoryPattern.test(repository)) throw new AtlasError('Invalid GitHub repository.', 'INVALID_REQUEST');
         const owner = repository.split('/')[0]!.toLowerCase();
         const installations = await this.installations();
