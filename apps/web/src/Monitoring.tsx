@@ -164,7 +164,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
                 })}>{live ? 'Stop live updates' : 'Start live updates'}</button>
             <button className="ghost" disabled={loading} onClick={() => setRefresh(x => x + 1)}>Refresh</button>
         </div></div>
-        <div className="monitoring-primary-filters" aria-label="Common activity filters">
+        <div className="monitoring-primary-filters" role="group" aria-label="Common activity filters">
             <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}>
                 <label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} placeholder="Find an operation" /></label>
                 <button type="submit">Search</button>
@@ -398,7 +398,7 @@ function LogsPanel({ filters }: { filters: MonitoringFilters }) {
                 e.target.value === 'server' ? { target: 'server' } : { target: 'node' })}>
             <option value="node">Connected Node</option><option value="server">Atlas Server diagnostics</option>
         </select></label></div>
-        <div className="monitoring-source-guide" aria-label="Log source boundaries">
+        <div className="monitoring-source-guide" role="group" aria-label="Log source boundaries">
             <div><strong>Node tails</strong><span>Approved stdout, stderr or Linux service journal. On-demand, bounded and not an archive.</span></div>
             <div><strong>Server signals</strong><span>Fixed-code diagnostics only: current process or best-effort retained history, not Docker logs.</span></div>
         </div>
@@ -459,7 +459,7 @@ function MonitoringHealthPanel() {
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
             <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
-            <div className="monitoring-health-summary" aria-label="Health signal summary">
+            <div className="monitoring-health-summary" role="group" aria-label="Health signal summary">
                 <div><strong>{snapshot.server.database.status}</strong><small>Database</small></div>
                 <div><strong>{snapshot.diagnostics?.status ?? 'unknown'}</strong><small>Diagnostic archive</small></div>
                 <div><strong>{snapshot.diagnostics?.retentionCleanup ?? 'unknown'}</strong><small>Physical expiry</small></div>
