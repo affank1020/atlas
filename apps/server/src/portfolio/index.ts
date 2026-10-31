@@ -364,6 +364,22 @@ export class PortfolioMediaService {
         return ids;
     }
 
+    /** Called only after an upload failed and any begun transaction rolled back.
+     * An uncertain COMMIT or failed ROLLBACK must never reach this method.
+     * Querying a separate connection makes a durable metadata reference the
+     * authority for keeping every object, including archived assets. */
+    private async discardUncommittedVersionedMedia(assetId: string, keys: string[]): Promise<boolean> {
+        if (!this.versionedProjectWrites || !keys.length) return false;
+        const result = await this.pool.query<{referenced:boolean}>(`
+            SELECT EXISTS(SELECT 1 FROM media_assets WHERE id=$1 OR storage_key=ANY($2::text[]))
+                OR EXISTS(SELECT 1 FROM media_variants WHERE asset_id=$1 OR storage_key=ANY($2::text[]))
+                AS referenced`, [assetId,keys]);
+        // An unavailable DB or uncertain result must retain every object.
+        if (result.rows[0]?.referenced !== false) return false;
+        for (const key of keys) await this.objects.delete(key);
+        return true;
+    }
+
     async upload(input: { fileName: string; mimeType: string; base64: string; altText?: string; caption?: string; client?: string }) {
         if (!ALLOWED_MEDIA.has(input.mimeType)) throw new AtlasError(`Unsupported media type '${input.mimeType}'.`);
         const bytes = Buffer.from(input.base64.replace(/^data:[^;]+;base64,/, ""), "base64");
@@ -382,9 +398,49 @@ export class PortfolioMediaService {
                 ? projectStorageKey(PORTFOLIO_PROJECT_ID,id,name)
                 : `${checksum}-${name}.webp`, mime:"image/webp", bytes:output.data, width:output.info.width, height:output.info.height }); }
         } else if (!bytes.subarray(0,5).equals(Buffer.from("%PDF-"))) throw new AtlasError("The uploaded file is not a valid PDF.");
-        await this.objects.put(originalKey, bytes, input.mimeType);
-        for (const variant of variants) await this.objects.put(variant.key, variant.bytes, variant.mime);
-        const connection = await this.pool.connect(); try { await connection.query("BEGIN"); await connection.query(`INSERT INTO media_assets(id,checksum,storage_key,original_name,mime_type,byte_size,width,height,alt_text,caption,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id,checksum,originalKey,input.fileName,input.mimeType,bytes.length,width??null,height??null,input.altText?.trim()||null,input.caption?.trim()||null,input.client??"portfolio-observatory"]); for (const variant of variants) await connection.query(`INSERT INTO media_variants(asset_id,name,storage_key,mime_type,byte_size,width,height) VALUES($1,$2,$3,$4,$5,$6,$7)`,[id,variant.name,variant.key,variant.mime,variant.bytes.length,variant.width??null,variant.height??null]); await connection.query("COMMIT"); } catch(error) { await connection.query("ROLLBACK"); throw error; } finally { connection.release(); }
+        // Only fresh UUID-based Project keys are eligible for cleanup; legacy
+        // checksum keys can be shared with earlier uploads and must be retained.
+        // Register each PUT BEFORE calling R2: a rejected PUT can still have
+        // committed remotely if its response was lost.
+        const attempted: string[] = [];
+        let commitOutcomeUnknown = false, rollbackFailed = false;
+        try {
+            attempted.push(originalKey);
+            await this.objects.put(originalKey, bytes, input.mimeType);
+            for (const variant of variants) {
+                attempted.push(variant.key);
+                await this.objects.put(variant.key, variant.bytes, variant.mime);
+            }
+            const connection = await this.pool.connect();
+            let inTransaction = false, discardConnection = false;
+            try {
+                await connection.query("BEGIN"); inTransaction = true;
+                await connection.query(`INSERT INTO media_assets(id,checksum,storage_key,original_name,mime_type,byte_size,width,height,alt_text,caption,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id,checksum,originalKey,input.fileName,input.mimeType,bytes.length,width??null,height??null,input.altText?.trim()||null,input.caption?.trim()||null,input.client??"portfolio-observatory"]);
+                for (const variant of variants)
+                    await connection.query(`INSERT INTO media_variants(asset_id,name,storage_key,mime_type,byte_size,width,height) VALUES($1,$2,$3,$4,$5,$6,$7)`,[id,variant.name,variant.key,variant.mime,variant.bytes.length,variant.width??null,variant.height??null]);
+                commitOutcomeUnknown = true;
+                await connection.query("COMMIT");
+                commitOutcomeUnknown = false;
+                inTransaction = false;
+            } catch (error) {
+                // A lost COMMIT acknowledgement can mean the rows are already
+                // durable. Never reclaim any object on an unknown outcome.
+                if (commitOutcomeUnknown) discardConnection = true;
+                else if (inTransaction) {
+                    try { await connection.query("ROLLBACK"); }
+                    catch { rollbackFailed = true; discardConnection = true; }
+                }
+                throw error;
+            } finally { connection.release(discardConnection); }
+        } catch (error) {
+            if (this.versionedProjectWrites && attempted.length &&
+                !commitOutcomeUnknown && !rollbackFailed) {
+                try { await this.discardUncommittedVersionedMedia(id, attempted); }
+                catch { console.error("Portfolio could not safely confirm/clean an uncommitted media upload."); }
+            }
+            throw error;
+        }
+        // Never reclaim successfully committed bytes if this separate read fails.
         return (await this.list()).find(asset => asset.id === id)!;
     }
     async update(id: string, input: { altText?: string | null; caption?: string | null; status?: "active" | "archived" }) { const result = await this.pool.query(`UPDATE media_assets SET alt_text=CASE WHEN $2::boolean THEN $3 ELSE alt_text END,caption=CASE WHEN $4::boolean THEN $5 ELSE caption END,status=coalesce($6,status),updated_at=now() WHERE id=$1 RETURNING id`,[id,input.altText!==undefined,input.altText?.trim()||null,input.caption!==undefined,input.caption?.trim()||null,input.status??null]); if(!result.rows[0])throw new AtlasError(`Media asset '${id}' was not found.`,"NOT_FOUND"); return (await this.list()).find(asset=>asset.id===id); }
