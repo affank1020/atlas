@@ -127,7 +127,7 @@ test('large histories remain visible with explicit recent-window and minimum-cou
                 }] }, refetch } as never);
     render(<CodeReviewsDashboard />);
     expect(screen.getByText('PRs shown').parentElement).toHaveTextContent('1');
-    expect(screen.getByText(/Rounds 1–500 of 2001/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Rounds 1–500 of 2001/)).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Older reviews' })).toBeEnabled();
     const open = screen.getByRole('region', { name: 'Open pull requests' });
     expect(open).toHaveTextContent('500+');
@@ -163,7 +163,7 @@ test('older reviewed PRs remain accessible via dashboard pagination and can be e
     expect(screen.getByRole('region', { name: 'Open pull requests' })).toHaveTextContent('#501');
     expect(screen.getByRole('region', { name: 'Closed pull requests' })).toHaveTextContent('#502');
     expect(screen.getByText('Result in window')).toBeInTheDocument();
-    expect(screen.getByText(/Rounds 501–502 of 502/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Rounds 501–502 of 502/)).toHaveLength(2);
     expect(screen.getByRole('searchbox', { name: 'Find pull request' })).toHaveAttribute('placeholder', 'Find in window…');
     fireEvent.click(screen.getByRole('button', { name: 'Details for example/atlas-demo #501' }));
     expect(screen.getByRole('tab', { name: 'Findings in window' })).toBeInTheDocument();
