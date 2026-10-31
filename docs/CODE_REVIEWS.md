@@ -1007,9 +1007,18 @@ review thread must map to that exact original REST root ID, path and line.
 An arbitrary human-authored reply, copied marker, outdated anchor or a
 reviewer's unsupported assertion is insufficient.
 
+GitHub has reported that its GraphQL `resolveReviewThread` mutation may
+require Contents:write for App installation tokens, despite not changing
+repository files (<https://github.com/github/gh-aw/issues/35726>). The
+ordinary Code Reviews comment-publishing token remains restricted to
+`pull_requests:write`; only the new, independently gated resolution path
+requests the stronger scopes. An installation without either explicitly
+confirmed permission fails **before** creating a durable mutation claim.
+
 For `apply:true`, the operation checks that the pull request is **open** at
-the reviewed SHA, explicitly requests a GitHub App `pull_requests:write`
-installation token, and uses that write token to re-query the full GraphQL
+the reviewed SHA, explicitly requests a **dedicated** GitHub App installation
+token with both `pull_requests:write` and `contents:write` permissions, verifies
+GitHub actually granted both scopes, and uses that token to re-query the full GraphQL
 thread inventory. The thread must remain open, current (not outdated) and
 report `viewerCanResolve:true` for that token. These checks are refreshed
 after committing a transaction-fenced, durable one-shot Atlas claim and
