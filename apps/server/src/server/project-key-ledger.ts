@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { ObjectNotFound, type ObjectStore } from "./file-storage.js";
 import {
-    copyProjectKeys, encodeKeyCopyCursor, inspectProjectKeyCopyRow,
+    copyProjectKeyPage, encodeKeyCopyCursor, inspectProjectKeyCopyRow,
     type BoundedCopyStore, type ProjectKeyCopyRow, type KeyCopyReport,
 } from "./project-key-migration.js";
 
@@ -219,13 +219,12 @@ export async function advanceProjectKeyRun(input: {
         return { status:"all-copied",runId:run.id,checked:0,newlyReceipted:0,
             nextOrdinal:offset,copiedCount:offset,copy:null };
     const page = run.items.slice(offset,offset+maxFiles);
-    const cursor = offset === 0 ? undefined : encodeKeyCopyCursor({
-        projectId:run.projectId, source:run.items[offset-1]!.row.source,
-        fileId:run.items[offset-1]!.row.file_id,variant:run.items[offset-1]!.row.variant,
-    });
-    const result = await copyProjectKeys({ database: input.database, source:input.source,
+    // Copy exclusively from immutable manifest rows. Never reselect the
+    // mutable live catalogue after the initial fingerprint comparison.
+    const result = await copyProjectKeyPage({ rows:page.map(item => item.row),
+        remaining:offset + page.length < run.objectCount, source:input.source,
         destination:input.destination,apply:input.apply === true,
-        maxFiles,projectId:project,cursor });
+        projectId:project,beforeWrite:() => checkedCurrent(input.database,run) });
     if (result.status === "failed" || result.checked !== page.length ||
         result.nextCursor !== encodeKeyCopyCursor({
             projectId:run.projectId,source:page[page.length-1]!.row.source,
