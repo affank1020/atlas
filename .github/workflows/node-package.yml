@@ -53,7 +53,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:node
       - name: Check bundled macOS operator sources
-        run: python3 -m py_compile scripts/macos-node-update.py scripts/macos-node-stage.py scripts/macos-node-lifecycle.py scripts/linux-node-host-updater.py scripts/macos-node-operator.py
+        run: python3 -c "import ast, pathlib; [ast.parse(path.read_text()) for path in sorted(pathlib.Path('scripts').glob('*node*.py'))]"
       - name: Package immutable Node artifact
         run: node scripts/package-node-release.mjs
       - name: Verify archive installs and loads shared protocol
