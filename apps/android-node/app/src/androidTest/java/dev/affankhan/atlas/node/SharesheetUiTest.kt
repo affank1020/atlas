@@ -67,8 +67,8 @@ class SharesheetUiTest {
                 onLoadDeferredShare = { state = state.loadDeferredShare() },
                 incomingShare = incoming,
                 queuedInboxItems = queuedItems,
-                onCopyQueued = { queuedCopied = true },
-                onDeclineQueued = { queuedDeclined = true },
+                onCopyQueued = { _, _ -> queuedCopied = true },
+                onDeclineQueued = { _, _ -> queuedDeclined = true },
                 onCopyIncoming = { copied = true; incoming = null },
                 onDeclineIncoming = { declined = true; incoming = null },
                 backgroundReceiving = backgroundRunning,
@@ -184,10 +184,10 @@ class SharesheetUiTest {
                 System.currentTimeMillis() + 30_000))
             state = state.navigate(Section.INBOX)
         }
-        compose.onNodeWithTag("queued-inbox-" + id).assertExists()
-        compose.onNodeWithTag("queued-copy-" + id).performScrollTo().performClick()
+        compose.onNodeWithTag("queued-inbox-" + mac.nodeId + "-" + id).assertExists()
+        compose.onNodeWithTag("queued-copy-" + mac.nodeId + "-" + id).performScrollTo().performClick()
         compose.runOnIdle { org.junit.Assert.assertTrue(queuedCopied) }
-        compose.onNodeWithTag("queued-decline-" + id).performScrollTo().performClick()
+        compose.onNodeWithTag("queued-decline-" + mac.nodeId + "-" + id).performScrollTo().performClick()
         compose.runOnIdle { org.junit.Assert.assertTrue(queuedDeclined) }
     }
 

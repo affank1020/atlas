@@ -139,14 +139,14 @@ class MainActivity : ComponentActivity() {
                 queuedInboxLoading = model.queuedInboxLoading,
                 queuedInboxBusyIds = model.queuedInboxBusyIds,
                 onRefreshQueuedInbox = model::refreshQueuedInbox,
-                onCopyQueued = { deliveryId ->
-                    model.decideQueuedShare(deliveryId, true) { text ->
+                onCopyQueued = { sourceId, deliveryId ->
+                    model.decideQueuedShare(sourceId, deliveryId, true) { text ->
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("Atlas queued text", text))
                     }
                 },
-                onDeclineQueued = { deliveryId ->
-                    model.decideQueuedShare(deliveryId, false) { }
+                onDeclineQueued = { sourceId, deliveryId ->
+                    model.decideQueuedShare(sourceId, deliveryId, false) { }
                 },
                 onCopyIncoming = {
                     model.copyIncomingShare { text ->
@@ -220,8 +220,8 @@ internal fun AtlasCompanion(
     queuedInboxLoading: Boolean = false,
     queuedInboxBusyIds: Set<String> = emptySet(),
     onRefreshQueuedInbox: () -> Unit = {},
-    onCopyQueued: (String) -> Unit = {},
-    onDeclineQueued: (String) -> Unit = {},
+    onCopyQueued: (String, String) -> Unit = { _, _ -> },
+    onDeclineQueued: (String, String) -> Unit = { _, _ -> },
     onCopyIncoming: () -> Unit = {},
     onDeclineIncoming: () -> Unit = {},
     backgroundReceiving: Boolean = false,
@@ -425,7 +425,7 @@ private fun CompanionContent(
                 }
                 queuedInboxItems.forEach { item ->
                     Card(modifier = Modifier.fillMaxWidth()
-                        .testTag("queued-inbox-" + item.deliveryId)) {
+                        .testTag("queued-inbox-" + item.sourceNodeId + "-" + item.deliveryId)) {
                         Column(modifier = Modifier.padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("From Node " + item.sourceNodeId.take(8))
@@ -435,16 +435,16 @@ private fun CompanionContent(
                                 style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Button(
-                                    onClick = { onCopyQueued(item.deliveryId) },
+                                    onClick = { onCopyQueued(item.sourceNodeId, item.deliveryId) },
                                     enabled = connection == "Online" &&
-                                        item.deliveryId !in queuedInboxBusyIds,
-                                    modifier = Modifier.testTag("queued-copy-" + item.deliveryId),
+                                        (item.sourceNodeId.lowercase() + ":" + item.deliveryId.lowercase()) !in queuedInboxBusyIds,
+                                    modifier = Modifier.testTag("queued-copy-" + item.sourceNodeId + "-" + item.deliveryId),
                                 ) { Text("Copy") }
                                 TextButton(
-                                    onClick = { onDeclineQueued(item.deliveryId) },
+                                    onClick = { onDeclineQueued(item.sourceNodeId, item.deliveryId) },
                                     enabled = connection == "Online" &&
                                         item.deliveryId !in queuedInboxBusyIds,
-                                    modifier = Modifier.testTag("queued-decline-" + item.deliveryId),
+                                    modifier = Modifier.testTag("queued-decline-" + item.sourceNodeId + "-" + item.deliveryId),
                                 ) { Text("Decline") }
                             }
                         }

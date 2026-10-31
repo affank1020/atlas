@@ -127,7 +127,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     var queuedInboxBusyIds by mutableStateOf<Set<String>>(emptySet())
         private set
     private var pendingInboxListId: String? = null
-    private val pendingInboxResolutions = mutableMapOf<String, Pair<String, Boolean>>()
+    private val pendingInboxResolutions = mutableMapOf<String, Triple<String, String, Boolean>>()
 
     private var pendingShareRequestId: String? = null
     private val directoryLookup = RecipientLookupGate(RECIPIENT_REFRESH_COOLDOWN_MS)
@@ -427,10 +427,13 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 handler.post {
                     if (!owners.connected || generation != connectionGeneration) return@post
                     val pending = pendingInboxResolutions.remove(reply.requestId) ?: return@post
-                    val (deliveryId, copied) = pending
+                    val (sourceNodeId, deliveryId, copied) = pending
+                    val itemKey = sourceNodeId.lowercase() + ":" + deliveryId.lowercase()
                     if (reply.state == (if (copied) "copied" else "declined")) {
-                        queuedInboxItems = queuedInboxItems.filterNot { it.deliveryId == deliveryId }
-                        queuedInboxBusyIds = queuedInboxBusyIds - deliveryId
+                        queuedInboxItems = queuedInboxItems.filterNot {
+                            it.deliveryId == deliveryId && it.sourceNodeId == sourceNodeId
+                        }
+                        queuedInboxBusyIds = queuedInboxBusyIds - itemKey
                         inboxStatus = if (copied) "Copied on tablet and confirmed by Atlas." else
                             "Queued transfer declined."
                     } else {
@@ -468,12 +471,19 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
-    fun decideQueuedShare(deliveryId: String, accepted: Boolean, copyText: (String) -> Unit) {
+    fun decideQueuedShare(
+        sourceNodeId: String, deliveryId: String, accepted: Boolean, copyText: (String) -> Unit,
+    ) {
+        val itemKey = sourceNodeId.lowercase() + ":" + deliveryId.lowercase()
         if (!owners.canApproveClipboard || connectionStatus != "Online" ||
-            pendingInboxListId != null || deliveryId in queuedInboxBusyIds) return
-        val item = queuedInboxItems.find { it.deliveryId == deliveryId } ?: return
+            pendingInboxListId != null || itemKey in queuedInboxBusyIds) return
+        val item = queuedInboxItems.find {
+            it.deliveryId == deliveryId && it.sourceNodeId == sourceNodeId
+        } ?: return
         if (item.expiresAtMs <= System.currentTimeMillis()) {
-            queuedInboxItems = queuedInboxItems.filterNot { it.deliveryId == deliveryId }
+            queuedInboxItems = queuedInboxItems.filterNot {
+                it.deliveryId == deliveryId && it.sourceNodeId == sourceNodeId
+            }
             inboxStatus = "Queued transfer expired."
             return
         }
@@ -483,9 +493,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
         // A successful clipboard write precedes the server receipt, never vice
         // versa. On disconnect, this result is unconfirmed, not automatically retried.
-        queuedInboxBusyIds = queuedInboxBusyIds + deliveryId
+        queuedInboxBusyIds = queuedInboxBusyIds + itemKey
         val requestId = UUID.randomUUID().toString()
-        pendingInboxResolutions[requestId] = deliveryId to accepted
+        pendingInboxResolutions[requestId] = Triple(sourceNodeId, deliveryId, accepted)
         inboxStatus = if (accepted) "Copied locally; confirming receipt with Atlas…" else
             "Declining queued transfer…"
         if (socket?.send(inboxResolutionRequest(requestId, deliveryId, item.sourceNodeId, accepted)) != true) {

@@ -298,7 +298,7 @@ internal fun parseInboxListReply(raw: String): InboxListReply? = runCatching {
         val text = item.getString("text")
         val expiry = Instant.parse(item.getString("expiresAt")).toEpochMilli()
         if (!validNodeId(deliveryId) || !validNodeId(sourceId) ||
-            !seen.add(deliveryId.lowercase()) || text.isBlank() ||
+            !seen.add(sourceId.lowercase() + ":" + deliveryId.lowercase()) || text.isBlank() ||
             text.length > MAX_SHARE_CHARACTERS) return@runCatching null
         QueuedShareItem(deliveryId, sourceId, text, expiry)
     }
