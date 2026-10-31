@@ -195,6 +195,23 @@ class RealMacLaunchdCheckOnly(unittest.TestCase):
         self.assertFalse(self.layout.recovery_plist.exists())
 
 
+    def test_actual_launchctl_checker_recovers_from_unloaded_job(self):
+        # A per-user job may disappear after logout or an abnormal launchd
+        # event while its valid plist remains. Status must report attention,
+        # and an explicit enable should rebootstrap that known job.
+        operator.enable_check(self.layout)
+        self.assertEqual(operator.installed_check_status(self.layout)["schedule"], "enabled")
+        operator.lifecycle.command(
+            "launchctl", "bootout", operator.check_target(self.layout)
+        )
+        self.assertEqual(operator.installed_check_status(self.layout)["schedule"],
+                         "needs-attention")
+        operator.enable_check(self.layout)
+        self.assertEqual(operator.installed_check_status(self.layout)["schedule"], "enabled")
+        operator.disable_check(self.layout)
+        self.assertFalse(operator.check_paths(self.layout)[0].exists())
+        self.assertFalse(self.layout.plist.exists())
+
     def test_actual_launchctl_recovery_watchdog_bootstrap_and_bootout(self):
         # Probe the actual watchdog's known per-user launchd shape, without
         # installing or restarting a Node service. With no pending journal,
