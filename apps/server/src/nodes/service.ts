@@ -84,7 +84,7 @@ export class NodeService {
                     status: live.status,
                     available: live.status === 'online' &&
                         live.capabilities.includes('device.share.receive'),
-                    queueCapable: node.capabilities.includes('device.share.receive'),
+                    queueCapable: node.capabilities.includes('device.inbox.receive'),
                 };
             }).slice(0,64);
     }
