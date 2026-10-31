@@ -33,7 +33,7 @@ export function ApplicationsDirectory() {
                 aria-label="Refresh applications">↻ Refresh</button>
         } />
         <CatalogueToolbar label="Search applications" placeholder="Find an application…" query={search}
-            onQueryChange={setSearch} count={visible.length} itemName="application" />
+            onQueryChange={setSearch} count={isLoading || error ? null : visible.length} itemName="application" />
         {isLoading && !error && <SkeletonRows label="Loading applications" variant="applications" rows={6} />}
         {error && <div className="notice error" role="alert">Couldn't load applications. <button type="button" className="ghost" onClick={() => void refetch()}>Try again</button></div>}
         {isFetching && !isLoading && !error && <small role="status" className="applications-refresh-status">Refreshing applications…</small>}
