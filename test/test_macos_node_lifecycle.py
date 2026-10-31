@@ -183,6 +183,20 @@ class MacLifecycleTests(unittest.TestCase):
         self.assertEqual(self.layout.plist.read_bytes(), old_node)
         self.assertFalse(self.layout.watchdog_refresh.exists())
 
+    def test_refresh_watchdog_verification_failure_restores_previous_watcher(self):
+        self.with_watchdog()
+        prior = b"#!/usr/bin/env python3\n# old watchdog source\n"
+        self.layout.recovery_script.write_bytes(prior)
+        old_plist = self.layout.recovery_plist.read_bytes()
+        with patch.object(lifecycle, "require_watchdog",
+                          side_effect=lifecycle.Refused("simulated post-bootstrap mismatch")):
+            with self.assertRaisesRegex(lifecycle.Refused, "post-bootstrap mismatch"):
+                lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertEqual(self.layout.recovery_script.read_bytes(), prior)
+        self.assertEqual(self.layout.recovery_plist.read_bytes(), old_plist)
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+
     def test_refresh_watchdog_rejects_unexpected_old_plist_without_bootout(self):
         self.with_watchdog()
         plist = plistlib.loads(self.layout.recovery_plist.read_bytes())
