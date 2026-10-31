@@ -1,4 +1,6 @@
 import { config as loadEnv } from 'dotenv';
+import { randomUUID } from 'node:crypto';
+import { recordR2SeedObservation } from './operational-audit.js';
 import { Pool } from 'pg';
 import { loadPortfolioConfig, requireDatabaseUrl } from './config.js';
 import { LocalObjectStore, R2ObjectStore } from './file-storage.js';
@@ -20,8 +22,18 @@ try {
             new R2ObjectStore(primaryConfig!), new LocalObjectStore(primaryStorage.mediaRoot)),
         backup: new R2ObjectStore(recoveryConfig), ...args,
     });
-    console.log(JSON.stringify(report, null, 2));
-    if (report.status === 'failed' || report.status === 'empty') process.exitCode = 2;
+    // R2 writes and PostgreSQL audit cannot commit atomically. Record only
+    // a bounded observation, and surface audit failure without asserting that
+    // any already-completed copy was rolled back.
+    const runId = randomUUID();
+    console.log(JSON.stringify({ runId, ...report }, null, 2));
+    try {
+        await recordR2SeedObservation(pool, runId, report);
+    } catch {
+        console.error('R2 seed outcome recorded by CLI but Monitoring audit unavailable; copies may exist. Check recovery storage before retrying.');
+        process.exitCode = 3;
+    }
+    if ((report.status === 'failed' || report.status === 'empty') && process.exitCode !== 3) process.exitCode = 2;
 } catch {
     // Raw exceptions can contain endpoints, credentials, signed headers or
     // private metadata. Do not print them to CLI logs.
