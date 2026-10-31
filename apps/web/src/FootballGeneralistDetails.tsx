@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { callTool } from './api';
 import { FootballPolicySkills } from './FootballPolicySkills';
+import { Skeleton, SkeletonRows } from './Skeletons';
 import type { PolicyAssessment } from './football-skill-model';
 
 export type GeneralistRun = {
@@ -117,9 +118,9 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
     }, [logText, filter, section]);
     return <section className="fg-detail">
         <button className="fg-link" onClick={onBack}>← Training runs</button>
-        <div className="fg-detail-heading"><div><p className="fg-eyebrow">TRAINING RUN</p><h2>{runId}</h2></div><span>{run?.state ?? 'Loading'}</span></div>
+        <div className="fg-detail-heading"><div><p className="fg-eyebrow">TRAINING RUN</p><h2>{runId}</h2></div><span>{run?.state ?? <Skeleton width={72} height={15} />}</span></div>
         {error && <p className="fg-error" role="alert">Could not refresh run detail: {error}. Last available data is retained.</p>}
-        {!detail && !error && <p role="status">Loading training diagnostics…</p>}
+        {!detail && !error && <SkeletonRows label="Loading training diagnostics" variant="metrics" rows={4} />}
         {run && <>
             <div className="fg-detail-metrics">
                 {metric('Recorded steps', num(hasRecordedSteps ? recordedSteps : null, 0) + (budget ? ' / ' + num(budget, 0) : ''))}
@@ -199,9 +200,9 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy, policyName 
     const rows = d?.episodes.filter(e => JSON.stringify(e).toLowerCase().includes(filter.toLowerCase())) ?? [];
     return <section className="fg-detail">
         <button className="fg-link" onClick={onBack}>← Evaluation history</button>
-        <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY EVALUATION</p><h2>{operation?.policy_id ? (policyName?.(operation.policy_id) || operation.policy_id) : 'Baseline evaluation'}</h2><small className="fg-muted">{ticket}</small></div><span>{operation?.status ?? 'Loading'}</span></div>
+        <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY EVALUATION</p><h2>{operation?.policy_id ? (policyName?.(operation.policy_id) || operation.policy_id) : 'Baseline evaluation'}</h2><small className="fg-muted">{ticket}</small></div><span>{operation?.status ?? <Skeleton width={70} height={15} />}</span></div>
         {error && <p className="fg-error" role="alert">Could not fetch evaluation detail: {error}</p>}
-        {!d && !error && <p role="status">Loading evaluation results…</p>}
+        {!d && !error && <SkeletonRows label="Loading evaluation results" variant="metrics" rows={4} />}
         {d && <>
             <div className="fg-detail-metrics">
                 {metric(d?.summary ? 'Saved episodes' : 'Episodes observed', num(summary?.total, 0))}
