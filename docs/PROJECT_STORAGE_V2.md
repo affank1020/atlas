@@ -474,3 +474,31 @@ Project's independent Project/Portfolio verification, the encrypted DB
 snapshot drill, Atlas boot/read testing, and a coherent DB/R2 recovery point.
 No cutover, existing owner conversion, Node privilege change, source
 retention or cleanup is included.
+
+
+## Stage 10 — all-owner recovery-only coverage orchestration
+
+After merging #179, Project/Portfolio manifest verification and archived
+Workspace/Application Files verification both exist independently. The
+operator-facing all-owner suite now discovers all Projects represented in the
+restored database's Project storage view, requires one exact Project recovery
+run ID for each (no automatic latest-run selection), and independently GETs
+all their recovery-manifest objects, alongside the complete legacy-owner
+inventory. It checks the full Project catalogue again after reads and
+refuses missing/extra Projects, duplicate runs, corrupt/missing bytes,
+truncated inventory or unacknowledged empty owner groups. Read-only R2
+and restored-DB SELECT access only.
+
+The suite is bounded to 25 Projects, **1,000 total Project/Portfolio source
+objects** and 2,000 legacy Workspace/Application Files. An immutable
+Project recovery manifest can contain both original and versioned entries
+(up to 2,000 manifest entries for 1,000 source objects). The lower-level
+key-ledger/recovery limits are unchanged. Going beyond 1,000 Project/Portfolio
+source rows requires a separate reviewed capacity extension; the suite fails
+before R2 GET rather than claiming unreachable coverage. The report field
+`projectEntriesVerified` is the number of SHA-256-verified recovery manifest
+entries, **not a byte count**. A verified object-scope
+report is deliberately not disasterRecoveryReady, production cutover
+approval or replacement Atlas application readiness. See
+RECOVERY_ACCEPTANCE.md section 10 for command, acceptance and separate
+offline custody/restore requirements.

@@ -322,3 +322,66 @@ that a full isolated disaster-recovery drill was completed.
 
 No live backup, R2 seed, production database restore, key migration,
 retention or cutover happens by running or merging this code.
+
+
+## 10. One recovery-only check across every stored owner
+
+Stage 5/6 checks each Project/Portfolio manifest, and Stage 9 checks
+Workspace/Application Files. A single operator-scoped **coverage suite**
+can now enforce that these are all checked in the same restored PostgreSQL
+database with only the independent recovery R2 account.
+
+The operator selects the exact immutable recovery run for **each Project**
+with any native Files or Portfolio original/variant data, including archived
+objects. Never select the latest run automatically. A missing, duplicated
+or extra Project-run selection blocks the entire suite before any Project
+object GET. The suite enumerates the full Project/Portfolio storage view
+in one bounded statement (at most **1,000 Project/Portfolio source objects**
+across at most 25 Projects), verifies every provided Project's complete immutable
+manifest (up to 2,000 entries when both original and versioned copies are
+included) and backed
+object bytes, verifies all legacy Workspace/Application Files (up to 2,000),
+then compares the full Project catalogue again. A larger catalogue fails
+closed; partial page coverage is not sufficient.
+
+Use the existing isolated recovery-only environment described in section 9.
+Do not load production .env, primary R2 credentials or production DB access:
+
+~~~sh
+npm run build:server
+npm run files:r2:isolated-recovery-coverage -- \
+  --verify-all \
+  --project-run=PROJECT_UUID:RECOVERY_RUN_UUID \
+  --project-run=OTHER_PROJECT_UUID:OTHER_RECOVERY_RUN_UUID
+~~~
+
+Supply one --project-run per Project with storage entries, **including the
+Portfolio Project if it has media**. The CLI fails closed when a Project is
+omitted or an extra Project is selected. The report intentionally exposes
+only Project/run UUIDs, counts, manifest coverage, flags and a metadata
+fingerprint, not object keys, file names, Cloudflare secrets or DB URLs.
+
+For a genuinely empty legacy-owner catalogue, the default result is blocked
+until the operator separately establishes that there should be no such
+objects and explicitly adds --expect-no-legacy. For a database with no
+Project/Portfolio objects, add --expect-no-projects *only* after independently
+confirming that expected inventory; it may not be combined with Project
+run selections. A fully empty database is **always blocked** even when
+both zero-inventory acknowledgements are supplied.
+
+Result object-scope-passed means *the referenced bytes in this restored
+database are accessible and hash-verified from independent recovery R2
+within the tool's bounds*. It is not a disaster-recovery readiness claim.
+Blocked means at least one required selection, object, catalogue or
+inventory gate did not pass; its exit code is 2. Unexpected access, network,
+database and manifest integrity errors terminate with exit code 1.
+Every report unconditionally returns disasterRecoveryReady=false and
+cutoverAuthorized=false.
+
+**Still required outside this command:** evidence that the encrypted
+PostgreSQL snapshot and R2 bytes were independently held at a coherent
+writer-quiescence boundary; physical host/account separation; decryption
+and restore of the actual offsite archive; bootstrap of a replacement
+Atlas service; authentication, public media delivery and representative
+read smoke tests; and separate approval of any versioned-key cutover.
+Passing this command alone does not satisfy any of those conditions.
