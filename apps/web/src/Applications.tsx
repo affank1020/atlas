@@ -5,7 +5,7 @@ import { useApplicationRead } from './atlasApi';
 import { AtlasTopBar } from './AtlasTopBar';
 const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
-const CodeReviews = lazy(() => import('./CodeReviews').then(module => ({ default: module.CodeReviews })));
+const CodeReviews = lazy(() => import('./CodeReviewsDashboard').then(module => ({ default: module.CodeReviewsDashboard })));
 import './applications.css';
 
 export type ApplicationManifest = {
