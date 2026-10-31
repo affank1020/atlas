@@ -35,9 +35,10 @@ describe('encrypted offline inbox envelope', () => {
     assert.throws(() => validateInboxText('🙂'.repeat(9_000)));
   });
   it('detects replay payload mismatch in constant-time comparison', () => {
-    const a = digestInboxSubmission(to, 'hello');
-    assert.equal(sameDigest(a, digestInboxSubmission(to, 'hello')), true);
-    assert.equal(sameDigest(a, digestInboxSubmission(to, 'goodbye')), false);
-    assert.equal(sameDigest(a, digestInboxSubmission(from, 'hello')), false);
+    const key = randomBytes(32);
+    const a = digestInboxSubmission(key, to, 'hello');
+    assert.equal(sameDigest(a, digestInboxSubmission(key, to, 'hello')), true);
+    assert.equal(sameDigest(a, digestInboxSubmission(key, to, 'goodbye')), false);
+    assert.equal(sameDigest(a, digestInboxSubmission(key, from, 'hello')), false);
   });
 });
