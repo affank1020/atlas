@@ -212,8 +212,8 @@ export class RemoteNodeGateway {
                         if(node.platform!=='android' || node.credentialState!=='active' ||
                             !node.capabilities.includes('device.inbox.receive'))
                             throw new AtlasError('Push registration denied.','SHARE_DENIED');
-                        if(pushRegister.success) await this.push.register(originId,pushRegister.data.token);
-                        else await this.push.unregister(originId);
+                        if(pushRegister.success) await this.push.register(originId,pushRegister.data.token,current.id);
+                        else await this.push.unregister(originId,current.id);
                         respond(true,{registered:pushRegister.success});
                     }catch(error){
                         const known=error instanceof AtlasError;
