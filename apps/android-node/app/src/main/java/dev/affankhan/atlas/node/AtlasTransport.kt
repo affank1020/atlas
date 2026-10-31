@@ -52,6 +52,7 @@ internal class AtlasTransport {
         onShareReply: (ShareReply) -> Unit,
         onRecipientsReply: (RecipientsReply) -> Unit,
         onInboxReply: (InboxReply) -> Unit,
+        onPushReply: (String) -> Unit,
         onIncomingShare: (IncomingDeviceShare, (IncomingShareOutcome) -> Unit) -> Unit,
     ): WebSocket {
         val endpoint = parseAtlasEndpoint(node.origin)
@@ -93,12 +94,17 @@ internal class AtlasTransport {
                 val shareReply = parseShareReply(text)
                 val directoryReply = parseRecipientsReply(text)
                 val inboxReply = parseInboxReply(text)
-                if (shareReply != null || directoryReply != null || inboxReply != null) {
+                val pushReply = runCatching {
+                    val json=JSONObject(text)
+                    if(json.optString("type")=="response") json.optString("requestId") else ""
+                }.getOrDefault("")
+                if (shareReply != null || directoryReply != null || inboxReply != null || pushReply.isNotBlank()) {
                     // Error envelopes share the same wire shape. Callers correlate
                     // requestId to their pending operation and ignore other replies.
                     shareReply?.let(onShareReply)
                     directoryReply?.let(onRecipientsReply)
                     inboxReply?.let(onInboxReply)
+                    if (pushReply.isNotBlank()) onPushReply(pushReply)
                     return
                 }
                 // Reject malformed deliveries and all Workspace/unsupported commands.
