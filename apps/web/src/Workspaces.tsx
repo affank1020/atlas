@@ -219,6 +219,9 @@ export function Workspaces() {
         // Checkout expansion is transient UI state: no route change or
         // hashchange, which otherwise re-renders the shell and can scroll.
         setSelectedId(id);
+        // A new disclosure must not inherit mounted forms from a previous
+        // expansion (including closing and reopening the same checkout).
+        setActionsOpenForCheckout('');
         if (focusedGroup) setFocusedGroupId(focusedGroup.id);
 
         // Existing ?workspace= deep links still open on load, but interacting
@@ -230,6 +233,7 @@ export function Workspaces() {
     function focusGroup(id: string) {
         setFocusedGroupId(id);
         setSelectedId('');
+        setActionsOpenForCheckout('');
         // Keep the Workspace URL shareable without triggering shell navigation
         // or a second asynchronous hashchange reconciliation.
         replaceGroupUrl(id);

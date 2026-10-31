@@ -113,11 +113,17 @@ test('opening, switching and closing checkouts never navigate or mount hidden Gi
     expect(next).toHaveAttribute('aria-expanded', 'true');
     const secondDetails = within(browser).getByRole('region', { name: 'Checkout details' });
     expect(within(secondDetails).getByText('Git actions').closest('details')).not.toHaveAttribute('open');
-    expect(within(secondDetails).queryByRole('button', { name: 'Create worktree' })).not.toBeInTheDocument();
+    expect(secondDetails.querySelector('button[type="submit"]')).not.toBeInTheDocument();
     fireEvent.click(next);
     expect(location.href).toBe(workspaceUrl);
     expect(next).toHaveAttribute('aria-expanded', 'false');
     expect(within(browser).queryByRole('region', { name: 'Checkout details' })).not.toBeInTheDocument();
+    // The same checkout must reopen with no hidden Git forms in its DOM.
+    fireEvent.click(first);
+    const reopened = within(browser).getByRole('region', { name: 'Checkout details' });
+    expect(within(reopened).getByText('Git actions').closest('details')).not.toHaveAttribute('open');
+    expect(reopened.querySelector('form')).not.toBeInTheDocument();
+    fireEvent.click(first);
 
     // Legacy deep links still open the right checkout on navigation, but a
     // subsequent interaction clears their stale URL selection without navigating.
@@ -609,10 +615,11 @@ test('initial loading shows Workspace rail skeletons and a deep-link inspector p
     });
     render(<Workspaces />);
     const browser = screen.getByRole('region', { name: 'Workspace browser' });
-    const inspector = screen.getByRole('region', { name: 'Checkout details' });
+    // The skeleton deliberately lives below an aria-hidden placeholder.
+    const inspector = browser.querySelector('.wm-inspector-skeleton');
     expect(browser).toHaveAttribute('aria-busy', 'true');
     expect(browser.querySelectorAll('.wm-explorer-nav-skeleton')).toHaveLength(5);
-    expect(inspector).toHaveClass('wm-inspector-skeleton');
+    expect(inspector).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Loading Nodes and Workspaces');
 
     workspaces.resolve([manager, repo]);
@@ -657,7 +664,9 @@ test('Git inspection has skeletons and refresh keeps existing checkout details v
     await screen.findByText('2 workspaces');
     openWorkspaceCheckout(screen.getByRole('region', { name: 'Workspace browser' }), 'Atlas');
     const inspector = screen.getByRole('region', { name: 'Checkout details' });
-    expect(inspector.querySelectorAll('.wm-git .wm-skeleton-git')).toHaveLength(2);
+    // Only the two visible summary rows count; collapsed Git details also
+    // contain their own skeletons, intentionally hidden in the disclosure.
+    expect(inspector.querySelectorAll(':scope > .wm-git .wm-skeleton-git')).toHaveLength(2);
     expect(within(inspector).getByText('Branch')).toBeInTheDocument();
     expect(within(inspector).getByText('Working tree')).toBeInTheDocument();
     const gitDetails = within(inspector).getByText('Git details');
@@ -670,7 +679,7 @@ test('Git inspection has skeletons and refresh keeps existing checkout details v
     await waitFor(() => expect(inspector.querySelector('.wm-git .wm-skeleton-git')).not.toBeInTheDocument());
     expect(within(inspector).getByText('Git details')).toBe(gitDetails);
     expect(within(inspector).getByText('Git actions')).toBe(gitActions);
-    expect(inspector.querySelectorAll('.wm-inline-details > .wm-git > div')).toHaveLength(2);
+    expect(inspector.querySelectorAll(':scope > .wm-git > div')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(inspections).toBe(2));
     expect(within(inspector).getAllByText('atlas/feature').length).toBeGreaterThan(0);
