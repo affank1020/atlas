@@ -3,7 +3,7 @@ export type MonitoringTab = 'overview' | 'activity' | 'logs';
 export type MonitoringFilters = {
     projectId?: string; workspaceId?: string; checkoutId?: string; logicalWorkspaceId?: string; storeId?: string; nodeId?: string;
     operation?: string; category?: string; client?: string; outcome?: string; search?: string;
-    from?: string; to?: string; offset?: string; live?: '1'; source?: 'stdout' | 'stderr' | 'journal'; lines?: string; target?: 'server' | 'node'; history?: '1';
+    from?: string; to?: string; offset?: string; live?: '1'; source?: 'stdout' | 'stderr' | 'journal' | 'service'; lines?: string; target?: 'server' | 'node'; history?: '1';
 };
 export type MonitoringRoute = { tab: MonitoringTab; filters: MonitoringFilters };
 const keys: (keyof MonitoringFilters)[] = ['projectId','workspaceId','checkoutId','logicalWorkspaceId','storeId','nodeId','operation','category','client','outcome','search','from','to','offset','live','source','lines','target','history'];
@@ -26,7 +26,7 @@ export function parseMonitoringHash(hash: string): MonitoringRoute {
             if (value === '1' && tab === 'activity' && (!filters.offset || Number(filters.offset) === 0)) filters.live = '1';
             continue;
         }
-        if (key === 'source') { if (value === 'stdout' || value === 'stderr' || value === 'journal') filters.source = value; continue; }
+        if (key === 'source') { if (value === 'stdout' || value === 'stderr' || value === 'journal' || value === 'service') filters.source = value; continue; }
         if (key === 'history') { if (value === '1' && tab === 'logs') filters.history = '1'; continue; }
         if (key === 'target') { if (value === 'server' || value === 'node') filters.target = value; continue; }
         if (key === 'lines') { if (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 200) filters.lines = String(Number(value)); continue; }
