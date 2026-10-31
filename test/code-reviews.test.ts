@@ -105,7 +105,7 @@ test('Code Reviews operations are visible early in bounded MCP catalogues withou
         await server.connect(serverConnection);
         await client.connect(clientConnection);
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.slice(6, 24).map(tool => tool.name), [
+        assert.deepEqual(tools.slice(6, 25).map(tool => tool.name), [
             'code_reviews_overview',
             'code_reviews_pr_summary',
             'code_reviews_pr_timeline',
@@ -116,6 +116,7 @@ test('Code Reviews operations are visible early in bounded MCP catalogues withou
             'code_reviews_review_thread_state',
             'code_reviews_publish_initial_inline_root',
             'code_reviews_publish_inline_reply',
+            'code_reviews_resolve_verified_thread',
             'code_reviews_publish_fix_evidence',
             'code_reviews_list_runs',
             'code_reviews_list_findings',

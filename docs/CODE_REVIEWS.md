@@ -986,6 +986,64 @@ overridden by an old reviewer assertion.
 GitHub schema: <https://docs.github.com/en/graphql/reference/objects#pullrequestreviewthread>
 and <https://docs.github.com/en/graphql/reference/pulls#resolvereviewthread>.
 
+### Separately authorised GitHub GraphQL conversation resolution
+
+`code_reviews_resolve_verified_thread({repository,prNumber,runId,lineageKey,apply?})`
+is the final **explicit** Code Reviews inline discussion operation. No
+conversation mutation is implicit in a fix-evidence reply. `apply:false` is
+read-only. Live GraphQL mutation requires `apply:true`, the same authenticated
+structured reviewer, an explicit owner/repository allowlist which is
+**independent** of all previous publication flags:
+
+```text
+ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES=owner/repository
+```
+
+Atlas requires the latest, complete structured review to declare an
+evidence-backed resolution on its exact SHA, a **published** fix-evidence reply
+receipt tied to that run, and the independently verified App Bot-owned root
+and reply in the complete bounded REST comment inventory. Its GraphQL
+review thread must map to that exact original REST root ID, path and line.
+An arbitrary human-authored reply, copied marker, outdated anchor or a
+reviewer's unsupported assertion is insufficient.
+
+GitHub has reported that its GraphQL `resolveReviewThread` mutation may
+require Contents:write for App installation tokens, despite not changing
+repository files (<https://github.com/github/gh-aw/issues/35726>). The
+ordinary Code Reviews comment-publishing token remains restricted to
+`pull_requests:write`; only the new, independently gated resolution path
+requests the stronger scopes. An installation without either explicitly
+confirmed permission fails **before** creating a durable mutation claim.
+
+For `apply:true`, the operation checks that the pull request is **open** at
+the reviewed SHA, explicitly requests a **dedicated** GitHub App installation
+token with both `pull_requests:write` and `contents:write` permissions, verifies
+GitHub actually granted both scopes, and uses that token to re-query the full GraphQL
+thread inventory. The thread must remain open, current (not outdated) and
+report `viewerCanResolve:true` for that token. These checks are refreshed
+after committing a transaction-fenced, durable one-shot Atlas claim and
+before any `resolveReviewThread` mutation. Post-mutation a separate fresh
+full GraphQL read must show the exact thread resolved, with the REST Bot
+identity still matching, before recording a published receipt.
+
+A timeout, HTTP error, GraphQL error, unexpected response, missed read-back,
+or failure after a claim **never triggers an automatic resend**. Retrying a
+claimed mutation is strictly read-only, even if GitHub appears to remain
+open; resolved-remote state with no published Atlas receipt is reported as
+**attribution unknown**, not falsely credited to Atlas. Once an Atlas
+resolution has been recorded, a discussion reopened by a human is reported
+as `reopened_after_publication` and **not automatically closed again**. A
+second review run cannot silently re-resolve the same lineage. If already
+resolved on GitHub before any claim, Atlas makes no mutation or adoption.
+
+This operation does not approve/reject/merge the pull request. `isResolved`
+is a GitHub discussion state; it is **not proof** the code fix is correct.
+Historical Markdown reviews and untrusted Store data remain insufficient
+to independently prove reviewer identity. Keep production allowlist empty
+until deliberate rollout and a real authenticated GitHub integration test.
+Never enable both the legacy review publisher and this bot workflow without
+first selecting one authoritative publication path.
+
 ### MCP discovery for bounded tool catalogues
 
 The Server's Application registry includes the Code Reviews tools, but some

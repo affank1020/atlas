@@ -275,3 +275,33 @@ test('GitHub App bot identity comes from verified App slug and scoped read token
     }) as typeof fetch);
     await assert.rejects(mismatched.reviewPublisherBot(repo), /bot identity could not be verified/);
 });
+
+test('review-thread resolution token requires both contents and pull-request write scopes', async () => {
+    for (const granted of [
+        { contents: 'read', pull_requests: 'write' },
+        { contents: 'write', pull_requests: 'read' },
+        { pull_requests: 'write' },
+        { contents: 'write' },
+    ]) {
+        const broker = new GitHubBroker(env, (async (url, init) => {
+            if (String(url).includes('/app/installations?')) return response(200, installations);
+            assert.deepEqual(JSON.parse(String(init?.body)), {
+                repositories: ['portfolio-site'],
+                permissions: { contents: 'write', pull_requests: 'write' },
+            });
+            return response(201, { ...tokenBody, permissions: granted });
+        }) as typeof fetch);
+        await assert.rejects(broker.pullRequestResolutionToken(repo),
+            /resolution requires confirmed Contents and Pull requests write permissions/);
+    }
+    const broker = new GitHubBroker(env, (async (url, init) => {
+        if (String(url).includes('/app/installations?')) return response(200, installations);
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+            repositories: ['portfolio-site'],
+            permissions: { contents: 'write', pull_requests: 'write' },
+        });
+        return response(201, { ...tokenBody,
+            permissions: { contents: 'write', pull_requests: 'write' } });
+    }) as typeof fetch);
+    assert.equal(await broker.pullRequestResolutionToken(repo), tokenBody.token);
+});

@@ -146,6 +146,19 @@ export function loadInlineFixRepositories(env: NodeJS.ProcessEnv = process.env):
     return new Set(values);
 }
 
+/** Independent opt-in: publishing fix evidence NEVER enables GraphQL thread mutation. */
+export function loadThreadResolutionRepositories(env:NodeJS.ProcessEnv=process.env):ReadonlySet<string>{
+    const raw=env.ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES?.trim()??'';
+    if(!raw)return new Set();
+    const entries=raw.split(',').map(x=>x.trim().toLowerCase());
+    if(entries.length>30||entries.some(x=>
+        !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(x)||
+        x.split('/').some(part=>part==='.'||part==='..'))||
+        new Set(entries).size!==entries.length)
+        throw new Error('ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES must list distinct owner/repo pairs.');
+    return new Set(entries);
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -192,7 +205,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
             managedSummaryRepositories: loadManagedSummaryRepositories(env),
             inlineRootRepositories: loadInlineRootRepositories(env),
             inlineReplyRepositories: loadInlineReplyRepositories(env),
-            inlineFixRepositories: loadInlineFixRepositories(env) },
+            inlineFixRepositories: loadInlineFixRepositories(env),
+            threadResolutionRepositories: loadThreadResolutionRepositories(env) },
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }
