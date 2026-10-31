@@ -336,8 +336,10 @@ with any native Files or Portfolio original/variant data, including archived
 objects. Never select the latest run automatically. A missing, duplicated
 or extra Project-run selection blocks the entire suite before any Project
 object GET. The suite enumerates the full Project/Portfolio storage view
-in one bounded statement (at most 2,000 objects across at most 25 Projects),
-verifies every provided Project's complete immutable manifest and backed
+in one bounded statement (at most **1,000 Project/Portfolio source objects**
+across at most 25 Projects), verifies every provided Project's complete immutable
+manifest (up to 2,000 entries when both original and versioned copies are
+included) and backed
 object bytes, verifies all legacy Workspace/Application Files (up to 2,000),
 then compares the full Project catalogue again. A larger catalogue fails
 closed; partial page coverage is not sufficient.
