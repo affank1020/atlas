@@ -127,6 +127,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     var queuedInboxBusyIds by mutableStateOf<Set<String>>(emptySet())
         private set
     private var pendingInboxListId: String? = null
+    private var pendingInboxTimeout: Runnable? = null
+    private val inboxResolutionTimeouts = mutableMapOf<String, Runnable>()
     private val pendingInboxResolutions = mutableMapOf<String, Triple<String, String, Boolean>>()
 
     private var pendingShareRequestId: String? = null
@@ -273,6 +275,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         queuedInboxBusyIds = emptySet()
         queuedInboxLoading = false
         pendingInboxListId = null
+        pendingInboxTimeout?.let(handler::removeCallbacks)
+        pendingInboxTimeout = null
+        inboxResolutionTimeouts.values.forEach(handler::removeCallbacks)
+        inboxResolutionTimeouts.clear()
         pendingInboxResolutions.clear()
         BackgroundReceiverService.cancelQueued(getApplication())
         if (pendingShareRequestId != null) {
@@ -307,6 +313,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             queuedInboxBusyIds = emptySet()
                             queuedInboxLoading = false
                             pendingInboxListId = null
+                            pendingInboxTimeout?.let(handler::removeCallbacks)
+                            pendingInboxTimeout = null
+                            inboxResolutionTimeouts.values.forEach(handler::removeCallbacks)
+                            inboxResolutionTimeouts.clear()
                             pendingInboxResolutions.clear()
                             BackgroundReceiverService.cancelQueued(getApplication())
                             if (pendingShareRequestId != null) {
@@ -408,6 +418,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                     if (!owners.connected || generation != connectionGeneration ||
                         reply.requestId != pendingInboxListId) return@post
                     pendingInboxListId = null
+                    pendingInboxTimeout?.let(handler::removeCallbacks)
+                    pendingInboxTimeout = null
                     queuedInboxLoading = false
                     if (reply.items != null) {
                         queuedInboxItems = reply.items.filter { it.expiresAtMs > System.currentTimeMillis() }
@@ -427,6 +439,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 handler.post {
                     if (!owners.connected || generation != connectionGeneration) return@post
                     val pending = pendingInboxResolutions.remove(reply.requestId) ?: return@post
+                    inboxResolutionTimeouts.remove(reply.requestId)?.let(handler::removeCallbacks)
                     val (sourceNodeId, deliveryId, copied) = pending
                     val itemKey = sourceNodeId.lowercase() + ":" + deliveryId.lowercase()
                     if (reply.state == (if (copied) "copied" else "declined")) {
@@ -464,7 +477,19 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val ws = socket ?: return
         pendingInboxListId = requestId
         queuedInboxLoading = true
+        val timeout = Runnable {
+            if (pendingInboxListId == requestId) {
+                pendingInboxListId = null
+                pendingInboxTimeout = null
+                queuedInboxLoading = false
+                inboxStatus = "Queued inbox timed out. Refresh to retry."
+            }
+        }
+        pendingInboxTimeout = timeout
+        handler.postDelayed(timeout, 12_000L)
         if (!ws.send(inboxListRequest(requestId))) {
+            handler.removeCallbacks(timeout)
+            pendingInboxTimeout = null
             pendingInboxListId = null
             queuedInboxLoading = false
             inboxStatus = "Queued inbox unavailable."
@@ -496,13 +521,26 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         queuedInboxBusyIds = queuedInboxBusyIds + itemKey
         val requestId = UUID.randomUUID().toString()
         pendingInboxResolutions[requestId] = Triple(sourceNodeId, deliveryId, accepted)
+        val timeout = Runnable {
+            val pending = pendingInboxResolutions.remove(requestId) ?: return@Runnable
+            inboxResolutionTimeouts.remove(requestId)
+            if (!pending.third) queuedInboxBusyIds = queuedInboxBusyIds - itemKey
+            inboxStatus = if (pending.third)
+                "Copied locally; Atlas receipt unconfirmed. Do not copy again."
+            else "Decline was not confirmed. You can retry."
+        }
+        inboxResolutionTimeouts[requestId] = timeout
+        handler.postDelayed(timeout, 15_000L)
         inboxStatus = if (accepted) "Copied locally; confirming receipt with Atlas…" else
             "Declining queued transfer…"
         if (socket?.send(inboxResolutionRequest(requestId, deliveryId, item.sourceNodeId, accepted)) != true) {
+            handler.removeCallbacks(timeout)
+            inboxResolutionTimeouts.remove(requestId)
             pendingInboxResolutions.remove(requestId)
+            if (!accepted) queuedInboxBusyIds = queuedInboxBusyIds - itemKey
             inboxStatus = if (accepted)
                 "Copied locally; Atlas receipt unconfirmed. Do not copy again."
-            else "Decline was not submitted."
+            else "Decline was not submitted; you can retry."
         }
     }
 
@@ -689,6 +727,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         queuedInboxBusyIds = emptySet()
         queuedInboxLoading = false
         pendingInboxListId = null
+        pendingInboxTimeout?.let(handler::removeCallbacks)
+        pendingInboxTimeout = null
+        inboxResolutionTimeouts.values.forEach(handler::removeCallbacks)
+        inboxResolutionTimeouts.clear()
         pendingInboxResolutions.clear()
         importSequence++
         session = CompanionSession()
