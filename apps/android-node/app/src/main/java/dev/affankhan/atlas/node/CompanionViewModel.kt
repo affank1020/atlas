@@ -99,6 +99,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private val transport = AtlasTransport()
     private val handler = Handler(Looper.getMainLooper())
     private var owners = ConnectionOwners()
+    var pushEnabled by mutableStateOf(AtlasPush.enabled(application))
+        private set
     var backgroundReceivingRunning by mutableStateOf(false)
         private set
     var backgroundReceiveError by mutableStateOf<String?>(null)
@@ -215,6 +217,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     /** Consent survives process death. A stopped service is not automatically restarted. */
     fun setPushEnabled(enabled: Boolean) {
         AtlasPush.setEnabled(getApplication(), enabled)
+        pushEnabled = enabled
         if (!enabled) sendPushUnregister()
         else refreshPushRegistration()
     }
@@ -767,6 +770,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun forget() {
+        setPushEnabled(false)
         val visibleActivities = owners.visibleActivities
         // Stop the independently running receiver before deleting its identity.
         getApplication<AtlasNodeApp>().stopService(Intent(
