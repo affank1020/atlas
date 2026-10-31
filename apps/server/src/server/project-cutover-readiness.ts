@@ -151,6 +151,7 @@ export async function assessProjectCutover(input:{
             }
         }
     }
+    const metadataMatched=blockers.length===0;
     const page=catalog.items.slice(from,from+count),end=from+page.length;
     const remaining=end<catalog.items.length;
     const counts={valid:0,missing:0,corrupt:0};
@@ -183,8 +184,7 @@ export async function assessProjectCutover(input:{
         backupReceiptsComplete:recoveryStatus.status==="complete",
         recoveryCoversBothKeys:recovery.versionedCopyRunId===keyRunId&&
             recovery.entries.length===catalog.items.length*2,
-        metadataMatched:input.mode==="plan"?blockers.length===0:
-            !blockers.some(x=>!x.startsWith("missing-")&&!x.startsWith("corrupt-")),
+        metadataMatched,
         byteVerification:verified,validatedObjects:counts.valid,
         missingObjects:counts.missing,corruptObjects:counts.corrupt,blockers,
         mappings:page.map(mapping),
