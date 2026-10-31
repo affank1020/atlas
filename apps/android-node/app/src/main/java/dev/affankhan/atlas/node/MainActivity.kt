@@ -1,6 +1,10 @@
 package dev.affankhan.atlas.node
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -8,7 +12,6 @@ import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +33,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -48,9 +52,44 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Foreground-only native Atlas Node with explicit send and incoming-copy approval. */
+/** Explicit text sharing UI with an optional app-scoped background receiver. */
 class MainActivity : ComponentActivity() {
-    private val model: CompanionViewModel by viewModels()
+    private val model: CompanionViewModel get() = (application as AtlasNodeApp).model
+
+    private val askNotifications = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) enableBackgroundReceiving()
+        else model.reportBackgroundError(
+            "Notifications are required for background receiving. Permission was denied.")
+    }
+
+    private fun enableBackgroundReceiving() {
+        if (model.pairedNode == null) return
+        if (!BackgroundReceiverService.hasNotificationPermission(this)) {
+            model.reportBackgroundError("Enable Atlas notifications to receive in other apps.")
+            return
+        }
+        try {
+            startForegroundService(Intent(this, BackgroundReceiverService::class.java))
+        } catch (_: RuntimeException) {
+            model.reportBackgroundError("Android did not allow background receiving to start.")
+        }
+    }
+
+    private fun setBackgroundReceiving(enabled: Boolean) {
+        if (!enabled) {
+            stopService(Intent(this, BackgroundReceiverService::class.java))
+            model.stopBackgroundReceiving()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            enableBackgroundReceiving()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,6 +129,9 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onDeclineIncoming = model::declineIncomingShare,
+                backgroundReceiving = model.backgroundReceivingRunning,
+                backgroundReceiveError = model.backgroundReceiveError,
+                onToggleBackgroundReceiving = ::setBackgroundReceiving,
             )
         }
     }
@@ -149,6 +191,9 @@ internal fun AtlasCompanion(
     inboxStatus: String = "No incoming shares yet.",
     onCopyIncoming: () -> Unit = {},
     onDeclineIncoming: () -> Unit = {},
+    backgroundReceiving: Boolean = false,
+    backgroundReceiveError: String? = null,
+    onToggleBackgroundReceiving: (Boolean) -> Unit = {},
 ) {
     MaterialTheme(colorScheme = atlasScheme) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -190,6 +235,9 @@ internal fun AtlasCompanion(
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
                             inboxStatus = inboxStatus,
+                            backgroundReceiving = backgroundReceiving,
+                            backgroundReceiveError = backgroundReceiveError,
+                            onToggleBackgroundReceiving = onToggleBackgroundReceiving,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -219,6 +267,9 @@ internal fun AtlasCompanion(
                             onSend = onSend,
                             onLoadDeferredShare = onLoadDeferredShare,
                             inboxStatus = inboxStatus,
+                            backgroundReceiving = backgroundReceiving,
+                            backgroundReceiveError = backgroundReceiveError,
+                            onToggleBackgroundReceiving = onToggleBackgroundReceiving,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
@@ -287,6 +338,9 @@ private fun CompanionContent(
     onSend: () -> Unit,
     onLoadDeferredShare: () -> Unit,
     inboxStatus: String = "No incoming shares yet.",
+    backgroundReceiving: Boolean = false,
+    backgroundReceiveError: String? = null,
+    onToggleBackgroundReceiving: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -311,7 +365,24 @@ private fun CompanionContent(
             }
             Section.SETTINGS -> {
                 InfoCard("App version", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-                InfoCard("Node protocol", "Atlas Node protocol v2 — outbound text sharing")
+                InfoCard("Node protocol", "Atlas Node protocol v2 — directional text sharing")
+                Text("Background receiving")
+                Switch(
+                    checked = backgroundReceiving,
+                    onCheckedChange = onToggleBackgroundReceiving,
+                    enabled = node != null,
+                    modifier = Modifier.testTag("background-receiving-toggle"),
+                )
+                Text(
+                    if (backgroundReceiving)
+                        "A persistent notification keeps the Node connection active while using other apps. " +
+                            "Open an incoming notification to approve Copy within 15 seconds."
+                    else "Off. Turn on to receive while using other apps. " +
+                        "Screen-off delivery is not guaranteed; there is no offline inbox or push yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (backgroundReceiveError != null)
+                    InfoCard("Background receiving unavailable", backgroundReceiveError)
                 if (node != null) {
                     InfoCard("Credentials", "Node credentials are encrypted using Android Keystore.")
                     Button(onClick = onForget) { Text("Forget this Node on device") }
@@ -446,7 +517,7 @@ private fun DevicePairing(
     if (node != null) {
         InfoCard("Paired Node", node.name + " · " + node.nodeId)
         InfoCard("Connection", connection)
-        InfoCard("Capabilities", "Text sending and foreground text receiving. Every incoming share requires approval.")
+        InfoCard("Capabilities", "Text sending and opt-in background text receiving. Every incoming share requires explicit Copy approval.")
         return
     }
     InfoCard("Not enrolled", "Create a one-time Node enrolment ticket in Atlas Web, then enter it here.")
