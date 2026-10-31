@@ -71,6 +71,7 @@ def local_state(layout) -> dict:
         "currentEntrypoint": entrypoint,
         "launchdPid": pid,
         "recoveryPending": layout.pending.exists(),
+        "watchdogRefreshPending": layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink(),
         "rollbackAvailable": layout.previous.exists(),
     }
 
