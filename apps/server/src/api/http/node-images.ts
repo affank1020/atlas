@@ -71,15 +71,17 @@ export async function serveNodeImages(request: IncomingMessage, response: Server
             // Absolute transfer deadline: a slow-drip client must not occupy
             // an authenticated 8-MiB slot indefinitely by sending one byte
             // just before the idle timeout.
-            const deadline = setTimeout(() => request.destroy(), 55_000);
-            try {
-                const bytes = await readImage(request);
-                const receipt = await relay.deliver(admitted, {
-                    sourceId: nodeId, targetId, deliveryId, sha256,
-                    mimeType: mimeType as 'image/png' | 'image/jpeg', bytes,
-                }, credential);
-                reply(response, 200, receipt);
-            } finally { clearTimeout(deadline); }
+            const deadline = setTimeout(() => request.destroy(), 30_000);
+            let bytes: Buffer;
+            try { bytes = await readImage(request); }
+            finally { clearTimeout(deadline); }
+            // The upload deadline covers untrusted source bytes, not the Mac's
+            // separately timed user approval/clipboard write after dispatch.
+            const receipt = await relay.deliver(admitted, {
+                sourceId: nodeId, targetId, deliveryId, sha256,
+                mimeType: mimeType as 'image/png' | 'image/jpeg', bytes,
+            }, credential);
+            reply(response, 200, receipt);
         } else {
             if (!UUID.test(readId!)) throw new AtlasError('Invalid image ID.', 'INVALID_REQUEST');
             const image = await relay.consume(readId!, nodeId, credential);
