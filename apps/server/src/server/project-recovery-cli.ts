@@ -7,6 +7,7 @@ import { loadRecoveryR2Config } from "./r2-recovery-verification.js";
 import { parseProjectRecoveryArgs } from "./project-recovery-args.js";
 import {
     captureProjectRecoveryManifest,seedProjectRecovery,verifyIsolatedProjectRecovery,
+    getProjectRecoverySeedStatus,
 } from "./project-independent-recovery.js";
 
 import { loadIsolatedRecoveryConfig } from "./project-recovery-isolation.js";
@@ -29,11 +30,18 @@ try{
             throw new Error("Explicit Project recovery manifest capture gate disabled.");
         if(args.mode==="seed"&&process.env.ATLAS_PROJECT_RECOVERY_SEED_ENABLED!=="1")
             throw new Error("Independent Project recovery seed gate disabled.");
+        pool=new Pool({connectionString:requireDatabaseUrl(),connectionTimeoutMillis:5000});
+        if(args.mode==="status"){
+            // Metadata-only completeness, requires no primary or backup R2
+            // credentials and performs no object read or write.
+            const result=await getProjectRecoverySeedStatus(pool,args.runId!,args.projectId);
+            console.log(JSON.stringify(result,null,2));
+            if(result.status!=="complete")process.exitCode=2;
+        }else{
         const files=loadPortfolioConfig();
         if(!files.r2)throw new Error("Primary R2 must be configured.");
         const primary=new R2ObjectStore(files.r2);
         const source=createR2SeedPrimarySource(primary,new LocalObjectStore(files.mediaRoot));
-        pool=new Pool({connectionString:requireDatabaseUrl(),connectionTimeoutMillis:5000});
         if(args.mode==="capture"){
             const result=await captureProjectRecoveryManifest({database:pool,source,
                 projectId:args.projectId,versionedRunId:args.versionedRunId});
@@ -48,6 +56,7 @@ try{
                 apply:args.mode==="seed",fromOrdinal:args.fromOrdinal,maxFiles:args.maxFiles});
             console.log(JSON.stringify(result,null,2));
             if(result.status==="partial")process.exitCode=2;
+        }
         }
     }
 }catch{
