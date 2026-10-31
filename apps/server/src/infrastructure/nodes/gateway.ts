@@ -180,9 +180,10 @@ export class RemoteNodeGateway {
             }
             const inboxList = deviceShareInboxListSchema.safeParse(message);
             const inboxResolve = deviceShareInboxResolveSchema.safeParse(message);
-            if (inboxList.success || inboxResolve.success) {
+            const resolution = inboxResolve.success ? inboxResolve.data : null;
+            if (inboxList.success || resolution) {
                 const originId = id, current = session;
-                const requestId = inboxList.success ? inboxList.data.requestId : inboxResolve.data.requestId;
+                const requestId = inboxList.success ? inboxList.data.requestId : resolution!.requestId;
                 const task = (async () => {
                     try {
                         if (!this.inbox) throw new AtlasError('Queued delivery unavailable.', 'SHARE_QUEUE_DISABLED');
@@ -190,8 +191,9 @@ export class RemoteNodeGateway {
                         const result = inboxList.success
                             ? await this.inbox.list(auth)
                             : await this.inbox.resolve({ ...auth,
-                                deliveryId: inboxResolve.data.deliveryId,
-                                accepted: inboxResolve.data.accepted });
+                                deliveryId: resolution!.deliveryId,
+                                sourceNodeId: resolution!.sourceNodeId,
+                                accepted: resolution!.accepted });
                         if (socket.readyState === WebSocket.OPEN && this.sessions.get(originId) === current)
                             socket.send(JSON.stringify({ type: 'response', requestId, ok: true, result }));
                     } catch (error) {

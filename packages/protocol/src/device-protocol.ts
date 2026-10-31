@@ -64,7 +64,8 @@ export const deviceShareInboxListSchema = z.object({
 }).strict();
 export const deviceShareInboxResolveSchema = z.object({
     type: z.literal('device.share.inbox.resolve'), requestId: z.string().uuid(),
-    deliveryId: z.string().uuid(), accepted: z.boolean(),
+    deliveryId: z.string().uuid(), sourceNodeId: z.string().uuid(),
+    accepted: z.boolean(),
 }).strict();
 export const deviceShareInboxItemSchema = z.object({
     deliveryId: z.string().uuid(), sourceNodeId: z.string().uuid(),

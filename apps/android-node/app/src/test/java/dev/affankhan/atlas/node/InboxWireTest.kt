@@ -18,7 +18,7 @@ class InboxWireTest {
         val copied = """{"type":"response","requestId":"$a","ok":true,"result":{"state":"copied"}}"""
         assertEquals("copied", parseInboxResolutionReply(copied)?.state)
         assertTrue(inboxListRequest(a).contains("device.share.inbox.list"))
-        assertTrue(inboxResolutionRequest(a,b,true).contains("device.share.inbox.resolve"))
+        assertTrue(inboxResolutionRequest(a,b,c,true).contains("device.share.inbox.resolve"))
     }
 
     @Test fun malformedAndUnboundedPayloadsAreRejected() {

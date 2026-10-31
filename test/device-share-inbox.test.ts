@@ -98,7 +98,7 @@ test('offline encrypted shares preserve queued-vs-copied states, replay safety, 
         assert.equal(list.result.items[0].sourceNodeId, sender.nodeId);
 
         const copy = await request(receiverSocket, { type: 'device.share.inbox.resolve',
-            deliveryId, accepted: true });
+            deliveryId, sourceNodeId: sender.nodeId, accepted: true });
         assert.equal(copy.result.state, 'copied');
         const empty = await request(receiverSocket, { type: 'device.share.inbox.list' });
         assert.deepEqual(empty.result.items, []);

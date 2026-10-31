@@ -488,7 +488,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         pendingInboxResolutions[requestId] = deliveryId to accepted
         inboxStatus = if (accepted) "Copied locally; confirming receipt with Atlas…" else
             "Declining queued transfer…"
-        if (socket?.send(inboxResolutionRequest(requestId, deliveryId, accepted)) != true) {
+        if (socket?.send(inboxResolutionRequest(requestId, deliveryId, item.sourceNodeId, accepted)) != true) {
             pendingInboxResolutions.remove(requestId)
             inboxStatus = if (accepted)
                 "Copied locally; Atlas receipt unconfirmed. Do not copy again."

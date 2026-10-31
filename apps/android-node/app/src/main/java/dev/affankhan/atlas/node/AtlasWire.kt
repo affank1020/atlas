@@ -266,11 +266,13 @@ internal fun inboxListRequest(id: String): String {
     return JSONObject().put("type", "device.share.inbox.list")
         .put("requestId", id).toString()
 }
-internal fun inboxResolutionRequest(id: String, deliveryId: String, accepted: Boolean): String {
-    require(validNodeId(id) && validNodeId(deliveryId))
+internal fun inboxResolutionRequest(
+    id: String, deliveryId: String, sourceNodeId: String, accepted: Boolean,
+): String {
+    require(validNodeId(id) && validNodeId(deliveryId) && validNodeId(sourceNodeId))
     return JSONObject().put("type", "device.share.inbox.resolve")
         .put("requestId", id).put("deliveryId", deliveryId)
-        .put("accepted", accepted).toString()
+        .put("sourceNodeId", sourceNodeId).put("accepted", accepted).toString()
 }
 internal fun parseInboxListReply(raw: String): InboxListReply? = runCatching {
     val json = JSONObject(raw)

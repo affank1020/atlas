@@ -166,12 +166,13 @@ export class DurableDeviceShareInbox {
         return { items };
     }
     async resolve(input: { targetId: string; runtime?: RemoteNodeRuntime; credential: string;
-        deliveryId: string; accepted: boolean }): Promise<{ state: QueuedStatus }> {
-        const target = input.targetId.toLowerCase(), id = input.deliveryId.toLowerCase();
+        deliveryId: string; sourceNodeId: string; accepted: boolean }): Promise<{ state: QueuedStatus }> {
+        const target = input.targetId.toLowerCase(), id = input.deliveryId.toLowerCase(),
+            source = input.sourceNodeId.toLowerCase();
         if (!this.key) throw new AtlasError('Queued delivery is disabled.', 'SHARE_QUEUE_DISABLED');
         await this.verifySession(input.targetId, input.runtime, input.credential, 'device.share.receive');
         const result = await this.pool.query(`SELECT source_node_id,status,expires_at FROM node_share_inbox
-            WHERE target_node_id=$1 AND delivery_id=$2 LIMIT 1`, [target, id]);
+            WHERE target_node_id=$1 AND delivery_id=$2 AND source_node_id=$3 LIMIT 1`, [target, id, source]);
         if (!result.rowCount) throw new AtlasError('Queued share not found.', 'NOT_FOUND');
         const row = result.rows[0];
         if (!(await this.authorized(String(row.source_node_id), target)))
@@ -181,11 +182,11 @@ export class DurableDeviceShareInbox {
             ? 'expired' : input.accepted ? 'copied' : 'declined';
         const updated = await this.pool.query(`UPDATE node_share_inbox SET status=$3,
             nonce=NULL,ciphertext=NULL,auth_tag=NULL,resolved_at=now()
-            WHERE target_node_id=$1 AND delivery_id=$2 AND status='queued'
-            RETURNING status`, [target, id, status]);
+            WHERE target_node_id=$1 AND delivery_id=$2 AND source_node_id=$4 AND status='queued'
+            RETURNING status`, [target, id, status, source]);
         if (updated.rowCount) return { state: status };
         const latest = await this.pool.query(
-            'SELECT status FROM node_share_inbox WHERE target_node_id=$1 AND delivery_id=$2', [target,id]);
+            'SELECT status FROM node_share_inbox WHERE target_node_id=$1 AND delivery_id=$2 AND source_node_id=$3', [target,id,source]);
         return { state: (latest.rows[0]?.status ?? 'expired') as QueuedStatus };
     }
 }
