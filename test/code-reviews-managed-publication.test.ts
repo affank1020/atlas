@@ -359,11 +359,46 @@ test('concurrent summary claims never create two comments', async () => {
     assert.equal(f.events.post, 1, 'concurrent requests cannot both POST');
     assert.equal(f.getRemote()?.id, 73);
     const accepted = settled.filter(x => x.status === 'fulfilled');
-    assert.ok(accepted.length >= 1, 'one concurrent request must publish');
-    assert.ok(accepted.every(x => x.value.status === 'published'),
-        'a later observer can return an already-published receipt');
-    // Depending on which snapshot wins, the other call either detects the
-    // changed claim and conflicts or sees the completed published receipt.
+    assert.ok(accepted.some(x => x.value.status === 'published'),
+        'one concurrent request must publish');
+    assert.ok(accepted.every(x => x.value.status === 'published' ||
+        (x.value.status === 'uncertain' && x.value.postedAgain === false)),
+        'a competing observer may see a still-claimed write, but cannot retry it');
+    // The follower may race after the first claim but before the POST:
+    // 'uncertain' is the safe, intentional read-only outcome in that window.
+    const stored = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID, f.runs.id, f.first.id);
+    assert.equal((stored.data.coverage as any).githubManagedSummary.state, 'published');
+});
+
+test('concurrent observer during an in-flight POST sees a claim without duplicating the write', async () => {
+    const f = await fixture();
+    let enteredPost!: () => void;
+    let finishPost!: () => void;
+    const entered = new Promise<void>(resolve => { enteredPost = resolve; });
+    const release = new Promise<void>(resolve => { finishPost = resolve; });
+    const originalPost = f.writer.post;
+    f.writer.post = async (...args: Parameters<typeof originalPost>) => {
+        enteredPost();
+        await release;
+        return originalPost(...args);
+    };
+
+    const publisher = f.invoke(true);
+    await entered; // The durable claim exists, but no GitHub POST has happened.
+    try {
+        const observer = await f.invoke(true);
+        assert.equal(observer.status, 'uncertain');
+        assert.equal(observer.postedAgain, false);
+        assert.equal(f.events.post, 0, 'a claimed write cannot be retransmitted');
+    } finally {
+        finishPost();
+    }
+    const published = await publisher;
+    assert.equal(published.status, 'published');
+    assert.equal(f.events.post, 1, 'only the original claimant may POST');
+    assert.equal(f.getRemote()?.id, 73);
+    const stored = await f.catalog.getRecord(CODE_REVIEWS_PROJECT_ID, f.runs.id, f.first.id);
+    assert.equal((stored.data.coverage as any).githubManagedSummary.state, 'published');
 });
 
 test('GitHub issue comment writer verifies base PR, unchanged head, methods and scoped tokens', async () => {
