@@ -120,7 +120,14 @@ test('offline encrypted shares preserve queued-vs-copied states, replay safety, 
         const copy = await request(receiverSocket, { type: 'device.share.inbox.resolve',
             deliveryId, sourceNodeId: sender.nodeId, accepted: true });
         assert.equal(copy.result.state, 'copied');
+        // A fast repeat read is explicitly rate-limited; it must not
+        // masquerade as an empty or successfully copied inbox.
+        const early = await request(receiverSocket, { type: 'device.share.inbox.list' });
+        assert.equal(early.ok, false);
+        assert.equal(early.error.code, 'SHARE_RATE_LIMIT');
+        await new Promise(resolve => setTimeout(resolve, 2_100));
         const empty = await request(receiverSocket, { type: 'device.share.inbox.list' });
+        assert.equal(empty.ok, true, JSON.stringify(empty));
         assert.deepEqual(empty.result.items, []);
         const scrubbed = await fixture.store.pool.query(
             'SELECT status,ciphertext FROM node_share_inbox WHERE delivery_id=$1', [deliveryId]);
@@ -133,7 +140,9 @@ test('offline encrypted shares preserve queued-vs-copied states, replay safety, 
         await request(senderSocket, { ...payload, deliveryId: secondId });
         await services.shareApprovals.update({ sourceNodeId: sender.nodeId,
             targetNodeId: receiver.nodeId, enabled: false });
+        await new Promise(resolve => setTimeout(resolve, 2_100));
         const revoked = await request(receiverSocket, { type: 'device.share.inbox.list' });
+        assert.equal(revoked.ok, true, JSON.stringify(revoked));
         assert.deepEqual(revoked.result.items, []);
         const denied = await request(senderSocket, { ...payload, deliveryId: randomUUID() });
         assert.equal(denied.ok, false);
