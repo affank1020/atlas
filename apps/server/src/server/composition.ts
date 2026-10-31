@@ -76,8 +76,10 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const askPortfolio = new AskPortfolioService(createAskAtlas(catalog, retrieval, { projectIds: [PORTFOLIO_PROJECT_ID], sourceTypes: [PORTFOLIO_SOURCE_TYPE], retrievalMode: 'direct' }, config.ai.baseUrl));
     const contentful = new ContentfulPortfolioIntegration(fabric.repository, config.portfolio.integrationEnvironment);
     const portfolio = new PortfolioService(catalog, fabric.repository, config.databaseUrl);
-    const media = new PortfolioMediaService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2);
-    const files = new AtlasFilesService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2);
+    const media = new PortfolioMediaService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2,
+        config.projectVersionedWrites.enabled);
+    const files = new AtlasFilesService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2,
+        undefined, config.projectVersionedWrites.enabled);
     const identity = new NodeIdentity(repository.pool);
     const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);

@@ -27,6 +27,17 @@ export function loadPortfolioConfig(env: NodeJS.ProcessEnv = process.env) {
         CONTENTFUL_WEBHOOK_TTL_SECONDS: env.CONTENTFUL_WEBHOOK_TTL_SECONDS,
     } };
 }
+/** Opt-in only after Project/Portfolio source keys have been copied and
+ * cut over. This controls new writes, not an online metadata migration. */
+export function loadProjectVersionedWritesConfig(env:NodeJS.ProcessEnv=process.env, hasPrimaryR2=false){
+    const value=env.ATLAS_PROJECT_VERSIONED_WRITES_ENABLED?.trim()||"false";
+    if(value!=="true"&&value!=="false")
+        throw new Error("ATLAS_PROJECT_VERSIONED_WRITES_ENABLED must be true or false.");
+    if(value==="true"&&!hasPrimaryR2)
+        throw new Error("Versioned Project writes require configured primary R2 storage.");
+    return {enabled:value==="true"};
+}
+
 export function requireDatabaseUrl(value = process.env.DATABASE_URL) {
     if (!value?.trim()) throw new Error('DATABASE_URL is required. Atlas uses PostgreSQL and does not fall back to JSON storage.');
     return value;
@@ -198,6 +209,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         oauthIssuer = issuer.toString();
     }
     const portfolio = loadPortfolioConfig(env);
+    const projectVersionedWrites=loadProjectVersionedWritesConfig(env,portfolio.r2!==null);
     // Never make the legacy per-run GitHub review and any managed publisher
     // available for the same repository. A bad cutover configuration must
     // fail at startup rather than allow duplicate GitHub publication.
@@ -230,7 +242,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         deviceShares: loadDeviceShareConfig(env),
         deviceInboxKey: env.ATLAS_DEVICE_INBOX_KEY?.trim(),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
-        retrieval: loadRetrievalConfig(env), portfolio,
+        retrieval: loadRetrievalConfig(env), portfolio, projectVersionedWrites,
         codeReviews: { trustedPublishers: loadReviewPublisherTrust(env),
             publishRepositories, managedSummaryRepositories, inlineRootRepositories,
             inlineReplyRepositories, inlineFixRepositories, threadResolutionRepositories },

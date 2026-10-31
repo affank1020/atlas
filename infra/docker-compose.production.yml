@@ -67,6 +67,8 @@ services:
       ATLAS_R2_BUCKET: ${ATLAS_R2_BUCKET:-}
       ATLAS_R2_ACCESS_KEY_ID: ${ATLAS_R2_ACCESS_KEY_ID:-}
       ATLAS_R2_SECRET_ACCESS_KEY: ${ATLAS_R2_SECRET_ACCESS_KEY:-}
+      # OFF until existing Project/Portfolio keys have been migrated; server-only write policy.
+      ATLAS_PROJECT_VERSIONED_WRITES_ENABLED: ${ATLAS_PROJECT_VERSIONED_WRITES_ENABLED:-false}
       # Optional read-only R2 account analytics; never exposed to the web bundle.
       ATLAS_CF_ACCOUNT_ID: ${ATLAS_CF_ACCOUNT_ID:-}
       ATLAS_CF_ANALYTICS_TOKEN: ${ATLAS_CF_ANALYTICS_TOKEN:-}
