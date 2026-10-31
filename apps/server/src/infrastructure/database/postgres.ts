@@ -113,6 +113,8 @@ export class PostgresRepository implements AtlasRepository {
                 THEN a.after_state->>'operation' ELSE a.operation END`;
             const category = `CASE WHEN ${op} LIKE 'view.%' THEN 'view'
                 WHEN ${op} LIKE 'node.%' THEN 'node'
+                WHEN ${op} LIKE 'files.%' THEN 'files'
+                WHEN ${op} LIKE 'backup.%' THEN 'backup'
                 WHEN ${op} LIKE 'workspace.git_%' THEN 'git'
                 WHEN ${op} LIKE 'workspace.dev_%' THEN 'dev'
                 WHEN ${op} LIKE 'workspace.unity_%' THEN 'unity'
@@ -192,6 +194,8 @@ export class PostgresRepository implements AtlasRepository {
                 THEN a.after_state->>'operation' ELSE a.operation END`;
             const category = `CASE WHEN ${op} LIKE 'view.%' THEN 'view'
                 WHEN ${op} LIKE 'node.%' THEN 'node'
+                WHEN ${op} LIKE 'files.%' THEN 'files'
+                WHEN ${op} LIKE 'backup.%' THEN 'backup'
                 WHEN ${op} LIKE 'workspace.git_%' THEN 'git'
                 WHEN ${op} LIKE 'workspace.dev_%' THEN 'dev'
                 WHEN ${op} LIKE 'workspace.unity_%' THEN 'unity'

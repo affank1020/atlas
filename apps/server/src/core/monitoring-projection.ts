@@ -25,6 +25,29 @@ function safeMetadata(input: unknown, eventOperation: string): Record<string, st
         if (typeof value === 'string' && pattern.test(value)) output[key] = value;
     }
     if (typeof source.outcome === 'string' && outcomes.has(source.outcome)) output.outcome = source.outcome;
+    if (eventOperation.startsWith('files.')) {
+        for (const key of ['fileId', 'folderId', 'previousFolderId'] as const) {
+            if (typeof source[key] === 'string' && uuid.test(source[key])) output[key] = source[key];
+        }
+        if (['project','workspace','application'].includes(String(source.ownerKind)))
+            output.ownerKind = source.ownerKind as string;
+        if (source.source === 'database-trigger') output.source = 'database-trigger';
+    }
+    if (eventOperation === 'backup.r2_seed_observed') {
+        if (typeof source.runId === 'string' && uuid.test(source.runId)) output.runId = source.runId;
+        if (['dry-run','apply'].includes(String(source.mode))) output.mode = source.mode as string;
+        if (['ready','completed','failed','partial','empty'].includes(String(source.status)))
+            output.status = source.status as string;
+        if (source.source === 'operator-cli') output.source = 'operator-cli';
+        for (const key of ['checked','existingVerified','planned','createdVerified','racedVerified',
+                'invalidMetadata','primaryMissing','primaryCorrupt','backupCorrupt','writesAttempted'] as const) {
+            const count = source[key];
+            if (typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 && count <= 1000)
+                output[key] = count;
+        }
+        if (typeof source.remaining === 'boolean') output.remaining = source.remaining;
+        if (typeof source.entireCatalogChecked === 'boolean') output.entireCatalogChecked = source.entireCatalogChecked;
+    }
     // Transport labels are meaningful only on trusted Node-control writers.
     // Other audit producers may store arbitrary fields with the same names:
     // never launder them into what looks like authenticated provenance.

@@ -25,6 +25,8 @@ export class AuditService {
         const category = (operation: string) => {
             if (operation.startsWith('view.')) return 'view';
             if (operation.startsWith('node.')) return 'node';
+            if (operation.startsWith('files.')) return 'files';
+            if (operation.startsWith('backup.')) return 'backup';
             if (operation.startsWith('workspace.git_')) return 'git';
             if (operation.startsWith('workspace.dev_')) return 'dev';
             if (operation.startsWith('workspace.unity_')) return 'unity';

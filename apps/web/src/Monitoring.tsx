@@ -18,7 +18,7 @@ export function localDateTimeValue(instant?: string) {
     const two = (value: number) => String(value).padStart(2, '0');
     return [date.getFullYear(), two(date.getMonth() + 1), two(date.getDate())].join('-') + 'T' + [two(date.getHours()), two(date.getMinutes())].join(':');
 }
-const CATEGORIES = ['','core','view','node','workspace','files','git','dev','unity'];
+const CATEGORIES = ['','core','view','node','workspace','files','backup','git','dev','unity'];
 function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     filters: MonitoringFilters; projectId?: string; refreshVersion?: number;
 }) {
