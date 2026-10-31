@@ -15,7 +15,8 @@ CREATE TABLE node_share_inbox (
     resolved_at timestamptz,
     PRIMARY KEY (source_node_id, delivery_id),
     CONSTRAINT node_inbox_payload CHECK (
-        (status = 'queued' AND octet_length(nonce)=12
+        (status = 'queued' AND nonce IS NOT NULL AND ciphertext IS NOT NULL
+            AND auth_tag IS NOT NULL AND octet_length(nonce)=12
             AND octet_length(auth_tag)=16 AND octet_length(ciphertext) BETWEEN 1 AND 65536)
         OR (status <> 'queued' AND nonce IS NULL AND ciphertext IS NULL AND auth_tag IS NULL)
     ),
