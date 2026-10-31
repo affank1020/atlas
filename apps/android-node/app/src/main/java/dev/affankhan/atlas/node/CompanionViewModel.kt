@@ -543,7 +543,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             }
             // Some Sharesheet producers use image/* rather than the concrete
             // subtype; consult the granted provider, never infer from a filename.
-            val providerType = getApplication<Application>().contentResolver.getType(uri)
+            val providerType = runCatching {
+                getApplication<Application>().contentResolver.getType(uri)
+            }.getOrNull()
             val specificType = when {
                 type == "image/png" || type == "image/jpeg" -> type
                 type == "image/jpg" -> "image/jpeg"
