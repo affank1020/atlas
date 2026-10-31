@@ -77,7 +77,7 @@ test('user-approved image handoff uses one target-only binary fetch, then confir
         const result=await relay.deliver(admitted,{
             sourceId:source,targetId:target,deliveryId:delivery,
             mimeType:'image/png',sha256,bytes,
-        });
+        }, 'x'.repeat(40));
         assert.deepEqual(result,{accepted:true});
         assert.deepEqual(seen,['approve','image-paste']);
         assert.equal(relay.pendingCount,0);
