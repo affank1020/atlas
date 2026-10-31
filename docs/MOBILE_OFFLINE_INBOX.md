@@ -97,3 +97,8 @@ configured: reconnect and retry, or revoke the Node from Atlas Web before
 removing its enrolment. A successful local Firebase token deletion does **not**
 count as successful Atlas Server token-row deletion. Android process death,
 force-stop and network loss cannot be treated as proof of server-side revocation.
+
+
+### Re-enable while opt-out is in progress
+
+The Android background-receiving toggle displays the **latest requested** On/Off state. If the user turns receiving On again while an earlier FCM unregistration is pending, Atlas queues the new Start until the unregister/Firebase-delete gate completes (acknowledgement or its eight-second deadline). Stop callbacks carry an intent revision and cannot stop a newer Start. The same ordering applies to notification Stop and subsequent foreground-service restarts; a newer service start does not lose its socket owner when an older Stop completes. Settings shows the pending-revocation state. Explicit Forget overrides a pending re-enable.
