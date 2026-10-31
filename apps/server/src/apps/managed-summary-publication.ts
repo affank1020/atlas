@@ -142,7 +142,7 @@ export class ManagedSummaryPublicationService {
     async publish(repository: string, prNumber: number, apply: boolean, caller?: ApplicationCaller) {
         assertStructuredCaller(caller);
         repository = canonicalRepository(repository);
-        if (!this.enabled.has(repository))
+        if (!this.enabled.has(repository) && !this.enabled.has('*'))
             throw new AtlasError('Managed GitHub summary publication is disabled for this repository.', 'CAPABILITY_UNAVAILABLE');
         const stores = await this.stores();
         const id: Identity = { ...stores, repository, prNumber };
