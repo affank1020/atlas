@@ -10,6 +10,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -66,8 +67,9 @@ class MainActivity : ComponentActivity() {
 
     private fun enableBackgroundReceiving() {
         if (model.pairedNode == null) return
-        if (!BackgroundReceiverService.hasNotificationPermission(this)) {
-            model.reportBackgroundError("Enable Atlas notifications to receive in other apps.")
+        if (!BackgroundReceiverService.hasUsableNotifications(this)) {
+            model.reportBackgroundError(
+                "Atlas notifications or one of its channels are disabled. Review notification settings.")
             return
         }
         try {
@@ -88,6 +90,16 @@ class MainActivity : ComponentActivity() {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             enableBackgroundReceiving()
+        }
+    }
+
+    private fun openNotificationSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            })
+        } catch (_: RuntimeException) {
+            model.reportBackgroundError("Open Android Settings → Apps → Atlas Node → Notifications.")
         }
     }
 
@@ -132,6 +144,7 @@ class MainActivity : ComponentActivity() {
                 backgroundReceiving = model.backgroundReceivingRunning,
                 backgroundReceiveError = model.backgroundReceiveError,
                 onToggleBackgroundReceiving = ::setBackgroundReceiving,
+                onOpenNotificationSettings = ::openNotificationSettings,
             )
         }
     }
@@ -194,6 +207,7 @@ internal fun AtlasCompanion(
     backgroundReceiving: Boolean = false,
     backgroundReceiveError: String? = null,
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
+    onOpenNotificationSettings: () -> Unit = {},
 ) {
     MaterialTheme(colorScheme = atlasScheme) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -238,6 +252,7 @@ internal fun AtlasCompanion(
                             backgroundReceiving = backgroundReceiving,
                             backgroundReceiveError = backgroundReceiveError,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
+                            onOpenNotificationSettings = onOpenNotificationSettings,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -270,6 +285,7 @@ internal fun AtlasCompanion(
                             backgroundReceiving = backgroundReceiving,
                             backgroundReceiveError = backgroundReceiveError,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
+                            onOpenNotificationSettings = onOpenNotificationSettings,
                             modifier = Modifier.weight(1f),
                         )
                         NavigationBar {
@@ -341,6 +357,7 @@ private fun CompanionContent(
     backgroundReceiving: Boolean = false,
     backgroundReceiveError: String? = null,
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
+    onOpenNotificationSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -381,8 +398,13 @@ private fun CompanionContent(
                         "Screen-off delivery is not guaranteed; there is no offline inbox or push yet.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                if (backgroundReceiveError != null)
+                if (backgroundReceiveError != null) {
                     InfoCard("Background receiving unavailable", backgroundReceiveError)
+                    Button(
+                        onClick = onOpenNotificationSettings,
+                        modifier = Modifier.testTag("open-notification-settings"),
+                    ) { Text("Open notification settings") }
+                }
                 if (node != null) {
                     InfoCard("Credentials", "Node credentials are encrypted using Android Keystore.")
                     Button(onClick = onForget) { Text("Forget this Node on device") }
