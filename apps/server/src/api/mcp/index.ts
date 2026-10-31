@@ -23,7 +23,11 @@ export const RELAY_READ_TOOLS: ReadonlySet<string> = new Set([
     'list_workspaces', 'get_workspace', 'list_logical_workspaces', 'list_project_workspaces',
     'list_applications', 'get_application', 'list_stores', 'get_store', 'list_records',
     'get_record', 'list_views', 'get_view', 'workspace_list_files', 'workspace_read_file',
-    'workspace_search_files', 'workspace_git_status', 'workspace_git_diff', 'workspace_list_dev_tasks',
+    'workspace_search_files', 'workspace_git_status', 'workspace_git_diff', 'workspace_git_list_worktrees',
+    'workspace_list_dev_tasks',
+    // Relay's reviewed read-only awareness adapters. Application writes stay
+    // out of the service-token catalogue even when a client requests them.
+    'code_reviews_overview', 'code_reviews_pr_summary', 'code_reviews_list_findings',
 ]);
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 

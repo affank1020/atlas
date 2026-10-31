@@ -190,6 +190,34 @@ Atlas compares the service token digest in constant time. A valid Relay
 credential receives an Atlas-enforced read-only MCP catalogue; mutations and
 `workspace_run_dev_task` are not available to this identity. The server
 does not grant more authority simply because a caller advertises a tool.
-Start with a real `get_atlas_status` smoke test from Relay before extending
-permissions. If the token leaks, regenerate it, update both private env files,
+The narrowly admitted Atlas Awareness reads are `workspace_git_list_worktrees`,
+`code_reviews_overview`, `code_reviews_pr_summary`, and
+`code_reviews_list_findings`. Code Reviews totals remain scoped to the
+Code Reviews Project; findings are bounded to the requested review-run ID.
+Publication, import, review submission, Git/Workspace mutations, and
+`workspace_run_dev_task` remain excluded from the Relay service catalogue.
+The human OAuth catalogue and its separate write approvals are unchanged.
+
+After the Atlas deployment has picked up this change, run the smoke from
+the Relay VPS with the **existing** private service token (do not copy it):
+
+```sh
+cd ~/relay
+docker compose exec -T relay npm run atlas:smoke
+```
+
+A successful `coreStatus: "verified"` and `codeReviews: "verified"`
+confirm only this credentialed discovery/read contract. If
+`codeReviews: "not_advertised"` remains, verify Atlas was deployed, not
+just Relay; do not assume permission succeeded. For an authorized project,
+optionally set `ATLAS_SMOKE_PROJECT_ID` for a scoped `get_project` check.
+
+Manual end-to-end acceptance still requires a Relay conversation where a
+main agent delegates an approved Atlas read to a child and receives a result
+through its persisted handoff. Verify the originating child `agentRunId`,
+Node/checkout state, Code Reviews cards, browser reconnect and mobile
+navigation. These checks cannot be inferred from a mocked MCP catalogue.
+No autonomous write privilege is enabled by this change.
+
+If the service token leaks, regenerate it, update both private env files,
 and redeploy Atlas and Relay.
