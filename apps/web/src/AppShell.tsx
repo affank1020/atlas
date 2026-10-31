@@ -3,6 +3,7 @@ import { ShellIcon, type ShellIconName } from './ShellIcon';
 import { AtlasTopBar } from './AtlasTopBar';
 import { useRecentWork } from './recentWork';
 import { useListProjectsQuery } from './atlasApi';
+import { SkeletonRows } from './Skeletons';
 
 export type ProjectSection = 'overview' | 'data' | 'views' | 'applications' | 'workspaces' | 'activity' | 'settings';
 const sections: ProjectSection[] = ['overview', 'data', 'views', 'applications', 'workspaces', 'activity', 'settings'];
@@ -52,7 +53,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
                 <div className="sidebar-projects">
                     <p className="nav-group">{shortcuts.length ? 'Recent projects' : 'Your projects'}</p>
                     {visibleProjects.map(p => <a href={`#/projects/${p.id}`} key={p.id} className={p.id === projectId ? 'active project-link' : 'project-link'}><span className="project-monogram" aria-hidden="true">{p.name.slice(0, 1).toUpperCase()}</span><span>{p.name}</span></a>)}
-                    {isLoading && <small role="status">Loading projects…</small>}
+                    {isLoading && !visibleProjects.length && !error && <SkeletonRows label="Loading project navigation" variant="nav" rows={4} />}
                     {error && <small className="nav-message">Projects unavailable <button onClick={() => void refetch()}>Retry</button></small>}
                 </div>
             </nav>
