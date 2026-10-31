@@ -12,6 +12,7 @@ This is a **checklist**, not evidence of a live VPS/browser acceptance test. App
 | Privacy | No raw previous/after snapshots, output, free-text errors, file paths or credentials in safe reads | monitoring-safe-details and projection tests |
 | Runtime diagnostics | Current Server process ring stores only fixed codes, max 100 on read | server-diagnostics tests |
 | Server history | Fixed codes survive restart, 14-day read window, far-future timestamps excluded and missing database is unavailable | server-diagnostic-history tests, deployed restart drill |
+| History deep pagination | Bounded <=100 keyset pages with microsecond ties and stable ordering; malformed cursors rejected before SQL, new inserts do not shift older pages; legacy Server has no invented next-page navigation | server-diagnostic-history and Monitoring.diagnostics tests, deployed 3+ page drill |
 | Archive integrity visibility | Health independently distinguishes reachable primary DB from archive table access; dropped writes, backoff, unknown and disabled are not silently green; rolling UI fallback | monitoring-health and Monitoring.health tests |
 | Files and folders | New metadata changes appear under Files with database-derived Project/checkout scoping; rolled-back changes create no audit; no names, keys or contents | monitoring-files-backup tests and Web/Node transfer checks |
 | R2 recovery seeding | Manual run ID and bounded outcomes visible; thrown reads/PUTs emit redacted aborted/inconclusive evidence if database is available; empty runs and aborts are failed, never completed | monitoring-files-backup tests, interrupted-upload injection and manual CLI drill |
@@ -28,6 +29,7 @@ This is a **checklist**, not evidence of a live VPS/browser acceptance test. App
 - `read_server_diagnostic_history` is a best-effort PostgreSQL read of at most 100 recent fixed-code events from the last 14 days. Writes are asynchronous and bounded. Database failures or full queues can lose events; the current process reports `droppedSinceStart`, but losses in previous processes cannot be recovered. The response therefore reports `coverage: incomplete-possible`.
 - This is **not** Docker stdout/stderr, full application logs, distributed tracing, immutable audit history or evidence that a silent period was healthy. Scoped activity still uses `audit_events`.
 - The archive uses a separate pool of one bounded connection, a maximum 128 queued events, batches of 32, failure backoff and incremental expiry. Read queries enforce the 14-day age window even if cleanup is delayed.
+- Read-only historical pages expose `nextCursor` only with proven older rows and cap every database fetch at 101 rows. Continuation is a non-authenticating coordinate, not a new trust boundary. The existing recent-history tool contract remains compatible.
 
 ## Disposable test commands
 

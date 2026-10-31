@@ -5,13 +5,57 @@ import { serverDiagnosticDescription, type ServerDiagnosticEvent } from './diagn
 // The archive stores only the already-allowlisted code, timestamp and random process ID.
 // It is not a container log collector or a guaranteed audit trail. The queue is bounded,
 // inserts never block tool dispatch, and failed writes are reported as missing coverage.
-const inputSchema = z.object({ limit: z.number().int().min(1).max(100).default(30) }).strict();
+const inputSchema = z.object({
+    limit: z.number().int().min(1).max(100).default(30),
+    cursor: z.string().min(1).max(160).optional(),
+}).strict();
+const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const CURSOR_ID = /^[1-9]\d{0,18}$/;
+const MAX_PG_BIGINT = 9223372036854775807n;
+function validTimestamp(at: string): boolean {
+    if (!CURSOR_AT.test(at)) return false;
+    const date = new Date(at);
+    // Reject normalised impossible dates such as February 31 rather than
+    // misreporting the database as unavailable on a malformed continuation.
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 19) === at.slice(0, 19);
+}
+
+/** Opaque continuation is strictly validated, but is not a security credential.
+ * The timestamp is kept at PostgreSQL microsecond precision so equal-millisecond
+ * events do not disappear between pages. All cursor components become SQL values. */
+function cursorFor(row: DiagnosticRow): string {
+    const at = row.cursor_at;
+    const id = String(row.id ?? '');
+    if (typeof at !== 'string' || !validTimestamp(at)
+        || !CURSOR_ID.test(id) || BigInt(id) > MAX_PG_BIGINT)
+        throw new Error('Invalid diagnostic history continuation row.');
+    return Buffer.from(JSON.stringify([at, id])).toString('base64url');
+}
+function parseCursor(cursor: string): [string, string] {
+    if (!/^[A-Za-z0-9_-]{1,160}$/.test(cursor))
+        throw new Error('Invalid diagnostic history cursor.');
+    try {
+        const encoded = Buffer.from(cursor, 'base64url').toString('utf8');
+        const payload: unknown = JSON.parse(encoded);
+        if (!Array.isArray(payload) || payload.length !== 2 ||
+            typeof payload[0] !== 'string' || typeof payload[1] !== 'string')
+            throw new Error('Invalid cursor');
+        const [at, id] = payload;
+        if (!validTimestamp(at) ||
+            !CURSOR_ID.test(id) || BigInt(id) > MAX_PG_BIGINT ||
+            Buffer.from(JSON.stringify([at, id])).toString('base64url') !== cursor)
+            throw new Error('Invalid cursor');
+        return [at, id];
+    } catch {
+        throw new Error('Invalid diagnostic history cursor.');
+    }
+}
 const MAX_PENDING = 128;
 const BATCH_SIZE = 32;
 const BACKOFF_MS = 30_000;
 const RETENTION_DAYS = 14;
 
-type DiagnosticRow = { occurred_at: Date | string; code: string };
+type DiagnosticRow = { occurred_at: Date | string; code: string; id?: string | number; cursor_at?: string };
 type DiagnosticDatabase = {
     query: (text: string, values?: unknown[]) => Promise<{ rows: DiagnosticRow[] }>;
 };
@@ -145,7 +189,8 @@ export class ServerDiagnosticHistory {
     }
 
     async read(raw: unknown = {}) {
-        const { limit } = inputSchema.parse(raw);
+        const { limit, cursor } = inputSchema.parse(raw);
+        const boundary = cursor ? parseCursor(cursor) : undefined;
         // Archive reads share the writer pool. Sample current loss/backoff
         // telemetry after the read settles, including when the read fails.
         const snapshot = () => ({
@@ -158,26 +203,34 @@ export class ServerDiagnosticHistory {
             writePaused: this.clock() < this.pausedUntil,
             coverage: 'incomplete-possible' as const,
         });
-        if (!this.enabled) return { ...snapshot(), available: false, truncated: false, events: [] };
+        if (!this.enabled) return { ...snapshot(), available: false, truncated: false, events: [], nextCursor: undefined };
         try {
             const result = await this.database.query(
-                'SELECT occurred_at, code FROM atlas_server_diagnostic_events ' +
+                "SELECT occurred_at, code, id, " +
+                "to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS cursor_at " +
+                'FROM atlas_server_diagnostic_events ' +
                 "WHERE occurred_at >= NOW() - INTERVAL '14 days' " +
                 "AND occurred_at <= NOW() + INTERVAL '30 seconds' " +
+                'AND ($2::timestamptz IS NULL OR (occurred_at, id) < ($2::timestamptz, $3::bigint)) ' +
                 'ORDER BY occurred_at DESC, id DESC LIMIT $1',
-                [limit + 1],
+                [limit + 1, boundary?.[0] ?? null, boundary?.[1] ?? null],
             );
-            const events = result.rows.slice(0, limit).flatMap(row => {
+            const page = result.rows.slice(0, limit);
+            // Only an actual extra row proves that another bounded page exists.
+            // A continuation is returned only after the page is fully formed.
+            const truncated = result.rows.length > limit;
+            const nextCursor = truncated && page.length ? cursorFor(page[page.length - 1]!) : undefined;
+            const events = page.flatMap(row => {
                 const description = serverDiagnosticDescription(row.code);
                 if (!description) return [];
                 const at = new Date(row.occurred_at);
                 if (!Number.isFinite(at.getTime())) return [];
                 return [{ at: at.toISOString(), code: row.code, ...description }];
             });
-            return { ...snapshot(), available: true, truncated: result.rows.length > limit, events };
+            return { ...snapshot(), available: true, truncated, nextCursor, events };
         } catch {
             // Never reveal connection strings, SQL or exception details.
-            return { ...snapshot(), available: false, truncated: false, events: [] };
+            return { ...snapshot(), available: false, truncated: false, nextCursor: undefined, events: [] };
         }
     }
 }
