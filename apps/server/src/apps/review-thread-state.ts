@@ -27,7 +27,7 @@ const GRAPHQL = `query AtlasReviewThreads($owner:String!,$name:String!,$number:I
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated viewerCanResolve path originalLine
-          comments(first:1) { nodes { fullDatabaseId } }
+          comments(first:1) { nodes { fullDatabaseId replyTo { id } } }
         }
       }
     }
@@ -94,8 +94,11 @@ export class GitHubReviewThreadStateReader {
                     throw new AtlasError('GitHub GraphQL review-thread identity is malformed.', 'GITHUB_REQUEST_FAILED');
                 // fullDatabaseId is GitHub's non-deprecated 64-bit ID. Reject
                 // values that cannot be matched safely against REST comment IDs.
-                const first = rootId(thread.comments.nodes[0].fullDatabaseId);
-                if (!first || roots.has(first))
+                // A reply's database ID must never be mistaken for the
+                // original thread root, even if GraphQL ordering changes.
+                const rootComment = thread.comments.nodes[0];
+                const first = rootId(rootComment.fullDatabaseId);
+                if (rootComment.replyTo !== null || !first || roots.has(first))
                     throw new AtlasError('GitHub GraphQL root comment mapping is ambiguous.', 'CONFLICT');
                 ids.add(thread.id); roots.add(first);
                 threads.push({id:thread.id,rootCommentId:first,path:thread.path,
