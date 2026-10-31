@@ -59,7 +59,7 @@ class MacUpdateTests(unittest.TestCase):
         with patch.object(update.lifecycle, "exact_plist_bytes", return_value=b"plist"), patch.object(
             update.lifecycle, "decode_plist", return_value={"ProgramArguments": ["/node", str(entry)]}
         ):
-            self.assertEqual(update.current_node(self.layout), (root.name, "release"))
+            self.assertEqual(update.current_node(self.layout), (root.name, "release", str(entry)))
         with patch.object(update.lifecycle, "exact_plist_bytes", return_value=b"plist"), patch.object(
             update.lifecycle, "decode_plist", return_value={
                 "ProgramArguments": ["/node", str(root / "elsewhere/main.js")]
@@ -91,7 +91,8 @@ class MacUpdateTests(unittest.TestCase):
 
     def test_no_migration_flag_refuses_before_mutation(self):
         candidate = {
-            "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidate": self.tag2, "candidateSource": "d" * 40, "candidateDigest": "b" * 64,
+            "currentEntrypoint": "/test/node.js",
             "installed": "development-checkout", "mode": "development",
             "state": "migration-required", "launchdPid": 123,
             "recoveryPending": False,
@@ -180,7 +181,8 @@ class MacUpdateTests(unittest.TestCase):
         ):
             self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
         self.assertEqual(events, ["stage", "watchdog",
-                                  ("activate", self.tag2.removeprefix("node-"), "--confirm")])
+                                  ("activate", self.tag2.removeprefix("node-"), "--confirm",
+                                   "--expect-entrypoint", "/test/node.js")])
 
 
 if __name__ == "__main__":
