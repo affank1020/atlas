@@ -14,7 +14,10 @@ updates, Atlas Web install button, host service, or production configuration
 are enabled by merging this script**.
 
 After inspecting the helper scripts from a reviewed checkout on the VPS, install
-the operator CLI and its required trusted, root-owned lifecycle helpers:
+the operator CLI and its required trusted, root-owned lifecycle helpers.
+The `status` command invokes the reviewed root-owned lifecycle status helper
+through `sudo`: the service account's private heartbeat is not readable by
+a normal VPS user, and the tool must not falsely show an online Node as offline.
 
 ```bash
 sudo install -o root -g root -m 0755 scripts/linux-node-host-updater.py /usr/local/bin/atlas-node-update
@@ -43,10 +46,20 @@ unknown same-version installed build or a truncated release list instead of
 guessing. `update` downloads exact fixed release assets as the non-root user,
 checks the GitHub digest and sidecar, pins Sigstore source repo/workflow/ref/SHA,
 asks for an explicit typed confirmation, and delegates to root-owned verified
-staging and the existing lifecycle activate/rollback watchdog. Credentials,
-workspaces, Server/Web, and PostgreSQL are not modified. A missing watchdog,
-invalid helper ownership, unverified artifact or failed reconnect stops the
-update (with lifecycle recovery/rollback where applicable).
+staging and the existing lifecycle activate/rollback watchdog.
+
+**Existing target releases are intentionally refused**, even when the name and
+metadata look correct: an older checksum-only installer could have staged
+different unsigned bytes at the same path. The updater cannot authenticate
+a pre-staged directory simply by checking its ownership or manifest.
+An operator must inspect any such release and arrange supervised removal or
+recovery before a fresh signed staging attempt. **Never delete the active
+`current` or `previous` rollback target simply to make an update succeed.**
+The root installer also refuses a target that appears concurrently.
+
+Credentials, workspaces, Server/Web, and PostgreSQL are not modified. A missing
+watchdog, invalid helper ownership, unverified artifact or failed reconnect
+stops the update (with lifecycle recovery/rollback where applicable).
 
 **Acceptance gate:** run healthy, wrong-signature, corrupt-release,
 interrupted-update and failed-reconnect drills on a disposable Linux host before

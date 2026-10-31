@@ -1,5 +1,6 @@
 """Safe, network-free selection tests for the host-local Linux Node updater."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -110,6 +111,92 @@ class CatalogTests(unittest.TestCase):
                 with self.assertRaises(updater.Refused):
                     updater.download_and_verify(info, directory)
         self.assertEqual(len(calls), 1)
+
+    def test_status_requires_privileged_heartbeat_access(self):
+        # Production node-status.json lives beneath a service-user 0700
+        # directory. A non-root operator must use the constrained root helper.
+        with patch.object(updater.os, "geteuid", return_value=1000), \
+             patch.object(updater, "root_helper") as verify_helper, \
+             patch.object(updater, "run") as run:
+            self.assertEqual(updater.main(["status"]), 0)
+        verify_helper.assert_called_once_with(updater.LIFECYCLE)
+        run.assert_called_once_with("sudo", str(updater.LIFECYCLE), "status")
+
+    def test_preexisting_checksum_only_stage_cannot_be_activated(self):
+        # An older installer could have created a root-owned but unsigned
+        # target with a valid directory name and a different runtime payload.
+        # Ownership/manifest alone is not release provenance; refuse reuse.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "releases" / ("v2.0.0-" + B)
+            target.mkdir(parents=True)
+            (target / "atlas-node-release.json").write_text('{"version":"2.0.0"}')
+            (target / "unsigned-runtime.js").write_text("untrusted code")
+            catalog = json.dumps([release(A, 100), release(B, 101)])
+            calls = []
+
+            def fake_run(*argv, **_kwargs):
+                calls.append(argv)
+                if argv == ("gh", "api", "-X", "GET", updater.RELEASES_API):
+                    return catalog
+                raise AssertionError("Untrusted pre-stage must not download, stage or activate")
+
+            with patch.object(updater, "ROOT", root), \
+                 patch.object(updater.os, "geteuid", return_value=1000), \
+                 patch.object(updater, "installed_release", return_value="v2.0.0-" + A), \
+                 patch.object(updater, "root_helper"), \
+                 patch.object(updater.sys, "stdin") as stdin, \
+                 patch.object(updater, "run", side_effect=fake_run):
+                stdin.isatty.return_value = True
+                with self.assertRaisesRegex(updater.Refused, "provenance cannot be established"):
+                    updater.main(["update"])
+            self.assertEqual(calls, [("gh", "api", "-X", "GET", updater.RELEASES_API)])
+            self.assertTrue((target / "unsigned-runtime.js").exists())
+
+    def test_release_target_appearing_during_download_never_activates(self):
+        # A concurrent stage between the initial preflight and sudo must
+        # not be accepted even if it uses the expected release directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "releases" / ("v2.0.0-" + B)
+            catalog = json.dumps([release(A, 100), release(B, 101)])
+            calls = []
+
+            def fake_run(*argv, **_kwargs):
+                calls.append(argv)
+                if argv == ("gh", "api", "-X", "GET", updater.RELEASES_API):
+                    return catalog
+                raise AssertionError("No sudo/staging/activation after unexpected target appears.")
+
+            def concurrent_stage(_candidate, _directory):
+                target.mkdir(parents=True)
+                (target / "unexpected.js").write_text("unsigned")
+                return (Path(tmp) / "archive", Path(tmp) / "checksum", Path(tmp) / "bundle")
+
+            with patch.object(updater, "ROOT", root), \
+                 patch.object(updater.os, "geteuid", return_value=1000), \
+                 patch.object(updater, "installed_release", return_value="v2.0.0-" + A), \
+                 patch.object(updater, "root_helper"), \
+                 patch.object(updater.sys, "stdin") as stdin, \
+                 patch.object(updater, "run", side_effect=fake_run), \
+                 patch.object(updater, "download_and_verify", side_effect=concurrent_stage), \
+                 patch("builtins.input", return_value="UPDATE node-v2.0.0-" + B):
+                stdin.isatty.return_value = True
+                with self.assertRaisesRegex(updater.Refused, "provenance cannot be established"):
+                    updater.main(["update"])
+            self.assertEqual(calls, [("gh", "api", "-X", "GET", updater.RELEASES_API)])
+            self.assertTrue((target / "unexpected.js").exists())
+
+    def test_dangling_release_symlink_is_not_safe_to_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / ("v2.0.0-" + B)
+            target.symlink_to(Path(tmp) / "missing")
+            with self.assertRaises(updater.Refused):
+                updater.require_new_release_target(target)
+
+    def test_absent_release_target_can_be_safely_staged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            updater.require_new_release_target(Path(tmp) / ("v2.0.0-" + B))
 
 
 if __name__ == "__main__":

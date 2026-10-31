@@ -166,6 +166,23 @@ def root_helper(path: Path) -> None:
         current = current.parent
 
 
+def require_new_release_target(target: Path) -> None:
+    """Never activate a pre-staged directory of unknown origin.
+
+    The legacy checksum-only installer and a signed installer can both create
+    the same release path. Directory name, ownership, manifest and installed
+    dependencies alone do not prove that the contents match a signed archive.
+    This CLI owns only *new* trusted staging; previously installed directories
+    require supervised inspection/removal and a fresh verified install.
+    """
+    if target.is_symlink() or target.exists():
+        raise Refused(
+            "Target release already exists and its provenance cannot be established: "
+            + str(target) + ". Refusing activation; inspect/recover the existing "
+            "staging manually and retry after supervised removal."
+        )
+
+
 def download_and_verify(release: dict, directory: Path) -> tuple[Path, Path, Path]:
     filename = release["file"]
     run("gh", "release", "download", release["tag"], "--repo", REPO,
@@ -204,7 +221,11 @@ def main(args: list[str]) -> int:
     if os.geteuid() == 0:
         raise Refused("Run as an ordinary VPS user, never via sudo; only the installed helpers use root.")
     if command == "status":
-        run("bash", str(LIFECYCLE), "status")
+        # The systemd Node heartbeat is private to the atlas-node service user
+        # (0700 parent, 0077 service umask). Use the reviewed root-owned
+        # read-only status helper, rather than silently reporting it offline.
+        root_helper(LIFECYCLE)
+        run("sudo", str(LIFECYCLE), "status")
         return 0
     if command == "rollback":
         root_helper(LIFECYCLE)
@@ -227,21 +248,22 @@ def main(args: list[str]) -> int:
         raise Refused("Update requires interactive operator confirmation.")
     for helper in (LIFECYCLE, TRUSTED_STAGE, RELEASE_HELPER):
         root_helper(helper)
+    target = ROOT / "releases" / candidate["tag"].removeprefix("node-")
+    # Fail before download and again immediately before privileged staging.
+    # Reusing a directory staged by the old checksum-only installer would
+    # activate unsigned, potentially different bytes under a signed name.
+    require_new_release_target(target)
     with tempfile.TemporaryDirectory(prefix="atlas-node-host-update-") as tmp:
         os.chmod(tmp, 0o700)
         archive, checksum, bundle = download_and_verify(candidate, Path(tmp))
         if input("Type UPDATE " + candidate["tag"] + " to activate the verified release: ") != "UPDATE " + candidate["tag"]:
             raise Refused("Update cancelled; no release activated.")
+        require_new_release_target(target)
         run("sudo", "-v")
-        target = ROOT / "releases" / candidate["tag"].removeprefix("node-")
-        if target.is_symlink():
-            raise Refused("Installed target is a symlink; refusing activation.")
-        if not target.exists():
-            # Root recopies the untrusted caller's files, then re-verifies
-            # signed provenance offline before staging the immutable release.
-            run("sudo", str(TRUSTED_STAGE), "install", str(archive), str(checksum), str(bundle))
-        elif not target.is_dir():
-            raise Refused("Existing release target is not a directory.")
+        # Root recopies the untrusted caller's files, then re-verifies
+        # the signed provenance offline before creating the immutable release.
+        # The root installer refuses a concurrent or pre-existing target.
+        run("sudo", str(TRUSTED_STAGE), "install", str(archive), str(checksum), str(bundle))
         name = target.name
         run("sudo", str(LIFECYCLE), "plan", name)
         run("sudo", str(LIFECYCLE), "activate", name, "--expect-current", current)
