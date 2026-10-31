@@ -113,7 +113,8 @@ test('managed grant revocation and receiver rotation both invalidate queued plai
     await grant.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:false});
     assert.deepEqual(await inbox.list(target.nodeId),[]);
     await assert.rejects(inbox.read(target.nodeId,deliveryId),
-        (error:any)=>error.code==='SHARE_DENIED');
+        (error:any)=>error.code==='NOT_FOUND',
+        'atomic revocation erases the queued payload before returning');
     await grant.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
     const rotation=await identity.ticket(target.nodeId,true);
     await identity.enrol({token:rotation.enrolmentToken,name:'Receiver',platform:'test'});
