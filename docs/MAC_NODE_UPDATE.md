@@ -111,6 +111,12 @@ and cannot be relied upon for unattended host recovery.
 The checker writes a private JSON observation to
 `~/Library/Application Support/Atlas/NodeSoftware/release-check.json`:
 `checkedAt`, `state`, installed version and candidate tag (when known).
+Public GitHub catalogue discovery runs **outside** the Node lifecycle lock,
+so slow network requests cannot block updates. Its final operator version
+check, pending-recovery check and atomic observation write happen **inside**
+that same lock, preventing an old checker from publishing a candidate after
+an operator promotion. If a promotion wins first, the old check writes an
+explicit `unavailable` observation instead of an obsolete candidate.
 Its `verification: catalogue-only` value explicitly means this is
 **unverified metadata**, not approval or signed-byte verification. If GitHub
 is unreachable, the configured Node cannot be inspected, or the local
