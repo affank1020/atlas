@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { callTool } from './api';
+import { SkeletonRows } from './Skeletons';
 
 type Check = { name: string; status: 'pass' | 'fail' | 'not_run'; detail?: string };
 type Receipt = {
@@ -85,7 +86,7 @@ export function FootballValidation() {
                 {r.output && <pre>{r.output}</pre>}
             </details>)}
             {snapshot && !receipts.length && <p className="football-muted">No automated receipts yet. Earlier manual Unity and Python passes are documented separately and are not relabelled as automated runs.</p>}
-            {!snapshot && !error && <p className="football-muted">Loading validation history from the Mac Node…</p>}
+            {!snapshot && !error && <SkeletonRows label="Loading validation history" variant="run" rows={3} />}
         </div>
     </section>;
 }
