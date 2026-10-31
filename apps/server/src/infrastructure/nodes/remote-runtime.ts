@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { AtlasError } from '../../shared/errors.js';
 import type { NodeRuntime, NodeOperation } from '../../nodes/runtime.js';
 import type { NodeCapability } from '../../nodes/model.js';
+import { deviceImageReceiptSchema, type DeviceImageDelivery } from '@atlas/protocol/device-protocol';
 import type { Workspace } from '../../workspaces/model.js';
 import { nodeResponseSchema } from '../../nodes/protocol.js';
 import { deviceShareReceiptSchema } from '@atlas/protocol/device-protocol';
@@ -40,6 +41,19 @@ export class RemoteNodeRuntime implements NodeRuntime {
         const result = deviceShareReceiptSchema.safeParse(receipt);
         if (!result.success) throw new AtlasError('Invalid share acknowledgement.', 'NODE_PROTOCOL');
         return result.data;
+    }
+
+    /** Metadata-only signal. The approved Mac fetches binary bytes over the
+     * separately authenticated one-use HTTPS endpoint, never a Node JSON frame.
+     */
+    async deliverDeviceImage(input: Omit<DeviceImageDelivery, 'type' | 'kind' | 'requestId'>):
+        Promise<{ accepted: boolean }> {
+        if (!this.capabilities.includes('device.image.receive'))
+            throw new AtlasError('Mac image receiving is not enabled.', 'CAPABILITY_UNAVAILABLE');
+        const receipt = await this.request({ kind: 'device_image', ...input }, 40_000);
+        const parsed = deviceImageReceiptSchema.safeParse(receipt);
+        if (!parsed.success) throw new AtlasError('Invalid image receipt.', 'NODE_PROTOCOL');
+        return parsed.data;
     }
 
     private request(payload: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
