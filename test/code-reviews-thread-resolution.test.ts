@@ -214,7 +214,7 @@ test('concurrent calls on identical fix evidence can mutate at most once',async(
 test('GraphQL resolution gateway checks mutation response and uses write token',async()=>{
     const seen:any[]=[];
     const gateway=new GitHubThreadResolutionGateway({
-        pullRequestPublishToken:async()=> 'write-token',
+        pullRequestResolutionToken:async()=> 'write-token',
     },(async(url:string|URL|Request,init?:RequestInit)=>{
         seen.push({url:String(url),init});
         return new Response(JSON.stringify({data:{resolveReviewThread:{
@@ -226,7 +226,7 @@ test('GraphQL resolution gateway checks mutation response and uses write token',
     assert.equal(seen[0].url,'https://api.github.com/graphql');
     assert.equal(JSON.parse(String(seen[0].init.body)).variables.threadId,'PRRT_123456789');
     const rejected=new GitHubThreadResolutionGateway({
-        pullRequestPublishToken:async()=> 'write-token',
+        pullRequestResolutionToken:async()=> 'write-token',
     },(async()=>new Response(JSON.stringify({errors:[{message:'not allowed'}]}),{status:200})) as typeof fetch);
     await assert.rejects(rejected.resolve('PRRT_123456789','write-token'),/unverified/);
 });
