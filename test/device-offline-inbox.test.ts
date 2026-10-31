@@ -239,3 +239,71 @@ test('idempotent retry after sender credential replacement cannot resurrect old 
     assert.deepEqual(await inbox.enqueue(input),{deliveryId,status:'expired',queued:false});
     assert.deepEqual(await inbox.list(target.nodeId),[]);
 });
+
+
+test('managed grant revocation destroys queued content before reapproval, without another enqueue', async () => {
+    const fixture=await databaseFixture();
+    const identity=new NodeIdentity(fixture.store.pool);
+    const source=await enroll(identity,'Sender');
+    const target=await enroll(identity,'Receiver');
+    await allowReceiving(fixture.store.pool,target.nodeId);
+    const approvals=new NodeShareApprovals(fixture.store.pool);
+    await approvals.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    const inbox=inboxUsing(fixture.store.pool,approvals);
+    const deliveryId=randomUUID();
+    const input={sourceId:source.nodeId,targetId:target.nodeId,
+        deliveryId,text:'Must never resurrect'};
+    await inbox.enqueue(input);
+    assert.equal((await inbox.read(target.nodeId,deliveryId)).text,input.text);
+
+    await approvals.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:false});
+    const retired=await fixture.store.pool.query(`
+        SELECT state,payload_ciphertext,payload_nonce,payload_tag,decided_at
+        FROM device_inbox WHERE id=$1
+    `,[deliveryId]);
+    assert.equal(retired.rows[0].state,'expired');
+    assert.equal(retired.rows[0].payload_ciphertext,null);
+    assert.equal(retired.rows[0].payload_nonce,null);
+    assert.equal(retired.rows[0].payload_tag,null);
+    assert.ok(retired.rows[0].decided_at);
+
+    await approvals.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    assert.deepEqual(await inbox.list(target.nodeId),[],
+        'regrant must not expose revoked content before any new enqueue');
+    await assert.rejects(inbox.read(target.nodeId,deliveryId),
+        (error:any)=>error.code==='NOT_FOUND');
+    assert.deepEqual(await inbox.enqueue(input),{deliveryId,status:'expired',queued:false},
+        'same delivery ID must remain a terminal tombstone after reapproval');
+    const newId=randomUUID();
+    assert.equal((await inbox.enqueue({...input,deliveryId:newId})).status,'queued',
+        'only fresh IDs can send content after reapproval');
+});
+
+test('disabling a managed grant erases pending data despite a valid environment overlay', async () => {
+    const fixture=await databaseFixture();
+    const identity=new NodeIdentity(fixture.store.pool);
+    const source=await enroll(identity,'Sender');
+    const target=await enroll(identity,'Receiver');
+    await allowReceiving(fixture.store.pool,target.nodeId);
+    const managed=new NodeShareApprovals(fixture.store.pool);
+    await managed.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    const overlay=new NodeShareApprovals(fixture.store.pool,
+        new Set([source.nodeId+':'+target.nodeId]));
+    const inbox=inboxUsing(fixture.store.pool,overlay);
+    const oldId=randomUUID();
+    await inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
+        deliveryId:oldId,text:'Queued while both grants exist'});
+    await overlay.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:false});
+    assert.equal(await overlay.allowedForInbox(source.nodeId,target.nodeId),true,
+        'environment grant still permits future sends');
+    assert.deepEqual(await inbox.list(target.nodeId),[],
+        'explicit managed revoke erases earlier queue despite environment overlay');
+    await assert.rejects(inbox.read(target.nodeId,oldId),(error:any)=>error.code==='NOT_FOUND');
+    const row=await fixture.store.pool.query(
+        'SELECT state,payload_ciphertext FROM device_inbox WHERE id=$1',[oldId]);
+    assert.deepEqual({state:row.rows[0].state,ciphertext:row.rows[0].payload_ciphertext},
+        {state:'expired',ciphertext:null});
+    const nextId=randomUUID();
+    assert.equal((await inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
+        deliveryId:nextId,text:'New item'})).status,'queued');
+});
