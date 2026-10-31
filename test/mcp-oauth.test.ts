@@ -151,3 +151,47 @@ test('Malformed Relay service digest fails startup without breaking owner OAuth'
     assert.equal(options.mcpAuth.relayTokenHash, hash);
     assert.equal(options.mcpAuth.enabled, false);
 });
+
+
+test('Relay-only hosted MCP rejects missing/invalid bearer with 401 without terminating HTTP server', async () => {
+    const token = 'a'.repeat(64);
+    const relayTokenHash = createHash('sha256').update(token).digest('hex');
+    const relayOnly: McpAuthOptions = {
+        enabled: false,
+        trustedIngress: true,
+        issuer: '',
+        resource: '',
+        subject: '',
+        scope: 'atlas:access',
+        relayTokenHash,
+    };
+    await withHttp(relayOnly, async base => {
+        for (const authorization of [undefined, 'Bearer ' + 'b'.repeat(64), 'Bearer malformed', 'Basic abc']) {
+            const response = await fetch(base + '/mcp', {
+                method: 'POST',
+                ...(authorization ? { headers: { Authorization: authorization } } : {}),
+            });
+            assert.equal(response.status, 401);
+            assert.equal(response.headers.get('www-authenticate'), 'Bearer realm="Atlas Relay MCP"');
+            assert.deepEqual(await response.json(), { error: 'MCP_UNAUTHORIZED' });
+        }
+        // A second request proves an earlier invalid token has not broken the listener.
+        const again = await fetch(base + '/mcp', { method: 'POST' });
+        assert.equal(again.status, 401);
+    });
+});
+
+test('Relay and owner OAuth coexist without changing the owner Bearer challenge', async () => {
+    const token = 'a'.repeat(64);
+    await withHttp({
+        ...config,
+        relayTokenHash: createHash('sha256').update(token).digest('hex'),
+    }, async base => {
+        const response = await fetch(base + '/mcp', {
+            method: 'POST', headers: { Authorization: 'Bearer invalid' },
+        });
+        assert.equal(response.status, 401);
+        assert.match(response.headers.get('www-authenticate') || '', /Bearer resource_metadata=/);
+        assert.deepEqual(await response.json(), { error: 'MCP_UNAUTHORIZED' });
+    });
+});
