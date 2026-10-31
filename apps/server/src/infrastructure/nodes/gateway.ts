@@ -148,9 +148,15 @@ export class RemoteNodeGateway {
                         await this.nodes.identity!.authenticate(originId, credential);
                         if (this.sessions.get(originId) !== current)
                             throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
+                        // Older Android sender builds expect an exact five-field
+                        // directory entry. Queue mode is currently a Mac-only
+                        // explicit CLI workflow; never send the optional field
+                        // to legacy Android senders.
+                        const sender = await this.nodes.repository.get(originId);
+                        const macQueueSender = sender.platform === 'darwin';
                         const recipients = await Promise.all((await this.nodes.shareRecipients(originId)).map(async recipient => {
                             let queueAvailable = false;
-                            if (recipient.platform === 'android' &&
+                            if (macQueueSender && recipient.platform === 'android' &&
                                 this.inbox?.allowsQueue(originId, recipient.nodeId) === true &&
                                 recipient.status !== 'unavailable') {
                                 // Live NodeService.get masks stored capabilities
