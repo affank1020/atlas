@@ -188,6 +188,19 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         oauthIssuer = issuer.toString();
     }
     const portfolio = loadPortfolioConfig(env);
+    // Never make the legacy per-run GitHub review and any managed publisher
+    // available for the same repository. A bad cutover configuration must
+    // fail at startup rather than allow duplicate GitHub publication.
+    const publishRepositories = loadCodeReviewPublishRepositories(env);
+    const managedSummaryRepositories = loadManagedSummaryRepositories(env);
+    const inlineRootRepositories = loadInlineRootRepositories(env);
+    const inlineReplyRepositories = loadInlineReplyRepositories(env);
+    const inlineFixRepositories = loadInlineFixRepositories(env);
+    const threadResolutionRepositories = loadThreadResolutionRepositories(env);
+    const managedAllowLists = [managedSummaryRepositories, inlineRootRepositories,
+        inlineReplyRepositories, inlineFixRepositories, threadResolutionRepositories];
+    if ([...publishRepositories].some(repo => managedAllowLists.some(set => set.has(repo))))
+        throw new Error('Atlas Code Reviews legacy and managed GitHub publishing must not overlap for a repository.');
     return {
         databaseUrl, host, port,
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
@@ -201,12 +214,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
         codeReviews: { trustedPublishers: loadReviewPublisherTrust(env),
-            publishRepositories: loadCodeReviewPublishRepositories(env),
-            managedSummaryRepositories: loadManagedSummaryRepositories(env),
-            inlineRootRepositories: loadInlineRootRepositories(env),
-            inlineReplyRepositories: loadInlineReplyRepositories(env),
-            inlineFixRepositories: loadInlineFixRepositories(env),
-            threadResolutionRepositories: loadThreadResolutionRepositories(env) },
+            publishRepositories, managedSummaryRepositories, inlineRootRepositories,
+            inlineReplyRepositories, inlineFixRepositories, threadResolutionRepositories },
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }
