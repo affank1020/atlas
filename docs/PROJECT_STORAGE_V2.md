@@ -316,7 +316,13 @@ five objects per invocation. Dry-run is read-only; apply requires a separate
 environment gate and an exact confirmation. Source and destination bytes
 are both preflighted before any create-only conditional PUT. A corrupt
 existing backup is never overwritten, and no source objects or rows are
-deleted. Partial pages are never full-backup acceptance.
+deleted. Each authorised apply batch persists a transactionally committed
+per-object SHA-256/size verification receipt after R2 readback. A separate
+read-only --status aggregates all receipt ordinals for the immutable
+manifest, so a 6+-object run can report seed completion after multiple
+five-object pages. A single page cannot prove earlier coverage. Receipt
+completeness means historical verification, **not** that current backup
+objects remain intact; isolated R2 GET verification is still required.
 
 The **isolated recovery verifier** reads only the restored database and the
 independent recovery-account bucket. It explicitly forbids primary R2 and
