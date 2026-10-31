@@ -157,7 +157,9 @@ export function createHttpTransport(services: ServerServices) {
                 stage = 'auth_rejected'; trace('stage');
                 response.writeHead(401, {
                     'content-type': 'application/json', 'cache-control': 'no-store',
-                    'www-authenticate': `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource', config.mcpAuth.resource).toString()}", scope="${config.mcpAuth.scope}"`
+                    'www-authenticate': config.mcpAuth.enabled
+                        ? `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource', config.mcpAuth.resource).toString()}", scope="${config.mcpAuth.scope}"`
+                        : 'Bearer realm="Atlas Relay MCP"'
                 });
                 response.end(JSON.stringify({ error: 'MCP_UNAUTHORIZED' }));
                 return;
