@@ -184,3 +184,15 @@ test('pending Project selection shows a Files skeleton instead of an empty messa
     expect(await screen.findByText('This folder is empty')).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Loading projects' })).not.toBeInTheDocument();
 });
+
+test('failed Project discovery shows an error without a false empty Files state or zero count', () => {
+    vi.mocked(useListProjectsQuery).mockReturnValueOnce({
+        data: undefined, isLoading: false, isFetching: false,
+        error: { message: 'Projects unavailable' }, refetch: vi.fn(),
+    } as never);
+    render(<Files />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load Projects');
+    expect(screen.queryByText('0 files · 0 B')).not.toBeInTheDocument();
+    expect(screen.queryByText('No Projects available. Create a Project to store files.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading projects' })).not.toBeInTheDocument();
+});
