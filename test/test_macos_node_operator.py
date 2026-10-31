@@ -119,8 +119,10 @@ class MacOperatorTests(unittest.TestCase):
         operator.initial_install(self.layout, self.version1)
         wrapper = operator.paths(self.layout)[2]
         original_wrapper = wrapper.read_bytes()
-        with operator.lifecycle.lock_state(self.layout):
-            operator.promote(self.layout, self.version2, require_existing=True)
+        with patch.object(operator, "align_recovery_watchdog") as align:
+            with operator.lifecycle.lock_state(self.layout):
+                operator.promote(self.layout, self.version2, require_existing=True)
+            align.assert_called_once()
         self.assertEqual(operator.current_target(self.layout), self.second / "scripts")
         self.assertEqual(wrapper.read_bytes(), original_wrapper)
 
@@ -175,7 +177,8 @@ class MacOperatorTests(unittest.TestCase):
             "RunAtLoad": True,
         }))
         self.layout.plist.chmod(0o600)
-        operator.sync_from_active(self.layout)
+        with patch.object(operator, "align_recovery_watchdog"):
+            operator.sync_from_active(self.layout)
         self.assertEqual(operator.current_target(self.layout), self.second / "scripts")
 
 
