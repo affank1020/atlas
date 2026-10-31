@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -9,6 +10,9 @@ import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, device
     deviceInboxEnqueueSchema, deviceInboxListSchema, deviceInboxReadSchema, deviceInboxDecideSchema,
     deviceInboxRecipientsRequestSchema, deviceInboxRecipientsResultSchema } from '@atlas/protocol/device-protocol';
 import type { DeviceOfflineInbox } from '../../nodes/offline-inbox.js';
+import type { DevicePushService } from '../../nodes/device-push.js';
+const pushRegisterSchema=z.object({type:z.literal('device.push.register'),requestId:z.string().uuid(),token:z.string().min(32).max(4096)}).strict();
+const pushUnregisterSchema=z.object({type:z.literal('device.push.unregister'),requestId:z.string().uuid()}).strict();
 import { DeviceShareRelay } from './share-relay.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
@@ -25,7 +29,7 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals, private readonly offlineInbox?: DeviceOfflineInbox) {
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals, private readonly offlineInbox?: DeviceOfflineInbox, private readonly push?: DevicePushService) {
         this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
     }
     private track(task: Promise<unknown>) {
@@ -185,6 +189,41 @@ export class RemoteNodeGateway {
             }
             // An explicit offline inbox never replaces the synchronous live
             // share path; only registered, capable, authenticated Nodes may use it.
+            const pushRegister=pushRegisterSchema.safeParse(message);
+            const pushUnregister=pushUnregisterSchema.safeParse(message);
+            if (pushRegister.success || pushUnregister.success) {
+                const request=pushRegister.success?pushRegister.data:pushUnregister.data!;
+                const originId=id, current=session;
+                const task=(async()=>{
+                    const respond=(ok:boolean, value:unknown)=>{
+                        if(socket.readyState===WebSocket.OPEN && this.sessions.get(originId)===current)
+                            socket.send(JSON.stringify(ok
+                                ? {type:'response',requestId:request.requestId,ok:true,result:value}
+                                : {type:'response',requestId:request.requestId,ok:false,error:value}));
+                    };
+                    try {
+                        if(!this.push || !current || this.sessions.get(originId)!==current ||
+                            !current.runtime.getCapabilities().includes('device.inbox.receive'))
+                            throw new AtlasError('Push registration unavailable.','SHARE_DENIED');
+                        await this.nodes.identity!.authenticate(originId,credential);
+                        if (this.sessions.get(originId)!==current)
+                            throw new AtlasError('Node session changed.','NODE_DISCONNECTED');
+                        const node=await this.nodes.get(originId);
+                        if(node.platform!=='android' || node.credentialState!=='active' ||
+                            !node.capabilities.includes('device.inbox.receive'))
+                            throw new AtlasError('Push registration denied.','SHARE_DENIED');
+                        if(pushRegister.success) await this.push.register(originId,pushRegister.data.token);
+                        else await this.push.unregister(originId);
+                        respond(true,{registered:pushRegister.success});
+                    }catch(error){
+                        const known=error instanceof AtlasError;
+                        respond(false,{code:known?error.code:'SHARE_UNAVAILABLE',
+                            message:known?error.message.slice(0,200):'Push registration unavailable.'});
+                    }
+                })();
+                this.track(task);
+                return;
+            }
             const enqueue = deviceInboxEnqueueSchema.safeParse(message);
             const listing = deviceInboxListSchema.safeParse(message);
             const reading = deviceInboxReadSchema.safeParse(message);
@@ -233,6 +272,12 @@ export class RemoteNodeGateway {
                             throw new AtlasError('Invalid inbox request.','INVALID_REQUEST');
                         }
                         respond(true,output);
+                        // A push is a best-effort wake hint only, sent after the
+                        // durable queue transaction commits. Never delay or relabel
+                        // the queue acknowledgement based on an FCM outcome.
+                        if (enqueue.success && (output as {queued?:boolean}).queued && this.push)
+                            this.track(this.push.notifyQueued(originId,enqueue.data.targetNodeId,
+                                enqueue.data.deliveryId).catch(()=>undefined));
                     } catch(error) {
                         const known=error instanceof AtlasError;
                         respond(false,{code:known?error.code:'SHARE_UNAVAILABLE',
