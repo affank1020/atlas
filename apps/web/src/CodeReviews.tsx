@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApplicationRead } from './atlasApi';
 import type { AtlasRecord, Page } from './types';
+import { CodeReviewThreads } from './CodeReviewThreads';
 import './code-reviews.css';
 
 type Overview = { projectId: string; reviewRuns: number; findingObservations: number };
@@ -107,6 +108,7 @@ function parsedFinding(record: AtlasRecord): ReviewFinding | undefined {
 function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVersion: number }) {
     const lastRefresh = useRef(refreshVersion);
     const [timelineOffset, setTimelineOffset] = useState(0);
+    const [showGithubThreads, setShowGithubThreads] = useState(false);
     const timeline = useApplicationRead<PrTimeline>('code_reviews_pr_timeline',
         { repository: entry.repository, prNumber: entry.prNumber, limit: 5, offset: timelineOffset }, true);
     const status = useApplicationRead<PrSummary>('code_reviews_pr_summary',
@@ -150,6 +152,18 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
                     : ' Full severity totals unavailable.'}
             </p>}
         </>}
+        <div className="code-reviews-remote-toggle">
+            <button type="button" className="ghost" aria-expanded={showGithubThreads}
+                aria-controls={`code-reviews-github-threads-${entry.id}`}
+                onClick={() => setShowGithubThreads(value => !value)}>
+                {showGithubThreads ? 'Hide GitHub conversations' : 'Check GitHub conversations'}
+            </button>
+            <span className="code-reviews-subtitle">Makes an independent GitHub API request; it never publishes or resolves a thread.</span>
+        </div>
+        {showGithubThreads && <div id={`code-reviews-github-threads-${entry.id}`}>
+            <CodeReviewThreads repository={entry.repository} prNumber={entry.prNumber}
+                refreshVersion={refreshVersion} />
+        </div>}
         <div className="code-reviews-timeline" aria-label="Saved PR review timeline">
             <h4>Saved review timeline</h4>
             {(timeline.isLoading || timeline.isFetching && !timeline.data) &&
