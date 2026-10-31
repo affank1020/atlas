@@ -531,6 +531,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         val type = intent.type ?: return
         if (type != "text/plain" && !type.startsWith("image/")) return
         val nextId = ++importSequence
+        if (!sharePending) shareStatus = "Nothing sent yet"
         if (type.startsWith("image/")) {
             @Suppress("DEPRECATION")
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
@@ -542,32 +543,24 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 )
                 return
             }
-            // Some Sharesheet producers use image/* rather than the concrete
-            // subtype; consult the granted provider, never infer from a filename.
-            val providerType = runCatching {
-                getApplication<Application>().contentResolver.getType(uri)
-            }.getOrNull()
-            val specificType = when {
-                type == "image/png" || type == "image/jpeg" -> type
-                type == "image/jpg" -> "image/jpeg"
-                providerType == "image/png" -> "image/png"
-                providerType == "image/jpeg" || providerType == "image/jpg" -> "image/jpeg"
-                else -> null
-            }
-            if (specificType == null) {
-                session = session.receiveShare(
-                    ShareDelivery(nextId, error = "Only PNG and JPEG images are supported."),
-                    sending = sharePending,
-                )
-                return
-            }
             session = session.receiveShare(
                 ShareDelivery(nextId, error = "Opening shared image…"), sending = sharePending,
             )
             viewModelScope.launch {
                 val delivery = try {
                     val image = withContext(Dispatchers.IO) {
-                        val imported = getApplication<Application>().contentResolver.openInputStream(uri)?.use {
+                        // MIME/provider queries may perform I/O; keep them off the UI thread.
+                        val resolver = getApplication<Application>().contentResolver
+                        val providerType = runCatching { resolver.getType(uri) }.getOrNull()
+                        // Some Sharesheet producers use image/* instead of the actual subtype.
+                        val specificType = when {
+                            type == "image/png" || type == "image/jpeg" -> type
+                            type == "image/jpg" -> "image/jpeg"
+                            providerType == "image/png" -> "image/png"
+                            providerType == "image/jpeg" || providerType == "image/jpg" -> "image/jpeg"
+                            else -> throw IllegalArgumentException("Unsupported image format.")
+                        }
+                        val imported = resolver.openInputStream(uri)?.use {
                             readSharedImage(it, specificType)
                         } ?: throw IllegalArgumentException("The image could not be opened.")
                         // Validate dimensions without allocating a full bitmap.
@@ -589,7 +582,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 // A newer Share event or deliberate edit invalidates this read.
                 if (nextId != importSequence) return@launch
                 session = session.completeImageImport(delivery)
-                if (!sharePending) shareStatus = "Image import complete; sending images is not yet supported."
+                if (!sharePending) shareStatus = if (delivery.image != null)
+                    "Image imported locally; sending images is not yet supported."
+                else "Image import failed; nothing was sent."
             }
             return
         }
