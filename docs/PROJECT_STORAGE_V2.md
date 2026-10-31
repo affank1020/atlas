@@ -502,3 +502,34 @@ report is deliberately not disasterRecoveryReady, production cutover
 approval or replacement Atlas application readiness. See
 RECOVERY_ACCEPTANCE.md section 10 for command, acceptance and separate
 offline custody/restore requirements.
+
+
+## Stage 11 — versioned-key writes prepared for rollout (default OFF)
+
+The storage adapter already supports Project UUID/file UUID v1 object keys
+and stable variant paths. The server now has one strict
+ATLAS_PROJECT_VERSIONED_WRITES_ENABLED switch, default false, wired into
+**both** native Project Files and Portfolio media upload services.
+
+When enabled, new native Project Files use v1 object keys derived from
+their immutable Project/file UUIDs. Portfolio originals and image variants
+use v1 keys under the Portfolio Project, while public media delivery paths
+and metadata IDs remain unchanged. Workspace/Application/Node-origin Files
+uploads retain legacy flat keys, and old objects remain readable.
+Deduplicating an existing Portfolio checksum returns its original record
+without rewriting its object key. Native Project metadata failures retain
+the post-rollback metadata-existence check before deleting their own
+uncommitted v1 object.
+
+**Do not enable this switch yet.** The immutable Stage 4B key-copy ledger
+expects legacy source keys; production metadata cutover is separate.
+Enabling v1 new uploads before the final copy/cutover could make a source
+catalogue impossible for the legacy-source migration ledger to capture.
+Complete the existing-key controlled cutover first, then opt into v1
+new uploads under a separate deployment and read acceptance. Primary
+R2 configuration is required; malformed flags fail startup.
+
+The existing manual encrypted PostgreSQL and independent R2 recovery
+tools remain available, but no additional offsite restore exercise is
+performed or claimed by this feature code. Merging this PR does not
+change live flags, source database keys or any R2 object.
