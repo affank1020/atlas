@@ -12,10 +12,11 @@ export const PROJECT_KEY_COPY_CONFIRMATION = "CREATE_PROJECT_KEY_COPIES";
 
 type Source = "atlas-file" | "portfolio-media";
 export type MigrationIdentity = { projectId: string; source: Source; fileId: string; variant: string };
-type Row = {
+export type ProjectKeyCopyRow = {
     project_id: string; source: Source; file_id: string; variant: string;
     storage_key: string; checksum: string | null; byte_size: number | string; mime_type: string; status: string;
 };
+type Row = ProjectKeyCopyRow;
 export type BoundedCopyStore = {
     getBounded(key: string, maxBytes: number): Promise<Buffer>;
     putIfAbsent?(key: string, bytes: Buffer, mimeType: string): Promise<boolean>;
@@ -89,7 +90,7 @@ export function parseKeyCopyArgs(args: string[]): Required<Pick<KeyCopyOptions,"
     return { apply, maxFiles, ...(cursor ? { cursor } : {}), ...(projectId ? { projectId } : {}) };
 }
 
-function validateRow(row: Row): { target: string; size: number } {
+export function inspectProjectKeyCopyRow(row: ProjectKeyCopyRow): { target: string; size: number } {
     const id = identity(row);
     const size = Number(row.byte_size);
     if (!validIdentity(id) || !isLegacyObjectKey(row.storage_key) ||
@@ -148,7 +149,7 @@ export async function copyProjectKeys(input: {
     for (const row of rows) {
         report.checked++;
         try {
-            const { target, size } = validateRow(row);
+            const { target, size } = inspectProjectKeyCopyRow(row);
             const bytes = await input.source.getBounded(row.storage_key, MAX_BYTES);
             const hash = createHash("sha256").update(bytes).digest("hex");
             if (bytes.length !== size || row.checksum !== null && row.checksum !== hash)
