@@ -101,7 +101,8 @@ test('image transport refuses unsupported methods and missing metadata',async()=
 test('reverse-proxy integration: forged credentials cannot block a valid sender sharing the same peer',async()=>{
     // All HTTP requests arrive over 127.0.0.1, as they would share the single
     // Caddy container bridge address in production. XFF remains untrusted.
-    let attempts=0;
+    let forgedAuthAttempts=0;
+    let legitimateAuthAttempts=0;
     const legitimate='g'.repeat(43);
     const forged='f'.repeat(43);
     const senderRuntime={getCapabilities:()=>['device.image.send']};
@@ -113,9 +114,11 @@ test('reverse-proxy integration: forged credentials cannot block a valid sender 
     const nodes={
         runtimes,
         identity:{authenticate:async(_id:string,credential:string)=>{
-            attempts++;
-            if(credential!==legitimate)
+            if(credential!==legitimate) {
+                forgedAuthAttempts++;
                 throw new AtlasError('Invalid credential','NODE_AUTH_INVALID');
+            }
+            legitimateAuthAttempts++;
         }},
         get:async(id:string)=>id===source
             ? {platform:'android',credentialState:'active',capabilities:['device.image.send']}
@@ -144,7 +147,10 @@ test('reverse-proxy integration: forged credentials cannot block a valid sender 
         assert.deepEqual(await accepted.json(),{accepted:false},
             'Mac explicitly declined; upload must never claim clipboard success');
     });
-    assert.equal(attempts,61,'only bad fingerprint throttled before DB authentication');
+    assert.equal(forgedAuthAttempts,60,
+        'the 61st invalid upload must be throttled before Node authentication');
+    assert.equal(legitimateAuthAttempts,2,
+        'valid upload must authenticate once at admission and again before dispatch');
     assert.equal(relay.authenticatedRateEntries,1);
     assert.equal(relay.pendingAuthCount,0);
     assert.ok(relay.preAuthRateEntries<=128);
