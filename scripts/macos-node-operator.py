@@ -282,8 +282,7 @@ def check_existing_plist(layout) -> bytes | None:
     # arguments must always be the approved, user-private, signed path.
     args = actual.get("ProgramArguments")
     if (not isinstance(args, list) or len(args) != 3 or
-        not isinstance(args[0], str) or not os.path.isabs(args[0]) or
-        not Path(args[0]).is_file()):
+        not isinstance(args[0], str) or not os.path.isabs(args[0])):
         raise Refused("Release-checker Python interpreter is unavailable.")
     expected["ProgramArguments"][0] = args[0]
     if actual != expected:
@@ -298,7 +297,11 @@ def installed_check_status(layout) -> dict:
     loaded = lifecycle.launch_loaded(layout, check_target(layout))
     if contents is None and loaded:
         raise Refused("Unexpected loaded release-checker job without its plist.")
-    if contents is not None and not loaded:
+    if contents is not None and (
+        not loaded or not Path(plistlib.loads(contents)["ProgramArguments"][0]).is_file()
+    ):
+        # Python upgrades can remove the interpreter originally pinned in
+        # launchd. Status and disable must remain usable to repair it.
         state = "needs-attention"
     else:
         state = "enabled" if loaded else "disabled"
@@ -345,6 +348,8 @@ def enable_check(layout) -> None:
             return
         if existing is None:
             lifecycle.atomic_write(plist, desired)
+        elif not Path(plistlib.loads(existing)["ProgramArguments"][0]).is_file():
+            raise Refused("Old checker Python interpreter is missing; disable and re-enable checks.")
         # Preserve a valid prior interpreter path on retry; do not overwrite
         # a plist from a previous attempt or a user-owned job unexpectedly.
         lifecycle.command("launchctl", "bootstrap", f"gui/{layout.uid}", str(plist))
