@@ -50,8 +50,9 @@ test('same-tab Activity scope links reopen advanced filters, but other filter ed
     await waitFor(() => expect(section.querySelector('.activity-item summary')).not.toBeNull());
     fireEvent.click(section.querySelector('.activity-item summary')!);
     fireEvent.click(screen.getByRole('link', { name: 'Workspace activity' }));
-    fireEvent(window, new Event('hashchange'));
-    expect(location.hash).toContain('workspaceId=' + workspaceId);
+    // jsdom schedules default anchor navigation asynchronously. Wait for the
+    // real hashchange rather than racing it with a synthetic event.
+    await waitFor(() => expect(location.hash).toContain('workspaceId=' + workspaceId));
     await waitFor(() => expect(disclosure).toHaveAttribute('open'));
     expect(screen.getByLabelText('Workspace ID')).toHaveValue(workspaceId);
 
@@ -60,16 +61,16 @@ test('same-tab Activity scope links reopen advanced filters, but other filter ed
     fireEvent.click(screen.getByText('Scope and time filters · 1 active'));
     await waitFor(() => expect(disclosure).not.toHaveAttribute('open'));
     fireEvent.change(screen.getByLabelText('Outcome'), { target: { value: 'failed' } });
-    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(location.hash).toContain('outcome=failed'));
     await waitFor(() => expect(screen.getByLabelText('Outcome')).toHaveValue('failed'));
     expect(disclosure).not.toHaveAttribute('open');
 
     // A different technical scope link is a genuine navigation and reopens it.
     await waitFor(() => expect(section.querySelector('.activity-item summary')).not.toBeNull());
-    fireEvent.click(section.querySelector('.activity-item summary')!);
-    fireEvent.click(screen.getByRole('link', { name: 'Node activity' }));
-    fireEvent(window, new Event('hashchange'));
-    expect(location.hash).toContain('nodeId=' + nodeId);
+    const eventRow = section.querySelector<HTMLDetailsElement>('details.activity-item')!;
+    if (!eventRow.open) fireEvent.click(eventRow.querySelector('summary')!);
+    fireEvent.click(await screen.findByRole('link', { name: 'Node activity' }));
+    await waitFor(() => expect(location.hash).toContain('nodeId=' + nodeId));
     await waitFor(() => expect(disclosure).toHaveAttribute('open'));
     expect(screen.getByLabelText('Node ID')).toHaveValue(nodeId);
 });
