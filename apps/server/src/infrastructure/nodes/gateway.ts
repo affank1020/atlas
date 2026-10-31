@@ -216,8 +216,10 @@ export class RemoteNodeGateway {
                             output={items:await this.offlineInbox!.list(originId)};
                         } else if (reading.success) {
                             output=await this.offlineInbox!.read(originId,reading.data.deliveryId);
-                        } else {
+                        } else if (deciding.success) {
                             output=await this.offlineInbox!.decide(originId,deciding.data.deliveryId,deciding.data.decision);
+                        } else {
+                            throw new AtlasError('Invalid inbox request.','INVALID_REQUEST');
                         }
                         respond(true,output);
                     } catch(error) {
