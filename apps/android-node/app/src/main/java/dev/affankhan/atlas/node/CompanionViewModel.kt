@@ -576,6 +576,22 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun decideQueuedInboxItem(copied:Boolean, copy:(String)->Unit) {
         val preview=queuedInboxPreview ?: return
         if(!owners.activityVisible || queuedInboxBusy || connectionStatus!="Online") return
+        // The Server limits inbox operations to one per 500ms. If a user
+        // presses Copy immediately after the read response, do not write to
+        // clipboard before the corresponding decision can be dispatched.
+        val elapsed=SystemClock.elapsedRealtime()-lastInboxCommandAt
+        if(elapsed<650L) {
+            queuedInboxBusy=true
+            val generation=connectionGeneration
+            val selectedId=preview.deliveryId
+            handler.postDelayed({
+                queuedInboxBusy=false
+                if(generation==connectionGeneration && owners.activityVisible &&
+                    queuedInboxPreview?.deliveryId==selectedId)
+                    decideQueuedInboxItem(copied,copy)
+            },650L-elapsed)
+            return
+        }
         if(copied) {
             try { copy(preview.text) } catch (_:Exception) {
                 inboxStatus="Clipboard write failed. Nothing confirmed."
