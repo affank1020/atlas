@@ -46,6 +46,28 @@ test('Displays verified remote conversation states without treating reviewer-ass
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
 });
 
+test('Canonicalizes a legacy mixed-case repository for both remote query and verified response', () => {
+    const legacyRepository = 'Affank1020/Atlas';
+    render(<CodeReviewThreads repository={legacyRepository} prNumber={prNumber} refreshVersion={0} />);
+    expect(vi.mocked(useApplicationRead)).toHaveBeenCalledWith('code_reviews_review_thread_state',
+        { repository: 'affank1020/atlas', prNumber }, true);
+    expect(screen.getByText(/3 Atlas-owned roots:/)).toHaveTextContent(
+        '1 open · 1 resolved on GitHub · 1 unknown');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /Open discussion/ })[0])
+        .toHaveAttribute('href', 'https://github.com/affank1020/atlas/pull/137#discussion_r72');
+});
+
+test('Canonical comparison accepts an equivalent response spelling but rejects another repository', () => {
+    vi.mocked(useApplicationRead).mockReturnValue({
+        data: { ...valid, repository: 'AFFANK1020/ATLAS' },
+        isLoading: false, isFetching: false, refetch: refresh,
+    } as never);
+    render(<CodeReviewThreads repository="Affank1020/Atlas" prNumber={prNumber} refreshVersion={0} />);
+    expect(screen.getByText(/3 Atlas-owned roots:/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
 test('Empty inventory is not confused with a clean or discussion-free PR', () => {
     vi.mocked(useApplicationRead).mockReturnValue({
         data: {...valid, totalGitHubThreads: 2, ownedRootCount: 0, mappedOwnedRoots: 0,
