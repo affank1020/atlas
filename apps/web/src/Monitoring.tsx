@@ -361,6 +361,17 @@ type HealthSnapshot = {
     nodes: { available: boolean; summary: { total: number; healthy: number; stale: number;
         offline: number; unavailable: number; revoked: number; unknown: number }; items: HealthNode[] };
 };
+
+/** During a rolling deployment an older Server may report healthy without
+ * probing diagnostic history. Never paint that unverified aggregate green.
+ * A confirmed DB/Node failure retains its higher-priority degraded state. */
+function displayedHealthOverall(snapshot: HealthSnapshot): HealthSnapshot['overall'] {
+    if (snapshot.overall !== 'healthy') return snapshot.overall;
+    const archive = snapshot.diagnostics;
+    if (!archive || (archive.status !== 'available' && archive.status !== 'disabled')
+        || archive.writePaused === true || (archive.droppedSinceStart ?? 0) > 0) return 'unknown';
+    return 'healthy';
+}
 function MonitoringHealthPanel() {
     const [snapshot, setSnapshot] = useState<HealthSnapshot>();
     const [busy, setBusy] = useState(false);
@@ -379,6 +390,7 @@ function MonitoringHealthPanel() {
         return () => controller.abort();
     }, [refresh]);
     const badge = (status: string) => status === 'healthy' || status === 'reachable' ? 'success' : 'muted';
+    const displayedOverall = snapshot ? displayedHealthOverall(snapshot) : 'unknown';
     return <section className="workspace-section" aria-label="Live operational health">
         <div className="section-heading"><h2>Live operational health</h2>
             <button className="ghost" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Checking…' : 'Refresh health'}</button>
@@ -386,7 +398,7 @@ function MonitoringHealthPanel() {
         {busy && !snapshot && <p role="status">Checking Server and Node health…</p>}
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
-            <p><span className={`badge ${badge(snapshot.overall)}`}>{snapshot.overall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
+            <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
             <div className="workspace-row"><span className="row-copy"><strong>Atlas Server · database</strong>
                 <small>{snapshot.server.database.status === 'reachable'
                     ? `Database query succeeded · ${snapshot.server.database.latencyMs ?? '—'} ms · Server uptime ${Math.floor(snapshot.server.uptimeSeconds / 60)} min`

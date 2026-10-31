@@ -44,6 +44,8 @@ test('rolling upgrade renders older health responses as unknown archive state wi
     expect(await screen.findByText(/Archive state unknown \(older Server revision\)/))
         .toBeInTheDocument();
     expect(screen.getByText('Server diagnostic archive')).toBeInTheDocument();
+    expect(screen.getByLabelText('Overall health')).toHaveTextContent('unknown');
+    expect(screen.getByLabelText('Overall health')).not.toHaveClass('success');
 });
 
 test('explicit disabled state and unreadable archive have different explanations', async () => {
@@ -84,4 +86,45 @@ test('unknown diagnostic telemetry never invents zero lost or queued writes', as
     expect(await screen.findByText(/Archive read not verified/)).toBeInTheDocument();
     expect(screen.queryByText(/0 dropped since restart/)).not.toBeInTheDocument();
     expect(screen.queryByText(/0 waiting to write/)).not.toBeInTheDocument();
+});
+
+test('rolling upgrade keeps a genuine degraded aggregate and never upgrades it to unknown or healthy', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockResolvedValue({ ...base(), overall: 'degraded',
+        server: { ...base().server, status: 'degraded', database: { status: 'unavailable' } },
+    } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Archive state unknown \(older Server revision\)/))
+        .toBeInTheDocument();
+    expect(screen.getByLabelText('Overall health')).toHaveTextContent('degraded');
+    expect(screen.getByLabelText('Overall health')).not.toHaveClass('success');
+});
+
+test('aggregate stays conservative when current archive evidence disagrees with a healthy Server aggregate', async () => {
+    for (const archive of [
+        { ...diagnostics, status: 'unavailable' },
+        { ...diagnostics, status: 'unknown', droppedSinceStart: null, queuedForWrite: null },
+        { ...diagnostics, status: 'available', droppedSinceStart: 2 },
+        { ...diagnostics, status: 'available', writePaused: true },
+    ]) {
+        location.hash = '#/monitoring?tab=overview';
+        vi.mocked(callTool).mockResolvedValue({ ...base(), diagnostics: archive } as never);
+        const view = render(<MonitoringPage />);
+        await screen.findByText('Server diagnostic archive');
+        expect(screen.getByLabelText('Overall health')).toHaveTextContent('unknown');
+        expect(screen.getByLabelText('Overall health')).not.toHaveClass('success');
+        view.unmount();
+    }
+});
+
+test('verified archive and explicitly disabled archive retain a healthy aggregate', async () => {
+    for (const status of ['available', 'disabled'] as const) {
+        location.hash = '#/monitoring?tab=overview';
+        vi.mocked(callTool).mockResolvedValue({ ...base(), diagnostics: { ...diagnostics, status } } as never);
+        const view = render(<MonitoringPage />);
+        await screen.findByText('Server diagnostic archive');
+        expect(screen.getByLabelText('Overall health')).toHaveTextContent('healthy');
+        expect(screen.getByLabelText('Overall health')).toHaveClass('success');
+        view.unmount();
+    }
 });
