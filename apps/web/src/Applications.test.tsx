@@ -78,3 +78,31 @@ test('Standalone Application opens with a global back link and no Project scope'
 });
 
 const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };
+
+test('known Application routes use owned placeholders while their Server manifest is unresolved', () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'get_application') return await new Promise<never>(() => {});
+        if (name === 'list_projects') return [] as never;
+        throw new Error('Unexpected tool ' + name);
+    });
+    for (const [slug, label, marker] of [
+        ['portfolio', 'Loading Portfolio', '.portfolio-workspace .portfolio-editor'],
+        ['code-reviews', 'Loading Code Reviews', '.cr-metrics'],
+        ['football-training', 'Loading Football Generalist application', '.fg-stats'],
+    ]) {
+        const view = render(<ApplicationWindow slug={slug} />);
+        expect(screen.getByRole('status', { name: label })).toHaveAttribute('aria-busy', 'true');
+        expect(view.container.querySelector(marker)).toBeInTheDocument();
+        expect(view.container.querySelector('.atlas-skeleton-app-window')).not.toBeInTheDocument();
+        view.unmount();
+    }
+});
+
+test('an unrecognised Application does not impersonate a known Application during manifest lookup', () => {
+    vi.mocked(callTool).mockImplementation(async name => name === 'get_application'
+        ? await new Promise<never>(() => {})
+        : [] as never);
+    const view = render(<ApplicationWindow slug="unregistered-application" />);
+    expect(screen.getByRole('status', { name: 'Loading application interface' })).toBeInTheDocument();
+    expect(view.container.querySelector('.cr-dashboard, .portfolio-app, .fg')).not.toBeInTheDocument();
+});
