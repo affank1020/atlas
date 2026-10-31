@@ -1,4 +1,5 @@
 import { createConnection } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -66,7 +67,8 @@ async function localRequest(request, path = socketPath()) {
  * Explicit local CLI action: never accept share text on argv, persist a draft,
  * start a second Node identity/socket, or print clipboard content.
  */
-export async function shareFromMacClipboard() {
+export async function shareFromMacClipboard(mode = 'live') {
+    if (mode !== 'live' && mode !== 'queue') throw Error('Invalid share mode.');
     if (process.platform !== 'darwin' || !process.stdin.isTTY || !process.stdout.isTTY)
         throw Error('Run ./atlasctl share interactively in the logged-in Mac Terminal.');
     let text;
@@ -82,13 +84,16 @@ export async function shareFromMacClipboard() {
     }
     const recipients = directory.result?.recipients;
     if (!Array.isArray(recipients)) throw Error('Unexpected recipient list.');
-    const ready = recipients.filter(recipient => recipient && recipient.available === true &&
+    const ready = recipients.filter(recipient => recipient &&
+        (mode === 'queue' || recipient.available === true) &&
         typeof recipient.nodeId === 'string' && typeof recipient.name === 'string');
     if (!ready.length) {
-        console.log('No approved receiving devices are online. Check Mac → Android approval in Atlas Web → Nodes.');
+        console.log(mode === 'queue' ? 'No approved recipients. Check sharing approvals in Atlas Web → Nodes.'
+            : 'No approved receiving devices are online. Check Mac → Android approval in Atlas Web → Nodes.');
         return;
     }
-    console.log('Share clipboard text (' + text.length + ' characters) to an approved Atlas Node:');
+    console.log((mode === 'queue' ? 'Queue' : 'Share') + ' clipboard text (' + text.length +
+        ' characters) to an approved Atlas Node:');
     ready.forEach((item, i) => console.log(formatShareRecipientOption(item, i)));
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
@@ -99,17 +104,26 @@ export async function shareFromMacClipboard() {
             console.log('Cancelled.'); return;
         }
         const target = ready[index];
-        console.log('Confirm Send in the native Atlas dialog on your Mac.');
-        const receipt = await localRequest({
-            action: 'send', targetNodeId: target.nodeId, text,
-        });
+        console.log('Confirm ' + (mode === 'queue' ? 'Queue' : 'Send') + ' in the native Atlas dialog on your Mac.');
+        const deliveryId = mode === 'queue' ? randomUUID() : undefined;
+        const receipt = await localRequest(mode === 'queue'
+            ? { action: 'queue', targetNodeId: target.nodeId, text, deliveryId }
+            : { action: 'send', targetNodeId: target.nodeId, text });
         if (!receipt.ok) {
             throw Error('Atlas did not confirm delivery (' + (receipt.code || 'SHARE_UNAVAILABLE') +
                 '). If interrupted, do not resend until checking the target.');
         }
         if (receipt.result?.cancelled === true)
             console.log('Cancelled on Mac; nothing sent.');
-        else if (receipt.result?.accepted === true)
+        else if (mode === 'queue' && receipt.result?.deliveryId === deliveryId &&
+            receipt.result?.status === 'queued') {
+            console.log('Queued on Atlas Server for up to 24 hours. Not copied on the receiving device.');
+            console.log('Delivery ID: ' + deliveryId + '. If confirmation was interrupted, check this ID before retrying.');
+        } else if (mode === 'queue' && receipt.result?.deliveryId === deliveryId &&
+            ['expired','declined','user_copied'].includes(receipt.result?.status)) {
+            console.log('Server reports delivery ' + deliveryId + ' as ' + receipt.result.status +
+                '; this operation did not confirm a new clipboard write.');
+        } else if (receipt.result?.accepted === true)
             console.log('Accepted. The receiving device confirmed the copy.');
         else if (receipt.result?.accepted === false)
             console.log('The receiving device declined the share.');
