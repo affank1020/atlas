@@ -49,7 +49,7 @@ test('authenticated recipient directory only shows sender-approved and active pe
     };
     try {
         const source = await connect(sender!,['device.share.send']);
-        await connect(mac!,['device.share.receive']);
+        const receiver = await connect(mac!,['device.share.receive']);
         const other = await connect(privateNode!,['device.share.send']);
         await services.shareApprovals.update({
             sourceNodeId:sender!.nodeId,targetNodeId:mac!.nodeId,enabled:true });
@@ -58,14 +58,31 @@ test('authenticated recipient directory only shows sender-approved and active pe
         assert.deepEqual(first.result.recipients.map((x:any)=>x.nodeId).sort(),
             [mac!.nodeId,revoked!.nodeId].sort(), 'No full Node registry or unapproved peers leak');
         assert.deepEqual(first.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId),
-            {nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'online',available:true});
+            {nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'online',
+                available:true,queueCapable:true});
         assert.deepEqual(first.result.recipients.find((x:any)=>x.nodeId===revoked!.nodeId),
-            {nodeId:revoked!.nodeId,name:'Revoked Mac',platform:'darwin',status:'offline',available:false});
+            {nodeId:revoked!.nodeId,name:'Revoked Mac',platform:'darwin',status:'offline',
+                available:false,queueCapable:false});
         assert.deepEqual((await lookup(other)).result,{recipients:[]},
             'Unapproved registered senders cannot discover any other Node');
         const throttled = await lookup(source);
         assert.equal(throttled.ok,false);
         assert.equal(throttled.error.code,'SHARE_RATE_LIMIT');
+
+        // The registered receiver retains its receive capability in the
+        // durable registry after the socket disconnects, even though live
+        // `available` becomes false. Offline queueing must still list it.
+        const disconnected = once(receiver,'close');
+        receiver.terminate();
+        await disconnected;
+        await new Promise(resolve=>setTimeout(resolve,2100));
+        const offlineCapable = await lookup(source);
+        assert.equal(offlineCapable.ok,true,JSON.stringify(offlineCapable));
+        assert.deepEqual(offlineCapable.result.recipients.find((x:any)=>x.nodeId===mac!.nodeId),{
+            nodeId:mac!.nodeId,name:'Approved Mac',platform:'test',status:'offline',
+            available:false,queueCapable:true,
+        });
+
         await services.shareApprovals.update({
             sourceNodeId:sender!.nodeId,targetNodeId:mac!.nodeId,enabled:false });
         await identity.revoke(revoked!.nodeId);
