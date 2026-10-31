@@ -15,6 +15,7 @@ import type { InlineRootPublicationService } from './inline-root-publication.js'
 import type { InlineReplyPublicationService } from './inline-reply-publication.js';
 import type { InlineFixPublicationService } from './inline-fix-publication.js';
 import type { ReviewThreadStateService } from './review-thread-state.js';
+import type { ReviewThreadResolutionService } from './review-thread-resolution.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -33,7 +34,8 @@ export class CodeReviewsService {
         private readonly inlineRootPublisher?: Pick<InlineRootPublicationService, 'publish'>,
         private readonly inlineReplyPublisher?: Pick<InlineReplyPublicationService, 'publish'>,
         private readonly inlineFixPublisher?: Pick<InlineFixPublicationService, 'publish'>,
-        private readonly reviewThreadState?: Pick<ReviewThreadStateService, 'preview'>) {}
+        private readonly reviewThreadState?: Pick<ReviewThreadStateService, 'preview'>,
+        private readonly threadResolution?: Pick<ReviewThreadResolutionService, 'publish'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -148,6 +150,15 @@ export class CodeReviewsService {
         if (!this.reviewThreadState)
             throw new AtlasError('GitHub review-thread state reader is unavailable.', 'CAPABILITY_UNAVAILABLE');
         return this.reviewThreadState.preview(repository,prNumber);
+    }
+
+    /** Separate opt-in GraphQL review-thread mutation; read-only by default. */
+    async resolveVerifiedReviewThread(repository:string,prNumber:number,runId:string,
+        lineageKey:string,apply:boolean,caller?:ApplicationCaller){
+        assertStructuredCaller(caller);
+        if(!this.threadResolution)
+            throw new AtlasError('GitHub conversation resolution is unavailable.','CAPABILITY_UNAVAILABLE');
+        return this.threadResolution.publish(repository,prNumber,runId,lineageKey,apply,caller);
     }
 
     /** One explicit evidence-backed fix acknowledgement on an owned inline root. */
@@ -423,6 +434,21 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     repository: string; prNumber: number; findingId: string; apply: boolean;
                 }, caller?: ApplicationCaller) =>
                     service.publishPersistingInlineReply(repository, prNumber, findingId, apply, caller),
+            },
+            {
+                name: 'code_reviews_resolve_verified_thread',
+                description: 'Separate opt-in GitHub GraphQL conversation resolution only after a verified published fix reply. Read-only preview by default; apply=true requires write-scoped GitHub permission, current PR head, durable claim and independent read-back. Never approves or merges.',
+                inputSchema:{
+                    repository:z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber:z.number().int().min(1).max(1_000_000),
+                    runId:z.string().uuid(),
+                    lineageKey:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/),
+                    apply:z.boolean().default(false),
+                },
+                invoke:({repository,prNumber,runId,lineageKey,apply}:{
+                    repository:string;prNumber:number;runId:string;lineageKey:string;apply:boolean;
+                },caller?:ApplicationCaller)=>
+                    service.resolveVerifiedReviewThread(repository,prNumber,runId,lineageKey,apply,caller),
             },
             {
                 name: 'code_reviews_publish_fix_evidence',
