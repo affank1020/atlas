@@ -284,6 +284,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             val callbacks = pushRevocationCallbacks.toList()
             pushRevocationCallbacks.clear()
             callbacks.forEach { it(result) }
+            // The Activity can leave while Forget or Stop awaits the ack.
+            // The temporary gate owns the socket until the operation finishes.
+            if (!owners.connected && socket != null) disconnect()
         }
         pushRevocation = gate
         val deadline = Runnable { if (pushRevocation === gate) gate.deadlineExpired() }
@@ -436,7 +439,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             }
             return
         }
-        disconnect()
+        if (pushRevocation == null) disconnect()
     }
 
     fun startBackgroundReceiving() {
@@ -449,7 +452,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun stopBackgroundReceiving() {
         owners = owners.copy(serviceRunning = false)
         backgroundReceivingRunning = false
-        if (!owners.connected) disconnect()
+        // A correlated unregister still needs this socket if the last
+        // Android connection owner disappears during the bounded opt-out.
+        if (!owners.connected && pushRevocation == null) disconnect()
     }
 
     private fun disableUndeliverableBackgroundReceiving() {
@@ -493,7 +498,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         socket = try {
             transport.connect(node, BuildConfig.VERSION_NAME, { event ->
                 handler.post {
-                    if (!owners.connected || generation != connectionGeneration) return@post
+                    if ((!owners.connected && pushRevocation == null) ||
+                        generation != connectionGeneration) return@post
                     when (event) {
                         ConnectionEvent.Online -> {
                             reconnectDelayMs = 1_000
