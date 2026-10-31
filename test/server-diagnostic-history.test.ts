@@ -198,3 +198,108 @@ test('archive status samples loss after a SELECT failure and retained reads do n
     assert.ok(!JSON.stringify({ state, history }).includes('private'));
     await archive.close();
 });
+
+
+test('diagnostic history keyset pages preserve PostgreSQL microsecond ties without gaps or duplicates', async () => {
+    const { store } = await databaseFixture();
+    const history = new ServerDiagnosticHistory(store.pool);
+    // Multiple rows share the same millisecond, some the same microsecond.
+    // A JavaScript Date cursor would round timestamps and skip events.
+    await store.pool.query(
+        "INSERT INTO atlas_server_diagnostic_events(occurred_at,instance_id,code) " +
+        "SELECT now() - interval '2 hours' + (n / 2) * interval '1 microsecond', " +
+        "gen_random_uuid(), CASE n % 3 WHEN 0 THEN 'server_initialised' " +
+        "WHEN 1 THEN 'tool_request_failed' ELSE 'background_task_failed' END " +
+        "FROM generate_series(0,8) AS n",
+    );
+    const expected = (await store.pool.query(
+        "SELECT occurred_at,code FROM atlas_server_diagnostic_events " +
+        "ORDER BY occurred_at DESC,id DESC",
+    )).rows.map(row => ({ at: new Date(row.occurred_at).toISOString(), code: row.code }));
+    const actual: Array<{ at: string; code: string }> = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+        const response = await history.read({ limit: 2, ...(cursor ? { cursor } : {}) });
+        assert.equal(response.available, true);
+        assert.ok(response.events.length <= 2);
+        assert.equal(response.truncated, Boolean(response.nextCursor));
+        assert.ok(response.events.every(event => !('instanceId' in event) && !('id' in event)));
+        actual.push(...response.events.map(({ at, code }) => ({ at, code })));
+        cursor = response.nextCursor;
+        pages++;
+        assert.ok(pages <= 6, 'pagination must terminate');
+    } while (cursor);
+    assert.equal(pages, 5);
+    assert.deepEqual(actual, expected);
+    await history.close();
+});
+
+test('newer insert after first page does not shift historical pages or repeat records', async () => {
+    const { store } = await databaseFixture();
+    const history = new ServerDiagnosticHistory(store.pool);
+    await store.pool.query(
+        "INSERT INTO atlas_server_diagnostic_events(occurred_at,instance_id,code) VALUES " +
+        "(now()-interval '4 hours',gen_random_uuid(),'server_initialised')," +
+        "(now()-interval '3 hours',gen_random_uuid(),'tool_request_failed')," +
+        "(now()-interval '2 hours',gen_random_uuid(),'background_task_failed')",
+    );
+    const first = await history.read({ limit: 1 });
+    assert.deepEqual(first.events.map(e => e.code), ['background_task_failed']);
+    assert.ok(first.nextCursor);
+    await store.pool.query(
+        "INSERT INTO atlas_server_diagnostic_events(occurred_at,instance_id,code) " +
+        "VALUES(now(),gen_random_uuid(),'server_initialised')",
+    );
+    const second = await history.read({ limit: 1, cursor: first.nextCursor });
+    const third = await history.read({ limit: 1, cursor: second.nextCursor });
+    assert.deepEqual([...first.events, ...second.events, ...third.events].map(e => e.code),
+        ['background_task_failed','tool_request_failed','server_initialised']);
+    assert.equal(third.nextCursor, undefined);
+    assert.equal(third.truncated, false);
+    const fresh = await history.read({ limit: 1 });
+    assert.deepEqual(fresh.events.map(e => e.code), ['server_initialised'],
+        'a fresh first page is not pinned to the old cursor');
+    await history.close();
+});
+
+test('diagnostic cursor input is strict, bounded, canonical and never interpolated into SQL', async () => {
+    const calls: unknown[][] = [];
+    const history = new ServerDiagnosticHistory({
+        query: async (_sql, values) => { calls.push(values ?? []); return { rows: [] }; },
+    }, true);
+    const badTokens = [
+        '', '!!', 'a'.repeat(161),
+        Buffer.from(JSON.stringify(['2026-10-31T11:00:00.123456Z', "1);DROP TABLE secrets;"])).toString('base64url'),
+        Buffer.from(JSON.stringify(['not-a-date', '1'])).toString('base64url'),
+        Buffer.from(JSON.stringify(['2026-10-31T11:00:00.123456Z', '9223372036854775808'])).toString('base64url'),
+        Buffer.from(JSON.stringify(['2026-10-31T11:00:00.123456Z', '01'])).toString('base64url'),
+    ];
+    for (const token of badTokens) {
+        await assert.rejects(() => history.read({ limit: 1, cursor: token }));
+    }
+    await assert.rejects(() => history.read({ limit: 1, cursor: 'abc', sql: 'DROP TABLE x' }));
+    assert.equal(calls.length, 0, 'invalid cursors must be rejected before database access');
+    await history.close();
+});
+
+test('expired rows and future-dated rows stay excluded across diagnostic history pages', async () => {
+    const { store } = await databaseFixture();
+    const history = new ServerDiagnosticHistory(store.pool);
+    await store.pool.query(
+        "INSERT INTO atlas_server_diagnostic_events(occurred_at,instance_id,code) VALUES " +
+        "(now() - interval '17 days',gen_random_uuid(),'server_initialised')," +
+        "(now() - interval '3 days',gen_random_uuid(),'tool_request_failed')," +
+        "(now() - interval '2 days',gen_random_uuid(),'background_task_failed')," +
+        "(now() - interval '1 day',gen_random_uuid(),'server_initialised')," +
+        "(now() + interval '3 days',gen_random_uuid(),'tool_request_failed')",
+    );
+    const first = await history.read({ limit: 2 });
+    assert.equal(first.events.length, 2);
+    assert.ok(first.nextCursor);
+    const second = await history.read({ limit: 2, cursor: first.nextCursor });
+    assert.deepEqual(second.events.map(e => e.code), ['tool_request_failed']);
+    assert.equal(second.truncated, false);
+    assert.equal(second.nextCursor, undefined);
+    await history.close();
+});
