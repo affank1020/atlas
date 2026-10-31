@@ -6,6 +6,7 @@ import {
     type AtlasFile, type FileOwner, type ProjectFolder,
 } from './filesApi';
 import './files.css';
+import { Skeleton } from './Skeletons';
 
 const prettySize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
@@ -221,7 +222,7 @@ export function Files() {
         <div className="files-collection-head">
             <div className="files-collection-info">
                 <h2>{currentFolder?.name ?? 'Project files'}</h2>
-                <span>{entries.length} files · {prettySize(totalBytes)}</span>
+                <span>{busy || (!owner && projects.isLoading) ? <Skeleton width={90} height={12} /> : `${entries.length} files · ${prettySize(totalBytes)}`}</span>
             </div>
             <div className="files-collection-controls">
                 <label className="files-status-control">Status
