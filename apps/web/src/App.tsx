@@ -122,7 +122,7 @@ function Projects() {
         <Loading show={list.busy && !list.data && !list.error} variant="cards" label="Loading projects" />
         {list.isFetching && list.data && <small role="status">Refreshing…</small>}
         <CatalogueToolbar label="Search projects" placeholder="Find a project…" query={search}
-            onQueryChange={setSearch} count={filtered?.length ?? 0} itemName="project" />
+            onQueryChange={setSearch} count={list.data && !list.error ? filtered.length : null} itemName="project" />
         <div className="project-browser">
             {filtered?.map(p => <button className="project-card" key={p.id} onClick={() => go(`/projects/${p.id}`)}>
                 <h2>{p.name}</h2>
