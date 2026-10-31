@@ -14,6 +14,8 @@ test("Project recovery CLI scopes all modes, confirmations and bounds",()=>{
         "--versioned-run="+versioned,"--confirm="+PROJECT_RECOVERY_CAPTURE_CONFIRM]).versionedRunId,versioned);
     assert.equal(parseProjectRecoveryArgs(["--seed","--project="+project,
         "--run="+run,"--confirm="+PROJECT_RECOVERY_SEED_CONFIRM]).mode,"seed");
+    assert.deepEqual(parseProjectRecoveryArgs(["--status","--project="+project,"--run="+run]),
+        {mode:"status",projectId:project,runId:run,maxFiles:3});
     assert.equal(parseProjectRecoveryArgs(["--dry-run","--project="+project,"--run="+run,
         "--from=3","--max-files=5"]).fromOrdinal,3);
     assert.equal(parseProjectRecoveryArgs(["--isolated-verify","--project="+project,
@@ -30,6 +32,10 @@ test("Project recovery CLI scopes all modes, confirmations and bounds",()=>{
             "--confirm="+PROJECT_RECOVERY_CAPTURE_CONFIRM],
         ["--seed","--project="+project,"--run="+run,"--versioned-run="+versioned,
             "--confirm="+PROJECT_RECOVERY_SEED_CONFIRM],
+        ["--status","--project="+project],
+        ["--status","--project="+project,"--run="+run,"--from=0"],
+        ["--status","--project="+project,"--run="+run,"--max-files=1"],
+        ["--status","--project="+project,"--run="+run,"--confirm="+PROJECT_RECOVERY_SEED_CONFIRM],
         ["--isolated-verify","--project="+project],
         ["--isolated-verify","--project="+project,"--run="+run,"--from=-1"],
         ["--isolated-verify","--project="+project,"--run="+run,"--max-files=2001"],
