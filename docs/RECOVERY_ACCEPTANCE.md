@@ -223,3 +223,26 @@ identity, a matching PostgreSQL/R2 consistency boundary, physical recovery
 host isolation, the excluded legacy Workspace/Application Files inventory,
 full backup coverage for each Project, replacement Atlas startup, measured
 RPO/RTO, and approval for metadata cutover or retention. Keep these gated.
+
+
+## 7. Cutover preflight is not cutover approval
+
+After one Project has a fully copied and byte-verified Stage 4B run and a
+fully seeded Stage 5/6 recovery manifest **including that same key-copy
+run**, a trusted operator can run the read-only assessment documented in
+PROJECT_STORAGE_V2.md. It checks exact metadata identity, SHA-256 receipts
+and at most five entries per bounded live byte pass, across both primary
+legacy/new keys and both independent recovery legacy/new keys.
+
+The result must be recorded privately with the Project and both run IDs,
+the observed page ordinals, checksum status, blockers and the approved code
+revision. Multiple passed pages are a collection of time-separated
+observations, not one atomic snapshot. Reconcile new writes, archive/restore
+changes and variants again after a real writer-quiescence boundary.
+
+No value emitted by that assessment authorises an UPDATE to atlas_files,
+media_assets or media_variants. It cannot establish independent recovery of
+the encrypted PostgreSQL archive, a rebuilt Atlas application, or tested
+rollback. Keep production key metadata unchanged until the real DR drill
+and operator approval are complete. No deletion or retention changes follow
+automatically.
