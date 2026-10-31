@@ -66,6 +66,22 @@ jobs:
           (cd .build/node-releases && sha256sum -c *.sha256)
           tar -xzf "$archive" -C "${RUNNER_TEMP}/atlas-node-package"
           cd "${RUNNER_TEMP}/atlas-node-package"
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path(".")
+          manifest = json.loads((root / "atlas-node-release.json").read_text())
+          expected = {
+              "scripts/macos-node-update.py", "scripts/macos-node-stage.py",
+              "scripts/macos-node-lifecycle.py", "scripts/linux-node-host-updater.py",
+              "scripts/macos-node-operator.py",
+          }
+          hashes = manifest.get("operatorScripts")
+          assert isinstance(hashes, dict) and set(hashes) == expected
+          for name, digest in hashes.items():
+              source = root / name
+              assert source.is_file() and not source.is_symlink()
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
+          PY
           npm ci --omit=dev --ignore-scripts --workspace @atlas/node --workspace @atlas/protocol --include-workspace-root=false
           npm ls --omit=dev --depth=0
           npm audit --omit=dev --audit-level=high
