@@ -25,7 +25,7 @@ FILES = (
     "linux-node-host-updater.py",
     "macos-node-operator.py",
 )
-CHECK_LABEL = lifecycle_label = "com.affank1020.atlas.node.update-check"
+CHECK_LABEL = "com.affank1020.atlas.node.update-check"
 CHECK_INTERVAL = 3600
 MAX_CHECK_RECORD = 4096
 WRAPPER = """#!/bin/sh
@@ -420,6 +420,24 @@ def background_check(layout) -> None:
             # Error type/message could contain a URL or host-local path.
             # Never persist a raw exception or the Node's identity/config.
             pass
+    # A versioned CLI can change during the bounded release catalogue read.
+    # Never persist a candidate computed by an obsolete helper as current.
+    if current_target(layout) != current:
+        observation = {
+            "schema": 1,
+            "checkedAt": observation["checkedAt"],
+            "state": "unavailable",
+            "reason": "operator-changed-during-check",
+        }
+    elif layout.pending.exists() or layout.pending.is_symlink() or (
+        layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()
+    ):
+        observation = {
+            "schema": 1,
+            "checkedAt": observation["checkedAt"],
+            "state": "needs-attention",
+            "reason": "local-recovery-pending",
+        }
     _, record = check_paths(layout)
     lifecycle.require_owned_parent(layout.app, layout.uid)
     if record.is_symlink():
