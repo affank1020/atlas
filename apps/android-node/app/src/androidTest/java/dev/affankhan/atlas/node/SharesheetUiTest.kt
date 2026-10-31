@@ -26,6 +26,8 @@ class SharesheetUiTest {
     private var selected by mutableStateOf("")
     private var refreshCooldown by mutableStateOf(false)
     private var backgroundRunning by mutableStateOf(false)
+    private var backgroundError by mutableStateOf<String?>(null)
+    private var notificationSettingsOpened = false
     private var incoming by mutableStateOf<IncomingDeviceShare?>(null)
     private var copied = false
     private var declined = false
@@ -64,7 +66,9 @@ class SharesheetUiTest {
                 onCopyIncoming = { copied = true; incoming = null },
                 onDeclineIncoming = { declined = true; incoming = null },
                 backgroundReceiving = backgroundRunning,
+                backgroundReceiveError = backgroundError,
                 onToggleBackgroundReceiving = { backgroundRunning = it },
+                onOpenNotificationSettings = { notificationSettingsOpened = true },
             )
         }
     }
@@ -149,6 +153,19 @@ class SharesheetUiTest {
         compose.runOnIdle { org.junit.Assert.assertTrue(backgroundRunning) }
         compose.onNodeWithTag("background-receiving-toggle").performClick()
         compose.runOnIdle { org.junit.Assert.assertFalse(backgroundRunning) }
+    }
+
+    @Test fun blockedNotificationsOfferSystemSettingsShortcut() {
+        notificationSettingsOpened = false
+        mount(ready = true)
+        compose.runOnIdle {
+            state = state.navigate(Section.SETTINGS)
+            backgroundError = "Atlas notification channels are disabled."
+        }
+        compose.onNodeWithTag("open-notification-settings")
+            .performScrollTo().assertIsEnabled().performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(notificationSettingsOpened) }
+        compose.runOnIdle { backgroundError = null }
     }
 
     @Test fun incomingCopyRequiresExplicitConsentAndDeclineDoesNotCopy() {
