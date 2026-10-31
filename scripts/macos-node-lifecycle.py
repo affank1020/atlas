@@ -232,6 +232,7 @@ def recover_record(layout: Layout) -> dict | None:
         raise Refused("Invalid pending lifecycle journal.") from exc
     if (data.get("schema") != 1 or data.get("action") not in ("activate", "rollback") or
         type(data.get("started")) not in (int, float) or
+        type(data.get("oldPid")) is not int or data["oldPid"] < 1 or
         hashlib.sha256(target).hexdigest() != data.get("recoverSha256")):
         raise Refused("Invalid pending lifecycle journal.")
     decode_plist(target, layout)
@@ -267,11 +268,31 @@ def wait_connected(layout: Layout, old_pid: int | None, after: float, timeout: i
     return False
 
 
+def pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def cutover(layout: Layout, plist: bytes) -> None:
     decode_plist(plist, layout)
-    # Never bootout a different launchd job or alter the user environment.
+    # Do not launch two copies of the same Node identity while the prior
+    # launchd process is still shutting down. Bootout may return before the
+    # underlying process exits; fail closed and preserve the pending journal.
+    prior_pid = launch_pid(layout)
     if launch_loaded(layout, layout.target):
         command("launchctl", "bootout", layout.target)
+    if prior_pid is not None:
+        for _ in range(20):
+            if not pid_exists(prior_pid):
+                break
+            time.sleep(0.5)
+        else:
+            raise Refused("Previous Node PID still running after launchd bootout.")
     atomic_write(layout.plist, plist)
     command("launchctl", "bootstrap", f"gui/{layout.uid}", str(layout.plist))
 
@@ -293,6 +314,7 @@ def complete(layout: Layout, candidate: bytes, current: bytes, action: str) -> N
     started = time.time()
     json_write(layout.pending, {
         "schema": 1, "action": action, "started": started,
+        "oldPid": prior_pid,
         "recoverPlist": base64.b64encode(restore).decode(),
         "recoverSha256": hashlib.sha256(restore).hexdigest(),
         "previousPlist": base64.b64encode(current).decode() if action == "rollback" else None,
@@ -321,6 +343,10 @@ def recover(layout: Layout, *, force: bool = False) -> bool:
     if not force and time.time() - data["started"] < GRACE_SECONDS:
         return False  # An in-flight update still owns the normal operation lock.
     old_pid = launch_pid(layout)
+    # A failed bootout can leave an orphan process which launchctl no longer
+    # lists as a managed job. Do not bootstrap another copy of that identity.
+    if old_pid != data["oldPid"] and pid_exists(data["oldPid"]):
+        raise Refused("Old Node PID is still alive outside the managed launchd job.")
     started = time.time()
     cutover(layout, data["_restore"])
     if not wait_connected(layout, old_pid, started):

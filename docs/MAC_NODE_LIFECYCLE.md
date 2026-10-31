@@ -57,8 +57,10 @@ Activation makes an atomic backup of the existing plist in a durable pending
 journal *before* changing the LaunchAgent. The candidate plist preserves the
 existing environment and Node identity file path, changing only the built
 Node entrypoint and working directory. It then unloads and bootstraps the
-**same** launchd label. A successful operation requires a **different**
-launchd MainPID and a newer `node-status.json` entry reporting
+**same** launchd label, first waiting for the prior Node PID to exit
+so two Node processes cannot briefly share the same identity. A surviving
+orphaned process blocks recovery until it is safely reconciled. A successful
+operation requires a **different** launchd MainPID and a newer `node-status.json` entry reporting
 `state=connected` with that PID. A local `connected` file is **not**
 independent Server-side registration; real-host acceptance must check the
 Server's authenticated Node presence separately.

@@ -115,6 +115,9 @@ class MacLifecycleTests(unittest.TestCase):
         self.patch_command = patch.object(lifecycle, "command", side_effect=self.fake)
         self.patch_command.start()
         self.addCleanup(self.patch_command.stop)
+        self.patch_pid = patch.object(lifecycle, "pid_exists", return_value=False)
+        self.patch_pid.start()
+        self.addCleanup(self.patch_pid.stop)
 
     def with_watchdog(self):
         lifecycle.manage(self.layout, ["install-watchdog"])
@@ -202,6 +205,19 @@ class MacLifecycleTests(unittest.TestCase):
         self.fake.pid += 1
         self.assertFalse(lifecycle.wait_connected(self.layout, 12345, time.time() - 1, timeout=0.01))
 
+    def test_previous_node_must_exit_before_new_launchd_bootstrap(self):
+        self.with_watchdog()
+        with patch.object(lifecycle, "pid_exists", return_value=True), \
+             patch.object(lifecycle.time, "sleep", return_value=None):
+            with self.assertRaisesRegex(lifecycle.Refused, "still running"):
+                lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        # The old process is outside launchd after bootout; attempting to
+        # recover immediately must not create another copy of its identity.
+        self.assertTrue(self.layout.pending.exists())
+        self.assertEqual(self.layout.plist.read_bytes(), self.existing)
+        self.assertFalse(any(c[:2] == ("launchctl", "bootstrap") and
+                             c[3] == str(self.layout.plist) for c in self.fake.commands))
+
     def test_pending_activation_prevents_second_update(self):
         self.with_watchdog()
         lifecycle.json_write(self.layout.pending, {
@@ -222,6 +238,21 @@ class MacLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(lifecycle.Refused, "Staged release"):
             lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
         self.assertFalse(any(c[:2] == ("launchctl", "bootout") for c in self.fake.commands))
+
+    def test_recovery_refuses_live_orphaned_original_pid(self):
+        self.with_watchdog()
+        original = lifecycle.cutover
+        with patch.object(lifecycle, "cutover", side_effect=KeyboardInterrupt()):
+            with self.assertRaises(KeyboardInterrupt):
+                lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
+        pending = json.loads(self.layout.pending.read_text())
+        pending["started"] = time.time() - lifecycle.GRACE_SECONDS - 1
+        lifecycle.json_write(self.layout.pending, pending)
+        self.fake.loaded = False  # bootout occurred but original PID lingers
+        with patch.object(lifecycle, "pid_exists", return_value=True):
+            with self.assertRaisesRegex(lifecycle.Refused, "still alive"):
+                lifecycle.manage(self.layout, ["recover"])
+        self.assertTrue(self.layout.pending.exists())
 
     def test_corrupt_recovery_journal_fails_closed(self):
         self.with_watchdog()
