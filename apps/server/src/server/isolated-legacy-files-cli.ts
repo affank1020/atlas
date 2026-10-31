@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { R2ObjectStore } from "./file-storage.js";
 import { loadIsolatedRecoveryConfig } from "./project-recovery-isolation.js";
-import { parseIsolatedLegacyFilesArgs } from "./isolated-legacy-files-args.js";
+import { parseIsolatedLegacyFilesArgs,isolatedLegacyVerificationExitCode } from "./isolated-legacy-files-args.js";
 import { verifyIsolatedLegacyFiles } from "./isolated-legacy-files-recovery.js";
 
 // No dotenv, primary R2 connection, local Files fallback or data mutation.
@@ -17,9 +17,9 @@ try{
         maxRecords:args.maxRecords,
     });
     console.log(JSON.stringify(report,null,2));
-    // Empty is an exact zero-inventory result, NOT evidence that any bytes
-    // were restored. Partial or failed never counts as full verification.
-    if(report.status!=="passed"&&report.status!=="empty")process.exitCode=2;
+    // Only a nonempty, completely verified legacy inventory exits 0.
+    // Empty retains its distinct JSON status but fails closed for automation.
+    process.exitCode=isolatedLegacyVerificationExitCode(report);
 }catch{
     // Never print database URLs, account credentials or signed requests.
     console.error("Isolated legacy Files verification failed or was inconclusive. No source or recovery objects were changed.");
