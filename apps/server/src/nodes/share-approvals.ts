@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { AtlasError } from '../shared/errors.js';
 import { toolAuditOrigin } from './audit-origin.js';
 
@@ -17,6 +17,37 @@ export class NodeShareApprovals {
         const result = await this.pool.query(
             'SELECT 1 FROM node_share_approvals WHERE source_node_id=$1 AND target_node_id=$2', [source, target]);
         return (result.rowCount ?? 0) > 0;
+    }
+
+    /**
+     * Offline shares require BOTH Node credentials to remain active, including
+     * for environment-managed grants. Check credentials and directional policy
+     * in the same SQL snapshot, with no nested pool checkout when a transaction
+     * client is supplied by enqueue().
+     *
+     * A managed grant is locked by a transactional caller so revocation cannot
+     * overtake admission between checking the policy and committing the item.
+     * For nontransactional list/read the statement is a point-in-time check.
+     */
+    async allowedForInbox(source: string, target: string, client?: PoolClient): Promise<boolean> {
+        const from = source.toLowerCase(), to = target.toLowerCase();
+        if (from === to) return false;
+        const db = client ?? this.pool;
+        const environmentGranted = this.environmentPairs.has(this.key(from, to));
+        const live = await db.query(`
+            SELECT 1 FROM nodes sender CROSS JOIN nodes receiver
+            WHERE sender.id=$1 AND receiver.id=$2
+              AND sender.credential_state='active'
+              AND receiver.credential_state='active'
+        `, [from, to]);
+        if (!live.rowCount) return false;
+        if (environmentGranted) return true;
+        const grant = await db.query(`
+            SELECT 1 FROM node_share_approvals
+            WHERE source_node_id=$1 AND target_node_id=$2
+            ${client ? 'FOR SHARE' : ''}
+        `, [from, to]);
+        return (grant.rowCount ?? 0) > 0;
     }
 
     /** Used only after Node socket auth. Never enumerate all configured pairs to a device. */
