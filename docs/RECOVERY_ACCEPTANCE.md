@@ -246,3 +246,24 @@ the encrypted PostgreSQL archive, a rebuilt Atlas application, or tested
 rollback. Keep production key metadata unchanged until the real DR drill
 and operator approval are complete. No deletion or retention changes follow
 automatically.
+
+
+## 8. Disposable PostgreSQL key-switch and reversal rehearsal
+
+Before proposing any live cutover, use the Stage 8 simulation on a local
+disposable recovery database whose catalogues and key-copy/recovery manifests
+are internally consistent. Follow the exact command and isolation guard
+requirements in PROJECT_STORAGE_V2.md. The operation temporarily runs
+conditional UPDATEs within one transaction, verifies all forward keys, then
+reverses all keys and verifies the original snapshot digest. **ROLLBACK is
+mandatory on success and failure.** The database, source R2, independent
+R2 and public URLs are untouched after execution.
+
+Record the reviewed commit, database origin/time, Project and immutable
+manifest IDs, simulated forward/reverse row count per table, measured
+transaction outcome, and source catalogue SHA-256 without secrets.
+
+A simulated transaction is *not* a substitute for a verified offsite
+PostgreSQL snapshot, matching recovery R2 bytes, offline Atlas startup, a
+quiesced production write boundary or explicit operator approval. It does
+not offer a production apply/commit mode or retention/deletion commands.
