@@ -249,7 +249,8 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
         ? Number(filters.lines) : 200;
     const nodeId = filters.nodeId ?? '';
     const selected = nodes.find(node => node.id === nodeId);
-    const source: 'stdout' | 'stderr' | 'journal' | 'service' = selected?.platform === 'linux' ? 'service'
+    const source: 'stdout' | 'stderr' | 'journal' | 'service' = selected?.platform === 'linux'
+        ? filters.source === 'journal' ? 'journal' : 'service'
         : filters.source === 'stdout' ? 'stdout' : 'stderr';
     const cancel = () => {
         generation.current++;
@@ -303,7 +304,7 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
         <div className="activity-filters">
             <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => { const next = nodes.find(node => node.id === e.target.value); setSelection({ ...filters, nodeId: next?.id, source: next?.platform === 'linux' ? 'service' : (filters.source === 'journal' || filters.source === 'service') ? undefined : filters.source }); }}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
             <label>Stream{selected?.platform === 'linux'
-                ? <select aria-label="Log stream" value="service" disabled><option value="service">Atlas Node · private service log</option></select>
+                ? <select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'service' | 'journal' })}><option value="service">Atlas Node · private service log</option><option value="journal">Legacy · systemd journal</option></select>
                 : <select aria-label="Log stream" value={source} onChange={e => setSelection({ ...filters, source: e.target.value as 'stdout' | 'stderr' })}><option value="stderr">stderr</option><option value="stdout">stdout</option></select>}</label>
             <label>Lines<input type="number" aria-label="Log lines" min={1} max={200} value={lines} onChange={e => { const next = Number(e.target.value); if (Number.isInteger(next) && next >= 1 && next <= 200) setSelection({ ...filters, lines: String(next) }); }} /></label>
         </div>
@@ -312,7 +313,7 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
         {selected?.status !== 'online' && selected && <p role="status" className="empty">Node is {selected.status}; live log reads are unavailable.</p>}
         {selected?.status === 'online' && !selected.capabilities.includes('node.logs') && <p className="empty">This Node does not expose approved log access.</p>}
         {error && <p role="alert" className="activity-error">{error}</p>}
-        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable{source === 'service' ? ' (private service log is not provisioned or readable on this Node)' : ''}.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visibleLines.join('\n'))}>Copy visible lines</button></div><pre>{visibleLines.join('\n') || (tailSearch.trim() ? '(no matching lines in loaded tail)' : '(empty)')}</pre></>}</div>}
+        {visible && <div className="monitoring-log-result">{!visible.available ? <p>Log source unavailable{source === 'service' ? ' (private service log is not provisioned or readable on this Node)' : source === 'journal' ? ' (journal access may be restricted for this service account)' : ''}.</p> : <><p>{visible.truncated ? 'Bounded tail: earlier lines are not retained here.' : 'Latest available lines.'}</p><div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(visibleLines.join('\n'))}>Copy visible lines</button></div><pre>{visibleLines.join('\n') || (tailSearch.trim() ? '(no matching lines in loaded tail)' : '(empty)')}</pre></>}</div>}
     </section>;
 }
 
