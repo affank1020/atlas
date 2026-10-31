@@ -6,6 +6,7 @@ import { RemoteNodeRuntime } from '../apps/server/src/infrastructure/nodes/remot
 import { MacImageReceiver, imagePasteboardScript } from '../apps/node/src/capabilities/device-share/mac-image-receiver.js';
 import { deviceImageDeliverySchema, MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
 import { loadDeviceImageConfig } from '../apps/server/src/server/config.js';
+import { imageDimensions } from '@atlas/protocol/image-format';
 import type { NodeService } from '../apps/server/src/nodes/service.js';
 import type { NodeShareApprovals } from '../apps/server/src/nodes/share-approvals.js';
 
@@ -122,4 +123,29 @@ test('image pair config is separate, directional and fail closed',()=>{
     assert.equal(config.approvedPairs.has(source+':'+target),true);
     assert.equal(config.approvedPairs.has(target+':'+source),false);
     assert.throws(()=>loadDeviceImageConfig({ATLAS_DEVICE_IMAGE_PAIRS:source+':'+source} as NodeJS.ProcessEnv));
+});
+
+test('cropped images do not require full-screen proportions and decompression bombs fail closed',()=>{
+    const clipped=Buffer.from(bytes);
+    clipped.writeUInt32BE(80,16);
+    clipped.writeUInt32BE(40,20);
+    assert.deepEqual(imageDimensions(clipped,'image/png'),{width:80,height:40});
+    const bomb=Buffer.from(bytes);
+    bomb.writeUInt32BE(8000,16);
+    bomb.writeUInt32BE(8000,20);
+    assert.equal(imageDimensions(bomb,'image/png'),null);
+});
+test('JPEG parser verifies SOF dimensions and blocks oversized pixel areas',()=>{
+    const jpeg=Buffer.from([
+        0xff,0xd8,
+        0xff,0xe0,0x00,0x04,0x01,0x02,
+        0xff,0xc0,0x00,0x0b,0x08,0x00,0x64,0x00,0x32,0x01,0x01,0x11,0x00,0x00,
+        0xff,0xd9,0x00,0x00,
+    ]);
+    // A minimal metadata fixture; native image decoder is still the final
+    // authority for actual complete JPEG pixel bytes.
+    jpeg[jpeg.length-2]=0xff;jpeg[jpeg.length-1]=0xd9;
+    assert.deepEqual(imageDimensions(jpeg,'image/jpeg'),{width:50,height:100});
+    jpeg[14]=0xff;jpeg[15]=0xff;jpeg[16]=0xff;jpeg[17]=0xff;
+    assert.equal(imageDimensions(jpeg,'image/jpeg'),null);
 });
