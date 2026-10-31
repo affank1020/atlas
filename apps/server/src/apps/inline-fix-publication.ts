@@ -81,7 +81,7 @@ function parseClaim(run: AtlasRecord, lineageKey: string): Claim | undefined {
 function body(run: AtlasRecord, lineageKey: string, evidence: string, marker: string) {
     const rendered = '**Code Reviews · reviewer assessment: addressed**\n\n' +
         'Root cause: `' + markdown(lineageKey,128) + '`\n\n' +
-        'Review evidence: ' + markdown(evidence,4_000) + '\n\n' +
+        'Review evidence: ' + markdown(evidence,1_500) + '\n\n' +
         '_Assessed on commit `' + run.data.headSha +
         '` · This comment does not resolve the GitHub discussion automatically._\n\n' + marker;
     if (rendered.length > 8_000)
