@@ -78,3 +78,19 @@ test('an unavailable catalogue is an error, not an empty app list', async () => 
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn\'t load applications');
     expect(screen.queryByText('No applications are registered yet.')).not.toBeInTheDocument();
 });
+
+
+test('shows inert application cards during initial request, then reveals actual links', async () => {
+    let resolve!: (value: typeof apps) => void;
+    vi.mocked(callTool).mockImplementation(name => {
+        if (name === 'list_all_applications') return new Promise<typeof apps>(r => { resolve = r; }) as never;
+        throw new Error('Unexpected tool ' + name);
+    });
+    render(<ApplicationsDirectory />);
+    const loading = screen.getByRole('status', { name: 'Loading applications' });
+    expect(loading.querySelectorAll('.atlas-skeleton-card')).toHaveLength(6);
+    expect(screen.queryByRole('link', { name: 'Launch Portfolio' })).not.toBeInTheDocument();
+    resolve(apps);
+    expect(await screen.findByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading applications' })).not.toBeInTheDocument();
+});
