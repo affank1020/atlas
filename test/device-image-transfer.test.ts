@@ -1,0 +1,110 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { test } from 'node:test';
+import { LiveImageRelay, isImage } from '../apps/server/src/nodes/live-image-relay.js';
+import { RemoteNodeRuntime } from '../apps/server/src/infrastructure/nodes/remote-runtime.js';
+import { MacImageReceiver, imagePasteboardScript } from '../apps/node/src/capabilities/device-share/mac-image-receiver.js';
+import { deviceImageDeliverySchema, MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
+import type { NodeService } from '../apps/server/src/nodes/service.js';
+import type { NodeShareApprovals } from '../apps/server/src/nodes/share-approvals.js';
+
+const source='11111111-1111-4111-8111-111111111111';
+const target='22222222-2222-4222-8222-222222222222';
+const delivery='33333333-3333-4333-8333-333333333333';
+function png():Buffer {
+    const bytes=Buffer.alloc(24);
+    Buffer.from([137,80,78,71,13,10,26,10]).copy(bytes,0);
+    bytes.write('IHDR',12,'ascii');
+    bytes.writeUInt32BE(3,16);
+    bytes.writeUInt32BE(5,20);
+    return bytes;
+}
+const bytes=png();
+const sha256=createHash('sha256').update(bytes).digest('hex');
+const expiresAt=()=>new Date(Date.now()+40_000).toISOString();
+function harness() {
+    let permitted=true;
+    let credentialsValid=true;
+    const remote=new RemoteNodeRuntime({} as never,['device.image.receive']);
+    const runtimes=new Map<string,unknown>([
+        [source,{getCapabilities:()=>['device.image.send']}],
+        [target,remote],
+    ]);
+    const nodes={
+        runtimes,
+        identity:{authenticate:async (_id:string,_token:string)=>{
+            if (!credentialsValid) throw Error('revoked');
+        }},
+        get:async (id:string)=>id===source
+            ? {platform:'android',credentialState:'active',capabilities:['device.image.send']}
+            : {platform:'darwin',credentialState:'active',capabilities:['device.image.receive']},
+    } as unknown as NodeService;
+    const approvals={allowedForInbox:async()=>permitted} as unknown as NodeShareApprovals;
+    const relay=new LiveImageRelay(nodes,approvals);
+    return {relay,remote,runtimes,setPermission:(value:boolean)=>{permitted=value;},
+        setCredentials:(value:boolean)=>{credentialsValid=value;}};
+}
+
+test('generic image metadata is strict and does not contain bytes or user text',()=>{
+    const request={type:'request',kind:'device_image',requestId:delivery,
+        deliveryId:delivery,sourceNodeId:source,mimeType:'image/png',
+        byteLength:24,sha256,expiresAt:expiresAt()};
+    assert.equal(deviceImageDeliverySchema.safeParse(request).success,true);
+    assert.equal(deviceImageDeliverySchema.safeParse({...request,text:'sensitive'}).success,false);
+    assert.equal(deviceImageDeliverySchema.safeParse({...request,byteLength:MAX_DEVICE_IMAGE_BYTES+1}).success,false);
+});
+test('format, dimensions and strict fingerprint gate both ordinary images and snips',()=>{
+    assert.equal(isImage(bytes,'image/png'),true);
+    assert.equal(isImage(Buffer.concat([bytes,Buffer.alloc(4)]),'image/jpeg'),false);
+    const oversized=Buffer.from(bytes);oversized.writeUInt32BE(17_000,16);
+    assert.equal(isImage(oversized,'image/png'),false);
+    assert.equal(isImage(Buffer.alloc(24),'image/png'),false);
+});
+test('user-approved image handoff uses one target-only binary fetch, then confirmed paste',async()=>{
+    const {relay,remote}=harness();
+    const seen:string[]=[];
+    const receiver=new MacImageReceiver(async()=>{seen.push('approve');return true;},
+        async(input)=>{seen.push('image-paste');assert.deepEqual(input.bytes,bytes);});
+    remote.deliverDeviceImage=async input=>{
+        assert.equal(JSON.stringify(input).includes('bytes'),false);
+        const image=await relay.consume(input.deliveryId,target,'x'.repeat(40));
+        assert.deepEqual(image.bytes,bytes);
+        await assert.rejects(relay.consume(input.deliveryId,target,'x'.repeat(40)));
+        return receiver.receive({...input,bytes:image.bytes});
+    };
+    const admitted=await relay.admit(source,target,'x'.repeat(40));
+    try {
+        const result=await relay.deliver(admitted,{
+            sourceId:source,targetId:target,deliveryId:delivery,
+            mimeType:'image/png',sha256,bytes,
+        });
+        assert.deepEqual(result,{accepted:true});
+        assert.deepEqual(seen,['approve','image-paste']);
+        assert.equal(relay.pendingCount,0);
+    } finally {admitted.release();}
+});
+test('unauthorised image sender or revoked direction cannot transfer',async()=>{
+    const {relay,setPermission}=harness();
+    setPermission(false);
+    await assert.rejects(relay.admit(source,target,'x'.repeat(40)));
+    assert.equal(relay.pendingCount,0);
+});
+test('image receiver does not copy after decline or expired receipt',async()=>{
+    let copies=0;
+    const receiver=new MacImageReceiver(async()=>false,async()=>{copies++;});
+    const input={deliveryId:delivery,sourceNodeId:source,mimeType:'image/png' as const,
+        sha256,bytes,byteLength:bytes.length,expiresAt:expiresAt()};
+    assert.deepEqual(await receiver.receive(input),{accepted:false});
+    assert.equal(copies,0);
+    assert.deepEqual(await receiver.receive(input),{accepted:false});
+    await assert.rejects(receiver.receive({...input,expiresAt:new Date(0).toISOString()}));
+});
+test('image pasteboard writes a native image type, not a plain-text pasteboard',()=>{
+    const script=imagePasteboardScript({
+        deliveryId:delivery,sourceNodeId:source,mimeType:'image/png',sha256,
+        bytes,byteLength:bytes.length,expiresAt:expiresAt(),
+    });
+    assert.ok(script.includes('public.png'));
+    assert.ok(script.includes('setDataForType'));
+    assert.equal(script.includes('NSPasteboardTypeString'),false);
+});
