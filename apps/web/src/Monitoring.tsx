@@ -56,7 +56,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     // The reader survives a live-mode toggle; only scope/manual refresh owns
     // network cancellation and clearing the previously displayed page.
     const activeReader = useRef<{
-        read: () => void; inFlight: boolean; lastSettledAt?: number;
+        read: () => void; inFlight: boolean; lastSettledAt?: number; consecutiveFailures: number;
     } | null>(null);
     const schedulePoll = useRef<() => void>(() => {});
     useEffect(() => setSearch(filters.search ?? ''), [filters.search]);
@@ -78,7 +78,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     const scopeKey = JSON.stringify(scopeInput);
     useEffect(() => {
         const controller = new AbortController();
-        const reader = { read: () => {}, inFlight: false, lastSettledAt: undefined as number | undefined };
+        const reader = { read: () => {}, inFlight: false, lastSettledAt: undefined as number | undefined, consecutiveFailures: 0 };
         activeReader.current = reader;
         setPage(undefined); setError(''); setLastUpdated(undefined);
         // Scope changes and manual Refresh are the only reasons to clear data.
@@ -91,9 +91,9 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
             void callTool<ActivityPage>('query_monitoring_activity',
                 { ...input, offset, limit: LIMIT, groupOperations: true, safeDetails: true }, controller.signal)
                 .then(value => {
-                    if (!controller.signal.aborted) { setPage(value); setLastUpdated(new Date().toLocaleTimeString()); }
+                    if (!controller.signal.aborted) { reader.consecutiveFailures = 0; setPage(value); setLastUpdated(new Date().toLocaleTimeString()); }
                 })
-                .catch(e => { if (!controller.signal.aborted) setError((e as Error).message); })
+                .catch(e => { if (!controller.signal.aborted) { reader.consecutiveFailures = Math.min(reader.consecutiveFailures + 1, 4); setError((e as Error).message); } })
                 .finally(() => {
                     reader.inFlight = false;
                     if (controller.signal.aborted) return;
@@ -125,7 +125,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
             const reader = activeReader.current;
             if (!reader || reader.inFlight) return;
             const remaining = reader.lastSettledAt === undefined ? 0
-                : Math.max(0, ACTIVITY_LIVE_POLL_MS - (Date.now() - reader.lastSettledAt));
+                : Math.max(0, ACTIVITY_LIVE_POLL_MS * 2 ** reader.consecutiveFailures - (Date.now() - reader.lastSettledAt));
             if (remaining === 0) reader.read();
             else timer = setTimeout(() => activeReader.current?.read(), remaining);
         };
@@ -186,7 +186,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
         {page && <><div className="activity-scroll"><ActivityRows events={page.items} names={workspaceNames} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
         <p className="activity-footnote" role="status">{live
-            ? 'Live updates on · at most one read every 30 seconds after completion · paused in hidden tabs'
+            ? 'Live updates on · at most one read every 30 seconds after completion · failures back off up to 8 minutes · paused in hidden tabs'
             : 'Live updates off · manual refresh only'}{lastUpdated ? ` · Last updated ${lastUpdated}` : ''}</p>
         <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
     </section>;
