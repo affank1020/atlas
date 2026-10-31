@@ -19,6 +19,7 @@ export async function recordR2SeedObservation(
         primaryCorrupt: report.primaryCorrupt, backupCorrupt: report.backupCorrupt,
         writesAttempted: report.writesAttempted,
         remaining: report.remaining, entireCatalogChecked: report.entireCatalogChecked,
+        ...(report.status === 'failed' ? { outcome: 'failed' } : {}),
     };
     await db.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at)
         VALUES(gen_random_uuid(),'atlas-backup-cli','backup.r2_seed_observed',$1::jsonb,now())`,
