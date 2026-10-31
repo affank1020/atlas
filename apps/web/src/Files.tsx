@@ -46,6 +46,7 @@ export function Files() {
     const [folders, setFolders] = useState<ProjectFolder[]>([]);
     const [mediaEntries, setMediaEntries] = useState<PortfolioProjectMedia[]>([]);
     const [mediaError, setMediaError] = useState('');
+    const [mediaBusy, setMediaBusy] = useState(false);
     const [busy, setBusy] = useState(false);
     const [mutating, setMutating] = useState(false);
     const [error, setError] = useState('');
@@ -70,8 +71,9 @@ export function Files() {
 
     useEffect(() => {
         let live = true;
-        if (!owner) { setEntries([]); setFolders([]); setMediaEntries([]); setBusy(false); return; }
+        if (!owner) { setEntries([]); setFolders([]); setMediaEntries([]); setMediaBusy(false); setBusy(false); return; }
         setBusy(true); setEntries([]); setFolders([]); setMediaEntries([]); setError(''); setMediaError('');
+        setMediaBusy(folderId === null);
         // Portfolio is optional: its latency or failure must never block the
         // native Project files, folder navigation or write controls.
         if (folderId === null) {
@@ -79,7 +81,8 @@ export function Files() {
                 .then(mediaRows => { if (live) setMediaEntries(mediaRows); })
                 .catch(reason => {
                     if (live) setMediaError(reason instanceof Error ? reason.message : 'Portfolio media could not be loaded.');
-                });
+                })
+                .finally(() => { if (live) setMediaBusy(false); });
         }
         void Promise.all([listFiles(owner, fileStatus, folderId), listProjectFolders(owner.id)])
             .then(([files, folderRows]) => {
@@ -303,10 +306,19 @@ export function Files() {
                 </div>}
             </div>)}
         </div>}
-        {!busy && !error && owner && folderId === null && mediaError && <p className="notice error" role="alert">
+        {!busy && owner && folderId === null && mediaBusy && <section className="files-portfolio-section" aria-label="Portfolio media">
+            <div className="files-portfolio-header">
+                <h3>Portfolio media</h3>
+                <span>Read-only · Managed by Portfolio</span>
+            </div>
+            <div className="files-skeleton-list" role="status" aria-label="Loading Portfolio media" aria-busy="true">
+                {[1, 2].map(value => <div className="files-skeleton-row" key={value}><span /><div><i /><i /></div></div>)}
+            </div>
+        </section>}
+        {!busy && owner && folderId === null && mediaError && <p className="notice error" role="alert">
             Portfolio media catalogue unavailable: {mediaError}
         </p>}
-        {!busy && !error && owner && visibleMedia.length > 0 && <section className="files-portfolio-section" aria-label="Portfolio media">
+        {!busy && owner && visibleMedia.length > 0 && <section className="files-portfolio-section" aria-label="Portfolio media">
             <div className="files-portfolio-header">
                 <h3>Portfolio media</h3>
                 <span>Read-only · Managed by Portfolio · {visibleMedia.length} items</span>
@@ -326,7 +338,7 @@ export function Files() {
             </div>
         </section>}
         {!busy && !error && !owner && !projects.isLoading && !projects.error && <div className="files-empty">No Projects available. Create a Project to store files.</div>}
-        {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length && !visibleMedia.length &&
+        {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length && !visibleMedia.length && !mediaBusy &&
             <div className="files-empty">{searchText
                 ? 'Nothing matches your search in this folder.'
                 : fileStatus === 'archived'
