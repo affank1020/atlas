@@ -153,12 +153,17 @@ export class RemoteNodeGateway {
                             if (recipient.platform === 'android' &&
                                 this.inbox?.allowsQueue(originId, recipient.nodeId) === true &&
                                 recipient.status !== 'unavailable') {
-                                const node = await this.nodes.get(recipient.nodeId).catch(() => null);
+                                // Live NodeService.get masks stored capabilities
+                                // when offline. The queue is specifically for that
+                                // condition, so inspect the durable registration.
+                                const node = await this.nodes.repository.get(recipient.nodeId).catch(() => null);
                                 queueAvailable = !!node && node.credentialState === 'active' &&
                                     supportsAndroidInbox(node.version) &&
                                     node.capabilities.includes('device.share.receive');
                             }
-                            return { ...recipient, queueAvailable };
+                            // Optional extension must not alter older directory
+                            // responses unless queueing really is available.
+                            return queueAvailable ? { ...recipient, queueAvailable: true } : recipient;
                         }));
                         respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
                     } catch (error) {
