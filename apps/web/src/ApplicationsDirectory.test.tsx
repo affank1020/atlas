@@ -94,3 +94,29 @@ test('shows inert application cards during initial request, then reveals actual 
     expect(await screen.findByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Loading applications' })).not.toBeInTheDocument();
 });
+
+
+test('retains existing application cards during an explicit refresh', async () => {
+    let calls = 0;
+    let completeRefresh!: (value: typeof apps) => void;
+    vi.mocked(callTool).mockImplementation(name => {
+        if (name !== 'list_all_applications') throw new Error('Unexpected tool ' + name);
+        calls++;
+        return (calls === 1 ? Promise.resolve(apps)
+            : new Promise<typeof apps>(resolve => { completeRefresh = resolve; })) as never;
+    });
+    render(<ApplicationsDirectory />);
+    expect(await screen.findByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh applications' }));
+    expect(screen.getByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading applications' })).not.toBeInTheDocument();
+    completeRefresh(apps);
+    expect(await screen.findByRole('link', { name: 'Launch Football Training' })).toBeInTheDocument();
+});
+
+test('empty application catalogue is distinct from pending skeleton and error', async () => {
+    vi.mocked(callTool).mockResolvedValue([] as never);
+    render(<ApplicationsDirectory />);
+    expect(await screen.findByText('No applications are registered yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading applications' })).not.toBeInTheDocument();
+});
