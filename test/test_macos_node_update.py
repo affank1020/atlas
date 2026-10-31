@@ -22,6 +22,7 @@ class LayoutFixture:
         self.releases = root / "releases"
         self.releases.mkdir(mode=0o700)
         self.pending = root / "pending.json"
+        self.watchdog_refresh = root / "watchdog-refresh.json"
         self.previous = root / "previous.plist"
         self.plist = root / "node.plist"
         self.uid = os.getuid()
@@ -180,6 +181,49 @@ class MacUpdateTests(unittest.TestCase):
             with self.assertRaisesRegex(update.Refused, "Recovery is pending"):
                 update.apply_update(self.layout, migrate=False)
             prompt.assert_not_called()
+
+    def test_loaded_older_watchdog_is_refreshed_before_activation(self):
+        candidate = {
+            "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
+            "installed": self.tag1.removeprefix("node-"), "mode": "release",
+            "state": "available", "launchdPid": 123, "recoveryPending": False,
+        }
+        events = []
+        with patch.object(update, "discover", return_value=candidate), patch.object(
+            update.sys.stdin, "isatty", return_value=True
+        ), patch("builtins.input", return_value="UPDATE " + self.tag2), patch.object(
+            update, "prepared_release", side_effect=lambda *_: events.append("stage")
+        ), patch.object(update.lifecycle, "require_watchdog",
+                        side_effect=update.lifecycle.Refused("old script")), patch.object(
+            update.lifecycle, "launch_loaded", return_value=True
+        ), patch.object(update.lifecycle, "manage", side_effect=lambda _layout, args: events.append(tuple(args))):
+            self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
+        self.assertEqual(events, [
+            "stage", ("refresh-watchdog", "--confirm"),
+            ("activate", self.tag2.removeprefix("node-"), "--confirm",
+             "--expect-entrypoint", "/test/node.js"),
+        ])
+
+    def test_interrupted_watchdog_refresh_refuses_update(self):
+        candidate = {
+            "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
+            "installed": self.tag1.removeprefix("node-"), "mode": "release",
+            "state": "available", "launchdPid": 123, "recoveryPending": False,
+        }
+        self.layout.watchdog_refresh.write_text("{}")
+        with patch.object(update, "discover", return_value=candidate), patch.object(
+            update.sys.stdin, "isatty", return_value=True
+        ), patch("builtins.input", return_value="UPDATE " + self.tag2), patch.object(
+            update, "prepared_release"
+        ), patch.object(update.lifecycle, "require_watchdog",
+                        side_effect=update.lifecycle.Refused("migration pending")), patch.object(
+            update.lifecycle, "manage"
+        ) as lifecycle_manage:
+            with self.assertRaisesRegex(update.Refused, "Watchdog upgrade was interrupted"):
+                update.apply_update(self.layout, migrate=False)
+            lifecycle_manage.assert_not_called()
 
     def test_successful_flow_verifies_staging_then_reuses_lifecycle(self):
         old = self.tag1.removeprefix("node-")
