@@ -102,7 +102,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         ? new DevicePushService(repository.pool, readInboxKey(config.deviceInboxKey), fcmCredentials, shareApprovals)
         : undefined;
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox, push);
-    const imageRelay = new LiveImageRelay(nodes, shareApprovals);
+    const imageRelay = new LiveImageRelay(nodes, shareApprovals, config.deviceImages.approvedPairs);
     // Bounded periodic retention cleanup, including while the inbox is idle.
     const inboxCleanup = offlineInbox && setInterval(() => {
         void offlineInbox.purgeExpired().catch(() => undefined);
