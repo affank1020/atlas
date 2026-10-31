@@ -88,8 +88,8 @@ export function renderManagedSummary(repository: string, prNumber: number, round
             ' · **Saved rounds:** ' + savedRounds +
             ' · **Source:** ' + (full ? 'Structured review' : 'Partial / historical'),
         ...(full ? [
-            '**Latest round:** ' + severities +
-                ' · **Reviewer-asserted fixes:** ' + round.resolutions.length,
+            ...(round.resolutions.length ?
+                ['**Reviewer-asserted fixes:** ' + round.resolutions.length] : []),
             ...visible.map(finding => '- **' + finding.severity.toUpperCase() + '** ' +
                 inlineText(finding.title, 200) +
                 (finding.filePath ? ' — ' + inlineCode(finding.filePath, 1_024) : '') +
