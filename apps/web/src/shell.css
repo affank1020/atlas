@@ -198,7 +198,6 @@ dialog.modal::backdrop { background: var(--shadow-color); backdrop-filter: blur(
 .workspace-loading { color: var(--text-muted); padding: var(--space-5) 0; animation: workspace-pulse 1.2s ease-in-out infinite alternate; }
 @keyframes workspace-pulse { from { opacity: .55; } to { opacity: 1; } }
 @keyframes workspace-appear { from { opacity: .5; } to { opacity: 1; } }
-.workspace-home, .workspace-section { animation: workspace-appear 180ms ease-out; }
 @media(max-width: 950px) {
  .sidebar nav { flex: auto; }
  .nav-bottom { padding-top: var(--space-4); }
@@ -378,6 +377,7 @@ body { background: #0c0d10; }
   max-width: 1450px;
   margin: 0 auto;
   padding: 42px clamp(40px, 4.3vw, 80px) 88px;
+  animation: workspace-appear 180ms ease-out;
 }
 /* Full-height experimental views should fit the content viewport, not the window. */
 .app-shell .content-frame > main.ask-page-shell {

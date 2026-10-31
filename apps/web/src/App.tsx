@@ -1,5 +1,6 @@
 import { WorkspaceHome, WorkspaceSettings, DeveloperHub } from './Workspace';
 import { MonitoringPage, ProjectActivityPanel } from './Monitoring';
+import { parseMonitoringHash } from './monitoringLinks';
 import { DataOverview } from './DataOverview';
 import { Files } from './Files';
 import { rememberWork } from './recentWork';
@@ -88,7 +89,14 @@ function App() {
     beginRoute(JSON.stringify(route));
     const askPage = route.page === "ask-atlas" || route.page === "ask-portfolio";
     if (route.page === "application") return <ApplicationWindow projectId={route.projectId} slug={route.slug} />;
-    return <AppShell page={route.page} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === 'monitoring' && <MonitoringPage />}{route.page === 'developer' && <DeveloperHub />}{route.page === 'settings' && <WorkspaceSettings />}{route.page === 'data' && <DataOverview />}{route.page === 'files' && <Files />}{route.page === "overview" && <WorkspaceHome />}{route.page === "projects" && <Projects />}{route.page === "applications" && <ApplicationsDirectory />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "node-software" && <NodeSoftware />}{route.page === "workspaces" && <Workspaces />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Suspense fallback={<SkeletonRows label="Loading Portfolio interface" variant="panel" rows={3} />}><Portfolio /></Suspense>}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
+    // Only navigational changes replay the fade. URL query-state changes (filters,
+    // Workspace selection, paging) keep the page mounted and do not animate.
+    const routeKey = route.page === "project" ? `project:${route.projectId}:${route.section}`
+        : route.page === "store" ? `store:${route.projectId}:${route.storeId}:${route.tab}`
+        : route.page === "view" ? `view:${route.projectId}:${route.viewId}`
+        : route.page === "monitoring" ? `monitoring:${parseMonitoringHash(location.hash).tab}`
+        : route.page;
+    return <AppShell page={route.page} routeKey={routeKey} projectId={"projectId" in route ? route.projectId : undefined} contentClass={askPage ? "ask-page-shell" : route.page === "fabric" ? "fabric-page" : route.page === "portfolio" ? "portfolio-page" : ""}>{route.page === 'monitoring' && <MonitoringPage />}{route.page === 'developer' && <DeveloperHub />}{route.page === 'settings' && <WorkspaceSettings />}{route.page === 'data' && <DataOverview />}{route.page === 'files' && <Files />}{route.page === "overview" && <WorkspaceHome />}{route.page === "projects" && <Projects />}{route.page === "applications" && <ApplicationsDirectory />}{route.page === "project" && <ProjectDetail key={route.projectId} id={route.projectId} section={route.section} />}{route.page === "store" && <StoreDetail route={route} />}{route.page === "view" && <ViewPage key={`${route.projectId}/${route.viewId}`} projectId={route.projectId} viewId={route.viewId} />}{route.page === "nodes" && <Nodes />}{route.page === "node-software" && <NodeSoftware />}{route.page === "workspaces" && <Workspaces />}{route.page === "fabric" && <Fabric />}{route.page === "portfolio" && <Suspense fallback={<SkeletonRows label="Loading Portfolio interface" variant="panel" rows={3} />}><Portfolio /></Suspense>}{route.page === "ask-atlas" && <AskAtlas />}{route.page === "ask-portfolio" && <AskPortfolio />}</AppShell>;
 }
 
 function Projects() {

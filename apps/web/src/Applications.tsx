@@ -81,7 +81,7 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
             <span className="application-breadcrumb-separator" aria-hidden="true">/</span>
             <span className="application-window-name" title={application?.name ?? slug}>{application?.name ?? 'Application'}</span>
         </nav>} />
-        <main className="application-window-main">
+        <main key={`${projectId ?? ''}:${slug}`} className="application-window-main">
             {busy && !currentApplication && !error && <Fallback />}
             {error && <div role="alert" className="notice error">{error} <button type="button" className="ghost" onClick={() => void refetch()}>Retry</button></div>}
             {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}

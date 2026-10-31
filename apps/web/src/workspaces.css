@@ -85,6 +85,27 @@
 .node-detail-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-areas: 'workspaces activity' 'technical activity' 'software activity'; gap: 16px; align-items: stretch; }
 .node-detail-workspaces { grid-area: workspaces; }
 .node-detail-activity { grid-area: activity; }
+.nodes-page .node-detail-activity > .activity-preview {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.nodes-page .node-detail-activity .panel-head {
+    padding: 0 0 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.nodes-page .node-detail-activity .panel-head h2 {
+    font-size: .91rem;
+    font-weight: 600;
+}
+.nodes-page .node-detail-activity .activity-preview-rows .activity-item summary { padding: 12px 0; }
+.nodes-page .node-detail-activity .activity-preview-rows .activity-details { padding: 0 0 14px; }
+.nodes-page .node-detail-activity .activity-preview-note { padding: 14px 0; }
+.nodes-page .node-detail-activity .activity-footnote { padding: 12px 0 0; }
 .node-detail-technical { grid-area: technical; }
 .node-detail-software { grid-area: software; }
 .node-detail-card { padding: 21px 22px; }

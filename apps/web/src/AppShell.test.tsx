@@ -81,6 +81,30 @@ test('switching Workspaces and checkouts preserves content scroll without breaki
     fireEvent(window, new Event('hashchange'));
     expect(frame.scrollTop).toBe(0);
 });
+test('page transitions remount content only for a different navigation target', () => {
+    vi.mocked(callTool).mockResolvedValue([]);
+    const shell = (routeKey: string, label: string) =>
+        <Provider store={store}><AppShell page="monitoring" routeKey={routeKey} contentClass="">
+            <h1>{label}</h1>
+        </AppShell></Provider>;
+    const view = render(shell('monitoring:overview', 'Monitoring'));
+    const main = screen.getByRole('main');
+    view.rerender(shell('monitoring:overview', 'Updated monitoring'));
+    expect(screen.getByRole('main')).toBe(main);
+    expect(screen.getByRole('heading', { name: 'Updated monitoring' })).toBeInTheDocument();
+
+    // Monitoring filters and Workspaces selections reuse their page key.
+    view.rerender(shell('monitoring:activity', 'Activity'));
+    const activity = screen.getByRole('main');
+    expect(activity).not.toBe(main);
+    view.rerender(shell('monitoring:activity', 'Filtered activity'));
+    expect(screen.getByRole('main')).toBe(activity);
+
+    view.rerender(shell('monitoring:logs', 'Logs'));
+    expect(screen.getByRole('main')).not.toBe(activity);
+    expect(screen.getByRole('heading', { name: 'Logs' })).toBeInTheDocument();
+});
+
 test('project sections retain an overview deep link and indicate the selected section', () => {
     render(<ProjectNav projectId="p" section="views" />);
     expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '#/projects/p');

@@ -127,13 +127,24 @@ test('health summary distinguishes known states and missing physical retention e
     expect(screen.getByLabelText('Overall health')).toHaveTextContent('degraded');
 });
 
-test('Logs explains the bounded Node and Server evidence sources', async () => {
+test('Activity uses page navigation instead of a tab strip', async () => {
+    vi.mocked(callTool).mockResolvedValue(emptyActivity as never);
+    location.hash = '#/monitoring?tab=activity&outcome=failed';
+    render(<MonitoringPage />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Activity' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '← Monitoring' })).toHaveAttribute('href', '#/monitoring');
+    expect(screen.queryByRole('navigation', { name: 'Monitoring sections' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Atlas Monitoring')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Outcome')).toHaveValue('failed');
+});
+
+test('Logs retains source controls without the static source guide', async () => {
     location.hash = '#/monitoring?tab=logs&target=node';
     vi.mocked(callTool).mockResolvedValue([] as never);
     render(<MonitoringPage />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Logs' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '← Monitoring' })).toHaveAttribute('href', '#/monitoring');
     expect(screen.getByLabelText('Log target')).toHaveValue('node');
-    const guide = screen.getByRole('group', { name: 'Log source boundaries' });
-    expect(within(guide).getByText('Node tails')).toBeInTheDocument();
-    expect(within(guide).getByText('Server signals')).toBeInTheDocument();
-    expect(within(guide).getByText(/not Docker logs/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Node logs' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Log source boundaries' })).not.toBeInTheDocument();
 });

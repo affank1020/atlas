@@ -62,7 +62,9 @@ test('switching Project clears a previously loaded Application when the next loo
     });
     const window = render(<ApplicationWindow projectId="project-portfolio" slug="portfolio" />);
     expect(await screen.findByText('Portfolio publishing UI')).toBeInTheDocument();
+    const initialMain = screen.getByRole('main');
     window.rerender(<ApplicationWindow projectId="other-project" slug="portfolio" />);
+    expect(screen.getByRole('main')).not.toBe(initialMain);
     expect(await screen.findByRole('alert')).toHaveTextContent('Application not found');
     expect(screen.queryByText('Portfolio publishing UI')).not.toBeInTheDocument();
 });

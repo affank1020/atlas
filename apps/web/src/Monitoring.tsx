@@ -4,7 +4,7 @@ import { callTool, IS_MOCK_MODE } from './api';
 import type { AuditEvent } from './types';
 import { ActivityRows } from './ActivityFeed';
 import { MonitoringOverview } from './Workspace';
-import { monitoringHash, parseMonitoringHash, type MonitoringFilters, type MonitoringRoute, type MonitoringTab } from './monitoringLinks';
+import { monitoringHash, parseMonitoringHash, type MonitoringFilters, type MonitoringRoute } from './monitoringLinks';
 import './activity.css';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
@@ -173,7 +173,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
         || search !== (filters.search ?? '')
         || advancedKeys.some(key => (draft[key] ?? '') !== (filters[key] ?? ''));
     return <section className="panel activity-panel" aria-label={projectId ? 'Project activity' : 'Monitoring activity'}>
-        <div className="panel-head"><div><p className="eyebrow">Immutable Atlas audit history</p><h2>{projectId ? 'Project activity' : 'Activity'}</h2></div><div className="actions">
+        <div className="panel-head"><h2>{projectId ? 'Project activity' : 'Audit history'}</h2><div className="actions">
             {projectId && <a className="monitoring-project-link" href={monitoringHash('activity', filters)}>Open in Monitoring →</a>}
             <button type="button" className="ghost" aria-pressed={live}
                 onClick={() => navigate({
@@ -222,10 +222,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
         {error && <p role="alert" className="activity-error">Audit history unavailable: {error}</p>}
         {page && <><div className="activity-scroll"><ActivityRows events={page.items} names={workspaceNames} scopeLinks />{page.items.length === 0 && <p className="empty">No events match these filters.</p>}</div>
             <div className="monitoring-pagination"><span>{page.total && operationCount ? `${page.offset + 1}–${page.offset + operationCount} of ${page.total} operations` : page.total ? `No operations on this page · ${page.total} total` : '0 operations'} · Filtered on the server</span><div className="actions"><button className="ghost" disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>Previous</button><button className="ghost" disabled={page.offset + operationCount >= page.total || page.offset >= 10000} onClick={() => changePage(page.offset + page.limit)}>Next</button></div></div></>}
-        <p className="activity-footnote" role="status">{live
-            ? 'Live updates on · at most one read every 30 seconds after completion · failures back off up to 8 minutes · paused in hidden tabs'
-            : 'Live updates off · manual refresh only'}{lastUpdated ? ` · Last updated ${lastUpdated}` : ''}</p>
-        <p className="activity-footnote">Recorded events only. A pending request is not proof of a failed operation; audit retention and runtime logs are separate.</p>
+        <p className="activity-footnote" role="status">{live ? 'Live updates on' : 'Manual refresh'}{lastUpdated ? ` · Updated ${lastUpdated}` : ''}</p>
     </section>;
 }
 /** Project Activity reuses the full server-filtered Monitoring reader, never the legacy polling feed. */
@@ -300,7 +297,7 @@ function NodeLogsPanel({ filters }: { filters: MonitoringFilters }) {
     const visible = result?.nodeId === nodeId && result.source === source && result.count === lines ? result.output : undefined;
     const visibleLines = visible?.lines.filter(line => line.toLowerCase().includes(tailSearch.trim().toLowerCase())) ?? [];
     return <section className="panel activity-panel" aria-label="Monitoring logs">
-        <div className="panel-head"><div><p className="eyebrow">Bounded runtime tails</p><h2>Logs</h2></div><button className="ghost" disabled={!selected || reading || selected.status !== 'online' || !selected.capabilities.includes('node.logs')} onClick={() => void read()}>{reading ? 'Reading…' : 'Refresh logs'}</button></div>
+        <div className="panel-head"><h2>Node logs</h2><button className="ghost" disabled={!selected || reading || selected.status !== 'online' || !selected.capabilities.includes('node.logs')} onClick={() => void read()}>{reading ? 'Reading…' : 'Refresh logs'}</button></div>
         <div className="activity-filters">
             <label>Node source<select aria-label="Node source" value={nodeId} onChange={e => { const next = nodes.find(node => node.id === e.target.value); setSelection({ ...filters, nodeId: next?.id, source: next?.platform === 'linux' ? 'service' : (filters.source === 'journal' || filters.source === 'service') ? undefined : filters.source }); }}><option value="">Select a Node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
             <label>Stream{selected?.platform === 'linux'
@@ -368,7 +365,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     const events = visible?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];
     const output = events.map(event => event.at + ' [' + event.level + '] ' + event.message).join('\n');
     return <section className="panel activity-panel" aria-label="Server diagnostics">
-        <div className="panel-head"><div><p className="eyebrow">{history ? 'Best-effort retained fixed codes' : 'Current server process · fixed event codes'}</p><h2>Atlas Server diagnostics</h2></div>
+        <div className="panel-head"><h2>Atlas Server diagnostics</h2>
             <button type="button" className="ghost" disabled={busy} onClick={() => setRefresh(x => x + 1)}>{busy ? 'Reading…' : 'Refresh diagnostics'}</button></div>
         <div className="activity-filters">
             <label>Source<select aria-label="Diagnostic source" value={history ? 'history' : 'process'}
@@ -383,8 +380,8 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
             <label>Search loaded events<input aria-label="Search diagnostics" value={search} onChange={e => setSearch(e.target.value)} /></label>
         </div>
         <p className="activity-footnote">{history
-            ? 'PostgreSQL retains up to 14 days of fixed-code Server signals across restarts. Writes are best-effort, so missing events do not prove healthy operation. This is not Docker stdout/stderr, complete historical logs or an audit ledger.'
-            : 'Only non-sensitive operational event codes from this Atlas Server process are shown. This is not Docker stdout/stderr or a multi-instance archive.'}</p>
+            ? 'Retained diagnostic events are best-effort; missing entries do not prove healthy operation.'
+            : 'Current-process diagnostic events only; not complete Server logs.'}</p>
         {busy && !visible && !error && <SkeletonRows label="Loading server diagnostics" variant="metrics" rows={3} />}
         {error && <p role="alert" className="activity-error">Server diagnostics unavailable: {error}</p>}
         {visible && !visible.available && <p className="empty">{history ? 'Retained Server diagnostics unavailable or disabled. Check database migration and connectivity.' : 'Server diagnostics are disabled on this deployment.'}</p>}
@@ -418,10 +415,6 @@ function LogsPanel({ filters }: { filters: MonitoringFilters }) {
                 e.target.value === 'server' ? { target: 'server' } : { target: 'node' })}>
             <option value="node">Connected Node</option><option value="server">Atlas Server diagnostics</option>
         </select></label></div>
-        <div className="monitoring-source-guide" role="group" aria-label="Log source boundaries">
-            <div><strong>Node tails</strong><span>Approved macOS stdout/stderr or Linux private service output. On-demand, bounded and not a complete archive.</span></div>
-            <div><strong>Server signals</strong><span>Fixed-code diagnostics only: current process or best-effort retained history, not Docker logs.</span></div>
-        </div>
         {target === 'server' ? <ServerDiagnosticsPanel filters={filters} /> : <NodeLogsPanel filters={filters} />}
     </>;
 }
@@ -471,14 +464,14 @@ function MonitoringHealthPanel() {
     }, [refresh]);
     const badge = (status: string) => ['healthy', 'reachable', 'available', 'caught-up'].includes(status) ? 'success' : 'muted';
     const displayedOverall = snapshot ? displayedHealthOverall(snapshot) : 'unknown';
-    return <section className="workspace-section" aria-label="Live operational health">
+    return <section className="workspace-section monitoring-card monitoring-card--health" aria-label="Live operational health">
         <div className="section-heading"><h2>Live operational health</h2>
             <button className="ghost" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Checking…' : 'Refresh health'}</button>
         </div>
         {busy && !snapshot && !error && <SkeletonRows label="Checking Server and Node health" variant="metrics" rows={3} />}
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
-            <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
+            <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()}{IS_MOCK_MODE ? ' · Simulated' : ''}</p>
             <div className="monitoring-health-summary" role="group" aria-label="Health signal summary">
                 <div><strong>{snapshot.server.database.status}</strong><small>Database</small></div>
                 <div><strong>{snapshot.diagnostics?.status ?? 'unknown'}</strong><small>Diagnostic archive</small></div>
@@ -519,7 +512,7 @@ function MonitoringHealthPanel() {
                             ? 'Expiry cleanup failed; disk retention may be behind even though reads remain limited to 14 days.'
                         : 'Physical expiry has not been verified in this Server process.'}
                 </small>}
-                <small>Historical coverage is never guaranteed. <a href={monitoringHash('logs', { target: 'server', history: '1' })}>View retained diagnostics</a></small></span>
+                <small><a href={monitoringHash('logs', { target: 'server', history: '1' })}>View retained diagnostics</a></small></span>
                 <span className={`badge ${badge(snapshot.diagnostics?.status ?? 'unknown')}`}>{snapshot.diagnostics?.status ?? 'unknown'}</span>
             </div>
             {!snapshot.nodes.available && <p role="status">Node registry could not be checked. Node health is unknown.</p>}
@@ -542,11 +535,15 @@ function MonitoringHealthPanel() {
 export function MonitoringPage() {
     const [route, setRoute] = useState<MonitoringRoute>(() => parseMonitoringHash(location.hash));
     useEffect(() => { const update = () => setRoute(parseMonitoringHash(location.hash)); addEventListener('hashchange', update); return () => removeEventListener('hashchange', update); }, []);
-    const tabs: { key: MonitoringTab; title: string }[] = [{key:'overview',title:'Overview'},{key:'activity',title:'Activity'},{key:'logs',title:'Logs'}];
     return <div className="monitoring-page">
-        <nav className="tabs project-nav" aria-label="Monitoring sections">{tabs.map(tab => <a key={tab.key} href={monitoringHash(tab.key, tab.key === route.tab ? route.filters : {})} aria-current={route.tab === tab.key ? 'page' : undefined} className={route.tab === tab.key ? 'active' : ''}>{tab.title}</a>)}</nav>
-        {route.tab === 'overview' && <><MonitoringOverview /><MonitoringHealthPanel /></>}
-        {route.tab === 'activity' && <><header className="page-head"><div><p className="eyebrow">Atlas Monitoring</p><h1>Activity</h1><p>Search and investigate structured operations across Atlas.</p></div></header><ActivityPanel filters={route.filters} /></>}
-        {route.tab === 'logs' && <><header className="page-head"><div><p className="eyebrow">Atlas Monitoring</p><h1>Logs</h1><p>Inspect approved Node tails and bounded Atlas Server diagnostics.</p></div></header><LogsPanel filters={route.filters} /></>}
+        {route.tab === 'overview' && <div className="monitoring-overview-grid"><MonitoringOverview /><MonitoringHealthPanel /></div>}
+        {route.tab !== 'overview' && <header className="page-head monitoring-detail-head">
+            <div>
+                <a className="monitoring-back" href="#/monitoring">← Monitoring</a>
+                <h1>{route.tab === 'activity' ? 'Activity' : 'Logs'}</h1>
+            </div>
+        </header>}
+        {route.tab === 'activity' && <ActivityPanel filters={route.filters} />}
+        {route.tab === 'logs' && <LogsPanel filters={route.filters} />}
     </div>;
 }

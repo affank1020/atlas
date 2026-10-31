@@ -66,6 +66,7 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(142, 146, 158, .32) transparent;
+  animation: workspace-appear 180ms ease-out;
 }
 .application-window-main::-webkit-scrollbar { width: 7px; }
 .application-window-main::-webkit-scrollbar-track { background: transparent; }
