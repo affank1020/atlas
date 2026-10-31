@@ -209,7 +209,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     fun stopConnection() {
         owners = owners.activityStopped()
         if (owners.connected) {
-            if (incomingShare != null) {
+            // A different Activity may still be visible. Only issue a
+            // background notification once the final visible Activity stops.
+            if (!owners.activityVisible && incomingShare != null) {
                 val remaining = incomingDeadlineElapsedMs - SystemClock.elapsedRealtime()
                 if (!BackgroundReceiverService.notifyIncoming(getApplication(), remaining)) {
                     finishIncomingShare(IncomingShareOutcome.DECLINED)
