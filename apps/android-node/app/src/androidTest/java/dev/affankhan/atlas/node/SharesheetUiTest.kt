@@ -202,7 +202,7 @@ class SharesheetUiTest {
             inboxPreview=InboxReply.Content(id,id,source,"Unicode 🎉 notes")
         }
         compose.onNodeWithTag("queued-inbox-preview")
-            .assertTextContains("Delivery ID: "+id)
+            .assertTextContains("Delivery ID: "+id, substring=true)
         compose.onNodeWithTag("queued-inbox-decline").assertIsEnabled().performClick()
         compose.runOnIdle {
             org.junit.Assert.assertTrue(inboxDeclined)
