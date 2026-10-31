@@ -219,7 +219,7 @@ export class InlineRootPublicationService {
         caller?: ApplicationCaller) {
         assertStructuredCaller(caller);
         repository = canonicalRepository(repository);
-        if (!this.enabled.has(repository))
+        if (!this.enabled.has(repository) && !this.enabled.has('*'))
             throw new AtlasError('Initial inline root publication is disabled for this repository.', 'CAPABILITY_UNAVAILABLE');
         const identity: Identity = { ...(await this.storeIds()), repository, prNumber };
         const initial = await this.catalog.store.snapshot();
