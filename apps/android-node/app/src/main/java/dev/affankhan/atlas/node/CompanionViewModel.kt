@@ -112,6 +112,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private var reconnectDelayMs = 1_000L
     private var pendingRetry: Runnable? = null
     private var socket: WebSocket? = null
+    private var pendingPushRequestId: String? = null
     private val recentIncoming = RecentIncomingShares()
     private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
     private var incomingTimeoutTask: Runnable? = null
@@ -211,6 +212,41 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
+    /** Consent survives process death. A stopped service is not automatically restarted. */
+    fun setPushEnabled(enabled: Boolean) {
+        AtlasPush.setEnabled(getApplication(), enabled)
+        if (!enabled) sendPushUnregister()
+        else refreshPushRegistration()
+    }
+
+    fun onPushTokenChanged(token: String) {
+        if (!AtlasPush.enabled(getApplication())) return
+        sendPushRegister(token)
+    }
+
+    private fun refreshPushRegistration() {
+        if (!AtlasPush.configured(getApplication())) return
+        AtlasPush.currentToken(getApplication()) { token ->
+            handler.post { onPushTokenChanged(token) }
+        }
+    }
+
+    private fun sendPushRegister(token: String) {
+        if (!AtlasPush.enabled(getApplication()) || connectionStatus != "Online") return
+        val ws = socket ?: return
+        val requestId = UUID.randomUUID().toString()
+        pendingPushRequestId = requestId
+        if (!ws.send(AtlasPush.registerRequest(requestId, token))) pendingPushRequestId = null
+    }
+
+    private fun sendPushUnregister() {
+        if (connectionStatus != "Online") return
+        val ws = socket ?: return
+        val requestId = UUID.randomUUID().toString()
+        pendingPushRequestId = requestId
+        if (!ws.send(AtlasPush.unregisterRequest(requestId))) pendingPushRequestId = null
+    }
+
     fun startConnection() {
         owners = owners.activityStarted()
         if (backgroundReceivingRunning &&
@@ -274,6 +310,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         socket = null
         clearRecipientLookup()
         clearQueuedInbox()
+        pendingPushRequestId = null
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -296,12 +333,16 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             reconnectDelayMs = 1_000
                             connectionStatus = "Online"
                             refreshRecipients()
+                            if (AtlasPush.enabled(getApplication())) refreshPushRegistration()
+                            else if (AtlasPush.configured(getApplication())) sendPushUnregister()
+                            if (session.section == Section.INBOX) refreshQueuedInbox()
                         }
                         is ConnectionEvent.Offline -> {
                             connectionStatus = event.detail
                             clearRecipientLookup()
                             clearIncomingShare()
                             clearQueuedInbox()
+                            pendingPushRequestId = null
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -394,6 +435,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             inboxStatus="Atlas inbox request rejected ("+reply.code+"). Refresh to retry."
                         }
                     }
+                }
+            }, { requestId ->
+                handler.post {
+                    if (generation == connectionGeneration && requestId == pendingPushRequestId)
+                        pendingPushRequestId = null
                 }
             }, { incoming, respond ->
                 // Capture receipt time on the socket thread so main-thread delays
