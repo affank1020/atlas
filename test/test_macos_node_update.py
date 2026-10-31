@@ -91,6 +91,42 @@ class MacUpdateTests(unittest.TestCase):
         self.assertEqual(result["candidate"], self.tag2)
         self.assertEqual(result["state"], "available")
 
+    def test_monitor_routes_to_signed_operator_without_node_activation(self):
+        from unittest.mock import Mock
+        helper = Mock()
+        helper.monitor_manage.return_value = 0
+        with patch.object(update, "ensure_operator"), patch.object(
+            update, "load_helper", return_value=helper
+        ), patch.object(update.lifecycle, "Layout", return_value=self.layout), patch.object(
+            update.lifecycle, "manage"
+        ) as activation:
+            self.assertEqual(update.main(["monitor", "status", "--json"]), 0)
+        helper.monitor_manage.assert_called_once_with(
+            self.layout, ["status", "--json"]
+        )
+        activation.assert_not_called()
+
+    def test_monitor_refusal_preserves_cli_error_boundary(self):
+        from unittest.mock import Mock
+        class MonitorRefused(Exception):
+            pass
+        helper = Mock()
+        helper.Refused = MonitorRefused
+        helper.monitor_manage.side_effect = MonitorRefused("unsafe checker job")
+        with patch.object(update, "ensure_operator"), patch.object(
+            update, "load_helper", return_value=helper
+        ), patch.object(update.lifecycle, "Layout", return_value=self.layout):
+            with self.assertRaisesRegex(update.Refused, "unsafe checker job"):
+                update.main(["monitor", "enable"])
+
+    def test_malformed_monitor_command_rejected_before_host_access(self):
+        with patch.object(update, "ensure_operator") as guard, patch.object(
+            update, "load_helper"
+        ) as helper:
+            self.assertEqual(update.main(["monitor", "auto-install"]), 2)
+            guard.assert_not_called()
+            helper.assert_not_called()
+
     def test_no_migration_flag_refuses_before_mutation(self):
         candidate = {
             "candidate": self.tag2, "candidateSource": "d" * 40, "candidateDigest": "b" * 64,

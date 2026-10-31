@@ -8,9 +8,12 @@ helpers, not scripts from a development checkout. No launchd or Node mutation.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 import importlib.util
 import json
 import os
+import plistlib
+import subprocess
 from pathlib import Path
 import stat
 import sys
@@ -22,6 +25,9 @@ FILES = (
     "linux-node-host-updater.py",
     "macos-node-operator.py",
 )
+CHECK_LABEL = "com.affank1020.atlas.node.update-check"
+CHECK_INTERVAL = 3600
+MAX_CHECK_RECORD = 4096
 WRAPPER = """#!/bin/sh
 exec python3 "$HOME/Library/Application Support/Atlas/NodeSoftware/operator/current/macos-node-update.py" "$@"
 """
@@ -235,16 +241,263 @@ def sync_from_active(layout) -> None:
     print("Operator CLI now follows the currently active signed Node release.")
 
 
+
+def check_paths(layout) -> tuple[Path, Path]:
+    return (layout.home / "Library/LaunchAgents" / (CHECK_LABEL + ".plist"),
+            layout.app / "release-check.json")
+
+
+def check_target(layout) -> str:
+    return f"gui/{layout.uid}/{CHECK_LABEL}"
+
+
+def check_plist(layout) -> bytes:
+    """No credentials, Node identity, privileged service or installer action."""
+    return plistlib.dumps({
+        "Label": CHECK_LABEL,
+        "ProgramArguments": [
+            sys.executable,
+            str(layout.app / "operator" / "current" / "macos-node-operator.py"),
+            "check-background",
+        ],
+        "RunAtLoad": True,
+        "StartInterval": CHECK_INTERVAL,
+    }, fmt=plistlib.FMT_XML)
+
+
+def check_existing_plist(layout) -> bytes | None:
+    plist, _ = check_paths(layout)
+    if not plist.exists() and not plist.is_symlink():
+        return None
+    content = lifecycle.exact_plist_bytes(plist, layout.uid)
+    try:
+        actual = plistlib.loads(content)
+        expected = plistlib.loads(check_plist(layout))
+    except (ValueError, TypeError, plistlib.InvalidFileException) as exc:
+        raise Refused("Invalid macOS release-checker LaunchAgent.") from exc
+    if not isinstance(actual, dict):
+        raise Refused("Unexpected macOS release-checker job.")
+    # An installed version may use a different absolute Python interpreter
+    # from the currently running updater, but the scheduled script and its
+    # arguments must always be the approved, user-private, signed path.
+    args = actual.get("ProgramArguments")
+    if (not isinstance(args, list) or len(args) != 3 or
+        not isinstance(args[0], str) or not os.path.isabs(args[0])):
+        raise Refused("Release-checker Python interpreter is unavailable.")
+    expected["ProgramArguments"][0] = args[0]
+    if actual != expected:
+        raise Refused("Unexpected release-checker job configuration; refusing changes.")
+    return content
+
+
+def installed_check_status(layout) -> dict:
+    """Read local state only. Status never performs network access."""
+    plist, record = check_paths(layout)
+    contents = check_existing_plist(layout)
+    loaded = lifecycle.launch_loaded(layout, check_target(layout))
+    if contents is None and loaded:
+        raise Refused("Unexpected loaded release-checker job without its plist.")
+    if contents is not None and (
+        not loaded or not Path(plistlib.loads(contents)["ProgramArguments"][0]).is_file()
+    ):
+        # Python upgrades can remove the interpreter originally pinned in
+        # launchd. Status and disable must remain usable to repair it.
+        state = "needs-attention"
+    else:
+        state = "enabled" if loaded else "disabled"
+    latest = None
+    if record.exists() or record.is_symlink():
+        lifecycle.require_private(record, layout.uid, directory=False)
+        if record.stat().st_size > MAX_CHECK_RECORD:
+            raise Refused("Release-checker result is oversized.")
+        try:
+            latest = json.loads(record.read_text())
+        except (ValueError, UnicodeError) as exc:
+            raise Refused("Release-checker result is malformed.") from exc
+        if (not isinstance(latest, dict) or latest.get("schema") != 1 or
+            latest.get("state") not in (
+                "current", "available", "migration-required",
+                "unavailable", "needs-attention",
+            ) or not isinstance(latest.get("checkedAt"), str)):
+            raise Refused("Release-checker result has unexpected fields.")
+        # Reject unexpected additional data, especially anything that might
+        # accidentally serialize a Node secret or an exception.
+        if set(latest) - {"schema", "checkedAt", "state", "installed",
+                          "candidate", "verification", "reason"}:
+            raise Refused("Release-checker result contains unknown fields.")
+    return {"schedule": state, "intervalSeconds": CHECK_INTERVAL,
+            "lastCheck": latest}
+
+
+def enable_check(layout) -> None:
+    """Provision a check-only user LaunchAgent; never update the Node."""
+    with lifecycle.lock_state(layout):
+        current = current_target(layout)
+        if current is None:
+            raise Refused("Install the signed standalone operator first.")
+        validate_signed_operator(layout, current.parent.name)
+        plist, _ = check_paths(layout)
+        lifecycle.require_owned_parent(layout.app, layout.uid)
+        plist.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        desired = check_plist(layout)
+        existing = check_existing_plist(layout)
+        if existing is not None and not Path(
+            plistlib.loads(existing)["ProgramArguments"][0]
+        ).is_file():
+            raise Refused("Old checker Python interpreter is missing; disable and re-enable checks.")
+        if lifecycle.launch_loaded(layout, check_target(layout)):
+            if existing is None:
+                raise Refused("Unrecognized loaded release-checker job.")
+            print("Release checker is already enabled.")
+            return
+        if existing is None:
+            lifecycle.atomic_write(plist, desired)
+        # Preserve a valid prior interpreter path on retry; do not overwrite
+        # a plist from a previous attempt or a user-owned job unexpectedly.
+        lifecycle.command("launchctl", "bootstrap", f"gui/{layout.uid}", str(plist))
+        if not lifecycle.launch_loaded(layout, check_target(layout)):
+            raise Refused("Release-checker LaunchAgent did not load.")
+    print("Enabled hourly macOS Node release checks (discovery only; no installs).")
+
+
+def disable_check(layout) -> None:
+    with lifecycle.lock_state(layout):
+        plist, _ = check_paths(layout)
+        existing = check_existing_plist(layout)
+        loaded = lifecycle.launch_loaded(layout, check_target(layout))
+        if existing is None:
+            if loaded:
+                raise Refused("Unrecognized loaded release-checker job.")
+            print("Release checker is already disabled.")
+            return
+        if loaded:
+            lifecycle.command("launchctl", "bootout", check_target(layout))
+            if lifecycle.launch_loaded(layout, check_target(layout)):
+                raise Refused("Release-checker job is still loaded after bootout.")
+        plist.unlink()
+        directory = os.open(plist.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    print("Disabled scheduled release checks; no Node service was changed.")
+
+
+def background_check(layout) -> None:
+    """Noninteractive, public catalogue read; only one private status file written."""
+    current = current_target(layout)
+    if current is None:
+        raise Refused("No signed standalone operator installed.")
+    # Prevent arbitrary execution from a checkout, or an out-of-date helper
+    # when the installed pointer has moved to a different signed release.
+    if Path(__file__).resolve().parent != current.resolve():
+        raise Refused("Checker must run from the selected signed operator.")
+    validate_signed_operator(layout, current.parent.name)
+    observation = {
+        "schema": 1,
+        "checkedAt": datetime.now(timezone.utc).isoformat(),
+        "state": "unavailable",
+        "reason": "catalogue-or-node-unavailable",
+    }
+    if layout.pending.exists() or layout.pending.is_symlink() or (
+        layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()
+    ):
+        observation["state"] = "needs-attention"
+        observation["reason"] = "local-recovery-pending"
+    else:
+        try:
+            source = Path(__file__).resolve().with_name("macos-node-update.py")
+            spec = importlib.util.spec_from_file_location(
+                "atlas_background_node_check", source
+            )
+            if not spec or not spec.loader:
+                raise Refused("Selected updater unavailable.")
+            updater = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(updater)
+            details = updater.discover(layout)
+            observation = {
+                "schema": 1,
+                "checkedAt": observation["checkedAt"],
+                "state": details["state"],
+                "installed": details["installed"],
+                "candidate": details["candidate"],
+                "verification": "catalogue-only",
+            }
+        except Exception:
+            # Error type/message could contain a URL or host-local path.
+            # Never persist a raw exception or the Node's identity/config.
+            pass
+    # Network discovery must not hold the lifecycle lock: it is bounded by
+    # network timeouts and must never stall a Node activation or watchdog.
+    # However, the *final* operator/recovery checks and atomic publication
+    # must be one critical section with promote() and activate()/rollback().
+    # Otherwise a promotion between validation and atomic_write() could
+    # publish an obsolete candidate after the new operator is already active.
+    with lifecycle.lock_state(layout):
+        if current_target(layout) != current:
+            observation = {
+                "schema": 1,
+                "checkedAt": observation["checkedAt"],
+                "state": "unavailable",
+                "reason": "operator-changed-during-check",
+            }
+        elif layout.pending.exists() or layout.pending.is_symlink() or (
+            layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()
+        ):
+            observation = {
+                "schema": 1,
+                "checkedAt": observation["checkedAt"],
+                "state": "needs-attention",
+                "reason": "local-recovery-pending",
+            }
+        _, record = check_paths(layout)
+        lifecycle.require_owned_parent(layout.app, layout.uid)
+        if record.is_symlink():
+            raise Refused("Release-checker result path is symlinked.")
+        if record.exists():
+            lifecycle.require_private(record, layout.uid, directory=False)
+        lifecycle.atomic_write(record, (
+            json.dumps(observation, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode())
+
+
+def monitor_manage(layout, argv: list[str]) -> int:
+    if argv in (["status"], ["status", "--json"]):
+        result = installed_check_status(layout)
+        if "--json" in argv:
+            print(json.dumps(result, sort_keys=True))
+        else:
+            print("Schedule:", result["schedule"])
+            print("Interval:", result["intervalSeconds"], "seconds")
+            print("Last check:", json.dumps(result["lastCheck"], sort_keys=True))
+        return 0
+    if argv not in (["enable"], ["disable"]):
+        raise Refused("Usage: atlas-node-mac monitor status [--json] | enable | disable")
+    if not sys.stdin.isatty():
+        raise Refused("Changing the scheduled checker requires an interactive terminal.")
+    word = "ENABLE CHECKS" if argv[0] == "enable" else "DISABLE CHECKS"
+    if input("Type " + word + " to proceed: ") != word:
+        raise Refused("No schedule change was made.")
+    if argv[0] == "enable":
+        enable_check(layout)
+    else:
+        disable_check(layout)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not (argv == ["status"] or argv == ["sync", "--confirm"] or
+            argv == ["check-background"] or
             len(argv) == 3 and argv[0] == "install" and argv[2] == "--confirm" and
             lifecycle.TAG.fullmatch(argv[1])):
-        print("Usage: macos-node-operator.py status | install vVERSION-SHA --confirm | sync --confirm",
+        print("Usage: macos-node-operator.py status | install vVERSION-SHA --confirm | sync --confirm | check-background",
               file=sys.stderr)
         return 2
     layout = layout_for_user()
     if argv[0] == "status":
         print(json.dumps(operator_status(layout), indent=2))
+    elif argv[0] == "check-background":
+        background_check(layout)
     elif argv[0] == "install":
         if not sys.stdin.isatty() or input("Type INSTALL " + argv[1] + " to provision the CLI: ") != "INSTALL " + argv[1]:
             raise Refused("Operator install requires explicit interactive confirmation.")

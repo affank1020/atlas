@@ -85,6 +85,58 @@ interactive. The operator and its compatibility are verified in CI, but the
 first real macOS login-session migration still requires disposable-host
 acceptance.
 
+## Optional hourly update discovery
+
+After installing the signed standalone operator, the Mac can check for new
+public releases every hour **without** staging archives, installing updates,
+changing the Node's LaunchAgent, or opening a privileged tool. This is
+deliberately opt-in, similar to Linux's existing check-only timer.
+
+```bash
+operator="$HOME/Library/Application Support/Atlas/NodeSoftware/bin/atlas-node-mac"
+"$operator" monitor status
+"$operator" monitor status --json
+"$operator" monitor enable    # interactive: ENABLE CHECKS
+"$operator" monitor disable   # interactive: DISABLE CHECKS
+```
+
+Enabling installs a *separate*, same-user LaunchAgent
+`com.affank1020.atlas.node.update-check` with `StartInterval=3600` and
+`RunAtLoad=true`. It uses the installed, signed Python operator via the
+private `operator/current` symlink, so future operator promotions do not
+require replacing the checker job. It never grants root access or performs
+downloads and installations. It does not run while the user is logged out
+and cannot be relied upon for unattended host recovery.
+
+The checker writes a private JSON observation to
+`~/Library/Application Support/Atlas/NodeSoftware/release-check.json`:
+`checkedAt`, `state`, installed version and candidate tag (when known).
+Public GitHub catalogue discovery runs **outside** the Node lifecycle lock,
+so slow network requests cannot block updates. Its final operator version
+check, pending-recovery check and atomic observation write happen **inside**
+that same lock, preventing an old checker from publishing a candidate after
+an operator promotion. If a promotion wins first, the old check writes an
+explicit `unavailable` observation instead of an obsolete candidate.
+Its `verification: catalogue-only` value explicitly means this is
+**unverified metadata**, not approval or signed-byte verification. If GitHub
+is unreachable, the configured Node cannot be inspected, or the local
+recovery journal is pending, the stored state is `unavailable` or
+`needs-attention`, not an invented up-to-date status. It never writes
+credentials, Node UUIDs, exception details, or filesystem paths into the
+observation. A last-check record may be stale; consult its timestamp.
+
+The schedule can be disabled without stopping the Atlas Node or changing its
+credentials. Unknown or modified LaunchAgent plists and symlinked status files
+are rejected. If a Python upgrade removes the interpreter recorded in the
+checker's existing LaunchAgent, `monitor status` reports `needs-attention`.
+Use `monitor disable` followed by `monitor enable` to intentionally
+re-provision it with the current Python; the old missing interpreter does
+not prevent disabling the job. If the LaunchAgent plist is installed but `launchctl` cannot
+find a loaded checker job, `monitor status` reports `needs-attention`
+rather than `enabled`. Scheduled checks are **not automatic installation**;
+`"$operator" update` still requires its original exact-release confirmation.
+
+
 **There is no automatic installation.** The command displays the exact stable
 release tag and requires typing `UPDATE node-vVERSION-SHA`. It checks the
 public release catalogue twice, including full source SHA, asset digest,
