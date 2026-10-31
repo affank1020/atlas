@@ -56,18 +56,18 @@ test('late log responses cannot cross Node and stream selection', async () => {
     expect(await screen.findByText('new-node-output')).toBeInTheDocument();
 });
 
-test('Linux Node only exposes the journal and requests the selected bounded tail', async () => {
+test('Linux Node requests its private service log and bounds the selected tail', async () => {
     location.hash = '#/monitoring?tab=logs&nodeId=linux-node&source=stdout&lines=25';
     vi.mocked(callTool).mockImplementation(async name => name === 'list_nodes'
         ? [{ id: 'linux-node', name: 'Linux server', platform: 'linux', status: 'online', capabilities: ['node.logs'] }] as never
-        : { source: 'journal', lines: ['2026-10-21T22:00:00Z atlas-node: healthy'], available: true, truncated: false } as never);
+        : { source: 'service', lines: ['2026-10-21T22:00:00Z atlas-node: healthy'], available: true, truncated: false } as never);
     render(<MonitoringPage />);
     expect(await screen.findByRole('option', { name: /Linux server/ })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Log stream' })).toHaveValue('journal');
+    expect(screen.getByRole('combobox', { name: 'Log stream' })).toHaveValue('service');
     expect(screen.getByRole('combobox', { name: 'Log stream' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh logs' }));
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('read_node_logs',
-        { nodeId: 'linux-node', source: 'journal', lines: 25 }, expect.any(AbortSignal)));
+        { nodeId: 'linux-node', source: 'service', lines: 25 }, expect.any(AbortSignal)));
     expect(await screen.findByText(/atlas-node: healthy/)).toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search loaded log lines' }), { target: { value: 'not-found' } });
     expect(screen.queryByText(/atlas-node: healthy/)).not.toBeInTheDocument();
