@@ -100,6 +100,31 @@ test('Bot-authenticated reply markers retain exact parent and body while copied 
     ]]).reader.inspect(repository, prNumber), /conflicting identity/);
 });
 
+test('fix acknowledgement replies have separate bot-owned markers and exact reply parents', async () => {
+    const marker = '<!-- atlas-code-reviews-fix:v1:' + 'c'.repeat(64) + ' -->';
+    const { reader } = githubFixture([[
+        root(110),
+        { ...reply(111, 110, 'Fixed with tests.\\n' + marker), user: { id: botId, type: 'Bot' } },
+        { ...reply(112, 110, 'Copied marker.\\n' + marker), user: { id: 777, type: 'User' } },
+    ]]);
+    const found = await reader.inspect(repository, prNumber);
+    assert.equal(found.managedFixReplies.length, 1);
+    assert.equal(found.managedFixReplies[0]!.id, 111);
+    assert.equal(found.managedFixReplies[0]!.parentId, 110);
+    assert.deepEqual(found.copiedFixMarkers, [marker]);
+    assert.equal(found.managedReplies.length, 0);
+
+    await assert.rejects(githubFixture([[
+        root(110),
+        { ...reply(111, 110, 'First.\\n' + marker), user: { id: botId, type: 'Bot' } },
+        { ...reply(113, 110, 'Duplicate.\\n' + marker), user: { id: botId, type: 'Bot' } },
+    ]]).reader.inspect(repository, prNumber), /conflicting identity/);
+    await assert.rejects(githubFixture([[
+        root(110),
+        root(111, 'Not a reply.\\n' + marker),
+    ]]).reader.inspect(repository, prNumber), /conflicting identity/);
+});
+
 test('duplicate owned roots, copied Bot reply and missing reply parents are conflicts', async () => {
     await assert.rejects(githubFixture([[root(110), root(111)]]).reader.inspect(repository, prNumber),
         /conflicting identity/);

@@ -13,6 +13,7 @@ import type { InlineThreadPreflightService } from './inline-thread-preflight.js'
 import type { InlineThreadInventoryService } from './inline-thread-inventory.js';
 import type { InlineRootPublicationService } from './inline-root-publication.js';
 import type { InlineReplyPublicationService } from './inline-reply-publication.js';
+import type { InlineFixPublicationService } from './inline-fix-publication.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -29,7 +30,8 @@ export class CodeReviewsService {
         private readonly inlinePreflight?: Pick<InlineThreadPreflightService, 'preview'>,
         private readonly inlineInventory?: Pick<InlineThreadInventoryService, 'preview'>,
         private readonly inlineRootPublisher?: Pick<InlineRootPublicationService, 'publish'>,
-        private readonly inlineReplyPublisher?: Pick<InlineReplyPublicationService, 'publish'>) {}
+        private readonly inlineReplyPublisher?: Pick<InlineReplyPublicationService, 'publish'>,
+        private readonly inlineFixPublisher?: Pick<InlineFixPublicationService, 'publish'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -137,6 +139,15 @@ export class CodeReviewsService {
         if (!this.inlineReplyPublisher)
             throw new AtlasError('Inline reply publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
         return this.inlineReplyPublisher.publish(repository, prNumber, findingId, apply, caller);
+    }
+
+    /** One explicit evidence-backed fix acknowledgement on an owned inline root. */
+    async publishInlineFixEvidence(repository: string, prNumber: number, runId: string,
+        lineageKey: string, apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.inlineFixPublisher)
+            throw new AtlasError('Inline fix evidence publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineFixPublisher.publish(repository,prNumber,runId,lineageKey,apply,caller);
     }
 
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
@@ -393,6 +404,21 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     repository: string; prNumber: number; findingId: string; apply: boolean;
                 }, caller?: ApplicationCaller) =>
                     service.publishPersistingInlineReply(repository, prNumber, findingId, apply, caller),
+            },
+            {
+                name: 'code_reviews_publish_fix_evidence',
+                description: 'Opt-in evidence-backed resolution acknowledgement reply to a verified Bot-owned GitHub inline root. Dry-run by default, never resolves or closes the GitHub review thread.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    runId: z.string().uuid(),
+                    lineageKey: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, runId, lineageKey, apply }: {
+                    repository:string; prNumber:number; runId:string; lineageKey:string; apply:boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishInlineFixEvidence(repository,prNumber,runId,lineageKey,apply,caller),
             },
             {
                 name: 'code_reviews_list_runs',

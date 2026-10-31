@@ -18,10 +18,12 @@ export type ManagedInlineReply = {
 };
 type Inventory = { roots: ThreadRoot[]; copiedMarkers: string[];
     replies: Map<number, number>; managedReplies: ManagedInlineReply[];
-    copiedReplyMarkers: string[] };
+    copiedReplyMarkers: string[]; managedFixReplies: ManagedInlineReply[];
+    copiedFixMarkers: string[] };
 const lineagePattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const markerPattern = /<!-- atlas-code-reviews-thread:v1:([a-f0-9]{64}) -->/g;
 const replyMarkerPattern = /<!-- atlas-code-reviews-reply:v1:([a-f0-9]{64}) -->/g;
+const fixMarkerPattern = /<!-- atlas-code-reviews-fix:v1:([a-f0-9]{64}) -->/g;
 const shaPattern = /^[a-f0-9]{40}$/i;
 const positive = (v: unknown): v is number =>
     typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
@@ -62,6 +64,9 @@ export class GitHubInlineThreadReader {
         const managedReplies: ManagedInlineReply[] = [];
         const copiedReplyMarkers: string[] = [];
         const ownedReplyMarkers = new Set<string>();
+        const managedFixReplies: ManagedInlineReply[] = [];
+        const copiedFixMarkers: string[] = [];
+        const ownedFixMarkers = new Set<string>();
         const replies = new Map<number, number>();
         const seenIds = new Set<number>();
         const seenOwnedMarkers = new Set<string>();
@@ -102,6 +107,28 @@ export class GitHubInlineThreadReader {
                 const owned = author.id === bot.id && author.type === 'Bot';
                 if (typeof entry.body !== 'string') {
                     if (owned) throw new AtlasError('App-owned GitHub inline comment has no body.', 'CONFLICT');
+                    continue;
+                }
+                const fixMatches = [...entry.body.matchAll(fixMarkerPattern)];
+                if (owned && entry.body.includes('<!-- atlas-code-reviews-fix:') &&
+                    (fixMatches.length !== 1 || !entry.body.endsWith(fixMatches[0]![0])))
+                    throw new AtlasError('App-owned fix reply marker is malformed.', 'CONFLICT');
+                if (fixMatches.length) {
+                    if (entry.body.includes('<!-- atlas-code-reviews-reply:') ||
+                        entry.body.includes('<!-- atlas-code-reviews-thread:'))
+                        throw new AtlasError('Fix reply has multiple incompatible identities.', 'CONFLICT');
+                    const marker = fixMatches[0]![0];
+                    if (!owned) copiedFixMarkers.push(marker);
+                    else {
+                        if (!positive(entry.in_reply_to_id) || ownedFixMarkers.has(marker) ||
+                            entry.body.length > 65_000)
+                            throw new AtlasError('App-owned fix reply has conflicting identity.', 'CONFLICT');
+                        ownedFixMarkers.add(marker);
+                        managedFixReplies.push({
+                            id: entry.id, parentId: entry.in_reply_to_id, marker,
+                            bodySha256: createHash('sha256').update(entry.body).digest('hex'),
+                        });
+                    }
                     continue;
                 }
                 const replyMatches = [...entry.body.matchAll(replyMarkerPattern)];
@@ -164,7 +191,8 @@ export class GitHubInlineThreadReader {
                 // Otherwise it is unsafe to conclude a managed thread is unique.
                 if ([...replies.keys()].some(id => !seenIds.has(id)))
                     throw new AtlasError('GitHub inline thread reply references an absent root.', 'CONFLICT');
-                return { roots, copiedMarkers, replies, managedReplies, copiedReplyMarkers };
+                return { roots, copiedMarkers, replies, managedReplies, copiedReplyMarkers,
+                    managedFixReplies, copiedFixMarkers };
             }
         }
         throw new AtlasError('GitHub inline thread inventory exceeds five complete pages.',
