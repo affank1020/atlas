@@ -14,7 +14,7 @@ async function enroll(identity: NodeIdentity, name: string) {
     return identity.enrol({ token: ticket.enrolmentToken, name, platform: 'test' });
 }
 async function allowReceiving(pool: Pool, nodeId: string) {
-    await pool.query("UPDATE nodes SET capabilities=ARRAY['device.share.receive']::text[] WHERE id=$1", [nodeId]);
+    await pool.query("UPDATE nodes SET capabilities=ARRAY['device.share.receive','device.inbox.receive']::text[] WHERE id=$1", [nodeId]);
 }
 function inboxUsing(pool: Pool, approval: NodeShareApprovals) {
     return new DeviceOfflineInbox(pool, randomBytes(32), approval);
@@ -307,4 +307,31 @@ test('disabling a managed grant erases pending data despite a valid environment 
     const nextId=randomUUID();
     assert.equal((await inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
         deliveryId:nextId,text:'New item'})).status,'queued');
+});
+
+test('live-only Android 0.6 or Mac receiver cannot accept queued text until inbox software is installed', async () => {
+    const fixture = await databaseFixture();
+    const identity = new NodeIdentity(fixture.store.pool);
+    const source = await enroll(identity,'Sender');
+    const target = await enroll(identity,'Legacy live receiver');
+    const approvals = new NodeShareApprovals(fixture.store.pool);
+    await approvals.update({sourceNodeId:source.nodeId,targetNodeId:target.nodeId,enabled:true});
+    const inbox = inboxUsing(fixture.store.pool,approvals);
+    await fixture.store.pool.query(
+        "UPDATE nodes SET capabilities=ARRAY['device.share.receive']::text[] WHERE id=$1",
+        [target.nodeId],
+    );
+    const original = randomUUID();
+    await assert.rejects(inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
+        deliveryId:original,text:'Should not be stored'}),
+        (error:any) => error.code==='SHARE_DENIED');
+    const missing = await fixture.store.pool.query('SELECT 1 FROM device_inbox WHERE id=$1',[original]);
+    assert.equal(missing.rowCount,0,'never acknowledge unreadable content as queued');
+    // Upgrading the same enrolled Node enables inbox storage without requiring
+    // a new identity or changing the approval; a fresh delivery ID is used.
+    await allowReceiving(fixture.store.pool,target.nodeId);
+    const supportedId = randomUUID();
+    assert.equal((await inbox.enqueue({sourceId:source.nodeId,targetId:target.nodeId,
+        deliveryId:supportedId,text:'Supported now'})).status,'queued');
+    assert.equal((await inbox.read(target.nodeId,supportedId)).text,'Supported now');
 });
