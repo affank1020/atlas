@@ -64,6 +64,26 @@ export function loadDeviceShareConfig(env: NodeJS.ProcessEnv = process.env) {
 }
 
 
+/** Extra opt-in for IMAGE delivery, independent from text-share approval.
+ * No wildcard: source and Mac target identities must be listed explicitly.
+ * Removing the pair on next server configuration reload revokes new transfers.
+ */
+export function loadDeviceImageConfig(env: NodeJS.ProcessEnv = process.env) {
+    const raw = env.ATLAS_DEVICE_IMAGE_PAIRS?.trim() ?? '';
+    const pairs = new Set<string>();
+    if (!raw) return { approvedPairs: pairs };
+    const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+    for (const item of raw.split(',')) {
+        const ids = item.trim().toLowerCase().split(':').map(x => x.trim());
+        if (ids.length !== 2 || !uuid.test(ids[0]!) || !uuid.test(ids[1]!) ||
+            ids[0] === ids[1] || pairs.has(ids.join(':')))
+            throw Error('ATLAS_DEVICE_IMAGE_PAIRS requires distinct sourceUUID:targetUUID pairs.');
+        pairs.add(ids.join(':'));
+    }
+    if (pairs.size > 64) throw Error('ATLAS_DEVICE_IMAGE_PAIRS allows at most 64 pairs.');
+    return { approvedPairs: pairs };
+}
+
 /** Explicit repository-to-immutable-GitHub-user-ID trust map; fail closed if absent.
  * A login or free-text review heading is never sufficient proof of publisher origin.
  */
@@ -240,6 +260,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         // Fail closed until the separately reviewed host executor is installed.
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
         deviceShares: loadDeviceShareConfig(env),
+        deviceImages: loadDeviceImageConfig(env),
         deviceInboxKey: env.ATLAS_DEVICE_INBOX_KEY?.trim(),
         fcmServiceAccountJson: env.ATLAS_FCM_SERVICE_ACCOUNT_JSON?.trim(),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),

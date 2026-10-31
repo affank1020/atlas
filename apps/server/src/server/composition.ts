@@ -5,6 +5,7 @@ import { readInboxKey } from '../nodes/offline-inbox-crypto.js';
 import { DevicePushService, parseFcmCredentials } from '../nodes/device-push.js';
 import { NodeIdentity } from '../nodes/identity.js';
 import { NodeShareApprovals } from '../nodes/share-approvals.js';
+import { LiveImageRelay } from '../nodes/live-image-relay.js';
 import { NodeService } from '../nodes/service.js';
 import { NodeUpdateIntentLedger } from '../nodes/update-intents.js';
 import { NodeRouter } from '../nodes/router.js';
@@ -101,6 +102,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         ? new DevicePushService(repository.pool, readInboxKey(config.deviceInboxKey), fcmCredentials, shareApprovals)
         : undefined;
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox, push);
+    const imageRelay = new LiveImageRelay(nodes, shareApprovals, config.deviceImages.approvedPairs);
     // Bounded periodic retention cleanup, including while the inbox is idle.
     const inboxCleanup = offlineInbox && setInterval(() => {
         void offlineInbox.purgeExpired().catch(() => undefined);
@@ -147,7 +149,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         inlineFixPublisher, reviewThreadState, threadResolution);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
-    const services = { config, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, imageRelay, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

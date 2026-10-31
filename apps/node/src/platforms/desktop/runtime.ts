@@ -14,6 +14,7 @@ import { AtlasError } from '@atlas/protocol/errors';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 import type { NodeCapability } from '@atlas/protocol/node-model';
 import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
+import { MacImageReceiver } from '../../capabilities/device-share/mac-image-receiver.js';
 import type { Workspace, WorkspaceAdapter } from '@atlas/protocol/workspace';
 import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 export class LocalNodeRuntime implements NodeRuntime {
@@ -23,13 +24,15 @@ export class LocalNodeRuntime implements NodeRuntime {
     readonly adapters: Map<string, WorkspaceAdapter>;
     private readonly platform: NodeJS.Platform;
     private readonly shareReceiver?: MacShareReceiver;
+    private readonly imageReceiver?: MacImageReceiver;
     private readonly shareSenderEnabled: boolean;
     constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>,
         platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver,
-        shareSenderEnabled = false) {
+        shareSenderEnabled = false, imageReceiver?: MacImageReceiver) {
         this.platform = platform;
         this.shareSenderEnabled = platform === 'darwin' && shareSenderEnabled;
         this.shareReceiver = platform === 'darwin' ? shareReceiver : undefined;
+        this.imageReceiver = platform === 'darwin' ? imageReceiver : undefined;
         this.files = new WorkspaceFiles(roots);
         // The Linux Node is intentionally not a Unity/football host. A Linux
         // development sandbox is not ready, so no dev execution is advertised.
@@ -42,12 +45,20 @@ export class LocalNodeRuntime implements NodeRuntime {
         return [...shared, "workspace.dev", "football.training", "node.logs",
             ...(this.adapters.has("unity") ? ["unity" as const] : []),
             ...(this.shareReceiver ? ["device.share.receive" as const] : []),
-            ...(this.shareSenderEnabled ? ["device.share.send" as const] : [])];
+            ...(this.shareSenderEnabled ? ["device.share.send" as const] : []),
+            ...(this.imageReceiver ? ["device.image.receive" as const] : [])];
     }
     bind(rootPath: string) { return this.files.bind(rootPath); }
     async receiveDeviceShare(input: { deliveryId: string; sourceNodeId: string; text: string; expiresAt: string }) {
         if (!this.shareReceiver) throw new AtlasError('Mac sharing approval not enabled.', 'CAPABILITY_UNAVAILABLE');
         return this.shareReceiver.receive(input, this.shutdown.signal);
+    }
+    async receiveDeviceImage(input: {
+        deliveryId: string; sourceNodeId: string; mimeType: 'image/png' | 'image/jpeg';
+        byteLength: number; sha256: string; expiresAt: string; bytes: Buffer;
+    }) {
+        if (!this.imageReceiver) throw new AtlasError('Mac image receiving is disabled.', 'CAPABILITY_UNAVAILABLE');
+        return this.imageReceiver.receive(input, this.shutdown.signal);
     }
     async readLogs(source: 'stdout' | 'stderr' | 'journal' | 'service', lines: number) {
         if (this.platform === 'linux') {

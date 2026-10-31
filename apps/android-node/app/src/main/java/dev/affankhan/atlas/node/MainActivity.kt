@@ -585,8 +585,8 @@ private fun SendContent(
     if (session.image != null) {
         val image = session.image
         val thumbnail = remember(image) { thumbnailForShare(image.bytes) }
-        InfoCard("Image imported", image.mimeType + " · " + (image.sizeBytes / 1024) +
-            " KiB. Image delivery is not enabled yet; this image has NOT been sent.")
+        InfoCard("Image ready", image.mimeType + " · " + (image.sizeBytes / 1024) +
+            " KiB. Select an approved Mac and press Send to copy it after Mac confirmation.")
         if (thumbnail != null) {
             Image(
                 bitmap = thumbnail,
@@ -638,9 +638,10 @@ private fun SendContent(
             !recipientsLoading && recipientsError == null &&
             recipients.any { it.available && it.nodeId.equals(shareTarget, ignoreCase = true) } &&
             validNodeId(shareTarget) && !shareTarget.equals(node.nodeId, ignoreCase = true) &&
-            session.image == null && session.draft.isNotBlank() && !sharePending,
+            (session.image != null || session.draft.isNotBlank()) && !sharePending,
         modifier = Modifier.testTag("share-submit"),
-    ) { Text(if (sharePending) "Waiting for approval…" else "Send to selected Node") }
+    ) { Text(if (sharePending) "Waiting for approval…" else
+        if (session.image != null) "Send image to Mac" else "Send to selected Node") }
     InfoCard("Delivery status", shareStatus)
     Text(
         "Only recipients approved for this Android Node appear above. Select a ready device and confirm Send; the recipient must still accept the share. The list is refreshed on connection and on request.",

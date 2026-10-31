@@ -17,16 +17,17 @@ class AtlasWireTest {
         }
     }
 
-    @Test fun registrationAdvertisesOnlyTextSharingCapabilities() {
+    @Test fun registrationAdvertisesScopedTextInboxAndImageSendCapabilities() {
         val stored = StoredNode("https://atlas.example.com",
             "123e4567-e89b-42d3-a456-426614174000", "a".repeat(43), "Samsung")
         val json = org.json.JSONObject(registrationMessage(stored, "0.1.0"))
         assertEquals("register", json.getString("type"))
         assertEquals(2, json.getInt("protocol"))
-        assertEquals(3, json.getJSONArray("capabilities").length())
+        assertEquals(4, json.getJSONArray("capabilities").length())
         assertEquals("device.share.send", json.getJSONArray("capabilities").getString(0))
         assertEquals("device.share.receive", json.getJSONArray("capabilities").getString(1))
         assertEquals("device.inbox.receive", json.getJSONArray("capabilities").getString(2))
+        assertEquals("device.image.send", json.getJSONArray("capabilities").getString(3))
         assertEquals("android", json.getString("platform"))
     }
 

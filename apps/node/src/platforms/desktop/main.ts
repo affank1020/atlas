@@ -10,6 +10,7 @@ import { UnityAdapter, UnityCliConnection } from '../../capabilities/unity/unity
 import { StandaloneNode } from '../../core/connection/standalone.js';
 import { WorkspaceFiles } from '../../capabilities/workspace-files/files.js';
 import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
+import { MacImageReceiver } from '../../capabilities/device-share/mac-image-receiver.js';
 import { startMacShareControlServer } from '../../capabilities/device-share/mac-sender-control.js';
 import { NodeOfflineFileQueue } from '../../core/file-queue.js';
 import { createNodeRuntimeLogger } from '../../core/runtime-logger.js';
@@ -40,7 +41,10 @@ if (process.env.ATLAS_NODE_UNITY_ENABLED === '1') {
 const shareReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_SHARE_RECEIVE_ENABLED === 'true'
     ? new MacShareReceiver() : undefined;
 const shareSenderEnabled = process.platform === 'darwin' && process.env.ATLAS_NODE_SHARE_SEND_ENABLED === 'true';
-const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver, shareSenderEnabled);
+// Image receiving is separately opt-in and keeps text sharing unchanged.
+const imageReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_IMAGE_RECEIVE_ENABLED === 'true'
+    ? new MacImageReceiver() : undefined;
+const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver, shareSenderEnabled, imageReceiver);
 const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
 const offlineQueue = process.env.ATLAS_NODE_FILE_QUEUE_ENABLED === '1'
     ? new NodeOfflineFileQueue({nodeId:id,credential:token,serverUrl:serverUrl.toString()})

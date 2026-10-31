@@ -1,13 +1,13 @@
-# Atlas Android Node (0.7.0 development build)
+# Atlas Android Node (0.9.0 development build)
 
 Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not** an Android port of the Atlas Web UI.
 
-## Current scope (v0.7.0)
+## Current scope (v0.9.0)
 
 - Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
 - One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated WSS (foreground by default, optional background service).
-- Android Sharesheet text/link import with memory-only draft. Since merged PR #161, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images cannot yet be sent**: the image Send button stays disabled until a separately authorized binary transport is implemented. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
-- Advertises `device.share.send` and `device.share.receive`; the Node disconnects on backgrounding unless the operator turns on Background receiving in Settings. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
+- Android Sharesheet text/link import with memory-only draft. Since merged PR #161, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images can now be explicitly sent** to an online approved Mac over an authenticated bounded binary relay, followed by a Mac Copy/Decline decision. The first slice supports PNG/JPEG and includes cropped screen snips. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
+- Advertises `device.share.send`, `device.share.receive`, `device.inbox.receive` and `device.image.send`; the Node disconnects on backgrounding unless the operator turns on Background receiving in Settings. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
 - Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or implicit background clipboard write.
 - No Workspace capabilities, on-device plaintext inbox persistence, file transfer, automatic send or blanket clipboard permission. The optional remote-messaging foreground service provides best-effort live receiving; it is not offline delivery.
 
@@ -46,7 +46,8 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 5. Foreground Android Copy/Decline receiver — implemented in 0.5.0. Mac-side sender merged in PR #82; an initial physical Mac → Samsung text Copy transfer succeeded on 31 October 2026. The negative cases still need acceptance.
 6. Android 0.6.0 adds an opt-in background service and content-free notifications for *live* text receiving while using other apps.
 7. Android 0.7.0 connects its Inbox tab to the encrypted offline queue from server PR #175, with manual Refresh, Review, Copy and Decline. The Mac sender queues text with `./atlasctl share --queue` and its separate native confirmation. A queued receipt does **not** mean copied.
-8. **Next gate:** physical Samsung queued-text acceptance and FCM wake-up for sleeping tablets; complete [E2E cases](../../docs/MOBILE_BACKGROUND_RECEIVER.md). Screenshot import remains preview-only.
+8. Android 0.8.0 adds opt-in Firebase wake-up hints for encrypted queued text; physical FCM acceptance remains pending.
+9. Android 0.9.0 adds explicit PNG/JPEG image transfer (including cropped snips) to a Mac with `ATLAS_NODE_IMAGE_RECEIVE_ENABLED=true`, existing directional approval, **and** separate server `ATLAS_DEVICE_IMAGE_PAIRS` opt-in. Physical Mac image clipboard paste acceptance is pending; see [MOBILE_IMAGE_HANDOFF.md](../../docs/MOBILE_IMAGE_HANDOFF.md).
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
