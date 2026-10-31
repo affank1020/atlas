@@ -272,6 +272,7 @@ test('diagnostic cursor input is strict, bounded, canonical and never interpolat
         '', '!!', 'a'.repeat(161),
         Buffer.from(JSON.stringify(['2026-10-31T11:00:00.123456Z', "1);DROP TABLE secrets;"])).toString('base64url'),
         Buffer.from(JSON.stringify(['not-a-date', '1'])).toString('base64url'),
+        Buffer.from(JSON.stringify(['2026-02-31T11:00:00.123456Z', '1'])).toString('base64url'),
         Buffer.from(JSON.stringify(['2026-10-31T11:00:00.123456Z', '9223372036854775808'])).toString('base64url'),
         Buffer.from(JSON.stringify(['2026-10-31T11:00:00.123456Z', '01'])).toString('base64url'),
     ];

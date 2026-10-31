@@ -12,6 +12,13 @@ const inputSchema = z.object({
 const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const CURSOR_ID = /^[1-9]\d{0,18}$/;
 const MAX_PG_BIGINT = 9223372036854775807n;
+function validTimestamp(at: string): boolean {
+    if (!CURSOR_AT.test(at)) return false;
+    const date = new Date(at);
+    // Reject normalised impossible dates such as February 31 rather than
+    // misreporting the database as unavailable on a malformed continuation.
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 19) === at.slice(0, 19);
+}
 
 /** Opaque continuation is strictly validated, but is not a security credential.
  * The timestamp is kept at PostgreSQL microsecond precision so equal-millisecond
@@ -19,7 +26,7 @@ const MAX_PG_BIGINT = 9223372036854775807n;
 function cursorFor(row: DiagnosticRow): string {
     const at = row.cursor_at;
     const id = String(row.id ?? '');
-    if (typeof at !== 'string' || !CURSOR_AT.test(at) || !Number.isFinite(Date.parse(at))
+    if (typeof at !== 'string' || !validTimestamp(at)
         || !CURSOR_ID.test(id) || BigInt(id) > MAX_PG_BIGINT)
         throw new Error('Invalid diagnostic history continuation row.');
     return Buffer.from(JSON.stringify([at, id])).toString('base64url');
@@ -34,7 +41,7 @@ function parseCursor(cursor: string): [string, string] {
             typeof payload[0] !== 'string' || typeof payload[1] !== 'string')
             throw new Error('Invalid cursor');
         const [at, id] = payload;
-        if (!CURSOR_AT.test(at) || !Number.isFinite(Date.parse(at)) ||
+        if (!validTimestamp(at) ||
             !CURSOR_ID.test(id) || BigInt(id) > MAX_PG_BIGINT ||
             Buffer.from(JSON.stringify([at, id])).toString('base64url') !== cursor)
             throw new Error('Invalid cursor');

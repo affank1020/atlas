@@ -157,13 +157,18 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         // contract, but explicitly guard the new tool's input schema.
         const diagnosticHistory = tools.find(tool => tool.name === 'read_server_diagnostic_history');
         assert.ok(diagnosticHistory, 'Retained Server diagnostics must be advertised by MCP');
-        assert.deepEqual(Object.keys(diagnosticHistory.inputSchema.properties ?? {}), ['limit'],
-            'Retained history may expose only a bounded limit selector');
+        assert.deepEqual(Object.keys(diagnosticHistory.inputSchema.properties ?? {}), ['limit', 'cursor'],
+            'Retained history must expose only the bounded limit and continuation cursor');
         assert.deepEqual(diagnosticHistory.inputSchema.properties?.limit, {
             type: 'integer', minimum: 1, maximum: 100, default: 30,
         }, 'Retained diagnostic history limit must remain bounded and have a safe default');
         assert.ok(!diagnosticHistory.inputSchema.required?.includes('limit'),
             'The default history page size must remain optional for MCP callers');
+        assert.deepEqual(diagnosticHistory.inputSchema.properties?.cursor, {
+            type: 'string', minLength: 1, maxLength: 160,
+        }, 'Only a bounded opaque continuation coordinate may be accepted');
+        assert.ok(!diagnosticHistory.inputSchema.required?.includes('cursor'),
+            'The new cursor must be optional for existing MCP callers');
         const storageUsage = tools.find(tool => tool.name === 'get_storage_usage');
         assert.ok(storageUsage, 'Read-only storage metrics must be exposed by the MCP transport');
         assert.deepEqual(storageUsage.inputSchema.properties?.refresh, { type: 'boolean' });
