@@ -16,8 +16,7 @@ test('common Activity filters are visible; technical scopes remain accessible an
     expect(screen.getByLabelText('Search activity')).toBeInTheDocument();
     expect(screen.getByLabelText('Outcome')).toHaveValue('failed');
     const advanced = screen.getByText('Scope and time filters · 1 active');
-    expect(advanced.closest('details')).not.toHaveAttribute('open');
-    fireEvent.click(advanced);
+    // A bookmarked Node scope opens its technical controls instead of hiding the active filter.
     expect(advanced.closest('details')).toHaveAttribute('open');
     expect(screen.getByLabelText('Node ID')).toHaveValue('node-1');
     fireEvent.change(screen.getByLabelText('Operation'), { target: { value: 'workspace.updated' } });
@@ -33,6 +32,7 @@ test('Reset filters also clears search and technical edits that have not been ap
     location.hash = '#/monitoring?tab=activity';
     vi.mocked(callTool).mockResolvedValue(emptyActivity as never);
     render(<MonitoringPage />);
+    expect(screen.getByText('Scope and time filters').closest('details')).not.toHaveAttribute('open');
     const search = screen.getByLabelText('Search activity');
     fireEvent.change(search, { target: { value: 'draft search' } });
     expect(screen.getByRole('button', { name: 'Reset filters' })).toBeEnabled();
