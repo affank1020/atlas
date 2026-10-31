@@ -11,7 +11,7 @@ import { WebSocketServer } from 'ws';
 import { LocalNodeRuntime } from '../apps/node/src/platforms/desktop/runtime.js';
 import { StandaloneNode } from '../apps/node/src/core/connection/standalone.js';
 import { startMacShareControlServer } from '../apps/node/src/capabilities/device-share/mac-sender-control.js';
-import { safeTerminalLabel, formatShareRecipientOption } from '../scripts/atlas-mac-share.mjs';
+import { safeTerminalLabel, formatShareRecipientOption, queueEligibleRecipients } from '../scripts/atlas-mac-share.mjs';
 
 
 test('Mac terminal recipient labels cannot execute ANSI, OSC 52, C1 or multiline controls', () => {
@@ -38,6 +38,19 @@ test('Mac terminal recipient labels cannot execute ANSI, OSC 52, C1 or multiline
     assert.ok(!option.includes('\x1b[2J'), 'screen-clearing CSI cannot execute');
     assert.equal(safeTerminalLabel('Sámšung 🚀'), 'Sámšung 🚀');
     assert.equal(safeTerminalLabel('Plain Mac'), 'Plain Mac');
+});
+
+test('queue picker excludes unsupported and legacy recipients but preserves offline-capable peers', () => {
+    const targets = [
+        { nodeId:randomUUID(), name:'Offline Samsung',status:'offline',available:false,queueCapable:true },
+        { nodeId:randomUUID(), name:'Live Mac',status:'online',available:true,queueCapable:true },
+        { nodeId:randomUUID(), name:'Unsupported Linux Node',status:'online',available:false,queueCapable:false },
+        { nodeId:randomUUID(), name:'Old Directory Entry',status:'offline',available:false },
+        { nodeId:randomUUID(), name:'Invalid metadata',status:'offline',available:false,queueCapable:true },
+    ];
+    const result=queueEligibleRecipients(targets);
+    assert.deepEqual(result.map(x=>x.name),['Offline Samsung','Live Mac'],
+        'offline support is independent of live availability; legacy/unsupported peers fail closed');
 });
 
 test('Mac sender is disabled by default, never appears on Linux, and does not change receiving', () => {
