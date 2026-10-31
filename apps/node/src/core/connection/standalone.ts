@@ -5,7 +5,7 @@ import { AtlasError } from '@atlas/protocol/errors';
 import { MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION, nodeRequestSchema, registeredSchema, validateNodeOperation } from '@atlas/protocol/node-protocol';
 import { requiredCapability } from '@atlas/protocol/runtime';
 import { deviceShareDeliverySchema, deviceShareReceiptSchema,
-    deviceShareRecipientsResultSchema, deviceShareTextSchema } from '@atlas/protocol/device-protocol';
+    deviceShareRecipientsResultSchema, deviceInboxRecipientsResultSchema, deviceShareTextSchema } from '@atlas/protocol/device-protocol';
 import { z } from 'zod';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 
@@ -209,6 +209,12 @@ export class StandaloneNode extends EventEmitter {
     async shareRecipients() {
         const result = await this.requestOutbound('directory', { type: 'device.share.recipients' });
         return deviceShareRecipientsResultSchema.parse(result).recipients;
+    }
+
+    /** Explicit queue-only directory; the legacy live reply stays unchanged. */
+    async inboxRecipients() {
+        const result = await this.requestOutbound('directory', { type: 'device.inbox.recipients' });
+        return deviceInboxRecipientsResultSchema.parse(result).recipients;
     }
 
     async sendDeviceShare(targetNodeId: string, text: string): Promise<{ accepted: boolean }> {
