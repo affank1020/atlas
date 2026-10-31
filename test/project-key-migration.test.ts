@@ -80,7 +80,8 @@ test("Strict versioned Project paths reject traversal, malformed variants and am
         variant.replace("/preview/","/original/"),"projects/%2e%2e/objects/"+id+"/v1"]) {
         assert.equal(isProjectObjectKey(key),false,key);
     }
-    for (const variant of ["../x","x/y","original","X","", "a".repeat(65)])
+    assert.equal(projectStorageKey(project,id,"original"),original);
+    for (const variant of ["../x","x/y","X","", "a".repeat(65)])
         assert.throws(()=>projectStorageKey(project,id,variant));
     assert.throws(()=>projectStorageKey(project,id,"preview",0));
     assert.throws(()=>projectStorageKey(project,id,"preview",1000000));
