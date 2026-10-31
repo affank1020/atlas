@@ -36,7 +36,7 @@ test('Node update events render in the Node category and preserve bounded intent
             transport: 'node-credential', approved: false, executable: false },
     };
     render(<ActivityRows events={[event]} scopeLinks />);
-    expect(screen.getByText(/Node/)).toBeInTheDocument();
+    expect(screen.getByText('atlas-node-credential · Node')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Node update intent claimed'));
     expect(screen.getByText('Intent Id')).toBeInTheDocument();
     expect(screen.getByText(source)).toBeInTheDocument();
