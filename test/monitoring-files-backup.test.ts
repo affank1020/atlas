@@ -130,4 +130,10 @@ test('Forged monitoring details on unrelated operations cannot appear as Files o
         operation:'record.updated' as const,projectId:randomUUID(),resulting:suspicious};
     const safe=projectMonitoringEvent(base);
     assert.equal(safe.resulting,undefined);
+    const fakeFile = projectMonitoringEvent({ ...base, operation: 'files.uploaded',
+        resulting: { fileId:suspicious.fileId, ownerKind:'project', source:'database-trigger' } });
+    assert.equal(fakeFile.resulting,undefined,'Only database-trigger file rows may expose file correlation');
+    const fakeBackup = projectMonitoringEvent({ ...base, operation: 'backup.r2_seed_observed',
+        resulting: { runId:suspicious.runId, mode:'apply',status:'completed',source:'operator-cli' } });
+    assert.equal(fakeBackup.resulting,undefined,'Only the operator CLI label may expose backup observations');
 });

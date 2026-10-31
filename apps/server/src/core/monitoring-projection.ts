@@ -11,7 +11,7 @@ const operation = /^workspace[.][a-z][a-z0-9_]{0,90}$/;
 const simpleName = /^[A-Za-z0-9_-]{1,80}$/;
 const outcomes = new Set(['completed', 'pending', 'failed', 'failed_or_uncertain', 'error', 'editor_error', 'cancelled', 'timed_out']);
 
-function safeMetadata(input: unknown, eventOperation: string): Record<string, string | number | boolean> | undefined {
+function safeMetadata(input: unknown, eventOperation: string, eventClient: string): Record<string, string | number | boolean> | undefined {
     if (input === null || typeof input !== 'object' || Array.isArray(input)) return undefined;
     const source = input as Record<string, unknown>;
     const output: Record<string, string | number | boolean> = {};
@@ -25,7 +25,7 @@ function safeMetadata(input: unknown, eventOperation: string): Record<string, st
         if (typeof value === 'string' && pattern.test(value)) output[key] = value;
     }
     if (typeof source.outcome === 'string' && outcomes.has(source.outcome)) output.outcome = source.outcome;
-    if (eventOperation.startsWith('files.')) {
+    if (eventOperation.startsWith('files.') && eventClient === 'atlas-files-db' && source.source === 'database-trigger') {
         for (const key of ['fileId', 'folderId', 'previousFolderId'] as const) {
             if (typeof source[key] === 'string' && uuid.test(source[key])) output[key] = source[key];
         }
@@ -33,7 +33,7 @@ function safeMetadata(input: unknown, eventOperation: string): Record<string, st
             output.ownerKind = source.ownerKind as string;
         if (source.source === 'database-trigger') output.source = 'database-trigger';
     }
-    if (eventOperation === 'backup.r2_seed_observed') {
+    if (eventOperation === 'backup.r2_seed_observed' && eventClient === 'atlas-backup-cli' && source.source === 'operator-cli') {
         if (typeof source.runId === 'string' && uuid.test(source.runId)) output.runId = source.runId;
         if (['dry-run','apply'].includes(String(source.mode))) output.mode = source.mode as string;
         if (['ready','completed','failed','partial','empty'].includes(String(source.status)))
@@ -92,6 +92,6 @@ export function projectMonitoringEvent(event: AuditEvent): AuditEvent {
     // Never copy before-state, and never forward arbitrary after-state such as
     // record fields, stdout/stderr, paths, errors or credential material.
     const { previous: _previous, resulting, ...safe } = event;
-    const metadata = safeMetadata(resulting, event.operation);
+    const metadata = safeMetadata(resulting, event.operation, event.client);
     return metadata ? { ...safe, resulting: metadata } : safe;
 }
