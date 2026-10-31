@@ -349,7 +349,10 @@ private fun SendContent(
         Button(onClick = onLoadDeferredShare, enabled = !sharePending,
             modifier = Modifier.testTag("load-next-share")) { Text("Load newest shared item") }
     }
-    if (session.error != null) InfoCard("Share not imported", session.error)
+    if (session.error != null) InfoCard(
+        if (session.error == "Opening shared image…") "Importing image" else "Share not imported",
+        session.error,
+    )
     if (session.image != null) {
         val image = session.image
         val thumbnail = remember(image) { thumbnailForShare(image.bytes) }
