@@ -7,7 +7,7 @@ import { ManagedSummaryPreviewService } from '../apps/server/src/apps/managed-su
 import { CodeReviewsService, codeReviewsApplication } from '../apps/server/src/apps/code-reviews.js';
 import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
 import { CODE_REVIEWS_PROJECT_ID } from '../apps/server/src/apps/review-import.js';
-import { loadManagedSummaryRepositories } from '../apps/server/src/server/config.js';
+import { loadManagedSummaryRepositories, loadServerConfig } from '../apps/server/src/server/config.js';
 import { databaseFixture, cleanupDatabases } from './database.js';
 
 after(cleanupDatabases);
@@ -128,6 +128,30 @@ async function fixture() {
         setHeadFailureAt: (number: number | null) => { failCheckAt = number; },
         setCurrentHead: (sha: string) => { currentHead = sha; } };
 }
+
+test('legacy publisher cannot overlap any managed or thread mutation allowlist at startup', () => {
+    const enabled = [
+        'ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES',
+    ];
+    for (const flag of enabled) {
+        assert.throws(() => loadServerConfig({
+            DATABASE_URL: 'postgres://localhost:5432/atlas_test',
+            ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: 'Affank1020/Atlas',
+            [flag]: 'affank1020/atlas',
+        }), /legacy and managed GitHub publishing must not overlap/);
+    }
+    const isolated = loadServerConfig({
+        DATABASE_URL: 'postgres://localhost:5432/atlas_test',
+        ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: 'other/repo',
+        ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES: 'affank1020/atlas',
+    });
+    assert.deepEqual([...isolated.codeReviews.publishRepositories], ['other/repo']);
+    assert.deepEqual([...isolated.codeReviews.managedSummaryRepositories], [repository]);
+});
 
 test('managed publication is separately disabled, requires OAuth and preflights without GitHub writes', async () => {
     assert.equal(loadManagedSummaryRepositories({}).size, 0);

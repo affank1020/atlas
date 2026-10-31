@@ -62,46 +62,46 @@ export function renderManagedSummary(repository: string, prNumber: number, round
     if (!sha.test(round.headSha) || !Number.isFinite(Date.parse(round.reviewedAt)))
         throw new AtlasError('Invalid stored review for managed summary.', 'CONFLICT');
     const full = round.source === 'structured' && !round.findingsTruncated;
-    const counts = { sev1: 0, sev2: 0, sev3: 0, sev4: 0, new: 0, persisting: 0, unverified: 0 };
-    for (const finding of round.findings) {
-        counts[finding.severity]++;
-        if (finding.state === 'new' || finding.state === 'persisting' || finding.state === 'unverified')
-            counts[finding.state]++;
-    }
-    const resolved = round.resolutions.length;
+    const counts = { sev1: 0, sev2: 0, sev3: 0, sev4: 0 };
+    for (const finding of round.findings) counts[finding.severity]++;
+    const outcomes: Record<Round['verdict'], { label: string; alert: string }> = {
+        changes_requested: { label: 'Changes requested', alert: 'CAUTION' },
+        concerns_to_verify: { label: 'Concerns to verify', alert: 'WARNING' },
+        non_blocking: { label: 'Non-blocking findings', alert: 'NOTE' },
+        no_findings: { label: 'No actionable findings identified', alert: 'TIP' },
+        inconclusive: { label: 'Inconclusive review', alert: 'WARNING' },
+    };
+    const outcome = outcomes[round.verdict];
+    const severities = ([
+        [counts.sev1, 'Sev1'], [counts.sev2, 'Sev2'],
+        [counts.sev3, 'Sev3'], [counts.sev4, 'Sev4'],
+    ] as const).filter(([count]) => count > 0)
+        .map(([count, severity]) => count + ' ' + severity).join(' · ') || '0 findings';
+    const visible = full ? round.findings.slice(0, 5) : [];
     const lines = [
-        '## Atlas Code Reviews · PR #' + prNumber,
+        '## 🔎 Atlas Code Review · PR #' + prNumber,
         '',
-        '**Latest saved round:** `' + round.headSha.slice(0, 12) + '` · ' +
-            inlineText(round.verdict, 64) + ' · ' + inlineText(round.reviewedAt, 50),
-        '**Stored history:** ' + savedRounds + ' round' + (savedRounds === 1 ? '' : 's') +
-            ' recorded in Atlas (not an exhaustive GitHub history).',
-        '**Evidence:** ' + (full ? 'Structured Atlas submission' :
-            round.source === 'historical' ? 'Historical import — partial/unverified' : 'Unknown or partial evidence'),
+        '> [!' + outcome.alert + ']',
+        '> **' + outcome.label + '**' + (full ? ' · ' + severities : ' · Partial evidence'),
         '',
-        '### Latest recorded round',
+        '**Reviewed head:** ' + inlineCode(round.headSha.slice(0, 7), 7) +
+            ' · **Saved rounds:** ' + savedRounds +
+            ' · **Source:** ' + (full ? 'Structured review' :
+                round.source === 'historical' ? 'Historical import — partial' : 'Partial / unknown'),
         ...(full ? [
-            'Severity observations: Sev1 ' + counts.sev1 + ' · Sev2 ' + counts.sev2 +
-                ' · Sev3 ' + counts.sev3 + ' · Sev4 ' + counts.sev4,
-            'Finding labels: new ' + counts.new + ' · persisting ' + counts.persisting +
-                ' · unverified ' + counts.unverified + ' · reviewer-asserted resolved ' + resolved,
-        ] : ['Complete severity and lifecycle totals unavailable for this round.']),
+            ...(round.resolutions.length ?
+                ['**Reviewer-asserted fixes:** ' + round.resolutions.length] : []),
+            ...visible.map(finding => '- **' + finding.severity.toUpperCase() + '** ' +
+                inlineText(finding.title, 200) +
+                (finding.filePath ? ' — ' + inlineCode(finding.filePath, 1_024) : '') +
+                (finding.line ? ':' + finding.line : '')),
+            ...(round.findings.length > visible.length ?
+                ['- +' + (round.findings.length - visible.length) +
+                    ' more findings in Atlas / inline discussions'] : []),
+        ] : ['**Finding counts:** unavailable for this partial review. See Atlas for evidence.']),
         '',
-        '#### Observations',
-        ...(round.findings.length ? round.findings.slice(0, 30).map(finding =>
-            '- **' + finding.severity.toUpperCase() + ' · ' + inlineText(finding.title, 200) + '**' +
-            ' (' + inlineText(finding.state, 20) + ')' +
-            (finding.filePath ? ' — ' + inlineCode(finding.filePath, 1_024) : '') +
-            (finding.line ? ':' + finding.line : '') +
-            (finding.lineageKey ? ' · lineage ' + inlineCode(finding.lineageKey, 128) : '')) :
-            ['No saved observations in this round; absence is not evidence of a fix.']),
-        ...(round.resolutions.length ? [
-            '', '#### Reviewer-asserted resolutions',
-            ...round.resolutions.map(item => '- ' + inlineCode(item.lineageKey, 128) + ': ' +
-                inlineText(item.evidence, 900)),
-        ] : []),
-        '',
-        '_This summary reflects saved Atlas evidence. A finding does not become fixed merely because it is absent, and reviewer-supplied resolutions are not independently verified by Atlas. GitHub discussion threads remain separate._',
+        '_Latest saved review only; missing findings are not proof of a fix. ' +
+            'Reviewer-assessed fixes and GitHub conversation resolution are separate._',
         '',
         marker,
     ];

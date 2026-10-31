@@ -548,18 +548,22 @@ The preview only materializes the selected saved round's linked findings,
 preserving existing strict cardinality and lineage integrity checks; missing
 history never establishes a clean review.
 
-The preview distinguishes structured source coverage from partial historical
-imports. Counts are **for the selected saved round**, not all unique root
-causes or all GitHub review history. It includes latest reviewed SHA, verdict,
-recorded round count, severity observations, explicit finding-state labels
-and *reviewer-asserted* resolutions with limited supporting text. No lifecycle
-outcome is inferred from disappeared observations or outdated comments. Body
-length and untrusted Markdown/HTML marker handling are bounded:
-inline title/evidence strings flatten line breaks and escape Markdown
-metacharacters, while file paths and lineage keys use safely delimited
-code spans (including embedded backticks). This prevents embedded headings,
-GitHub alerts and false status banners from being rendered as trusted
-summary structure.
+The managed PR summary is deliberately **compact**: one native GitHub verdict
+alert, abbreviated reviewed SHA, saved-round count, severity counts for the
+latest **complete structured** round, a maximum of five one-line finding
+titles/locations, and the count of reviewer-asserted fixes (not their full
+evidence). Remaining finding details and technical evidence belong to the
+original inline root and subsequent lineage-linked replies. This summary is
+updated **in place** by the separately opt-in managed publisher; it does not
+create a new large review body on every commit.
+
+Counts reflect the latest saved round, **not the outstanding unique defects**
+or all GitHub review history. Partial/historical reviews are explicitly labelled
+and do not receive fabricated counts. No outcome is inferred from a missing
+finding, an outdated GitHub discussion, or a reviewer-asserted fix. Titles and
+paths are safely Markdown-escaped; comments retain their unique, verified
+GitHub App Bot ownership markers. The summary is an index/status, not a
+replacement for detailed review evidence in Atlas.
 
 The proposed summary uses a **PR-scoped marker**, distinct from the legacy
 one-comment-per-review publisher:
@@ -1179,3 +1183,38 @@ performed.
 
 Review rounds, distinct reviewed commit SHAs, and unique finding identities are separate
 metrics. An empty Store does not imply any repository is free of issues.
+
+
+### Publisher cutover and concise re-review policy (operational acceptance)
+
+- **Before cutover:** the existing Code Reviewer skill remains the sole GitHub
+  publisher. Native Atlas managed summary, inline root/reply/fix, and resolution
+  allowlists remain empty until intentionally configured and verified.
+- **At cutover:** configure the repository-specific managed-summary, inline-root,
+  persisting-reply and fix-evidence allowlists together with the required GitHub
+  App Bot permissions. Update the reviewer skill's publication routing to
+  **submit to Atlas first**, then invoke the native publishing operations
+  sequentially. Never call the legacy GitHub review publisher and the new native
+  publishers for the same round. Use preview-first checks and ensure there is a
+  single authoritative publisher. Permission or uncertain-write failure must
+  fail closed, not trigger an automatic direct-GitHub fallback.
+- **One finding, one thread:** the first verified, anchored, lineage-keyed
+  observation gets a detailed initial inline root. Later verified observations
+  with the same root-cause identity post an incremental reply rather than
+  another root or a copy of the original explanation. Explicit verified fix
+  assessments get one short evidence-backed acknowledgement. Uncertain matches
+  stay unlinked; neither a clean round nor an "outdated" GitHub anchor resolves
+  a conversation automatically. Thread resolution remains a separately gated
+  action.
+- **Presentation:** the PR overview shows the *current saved review* rather
+  than cumulative historical prose. Technical descriptions can be verbose in
+  the initial inline root; persisting/fix replies show new SHA-bound evidence
+  (bounded to 1,500 characters in GitHub), while complete evidence remains
+  stored in Atlas. Managed PR summary always updates its existing Bot-owned
+  marker comment rather than stacking new summaries.
+- **Acceptance:** on an expressly approved open test PR, review SHA A with
+  one anchored finding, publish and independently read back summary/root;
+  review SHA B with explicit persisting or resolution lineage, verify one
+  summary PATCH (not POST) and one in-thread follow-up, verify stored receipts,
+  current GitHub thread state and uncertain-failure behavior. Never infer
+  successful publication from a preview or stored assertion.
