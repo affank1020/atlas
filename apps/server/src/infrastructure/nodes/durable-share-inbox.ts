@@ -14,6 +14,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export type QueuedStatus = 'queued' | 'copied' | 'declined' | 'expired';
 type Envelope = { deliveryId: string; sourceNodeId: string; text: string; expiresAt: string };
 
+/** Offline queue retrieval is only implemented by Android >= 0.7.0. Do not
+ * falsely offer the queue to 0.5/0.6 clients which would never fetch it.
+ */
+export function supportsAndroidInbox(version: string | null): boolean {
+    if (!version) return false;
+    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+    if (!match) return false;
+    const major = Number(match[1]), minor = Number(match[2]);
+    return major > 0 || (major === 0 && minor >= 7);
+}
+
 /**
  * A separate opt-in path from synchronous device.share.submit. No plaintext
  * enters Postgres or diagnostics. Each queue pair needs BOTH the ordinary
@@ -113,6 +124,7 @@ export class DurableDeviceShareInbox {
                 throw new AtlasError('The directional grant was revoked.', 'SHARE_DENIED');
             const targetNode = await this.nodes.get(target);
             if (targetNode.platform !== 'android' || targetNode.credentialState !== 'active' ||
+                !supportsAndroidInbox(targetNode.version) ||
                 !targetNode.capabilities.includes('device.share.receive'))
                 throw new AtlasError('The Android recipient cannot receive queued shares.', 'SHARE_TARGET_UNAVAILABLE');
             const text = input.submission.text;

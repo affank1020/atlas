@@ -8,7 +8,7 @@ import { RemoteNodeRuntime } from './remote-runtime.js';
 import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema,
     deviceShareQueueSubmissionSchema, deviceShareInboxListSchema, deviceShareInboxResolveSchema } from '@atlas/protocol/device-protocol';
 import { DeviceShareRelay } from './share-relay.js';
-import type { DurableDeviceShareInbox } from './durable-share-inbox.js';
+import { supportsAndroidInbox, type DurableDeviceShareInbox } from './durable-share-inbox.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
 
@@ -148,11 +148,17 @@ export class RemoteNodeGateway {
                         await this.nodes.identity!.authenticate(originId, credential);
                         if (this.sessions.get(originId) !== current)
                             throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
-                        const recipients = (await this.nodes.shareRecipients(originId)).map(recipient => ({
-                            ...recipient,
-                            queueAvailable: recipient.platform === 'android' &&
+                        const recipients = await Promise.all((await this.nodes.shareRecipients(originId)).map(async recipient => {
+                            let queueAvailable = false;
+                            if (recipient.platform === 'android' &&
                                 this.inbox?.allowsQueue(originId, recipient.nodeId) === true &&
-                                recipient.status !== 'unavailable',
+                                recipient.status !== 'unavailable') {
+                                const node = await this.nodes.get(recipient.nodeId).catch(() => null);
+                                queueAvailable = !!node && node.credentialState === 'active' &&
+                                    supportsAndroidInbox(node.version) &&
+                                    node.capabilities.includes('device.share.receive');
+                            }
+                            return { ...recipient, queueAvailable };
                         }));
                         respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
                     } catch (error) {

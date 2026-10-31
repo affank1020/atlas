@@ -27,7 +27,8 @@ acknowledges **durable admission on Atlas Server**, never a clipboard copy.
    enrolled Android Node 0.5/0.6; compare installed vs new APK certificate
    fingerprints before `adb install -r`. Never sideload a CI-signed APK.
    [Mobile E2E](./MOBILE_SHARE_E2E.md).
-6. The Mac Node must also be updated from the merged commit and already have
+6. Offline queue targets are only offered after Android has registered **version 0.7.0 or later** at least once. Older Android 0.5/0.6 clients cannot retrieve queued messages.
+7. The Mac Node must also be updated from the merged commit and already have
    `ATLAS_NODE_SHARE_SEND_ENABLED=true`. Keep its existing Node identity.
    `./atlasctl share` now lists approved online targets for immediate Copy
    and separately queue-enabled **offline Android** targets for durable admission.

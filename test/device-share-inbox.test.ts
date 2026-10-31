@@ -16,6 +16,12 @@ const ack = (socket: WebSocket) => once(socket, 'message').then(([bytes]) => JSO
 test('queue configuration is strictly additional to ordinary directional approval', () => {
     const source = randomUUID(), target = randomUUID();
     const base = { DATABASE_URL: 'postgresql://example.invalid/db' };
+    const { supportsAndroidInbox } = await import('../apps/server/src/infrastructure/nodes/durable-share-inbox.js');
+    assert.equal(supportsAndroidInbox('0.5.0'), false);
+    assert.equal(supportsAndroidInbox('0.6.0'), false);
+    assert.equal(supportsAndroidInbox('0.7.0'), true);
+    assert.equal(supportsAndroidInbox('1.0.0'), true);
+    assert.equal(supportsAndroidInbox(null), false);
     const empty = loadServerConfig(base);
     assert.equal(empty.deviceShares.queuePairs.size, 0);
     assert.equal(empty.deviceShares.queueKey, undefined);
@@ -65,6 +71,10 @@ test('offline encrypted shares preserve queued-vs-copied states, replay safety, 
         let receiverSocket = await connect(receiver, ['device.share.receive']);
         await services.shareApprovals.update({ sourceNodeId: sender.nodeId,
             targetNodeId: receiver.nodeId, enabled: true });
+        // Simulate an enrolled tablet that is running the inbox-capable APK.
+        // Older Android 0.5/0.6 clients have no inbox retrieval API.
+        await services.nodes.repository.registerRemote(receiver.nodeId, 'Android 0.7',
+            ['device.share.receive'], 'test-inbox-version', 'android', '0.7.0');
         const offline = once(receiverSocket, 'close'); receiverSocket.terminate(); await offline;
         for (let i = 0; i < 60 && (await services.nodes.get(receiver.nodeId)).status === 'online'; i++)
             await new Promise(resolve => setTimeout(resolve, 20));
