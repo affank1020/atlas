@@ -6,7 +6,7 @@ Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not**
 
 - Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
 - One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated foreground WSS.
-- Android Sharesheet `text/plain` import with memory-only draft. The app sends **only** when the user chooses an approved receiving Node by name and taps **Send**.
+- Android Sharesheet text/link import with memory-only draft. On the **screenshot-intake feature branch**, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images cannot yet be sent**: the image Send button stays disabled until a separately authorized binary transport is implemented. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
 - Advertises `device.share.send` and foreground-only `device.share.receive`. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
 - Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or background receiver.
 - No Workspace capabilities, persistent inbox/history, file transfer, automatic send, blanket clipboard permission or background service.
