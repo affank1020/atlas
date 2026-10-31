@@ -17,3 +17,9 @@
 .atlas-skeleton-app-window > .atlas-skeleton-line { height:26px; }
 .atlas-skeleton-app-window .atlas-skeleton-card { min-height:180px; }
 @media(prefers-reduced-motion:reduce){ .atlas-skeleton { animation:none; background-image:none; } }
+
+/* Match the application directory's four-column card geometry. */
+.applications-directory > .atlas-skeleton-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+@media(max-width:1300px){.applications-directory > .atlas-skeleton-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }}
+@media(max-width:1050px){.applications-directory > .atlas-skeleton-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }}
+@media(max-width:680px){.applications-directory > .atlas-skeleton-grid { grid-template-columns:minmax(0,1fr); }}
