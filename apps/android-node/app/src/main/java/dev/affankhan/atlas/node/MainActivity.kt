@@ -67,7 +67,8 @@ class MainActivity : ComponentActivity() {
 
     private fun enableBackgroundReceiving() {
         if (model.pairedNode == null) return
-        if (!BackgroundReceiverService.hasUsableNotifications(this)) {
+        if (!BackgroundReceiverService.prepareChannels(this) ||
+            !BackgroundReceiverService.hasUsableNotifications(this)) {
             model.reportBackgroundError(
                 "Atlas notifications or one of its channels are disabled. Review notification settings.")
             return
