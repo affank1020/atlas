@@ -23,7 +23,7 @@ function catalog(items: ReturnType<typeof run>[]) {
     } } as any };
 }
 
-test('review dashboard includes complete multi-page saved history and splits verified open, closed and unknown PRs', async () => {
+test('complete multi-page review history aggregates mixed-case PRs and statuses per repository', async () => {
     const all = [
         ...Array.from({ length: 102 }, (_, i) =>
             run(i + 1, i % 2 ? 'Affank1020/Atlas' : 'affank1020/atlas',
@@ -33,55 +33,88 @@ test('review dashboard includes complete multi-page saved history and splits ver
     ];
     const { reader, queries } = catalog(all);
     const checked: string[] = [];
-    const result = await readReviewDashboard(reader, runsId, async (repo, pr) => {
-        checked.push(repo + '#' + pr);
+    const result = await readReviewDashboard(reader, runsId, async (repo, numbers) => {
+        checked.push(repo + ':' + numbers.join(','));
         if (repo === 'other/atlas') throw new Error('GitHub unavailable');
-        return { open: pr === 17, headSha: 'a'.repeat(40) };
+        return Object.fromEntries(numbers.map(n => [n, { open: n === 17, headSha: 'a'.repeat(40) }]));
     });
     assert.equal(result.totalRuns, 104);
-    assert.equal(queries.length, 2, 'all 104 stored rounds are read, not merely the first 100');
+    assert.equal(result.scannedRuns, 104);
+    assert.equal(result.windowComplete, true);
+    assert.equal(result.truncatedPrs, false);
+    assert.equal(queries.length, 2);
     assert.equal(result.groups.length, 3);
-    const open = result.groups.find(group => group.repository === 'affank1020/atlas' && group.prNumber === 17)!;
+    const open = result.groups.find(g => g.repository === 'affank1020/atlas' && g.prNumber === 17)!;
     assert.equal(open.rounds, 102);
     assert.equal(open.findings, 102);
+    assert.equal(open.roundsComplete, true);
     assert.equal(open.status, 'open');
     assert.equal(open.reviewFreshness, 'current');
-    assert.equal(open.latest.reviewedAt, stamp(102));
-    const closed = result.groups.find(group => group.prNumber === 22)!;
+    const closed = result.groups.find(g => g.prNumber === 22)!;
     assert.equal(closed.status, 'closed');
-    assert.equal(closed.rounds, 1);
     assert.equal(closed.findings, 2);
-    const unknown = result.groups.find(group => group.repository === 'other/atlas')!;
-    assert.equal(unknown.status, 'unavailable', 'failed GitHub reads are never closed');
-    assert.equal(unknown.reviewFreshness, 'unknown');
-    assert.deepEqual(checked.sort(), ['affank1020/atlas#17', 'affank1020/atlas#22', 'other/atlas#17']);
+    assert.equal(result.groups.find(g => g.repository === 'other/atlas')!.status, 'unavailable');
+    assert.deepEqual(checked.sort(), ['affank1020/atlas:17,22', 'other/atlas:17']);
 });
 
-test('dashboard refuses incomplete or oversized saved history instead of mislabelling latest review', async () => {
+test('inconsistent history remains an error instead of inventing complete counts', async () => {
     await assert.rejects(readReviewDashboard({
         queryRecords: async () => ({ total: 2, items: [run(1, 'a/b', 1, stamp(1))] }),
     } as any, runsId), /incomplete/i);
-    await assert.rejects(readReviewDashboard({
-        queryRecords: async () => ({ total: 2001, items: [] }),
-    } as any, runsId), /bounded history/i);
 });
 
-test('dashboard bounds concurrent GitHub reads and keeps unknown counts unknown', async () => {
-    const all = Array.from({ length: 8 }, (_, i) =>
-        run(i + 1, 'example/repo', i + 1, stamp(i)));
+test('101 distinct PRs remain usable with explicit truncation metadata', async () => {
+    const all = Array.from({ length: 101 }, (_, i) =>
+        run(i + 1, 'example/atlas', i + 1, stamp(101 - i), { sev3: 1 }));
+    const result = await readReviewDashboard(catalog(all).reader, runsId);
+    assert.equal(result.totalRuns, 101);
+    assert.equal(result.scannedRuns, 101);
+    assert.equal(result.groups.length, 100);
+    assert.equal(result.windowComplete, true);
+    assert.equal(result.truncatedPrs, true);
+    assert.ok(result.groups.every(g => g.roundsComplete && g.countsComplete));
+});
+
+test('2001 stored runs show most recent 500, never masquerading as complete PR history', async () => {
+    const all = Array.from({ length: 2001 }, (_, i) =>
+        run(i + 1, 'example/atlas', 17, stamp(2001 - i), { sev3: 1 }));
+    const { reader, queries } = catalog(all);
+    const result = await readReviewDashboard(reader, runsId);
+    assert.equal(queries.length, 5);
+    assert.equal(result.totalRuns, 2001);
+    assert.equal(result.scannedRuns, 500);
+    assert.equal(result.windowComplete, false);
+    assert.equal(result.groups.length, 1);
+    assert.equal(result.groups[0]!.rounds, 500);
+    assert.equal(result.groups[0]!.findings, 500);
+    assert.equal(result.groups[0]!.roundsComplete, false);
+    assert.equal(result.groups[0]!.countsComplete, false);
+});
+
+test('status checks have an overall deadline; a hung repository never blocks saved aggregates', async () => {
+    const rows = [run(1, 'example/repo', 1, stamp(1))];
+    let signal: AbortSignal | undefined;
+    const start = Date.now();
+    const result = await readReviewDashboard(catalog(rows).reader, runsId,
+        async (_repo, _numbers, abort) => {
+            signal = abort;
+            return new Promise<never>(() => { /* Simulate a hung status provider. */ });
+        }, 15);
+    assert.ok(Date.now() - start < 1_000, 'bounded deadline prevents hung status checks delaying UI');
+    assert.equal(signal?.aborted, true);
+    assert.equal(result.groups[0]!.status, 'unavailable');
+    assert.equal(result.totalRuns, 1);
+});
+
+test('repository-level status reads are bounded and preserve unknown counts', async () => {
+    const all = Array.from({ length: 8 }, (_, i) => run(i + 1, 'example/repo', i + 1, stamp(i)));
     const { reader } = catalog(all);
-    let active = 0;
-    let peak = 0;
-    const result = await readReviewDashboard(reader, runsId, async (_repo, n) => {
-        active++;
-        peak = Math.max(peak, active);
-        await Promise.resolve();
-        active--;
-        return { open: n % 2 === 0, headSha: 'b'.repeat(40) };
+    const calls: string[] = [];
+    const result = await readReviewDashboard(reader, runsId, async (repo, numbers) => {
+        calls.push(repo);
+        return Object.fromEntries(numbers.map(n => [n, { open: n % 2 === 0, headSha: 'b'.repeat(40) }]));
     });
-    assert.ok(peak <= 5);
-    assert.ok(peak >= 2);
+    assert.deepEqual(calls, ['example/repo'], 'one batch per repository, never per PR');
     assert.equal(result.groups.length, 8);
-    assert.ok(result.groups.every(group => !group.countsComplete && group.reviewFreshness === 'outdated'));
-    assert.ok(result.groups.every(group => group.findings === 0));
+    assert.ok(result.groups.every(g => !g.countsComplete && g.reviewFreshness === 'outdated'));
 });

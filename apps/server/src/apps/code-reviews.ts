@@ -25,7 +25,7 @@ type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store'
 /** Project-scoped review history. Import is manually confirmed; publishing is a later capability. */
 export class CodeReviewsService {
     constructor(private readonly catalog: ReviewCatalogue,
-        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead'>>,
+        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead' | 'dashboardHeads'>>, 
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
         private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>,
         private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>,
@@ -293,8 +293,8 @@ export class CodeReviewsService {
 
     async dashboard() {
         const ids = await this.storeIds();
-        const verify = this.history?.currentHead
-            ? (repository: string, prNumber: number) => this.history!.currentHead!(repository, prNumber)
+        const verify = this.history?.dashboardHeads
+            ? (repository: string, prNumbers: number[], signal: AbortSignal) => this.history!.dashboardHeads!(repository, prNumbers, signal)
             : undefined;
         return readReviewDashboard(this.catalog, ids.runs, verify);
     }

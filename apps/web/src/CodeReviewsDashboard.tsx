@@ -17,11 +17,12 @@ type Run = {
 };
 type Group = {
     key: string; repository: string; prNumber: number; latest: Run;
-    rounds: number; findings: number; countsComplete: boolean; severities: Counts;
+    rounds: number; findings: number; countsComplete: boolean; roundsComplete: boolean; severities: Counts;
     status: 'open' | 'closed' | 'unavailable';
     reviewFreshness: 'current' | 'outdated' | 'unknown'; checkedAt?: string;
 };
-type Dashboard = { totalRuns: number; groups: Group[] };
+type Dashboard = { totalRuns: number; scannedRuns: number; windowComplete: boolean;
+    truncatedPrs: boolean; groups: Group[] };
 type Overview = { reviewRuns: number; findingObservations: number };
 type Finding = { id: string; severity: string; title: string; description: string; state: string;
     filePath?: string; line?: number };
@@ -36,6 +37,7 @@ type PrStatus = { recordedRounds: number; latestReviewHead: string;
 
 const number = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : 0;
 const dateLabel = (s: string) => new Date(s).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+const roundCount = (group: Group) => group.roundsComplete ? String(group.rounds) : group.rounds + '+';
 const findingCount = (group: Group) => group.countsComplete ? String(group.findings)
     : group.findings > 0 ? String(group.findings) + '+' : '—';
 const hrefFor = (group: Group) => 'https://github.com/' + group.repository + '/pull/' + group.prNumber;
@@ -161,7 +163,7 @@ function PrRow({ group, expanded, toggle, refreshVersion }: {
                 <PrLink group={group}/>
                 <SeverityBreakdown group={group}/>
             </div>
-            <div className="cr-number"><strong>{group.rounds}</strong></div>
+            <div className="cr-number"><strong>{roundCount(group)}</strong></div>
             <div className="cr-number" title={group.countsComplete
                 ? 'Finding observations across saved review rounds' : 'Some rounds have unknown finding counts'}>
                 <strong>{findingCount(group)}</strong>
@@ -190,7 +192,7 @@ function OpenPrCard({ group, expanded, toggle, refreshVersion }: {
             <span className={'cr-verdict ' + group.latest.verdict}>{verdicts[group.latest.verdict]}</span>
         </div>
         <div className="cr-card-stats">
-            <div><strong>{group.rounds}</strong><span>Rounds</span></div>
+            <div><strong>{roundCount(group)}</strong><span>Rounds</span></div>
             <div><strong>{findingCount(group)}</strong><span>Findings</span></div>
             <div><strong>{group.countsComplete && group.rounds
                 ? (group.findings / group.rounds).toFixed(1) : '—'}</strong><span>Per review</span></div>
@@ -244,9 +246,17 @@ export function CodeReviewsDashboard() {
             <article><span>Findings recorded</span><strong>{overview ? overview.findingObservations.toLocaleString() : '—'}</strong></article>
             <article title="Finding observations divided by saved rounds; repeated issues count again in each reviewed round.">
                 <span>Findings / review</span><strong>{average}</strong></article>
-            <article><span>PRs reviewed</span><strong>{dashboard.data ? groups.length : '—'}</strong></article>
+            <article><span>{dashboard.data && (dashboard.data.truncatedPrs || !dashboard.data.windowComplete)
+                ? 'PRs shown' : 'PRs reviewed'}</span><strong>{dashboard.data ? groups.length : '—'}</strong></article>
         </div>
         {error && <div className="notice error" role="alert">{error}</div>}
+        {dashboard.data && (!dashboard.data.windowComplete || dashboard.data.truncatedPrs) &&
+            <p className="cr-quiet cr-window-notice" role="status">
+                {dashboard.data.windowComplete ? 'Showing the 100 most recently reviewed PRs.' :
+                    `Showing ${dashboard.data.scannedRuns} of ${dashboard.data.totalRuns} recent review rounds.`}
+                {!dashboard.data.windowComplete && ' Per-PR counts may be partial.'}
+                {' Older reviewed PRs may be omitted.'}
+            </p>}
         <div className="cr-overview-tools">
             <input type="search" aria-label="Find pull request" placeholder="Find PR…" value={search}
                 onChange={e => setSearch(e.target.value)}/>

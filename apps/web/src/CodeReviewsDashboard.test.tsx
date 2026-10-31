@@ -10,7 +10,7 @@ const group = (number: number, status: 'open' | 'closed' | 'unavailable',
     key: 'example/atlas-demo#' + number, repository: 'example/atlas-demo', prNumber: number,
     latest: { id: 'run-' + number, repository: 'example/atlas-demo', prNumber: number,
         headSha: 'a'.repeat(40), reviewedAt: '2026-10-30T12:00:00Z', verdict },
-    rounds, findings, countsComplete: true,
+    rounds, findings, countsComplete: true, roundsComplete: true,
     severities: { sev1: 0, sev2: number === 42 ? 1 : 0,
         sev3: number === 42 ? 1 : 0, sev4: number === 59 ? 1 : 0 },
     status, reviewFreshness: status === 'unavailable' ? 'unknown' : 'current',
@@ -31,7 +31,8 @@ beforeEach(() => {
             isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_dashboard') return {
-            data: { totalRuns: 4, groups }, isLoading: false, isFetching: false, refetch,
+            data: { totalRuns: 4, scannedRuns: 4, windowComplete: true, truncatedPrs: false, groups },
+            isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_list_findings') return {
             data: { total: 1, items: [{ id: 'finding-1',
@@ -107,11 +108,28 @@ test('failed lifecycle checks remain unavailable and are not counted as closed',
     vi.mocked(useApplicationRead).mockImplementation((name: string) =>
         name === 'code_reviews_overview'
             ? { data: { reviewRuns: 1, findingObservations: 0 }, refetch } as never
-            : { data: { totalRuns: 1, groups: [groups[2]] }, refetch } as never);
+            : { data: { totalRuns: 1, scannedRuns: 1, windowComplete: true,
+                truncatedPrs: false, groups: [groups[2]] }, refetch } as never);
     render(<CodeReviewsDashboard />);
     expect(screen.getByText('No open reviewed PRs.')).toBeInTheDocument();
     expect(screen.getByText('No closed reviewed PRs.')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Unverified pull requests' })).toHaveTextContent('#54');
+});
+
+test('large histories remain visible with explicit recent-window and minimum-count indicators', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) =>
+        name === 'code_reviews_overview'
+            ? { data: { reviewRuns: 2001, findingObservations: 2001 }, refetch } as never
+            : { data: { totalRuns: 2001, scannedRuns: 500, windowComplete: false,
+                truncatedPrs: true, groups: [{
+                    ...groups[0], rounds: 500, roundsComplete: false, findings: 500, countsComplete: false,
+                }] }, refetch } as never);
+    render(<CodeReviewsDashboard />);
+    expect(screen.getByText('PRs shown').parentElement).toHaveTextContent('1');
+    expect(screen.getByText(/Showing 500 of 2001 recent review rounds/)).toBeInTheDocument();
+    const open = screen.getByRole('region', { name: 'Open pull requests' });
+    expect(open).toHaveTextContent('500+');
+    expect(open).toHaveTextContent('#59');
 });
 
 test('refresh rechecks both saved aggregates and GitHub lifecycle without publishing', () => {

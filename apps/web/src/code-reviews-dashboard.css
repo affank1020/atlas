@@ -39,7 +39,7 @@
 .cr-list-head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:17px 20px;border-bottom:1px solid var(--cr-border)}
 .cr-list-head h2{font-size:16px;line-height:1.4;margin:0;font-weight:650;letter-spacing:-.02em}
 .cr-filters{display:flex;align-items:center;gap:9px}
-.cr-filters input,.cr-filters select{border:1px solid var(--cr-border);border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:12px;min-height:34px;padding:7px 11px;outline-offset:2px}
+.cr-filters input,.cr-filters select,.cr-overview-tools select{border:1px solid var(--cr-border);border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:12px;min-height:34px;padding:7px 11px;outline-offset:2px}
 .cr-filters input{width:170px}
 .cr-filter-select{position:relative;display:inline-flex;min-width:138px}
 .cr-filter-select select{width:100%;min-width:138px;appearance:none;-webkit-appearance:none;padding-right:34px;cursor:pointer}

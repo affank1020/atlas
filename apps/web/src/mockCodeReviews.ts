@@ -107,7 +107,7 @@ export function mockCodeReviewTool(name: string, input: Record<string, unknown>)
             const groups = new Map<string, {
                 key: string; repository: string; prNumber: number;
                 latest: Record<string, unknown>; rounds: number; findings: number;
-                countsComplete: boolean; severities: Record<string, number>;
+                countsComplete: boolean; roundsComplete: boolean; severities: Record<string, number>;
                 status: 'open' | 'closed' | 'unavailable';
                 reviewFreshness: 'current' | 'outdated' | 'unknown';
             }>();
@@ -118,7 +118,8 @@ export function mockCodeReviewTool(name: string, input: Record<string, unknown>)
                 if (!group) {
                     group = { key, repository, prNumber: n,
                         latest: { id: run.id, ...run.data }, rounds: 0, findings: 0,
-                        countsComplete: true, severities: { sev1: 0, sev2: 0, sev3: 0, sev4: 0 },
+                        countsComplete: true, roundsComplete: true,
+                        severities: { sev1: 0, sev2: 0, sev3: 0, sev4: 0 },
                         status: statuses[n] ?? 'unavailable',
                         reviewFreshness: statuses[n] === 'unavailable' ? 'unknown' : 'current' };
                     groups.set(key, group);
@@ -130,7 +131,8 @@ export function mockCodeReviewTool(name: string, input: Record<string, unknown>)
                     group.findings += counts[severity] ?? 0;
                 }
             }
-            return { totalRuns: runs.length, groups: [...groups.values()] };
+            return { totalRuns: runs.length, scannedRuns: runs.length, windowComplete: true,
+                truncatedPrs: false, groups: [...groups.values()] };
         }
         case 'code_reviews_list_runs':
             return page(runs, input);

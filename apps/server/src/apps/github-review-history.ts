@@ -151,6 +151,70 @@ export class GitHubReviewHistoryReader {
         return { repository, prNumber, headSha: (headSha as string).toLowerCase(), open: pr.state === 'open' };
     }
 
+    // Short-lived, verified PR status cache. Never cache installation credentials.
+    private readonly dashboardHeadCache = new Map<string,
+        { at: number; head: { open: boolean; headSha: string } }>();
+
+    /** Bulk dashboard status reads: one scoped GitHub token per repository and
+     * at most five concurrent requests. This is read-only and independent of
+     * the stronger fresh-head verification used for review publication.
+     */
+    async dashboardHeads(repository: string, prNumbers: number[], signal?: AbortSignal) {
+        if (!repoName.test(repository) || !Array.isArray(prNumbers) ||
+            prNumbers.length > 100 || prNumbers.some(n =>
+                !Number.isSafeInteger(n) || n < 1 || n > 1_000_000) ||
+            new Set(prNumbers).size !== prNumbers.length)
+            throw new AtlasError('Invalid GitHub dashboard status request.', 'INVALID_REQUEST');
+        const identity = repository.toLowerCase();
+        const now = Date.now();
+        const result: Record<number, { open: boolean; headSha: string }> = {};
+        const missing: number[] = [];
+        for (const n of prNumbers) {
+            const cached = this.dashboardHeadCache.get(identity + '#' + n);
+            if (cached && now - cached.at < 30_000) result[n] = cached.head;
+            else missing.push(n);
+        }
+        if (!missing.length) return result;
+        // One credential acquisition for the entire repository page, never one per PR.
+        const bearer = await this.broker.pullRequestReadToken(repository);
+        if (signal?.aborted) return result;
+        const [owner, name] = repository.split('/');
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < missing.length && !signal?.aborted) {
+                const n = missing[cursor++]!;
+                try {
+                    const response = await this.http(
+                        `https://api.github.com/repos/${owner}/${name}/pulls/${n}`,
+                        { method: 'GET', redirect: 'error',
+                            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_000)])
+                                : AbortSignal.timeout(3_000),
+                            headers: { Authorization: `Bearer ${bearer}`,
+                                Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } },
+                    );
+                    if (!response.ok) continue;
+                    const data: unknown = await response.json().catch(() => null);
+                    if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+                    const pr = data as { number?: unknown; state?: unknown;
+                        head?: { sha?: unknown }; base?: { repo?: { full_name?: unknown } } };
+                    const headSha = pr.head?.sha;
+                    if (pr.number !== n || !['open', 'closed'].includes(String(pr.state)) ||
+                        !sha(headSha) || typeof pr.base?.repo?.full_name !== 'string' ||
+                        pr.base.repo.full_name.toLowerCase() !== identity) continue;
+                    const head = { open: pr.state === 'open', headSha: headSha.toLowerCase() };
+                    result[n] = head;
+                    this.dashboardHeadCache.set(identity + '#' + n, { at: Date.now(), head });
+                } catch {
+                    // Timeout, rate limits and inaccessible PRs remain unavailable.
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(5, missing.length) }, worker));
+        // Only recent verified data is cached, avoiding an ever-growing long-lived cache.
+        if (this.dashboardHeadCache.size > 500) this.dashboardHeadCache.clear();
+        return result;
+    }
+
     async read(repository: string, prNumber: number) {
         if (!repoName.test(repository) || !Number.isSafeInteger(prNumber) || prNumber < 1 || prNumber > 1_000_000)
             throw new AtlasError('Invalid GitHub pull request identity.', 'INVALID_REQUEST');
