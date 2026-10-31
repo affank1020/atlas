@@ -143,10 +143,15 @@ in-memory/mock-`launchctl` unit tests:
   and a one-off label under `com.affank1020.atlas.node.update-check.acceptance.*`.
   No production Node LaunchAgent label, credentials, Node PID or workspaces
   are touched.
-- It uses **real `launchctl bootstrap` and `bootout`**, checks the loaded
-  LaunchAgent, waits for `RunAtLoad` to execute the standalone Python
-  checker, verifies a private `unavailable` observation (since no real Node
-  exists), then validates removal and cleans the disposable fixture.
+- It uses **real `launchctl bootstrap` and `bootout`** twice:
+  first to confirm the separate hourly update-checker starts, executes the
+  standalone Python operator and writes a private `unavailable` observation
+  (since no real Node exists); second to confirm the actual per-user recovery
+  watchdog can be installed, loaded, validated and unloaded. Both jobs use
+  unique, test-only launchd labels. The watchdog runs `recover` with no
+  pending transaction and therefore never installs or restarts a Node.
+- It validates private script and status files and removes the test jobs,
+  plists, local fixture and test logs after both smoke tests.
 - It never stages an actual release archive, installs/upgrades Node, tests
   a 60-minute timer interval, or proves Sigstore verification. The fixture
   only exercises the runtime wiring of a signed-style operator bundle.
