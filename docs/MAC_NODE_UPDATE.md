@@ -58,11 +58,23 @@ operator="$HOME/Library/Application Support/Atlas/NodeSoftware/bin/atlas-node-ma
 ```
 
 The CLI source pointer advances **only after a successful Node activation**,
-when the newly staged release has a valid signed operator bundle. A failed
-post-activation CLI promotion leaves the existing signed operator available;
-it must not be mistaken for a failed Node restart. If interrupted between
-Node cutover and operator promotion, explicitly sync from the **currently
-active** verified release (not a fresh network candidate):
+when the newly staged release has a valid signed operator bundle. Before
+switching that pointer, the lifecycle lock checks that the loaded recovery
+LaunchAgent is compatible with the **new** signed operator. When the
+lifecycle script changed across versions, the operator migrates the loaded
+watchdog to the new signed script using its existing journal and failure
+rollback. If replacement fails, the CLI pointer remains on its previous
+release, so routine updates and rollback remain accessible.
+
+A killed updater can leave the old CLI pointer paired with the newer
+watchdog between those two steps. The confirmed `rollback` command
+reconciles the watcher to its own signed lifecycle before rolling back the
+Node, and the operator's explicit `sync --confirm` can finish aligning
+the updater with the active signed runtime. The active Node may already
+have updated successfully even if operator promotion did not complete;
+do not repeat the cutover blindly. If interrupted between Node cutover
+and operator promotion, explicitly sync from the **currently active**
+verified release (not a fresh network candidate):
 
 ```bash
 python3 "$HOME/Library/Application Support/Atlas/NodeSoftware/operator/current/macos-node-operator.py" sync --confirm
