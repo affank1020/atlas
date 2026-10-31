@@ -5,6 +5,10 @@ CREATE TABLE device_inbox (
   id uuid PRIMARY KEY,
   source_node_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
   target_node_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  -- Bind each queued item to the credentials current at admission.
+  -- A revoked/rotated Node must not regain earlier queued content on re-enrolment.
+  source_credential_updated_at timestamptz NOT NULL,
+  target_credential_updated_at timestamptz NOT NULL,
   submission_hash text NOT NULL CHECK (length(submission_hash)=64),
   payload_ciphertext bytea CHECK (payload_ciphertext IS NULL OR octet_length(payload_ciphertext) BETWEEN 1 AND 32768),
   payload_nonce bytea CHECK (payload_nonce IS NULL OR octet_length(payload_nonce)=12),
