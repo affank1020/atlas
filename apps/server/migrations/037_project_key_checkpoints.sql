@@ -32,7 +32,6 @@ CREATE TABLE atlas_project_key_receipts (
     ordinal integer NOT NULL,
     sha256 text NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
     byte_size bigint NOT NULL CHECK (byte_size BETWEEN 1 AND 26214400),
-    created_new boolean NOT NULL,
     verified_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(run_id,ordinal),
     FOREIGN KEY(run_id,ordinal) REFERENCES atlas_project_key_manifest(run_id,ordinal) ON DELETE RESTRICT
