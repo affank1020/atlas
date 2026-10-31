@@ -55,7 +55,9 @@ export class DeviceOfflineInbox {
                 if (!sameDigest(String(previous.rows[0].submission_hash),digest))
                     throw new AtlasError('Offline delivery ID reused with different content.', 'SHARE_REPLAY');
                 await client.query('COMMIT');
-                return { deliveryId:id, status:previous.rows[0].state as InboxState, queued:false };
+                const previousState: InboxState = new Date(previous.rows[0].expires_at).getTime() <= Date.now()
+                    ? 'expired' : previous.rows[0].state as InboxState;
+                return { deliveryId:id, status:previousState, queued:false };
             }
             const limits = await client.query(`
                 SELECT
