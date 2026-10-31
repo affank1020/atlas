@@ -35,7 +35,7 @@ function change(item:SnapshotItem):Change{
  * The asset ID + variant name is the identity of a Portfolio derivative.
  * Project scope is passed explicitly rather than inferred from a key. */
 async function selectKey(client:PoolClient,c:Change,project:string):Promise<string>{
-    const [sql,params]=c.table==="atlas_files"
+    const [sql,params]:[string,string[]]=c.table==="atlas_files"
         ?["SELECT storage_key FROM atlas_files WHERE id=$1 AND owner_kind='project' AND owner_id=$2",[c.fileId,project]]
         :c.table==="media_assets"
             ?["SELECT storage_key FROM media_assets WHERE id=$1",[c.fileId]]
@@ -45,7 +45,7 @@ async function selectKey(client:PoolClient,c:Change,project:string):Promise<stri
     return result.rows[0]!.storage_key;
 }
 async function swapKey(client:PoolClient,c:Change,project:string,from:string,to:string){
-    const [sql,params]=c.table==="atlas_files"
+    const [sql,params]:[string,string[]]=c.table==="atlas_files"
         ?["UPDATE atlas_files SET storage_key=$4 WHERE id=$1 AND owner_kind='project' AND owner_id=$2 AND storage_key=$3 RETURNING id",
           [c.fileId,project,from,to]]
         :c.table==="media_assets"
