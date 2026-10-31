@@ -202,6 +202,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     fun startConnection() {
         owners = owners.activityStarted()
+        if (backgroundReceivingRunning &&
+            !BackgroundReceiverService.hasUsableNotifications(getApplication())) {
+            disableUndeliverableBackgroundReceiving()
+        }
         BackgroundReceiverService.cancelIncoming(getApplication())
         if (pairedNode != null && socket == null) connect()
     }
@@ -215,6 +219,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 val remaining = incomingDeadlineElapsedMs - SystemClock.elapsedRealtime()
                 if (!BackgroundReceiverService.notifyIncoming(getApplication(), remaining)) {
                     finishIncomingShare(IncomingShareOutcome.DECLINED)
+                    disableUndeliverableBackgroundReceiving()
                 }
             }
             return
@@ -233,6 +238,17 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         owners = owners.copy(serviceRunning = false)
         backgroundReceivingRunning = false
         if (!owners.connected) disconnect()
+    }
+
+    private fun disableUndeliverableBackgroundReceiving() {
+        // Permission and channel settings can change without the foreground
+        // service receiving a callback. Decline undeliverable shares, then
+        // remove the service owner so Atlas cannot claim to be available.
+        backgroundReceiveError =
+            "Atlas notifications are blocked. Enable notifications and both Atlas channels in Android Settings."
+        getApplication<Application>().stopService(Intent(
+            getApplication(), BackgroundReceiverService::class.java))
+        stopBackgroundReceiving()
     }
 
     private fun disconnect() {
@@ -361,6 +377,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                     if (!owners.activityVisible &&
                         !BackgroundReceiverService.notifyIncoming(getApplication(), remaining)) {
                         finishIncomingShare(IncomingShareOutcome.DECLINED)
+                        disableUndeliverableBackgroundReceiving()
                     }
                 }
             })
