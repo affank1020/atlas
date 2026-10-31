@@ -270,5 +270,45 @@ class MacLifecycleTests(unittest.TestCase):
             lifecycle.manage(self.layout, ["rollback"])
 
 
+class AtlasControlGuardTests(unittest.TestCase):
+    def test_old_control_manager_refuses_pending_lifecycle_and_release_owned_plist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            fake = bin_dir / "launchctl"
+            fake.write_text("#!/bin/sh\nexit 0\n")
+            fake.chmod(0o755)
+            home = root / "home"
+            home.mkdir()
+            state = home / "Library/Application Support/Atlas/NodeSoftware/activation"
+            state.mkdir(parents=True)
+            pending = state / "pending.json"
+            pending.write_text("{}")
+            env = os.environ.copy()
+            env.update({
+                "ATLAS_CONTROL_TEST_ROOT": str(root),
+                "ATLAS_CONTROL_TEST_PLATFORM": "darwin",
+                "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+            })
+            control = SCRIPT.parent / "atlas-control.mjs"
+            for args in (["launchd", "install"], ["launchd", "uninstall"],
+                         ["restart"], ["up"], ["down"]):
+                with self.subTest(args=args):
+                    result = subprocess.run(["node", str(control), *args],
+                                            env=env, capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("pending recovery", result.stderr)
+            pending.unlink()
+            plist = home / "Library/LaunchAgents" / (lifecycle.LABEL + ".plist")
+            plist.parent.mkdir(parents=True, exist_ok=True)
+            plist.write_text("<string>" + lifecycle.LABEL + "</string>\\n"
+                             "<string>/Users/test/Library/Application Support/Atlas/NodeSoftware/releases/v2.0.0-abcdefabcdef/apps/node/dist/platforms/desktop/main.js</string>\\n")
+            result = subprocess.run(["node", str(control), "launchd", "install"],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("release-managed", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

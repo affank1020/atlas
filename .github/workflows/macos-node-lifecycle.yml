@@ -24,6 +24,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Test isolated launchd activation and rollback
         run: |
           python3 -m unittest discover -s test -p 'test_macos_node_lifecycle.py' -v

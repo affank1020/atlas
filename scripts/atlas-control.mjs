@@ -718,6 +718,10 @@ async function stopLaunchdNode() {
 }
 
 async function startHostedNode({ build = true } = {}) {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing an unrelated start.");
+    return false;
+  }
   const configError = hostedConfigurationError();
   if (configError) {
     console.error(configError);
