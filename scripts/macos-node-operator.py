@@ -89,6 +89,39 @@ def validate_signed_operator(layout, version: str) -> Path:
     return scripts
 
 
+def signed_lifecycle(scripts: Path):
+    """Load the already manifest-verified target release's lifecycle.
+
+    This runs only for a staged, signed release; never select Python from a
+    catalogue URL or an arbitrary user-supplied directory.
+    """
+    source = scripts / "macos-node-lifecycle.py"
+    spec = importlib.util.spec_from_file_location("atlas_mac_operator_target_lifecycle", source)
+    if not spec or not spec.loader:
+        raise Refused("Signed release lifecycle is unavailable.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def align_recovery_watchdog(layout, target) -> None:
+    """Caller holds lifecycle lock; don't leave CLI ahead of its watchdog."""
+    try:
+        target.require_watchdog(layout)
+    except (target.Refused, OSError):
+        if layout.pending.exists() or layout.pending.is_symlink():
+            raise Refused("Pending Node recovery prevents operator/watchdog migration.")
+        if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
+            raise Refused("Pending watchdog repair must be restored before operator migration.")
+        if not target.launch_loaded(layout, layout.recovery_target):
+            raise Refused("Recovery watchdog is not loaded; refusing operator promotion.")
+        # Refresh writes a durable rollback journal and restores the old job
+        # on failure. The caller's single lifecycle lock excludes concurrent
+        # activation, updater promotion and atlasctl modifications.
+        target.refresh_watchdog(layout)
+    target.require_watchdog(layout)
+
+
 def current_target(layout) -> Path | None:
     operator, link, _ = paths(layout)
     if link.is_symlink():
@@ -145,6 +178,13 @@ def promote(layout, version: str, *, require_existing: bool = False) -> None:
         lifecycle.atomic_write(wrapper, WRAPPER.encode())
         wrapper.chmod(0o700)
     current_target(layout)  # Reject an unexpected pointer before replacement.
+    # Align the recovery job to the *target release* before the new CLI can
+    # be selected. If the watchdog upgrade fails, the current CLI pointer
+    # stays unchanged. A process killed between alignment and os.replace
+    # leaves the old CLI operable: its confirmed rollback path repairs its
+    # own watchdog before touching the Node.
+    target = signed_lifecycle(scripts)
+    align_recovery_watchdog(layout, target)
     if link.is_symlink() and Path(os.readlink(link)) == scripts:
         return
     temp = operator / (".current." + str(os.getpid()) + ".tmp")
