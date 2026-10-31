@@ -110,6 +110,7 @@ test('diagnostic archive availability adds independent uncertainty but does not 
     const status = (state: 'available' | 'unavailable' | 'disabled', drops = 0, paused = false) => ({
         state, coverage: 'incomplete-possible' as const, retentionDays: 14 as const,
         droppedSinceStart: drops, pending: 0, writePaused: paused,
+        retentionCleanup: 'caught-up' as const,
     });
     const archive = (value: ReturnType<typeof status>) => ({ status: async () => value });
     const read = async (value: ReturnType<typeof status>, dbOk = true, nodes: AtlasNode[] = []) =>
@@ -154,4 +155,25 @@ test('archive probe failures or a never-ending probe settle to unknown without l
     assert.ok(performance.now() - before < 1000);
     assert.equal(timed.diagnostics.status, 'unknown');
     assert.equal(timed.overall, 'unknown');
+});
+
+test('retention cleanup status is independent of archive reachability and uses unknown aggregate', async () => {
+    const retention = async (cleanup: 'caught-up' | 'more-possible' | 'unavailable' | 'not-checked') =>
+        new MonitoringHealthService(
+            { query: async () => ({}) },
+            { list: async () => [] }, () => now, () => 100, 50,
+            { status: async () => ({
+                state: 'available' as const, coverage: 'incomplete-possible' as const,
+                retentionDays: 14 as const, droppedSinceStart: 0,
+                pending: 0, writePaused: false, retentionCleanup: cleanup,
+            }) },
+        ).read();
+    assert.equal((await retention('caught-up')).overall, 'healthy');
+    for (const cleanup of ['more-possible', 'unavailable', 'not-checked'] as const) {
+        const result = await retention(cleanup);
+        assert.equal(result.server.database.status, 'reachable');
+        assert.equal(result.diagnostics.status, 'available');
+        assert.equal(result.diagnostics.retentionCleanup, cleanup);
+        assert.equal(result.overall, 'unknown');
+    }
 });

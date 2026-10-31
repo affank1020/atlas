@@ -304,3 +304,160 @@ test('expired rows and future-dated rows stay excluded across diagnostic history
     assert.equal(second.nextCursor, undefined);
     await history.close();
 });
+
+test('startup and recurring bounded retention sweeps catch up on a quiet large backlog', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let expiredRows = 23_500;
+    let deletes = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                const n = Math.min(1000, expiredRows);
+                expiredRows -= n;
+                return { rows: Array.from({ length: n }, () => ({ occurred_at: new Date(), code: 'server_initialised' })) };
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 20);
+    const start = await service.status();
+    assert.ok(['not-checked', 'more-possible'].includes(start.retentionCleanup));
+    const deadline = Date.now() + 2000;
+    while (expiredRows && Date.now() < deadline) await pause(10);
+    const observed = await service.status();
+    assert.equal(expiredRows, 0, 'a bounded recurring sweep should eventually drain a backlog larger than one budget');
+    assert.equal(observed.retentionCleanup, 'caught-up');
+    assert.ok(deletes >= 24, 'multiple batches and sweeps required');
+    await service.close();
+    const afterClose = deletes;
+    await pause(70);
+    assert.equal(deletes, afterClose, 'no timer should restart maintenance after close');
+});
+
+test('retention failure is non-fatal, remains visible, and recovers on a later sweep', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let failuresRemaining = 1;
+    let deletes = 0;
+    // Keep the successful retry pending until the test has observed the
+    // failure state. Otherwise an active CI runner may schedule both sweeps
+    // before the polling assertion runs, making 'unavailable' transient.
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>(resolve => { releaseRecovery = resolve; });
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                if (failuresRemaining > 0) {
+                    failuresRemaining--;
+                    throw new Error('private pg maintenance error');
+                }
+                await recoveryGate;
+                return { rows: [] };
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 30);
+    try {
+        const failDeadline = Date.now() + 3000;
+        while ((await service.status()).retentionCleanup !== 'unavailable'
+            && Date.now() < failDeadline) await pause(5);
+        const unavailable = await service.status();
+        assert.equal(unavailable.state, 'available', 'reader can work despite failed expiry cleanup');
+        assert.equal(unavailable.retentionCleanup, 'unavailable');
+        assert.ok(!JSON.stringify(unavailable).includes('private'));
+        assert.equal(failuresRemaining, 0, 'inject exactly one failed DELETE');
+
+        releaseRecovery();
+        const recoveryDeadline = Date.now() + 3000;
+        while ((await service.status()).retentionCleanup !== 'caught-up'
+            && Date.now() < recoveryDeadline) await pause(5);
+        assert.equal((await service.status()).retentionCleanup, 'caught-up');
+        assert.ok(deletes >= 2);
+    } finally {
+        // Never leave a blocked sweep behind if an assertion fails.
+        releaseRecovery();
+        await service.close();
+    }
+});
+
+test('retention intervals cannot overlap an unfinished sweep and closing drains it', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let started!: () => void;
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const firstStarted = new Promise<void>(resolve => { started = resolve; });
+    let active = 0;
+    let peak = 0;
+    let deletes = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                active++;
+                peak = Math.max(peak, active);
+                started();
+                await pending;
+                active--;
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 15);
+    await firstStarted;
+    await pause(55);
+    assert.equal(deletes, 1, 'later timers must not launch overlapping SELECT/DELETEs');
+    assert.equal(peak, 1);
+    const closing = service.close();
+    finish();
+    await closing;
+    assert.equal(active, 0);
+    const finalDeletes = deletes;
+    await pause(45);
+    assert.equal(deletes, finalDeletes, 'shutdown must cancel both startup and periodic timers');
+});
+
+test('disabled diagnostic archive never schedules maintenance', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let calls = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async () => { calls++; return { rows: [] }; },
+    }, false, undefined, 10);
+    await pause(40);
+    assert.equal((await service.status()).retentionCleanup, 'disabled');
+    assert.equal(calls, 0);
+    await service.close();
+});
+
+test('bounded retention backfill yields between full batches to let diagnostic writes progress', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let start!: () => void;
+    const first = new Promise<void>(resolve => { start = resolve; });
+    let deletes = 0;
+    let insertedDuringBackfill = false;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                if (deletes === 1) start();
+                return { rows: Array.from({ length: 1000 }, () => ({ occurred_at: new Date(), code: 'server_initialised' })) };
+            }
+            if (sql.startsWith('INSERT')) {
+                insertedDuringBackfill = deletes < 10;
+                return { rows: [] };
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 300);
+    try {
+        await first;
+        service.record({ code: 'background_task_failed', level: 'warning', at: new Date().toISOString() });
+        await service.flush();
+        assert.equal(insertedDuringBackfill, true,
+            'writer should not wait for an entire 10-batch expiry sweep to finish');
+        const startWait = Date.now();
+        while ((await service.status()).retentionCleanup !== 'more-possible'
+            && Date.now() - startWait < 1500) await pause(10);
+        assert.equal((await service.status()).retentionCleanup, 'more-possible');
+    } finally {
+        await service.close();
+    }
+});
