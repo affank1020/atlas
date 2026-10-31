@@ -22,4 +22,5 @@ test('card skeletons match requested density and are decorative', () => {
 test('application fallback has an accessible loading announcement', () => {
     render(<SkeletonApplicationWindow />);
     expect(screen.getByRole('status', { name: 'Loading application interface' })).toBeInTheDocument();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
 });
