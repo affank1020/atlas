@@ -38,7 +38,7 @@ export class DevicePushService {
         if (encryptionKey.length !== 32) throw new Error('Invalid push-token encryption key.');
     }
 
-    async register(nodeId: string, token: string): Promise<void> {
+    async register(nodeId: string, token: string, sessionId: string): Promise<void> {
         if (!UUID.test(nodeId) || !TOKEN.test(token)) throw new AtlasError('Invalid push registration.', 'INVALID_REQUEST');
         const node = nodeId.toLowerCase();
         const nonce = randomBytes(12);
@@ -53,19 +53,22 @@ export class DevicePushService {
             SELECT id,credential_updated_at,$2,$3,$4 FROM nodes
             WHERE id=$1 AND platform='android' AND credential_state='active'
               AND capabilities @> ARRAY['device.inbox.receive']::text[]
-              AND credential_updated_at IS NOT NULL
+              AND credential_updated_at IS NOT NULL AND metadata->>'session'=$5
             ON CONFLICT(node_id) DO UPDATE SET
                 credential_updated_at=EXCLUDED.credential_updated_at,
                 token_ciphertext=EXCLUDED.token_ciphertext,token_nonce=EXCLUDED.token_nonce,
                 token_tag=EXCLUDED.token_tag,registered_at=now()
             RETURNING node_id
-        `, [node,encrypted,nonce,tag]);
+        `, [node,encrypted,nonce,tag,sessionId]);
         if (!result.rowCount) throw new AtlasError('Push registration not permitted.', 'SHARE_DENIED');
     }
 
-    async unregister(nodeId: string): Promise<void> {
+    async unregister(nodeId: string, sessionId: string): Promise<void> {
         if (!UUID.test(nodeId)) throw new AtlasError('Invalid push registration.', 'INVALID_REQUEST');
-        await this.pool.query('DELETE FROM device_push_tokens WHERE node_id=$1', [nodeId.toLowerCase()]);
+        await this.pool.query(`DELETE FROM device_push_tokens p WHERE p.node_id=$1
+            AND EXISTS (SELECT 1 FROM nodes n WHERE n.id=p.node_id
+                AND n.credential_state='active' AND n.metadata->>'session'=$2)`,
+            [nodeId.toLowerCase(),sessionId]);
     }
 
     /** Called ONLY for a first-time committed queue admission; never a retry or live share. */
