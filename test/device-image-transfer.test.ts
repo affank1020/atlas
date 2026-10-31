@@ -150,64 +150,67 @@ test('JPEG parser verifies SOF dimensions and blocks oversized pixel areas',()=>
     assert.equal(imageDimensions(jpeg,'image/jpeg'),null);
 });
 
-test('forged source UUID and invalid credential never charge legitimate sender rate',async()=>{
+test('forged source ID and invalid credential cannot charge legitimate sender',async()=>{
     const {relay,setCredentials}=harness();
     setCredentials(false);
     for(let i=0;i<20;i++) {
-        await assert.rejects(relay.admit(source,target,'invalid-token','192.0.2.4'),/revoked/);
+        await assert.rejects(relay.admit(source,target,'forged-token'),/revoked/);
     }
     assert.equal(relay.authenticatedRateEntries,0);
     assert.equal(relay.pendingAuthCount,0);
     setCredentials(true);
-    const admitted=await relay.admit(source,target,'x'.repeat(40),'192.0.2.5');
+    const admitted=await relay.admit(source,target,'x'.repeat(40));
     admitted.release();
     assert.equal(relay.authenticatedRateEntries,1);
 });
 
-test('pre-auth flood defense is independently peer keyed and hard bounded',async()=>{
+test('pre-auth credential fingerprint map is hard bounded despite rotated tokens',async()=>{
     const {relay,setCredentials}=harness();
     setCredentials(false);
-    // Thousands of arbitrary source UUIDs or attacker-provided XFF strings
-    // must not grow the sender map or the pre-auth peer map without limit.
+    // One reverse proxy handles every request, but 700 attacker credentials
+    // cannot create more than 128 pre-auth buckets or charge source quotas.
     for(let i=0;i<700;i++) {
         const fake='00000000-0000-4000-8000-'+i.toString(16).padStart(12,'0');
-        await assert.rejects(relay.admit(fake,target,'invalid-token','test-peer-'+i),/revoked/);
+        await assert.rejects(relay.admit(fake,target,'invalid-token-'+i),/revoked/);
     }
     assert.equal(relay.authenticatedRateEntries,0);
     assert.ok(relay.preAuthRateEntries<=128);
     assert.equal(relay.pendingAuthCount,0);
     setCredentials(true);
-    const admitted=await relay.admit(source,target,'x'.repeat(40),'valid-peer');
+    const admitted=await relay.admit(source,target,'x'.repeat(40));
     admitted.release();
 });
 
-test('unauthenticated peer is throttled but cannot poison other source budget',async()=>{
+test('same reverse-proxy peer: bad token budget cannot throttle valid Node token',async()=>{
     const {relay,setCredentials}=harness();
     setCredentials(false);
+    // With the old peer-IP bucket, these calls would consume the entire
+    // Caddy bridge-IP quota for every client, including this valid sender.
     for(let i=0;i<60;i++)
-        await assert.rejects(relay.admit(source,target,'invalid-token','abusive-peer'),/revoked/);
-    await assert.rejects(relay.admit(source,target,'invalid-token','abusive-peer'),
+        await assert.rejects(relay.admit(source,target,'same-invalid-token'),/revoked/);
+    await assert.rejects(relay.admit(source,target,'same-invalid-token'),
         (error:{code?:string})=>error.code==='SHARE_RATE_LIMIT');
     assert.equal(relay.authenticatedRateEntries,0);
     setCredentials(true);
-    const admitted=await relay.admit(source,target,'x'.repeat(40),'unrelated-peer');
+    const admitted=await relay.admit(source,target,'valid-distinct-node-credential');
     admitted.release();
+    assert.equal(relay.authenticatedRateEntries,1);
 });
 
-test('authenticated sender budget is capped and rate storage never grows without bound',async()=>{
+test('authenticated sender budget and rate storage remain capped',async()=>{
     const {relay}=harness();
     for(let i=0;i<12;i++){
-        const admitted=await relay.admit(source,target,'x'.repeat(40),'good-peer');
+        const admitted=await relay.admit(source,target,'x'.repeat(40));
         admitted.release();
     }
-    await assert.rejects(relay.admit(source,target,'x'.repeat(40),'good-peer'),
+    await assert.rejects(relay.admit(source,target,'x'.repeat(40)),
         (error:{code?:string})=>error.code==='SHARE_RATE_LIMIT');
     assert.equal(relay.authenticatedRateEntries,1);
     for(let i=0;i<600;i++) {
         const fake='aaaaaaaa-aaaa-4aaa-8aaa-'+i.toString(16).padStart(12,'0');
-        // Identity authentication is deliberately mocked to accept these
-        // IDs, but fake identities lack an Android runtime and get denied.
-        await assert.rejects(relay.admit(fake,target,'x'.repeat(40),'peer-'+i));
+        // Identity stub accepts these different credentials, but fake
+        // senders have no registered Android runtime and get denied.
+        await assert.rejects(relay.admit(fake,target,'valid-token-'+i));
     }
     assert.ok(relay.authenticatedRateEntries<=512);
     assert.equal(relay.pendingAuthCount,0);
@@ -215,14 +218,11 @@ test('authenticated sender budget is capped and rate storage never grows without
 
 test('image relay depends on structural delivery interface, not concrete infrastructure',async()=>{
     const {relay,remote,runtimes}=harness();
-    // An infrastructure adapter can be replaced by another live implementation
-    // satisfying only the explicit domain-side image delivery contract.
     const other={getCapabilities:()=>['device.image.receive'],
         deliverDeviceImage:async()=>({accepted:false})};
     runtimes.set(target,other);
-    const admitted=await relay.admit(source,target,'x'.repeat(40),'adapter-peer');
+    const admitted=await relay.admit(source,target,'x'.repeat(40));
     assert.equal(admitted.target,other);
     admitted.release();
-    // Restore only to avoid making the original fixture's remote unused.
     runtimes.set(target,remote);
 });
