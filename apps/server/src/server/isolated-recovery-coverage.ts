@@ -5,7 +5,11 @@ import { verifyIsolatedLegacyFiles } from "./isolated-legacy-files-recovery.js";
 import type { RecoveryObjectStore } from "./r2-recovery-verification.js";
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const MAX_PROJECTS=25,MAX_CATALOG_OBJECTS=2000;
+// An immutable Project recovery manifest can contain both original and
+// versioned entries. Existing manifest/restore tooling caps those at 2,000
+// entries (and the key-copy snapshot at 1,000 source rows). Therefore this
+// aggregate must bound SOURCE rows to 1,000, not claim 2,000 source rows.
+const MAX_PROJECTS=25,MAX_CATALOG_SOURCE_OBJECTS=1000;
 export type RecoveryRunScope={projectId:string;runId:string};
 type Row={
     project_id:string;source:string;file_id:string;variant:string;
@@ -17,7 +21,7 @@ export type IsolatedRecoveryCoverage={
     scope:"restored-db-and-independent-r2-all-file-owners";mode:"read-only";
     status:"object-scope-passed"|"blocked";
     catalogSha256:string;projectCount:number;catalogObjects:number;
-    projectVerified:number;projectBytesVerified:number;
+    projectVerified:number;projectEntriesVerified:number;
     legacyStatus:"passed"|"failed"|"partial"|"empty";
     legacyChecked:number;legacyVerified:number;
     projects:{projectId:string;runId:string;status:"passed"|"failed"|"partial";
@@ -34,9 +38,9 @@ async function inventory(db:Pick<Pool,"query">):Promise<Inventory>{
         "SELECT project_id,source,file_id,variant,storage_key,checksum,byte_size,mime_type,status "+
         "FROM atlas_project_storage_objects "+
         "ORDER BY project_id,source,file_id,variant LIMIT $1",
-        [MAX_CATALOG_OBJECTS+1]);
-    if(records.rows.length>MAX_CATALOG_OBJECTS)
-        throw new Error("Full Project/Portfolio recovery inventory exceeds bounded capacity.");
+        [MAX_CATALOG_SOURCE_OBJECTS+1]);
+    if(records.rows.length>MAX_CATALOG_SOURCE_OBJECTS)
+        throw new Error("Project/Portfolio recovery exceeds 1,000 source rows (2,000 possible recovery manifest entries); split or review bounds before acceptance.");
     const projects:string[]=[];
     for(const row of records.rows){
         if(!UUID.test(row.project_id))
@@ -93,7 +97,7 @@ export async function verifyIsolatedRecoveryCoverage(input:{
         block("missing-project-recovery-manifest-selection");
     if([...configured.keys()].some(id=>!wanted.has(id)))
         block("unexpected-project-run-selection");
-    let projectVerified=0,projectBytesVerified=0;
+    let projectVerified=0,projectEntriesVerified=0;
     const projects:IsolatedRecoveryCoverage["projects"]=[];
     // Do not spend a single R2 GET on a partial or mismatched Project
     // selection. One omitted Project makes the whole request incomplete.
@@ -110,7 +114,7 @@ export async function verifyIsolatedRecoveryCoverage(input:{
             projects.push({projectId,runId,status:result.status,verified:result.verified,
                 expected:manifest.entries.length,versionedIncluded:manifest.versionedCopyRunId!==null});
             if(result.status==="passed"&&result.verified===manifest.entries.length){
-                projectVerified++;projectBytesVerified+=result.verified;
+                projectVerified++;projectEntriesVerified+=result.verified;
             }else block("incomplete-or-failed-project-recovery-bytes");
         }
     }
@@ -132,7 +136,7 @@ export async function verifyIsolatedRecoveryCoverage(input:{
     return {scope:"restored-db-and-independent-r2-all-file-owners",
         mode:"read-only",status:blockers.length?"blocked":"object-scope-passed",
         catalogSha256:first.sha256,projectCount:first.projects.length,
-        catalogObjects:first.objects,projectVerified,projectBytesVerified,
+        catalogObjects:first.objects,projectVerified,projectEntriesVerified,
         legacyStatus:legacy.status,legacyChecked:legacy.checked,legacyVerified:legacy.verified,
         projects,blockers,catalogChanged,noPrimaryAccess:true,noWrites:true,
         disasterRecoveryReady:false,cutoverAuthorized:false};
