@@ -106,6 +106,10 @@ export async function shareFromMacClipboard(mode = 'live') {
         const target = ready[index];
         console.log('Confirm ' + (mode === 'queue' ? 'Queue' : 'Send') + ' in the native Atlas dialog on your Mac.');
         const deliveryId = mode === 'queue' ? randomUUID() : undefined;
+        // Print the opaque ID BEFORE submission. If the acknowledgement is
+        // lost, operators can compare this ID with Android's inbox rather
+        // than blindly creating a duplicate queued delivery.
+        if (deliveryId) console.log('Queue delivery ID: ' + deliveryId);
         const receipt = await localRequest(mode === 'queue'
             ? { action: 'queue', targetNodeId: target.nodeId, text, deliveryId }
             : { action: 'send', targetNodeId: target.nodeId, text });
