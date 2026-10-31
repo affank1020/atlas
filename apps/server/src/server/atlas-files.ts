@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { AtlasError } from "../shared/errors.js";
 import { ProjectFileFolders, folderId as parseFolderId } from "./project-file-folders.js";
+import { listPortfolioProjectMedia, type ProjectPortfolioMedia } from "./project-storage-catalog.js";
 import { createObjectStore, ObjectNotFound, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
 
 export type FileOwner = { kind: "project" | "workspace" | "application"; id: string };
@@ -50,6 +51,10 @@ export class AtlasFilesService {
         this.objects = objects ?? createObjectStore(root, r2);
     }
     async close() { await this.pool.end(); }
+
+    async portfolioCatalog(projectId: string): Promise<ProjectPortfolioMedia[]> {
+        return listPortfolioProjectMedia(this.pool, projectId);
+    }
 
     async list(ownerInput: FileOwner, status: AtlasFile["status"] = "active", destination?: string | null): Promise<AtlasFile[]> {
         const owner = ownerScope(ownerInput);

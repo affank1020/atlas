@@ -61,3 +61,13 @@
 .files-move-panel select { min-height:36px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text-primary); padding:6px 9px; }
 .files-move-panel button { min-height:36px; }
 @media(max-width:700px) { .files-actions { flex-wrap:wrap; } .files-move-panel { padding-left:0; } .files-scope-fields label:first-child { flex:1; } }
+
+/* Portfolio's Project-owned read-only media projection. */
+.files-portfolio-section { margin-top:24px; }
+.files-portfolio-header { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.files-portfolio-header h3 { margin:0; color:var(--text-primary); font-size:.99rem; font-weight:630; }
+.files-portfolio-header span { color:var(--text-muted); font-size:.76rem; }
+.files-media-link { display:inline-flex; align-items:center; justify-content:center; padding:8px 11px;
+    border:1px solid var(--border); border-radius:8px; color:var(--text-primary); text-decoration:none; font-size:.77rem; }
+.files-media-link:hover { border-color:var(--text-secondary); }
+.files-media-link:focus-visible { outline:2px solid var(--accent-solid); outline-offset:2px; }

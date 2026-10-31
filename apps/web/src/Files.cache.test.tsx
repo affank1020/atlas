@@ -20,6 +20,7 @@ test('Project browser refresh updates Project choices without fetching old owner
         if (action === 'list_projects') return response(projects.map(project => ({ ...project })));
         if (action === 'list') return response([]);
         if (action === 'folders-list') return response([]);
+        if (action === 'portfolio-catalog') return response([]);
         throw new Error('Unexpected request: ' + action);
     });
     vi.stubGlobal('fetch', fetcher);

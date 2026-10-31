@@ -114,3 +114,41 @@ development without R2. The browser does not expose physical keys, perform
 cross-Project moves or enable the default-off Node upload pipeline. Portfolio
 media remains in its specialised application until the separately reviewed
 catalog unification phase.
+
+## PR 3 — Portfolio Project storage catalogue (read-only, reversible)
+
+Migration `036_project_portfolio_catalog.sql` adds the
+`atlas_project_storage_objects` **read-only SQL view**. This is a single
+Project-scoped metadata catalogue for native Project Files, Portfolio media
+originals and every existing Portfolio derivative. Identity is the tuple
+`(project_id, source, file_id, variant)`, not a rewrite of media asset IDs or
+an assumption that variant names can become file IDs. Portfolio originals
+retain their `media_assets.id`; variants retain their existing names and
+object keys. All future Portfolio metadata changes are reflected automatically
+by the view, without a one-time backfill or duplicate editable rows.
+
+For the Portfolio Project (`d99a6c45-a4ec-5ef6-8f22-c07d31f8bb38`),
+the private `/api/files/portfolio-catalog` route returns a bounded read-only
+list of originals with metadata for their variants. The Project Files UI
+displays them separately at the Project root, labelled as read-only and
+managed by Portfolio. Active assets retain their original
+`/api/media/<asset-id>/original` delivery URLs; archived assets have no
+open link. No `storage_key` or R2 credentials are sent to the browser. Other
+Projects receive an empty Portfolio projection; active-Project
+authorization precedes the query. There are no Portfolio archive, folder-move,
+upload or overwrite buttons in this projection.
+
+**Object integrity limit:** the Portfolio original has an existing SHA-256
+checksum and byte size, but the legacy `media_variants` table contains size,
+MIME type and storage key **without a variant SHA-256**. The view explicitly
+projects `NULL` for variant checksums; it must **never** be treated as
+independent byte verification or permission to delete the original. The
+later backup/recovery milestone must read and hash actual variant bytes and
+prove coverage from both catalogues before any cutover. The API currently
+fails closed if Portfolio contains more than 500 originals; server-side
+pagination will be needed before growing past that bound.
+
+Rollback is non-destructive: remove the new view, optional service route and
+Files UI projection. No existing `media_assets`, `media_variants`,
+`atlas_files`, revision/publication records, public media endpoints, local
+files or R2 objects were mutated or copied by this change.
