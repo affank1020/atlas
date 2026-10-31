@@ -78,3 +78,22 @@ This is a **best-effort notification path**, not a delivery acknowledgement, bac
 The Node gateway processes push register/unregister requests **in socket arrival order**, including their asynchronous credential checks and PostgreSQL commits. This prevents a delayed registration from restoring an FCM token after a later opt-out on the same socket. Each socket has bounded pending work; a stale/disconnected socket cannot overwrite the active session's token row.
 
 Android parses both success and failure responses for its own correlated push request ID. For transient errors/timeouts, it makes at most five automatic retries with 1/2/4/8/16-second delays while the same Node session stays connected, and shows the status in Settings. Authorization/configuration errors are non-retryable without user/operator intervention. Disabling notifications locally immediately prevents displaying FCM alerts; Android requests server-side token removal and reports whether confirmation is still pending. If the socket is offline or interrupted before receipt, Android reconciles the opt-out at its next authenticated connection. **Offline local opt-out alone does not prove immediate server-side token deletion**, and it does not guarantee the server cannot briefly attempt an FCM request while the device is disconnected.
+
+
+### Stop/Forget push-revocation ordering
+
+Android's **Stop** action (including the notification action) and **Forget** do not
+immediately cancel their authenticated Node WebSocket after sending
+`device.push.unregister`. They retain the service/Activity connection until a
+matching server unregistration acknowledgement, or an 8-second bounded deadline.
+Android independently requests `FirebaseMessaging.deleteToken()` on opt-out
+to invalidate the existing FCM delivery token even if Atlas is unreachable.
+
+If Atlas fails to acknowledge before the deadline, **Stop** still terminates
+background receiving but explicitly reports that server revocation is unconfirmed
+and persists a pending-revocation marker for the next authenticated reconnect.
+**Forget refuses to clear the Node credential** in that case when Firebase is
+configured: reconnect and retry, or revoke the Node from Atlas Web before
+removing its enrolment. A successful local Firebase token deletion does **not**
+count as successful Atlas Server token-row deletion. Android process death,
+force-stop and network loss cannot be treated as proof of server-side revocation.
