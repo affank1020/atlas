@@ -252,6 +252,27 @@ class MacOperatorTests(unittest.TestCase):
             with self.assertRaisesRegex(operator.Refused, "Unrecognized loaded"):
                 operator.disable_check(self.layout)
 
+    def test_missing_python_interpreter_allows_safe_disable_and_reenable(self):
+        operator.initial_install(self.layout, self.version1)
+        with self.fake_check_service():
+            operator.enable_check(self.layout)
+            plist, _ = operator.check_paths(self.layout)
+            content = plistlib.loads(plist.read_bytes())
+            content["ProgramArguments"][0] = str(self.layout.home / "removed-python3")
+            plist.write_bytes(plistlib.dumps(content))
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"],
+                             "needs-attention")
+            with self.assertRaisesRegex(operator.Refused, "Python interpreter is missing"):
+                operator.enable_check(self.layout)
+            operator.disable_check(self.layout)
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"],
+                             "disabled")
+            operator.enable_check(self.layout)
+            self.assertEqual(operator.installed_check_status(self.layout)["schedule"],
+                             "enabled")
+        self.assertEqual(plistlib.loads(plist.read_bytes())["ProgramArguments"][0],
+                         sys.executable)
+
     def test_missing_launchd_session_is_needs_attention_not_enabled(self):
         operator.initial_install(self.layout, self.version1)
         with self.fake_check_service():
