@@ -158,11 +158,11 @@ export async function searchEverywhere(deps: SearchDeps, raw: z.input<typeof glo
         for (const node of list) {
             if (nodeActivity) {
                 const logAvailable = nodeLogs && (node as { capabilities?: string[] }).capabilities?.includes('node.logs') && node.status === 'online';
-                const selectedLogSource = node.platform === 'linux' ? 'journal' : logSource;
+                const selectedLogSource = node.platform === 'linux' ? 'service' : logSource;
                 const hit = makeHit(lookup || query, {
                     kind: 'node', id: node.id,
-                    title: logAvailable ? 'Read ' + node.name + ' ' + (selectedLogSource === 'journal' ? 'journal' : logSource === 'stderr' ? 'error logs' : 'logs') : 'Inspect ' + node.name + ' activity',
-                    description: logAvailable ? 'Latest ' + logLines + ' lines · ' + (selectedLogSource === 'journal' ? 'systemd journal' : logSource === 'stderr' ? 'stderr' : 'stdout') : 'Recent operations · raw logs unavailable until the Node supports log access',
+                    title: logAvailable ? 'Read ' + node.name + ' ' + (selectedLogSource === 'service' ? 'service logs' : logSource === 'stderr' ? 'error logs' : 'logs') : 'Inspect ' + node.name + ' activity',
+                    description: logAvailable ? 'Latest ' + logLines + ' lines · ' + (selectedLogSource === 'service' ? 'private Atlas Node output' : logSource === 'stderr' ? 'stderr' : 'stdout') : 'Recent operations · raw logs unavailable until the Node supports log access',
                     context: node.name + ' / ' + nodeDescription(node),
                     href: nodeLogs ? '#/monitoring?tab=logs&nodeId=' + encodeURIComponent(node.id) + '&source=' + selectedLogSource + '&lines=' + logLines : '#/monitoring?tab=activity&nodeId=' + encodeURIComponent(node.id),
                 });
