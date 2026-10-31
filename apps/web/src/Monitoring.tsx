@@ -153,6 +153,9 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     ];
     const advancedCount = advancedKeys.filter(key =>
         Boolean(filters[key]) && !(key === 'projectId' && projectId)).length;
+    // Keep named Project Workspace selection and bookmarked advanced scopes visible on entry.
+    // The user can still collapse the native disclosure when it is not needed.
+    const [advancedOpen, setAdvancedOpen] = useState(Boolean(projectId || advancedCount));
     const hasActiveFilters = Object.entries(filters).some(([key, value]) =>
         Boolean(value) && key !== 'live' && key !== 'offset' && !(key === 'projectId' && projectId))
         || search !== (filters.search ?? '')
@@ -169,7 +172,7 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
         <div className="monitoring-primary-filters" role="group" aria-label="Common activity filters">
             <form className="monitoring-search" onSubmit={e => { e.preventDefault(); setFilter('search', search.trim()); }}>
                 <label>Search<input aria-label="Search activity" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} placeholder="Find an operation" /></label>
-                <button type="submit">Search</button>
+                <button type="submit">Apply</button>
             </form>
             <label>Category<select aria-label="Category" value={filters.category ?? ''} onChange={e => setFilter('category', e.target.value)}>{CATEGORIES.map(x => <option key={x} value={x}>{x || 'All categories'}</option>)}</select></label>
             <label>Outcome<select aria-label="Outcome" value={filters.outcome ?? ''} onChange={e => setFilter('outcome', e.target.value)}>{['','failed','pending','completed'].map(x => <option key={x} value={x}>{x || 'All outcomes'}</option>)}</select></label>
@@ -177,7 +180,8 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
                 onClick={() => { setSearch(''); setDraft(projectId ? { projectId } : {});
                     navigate({ live: filters.live }); }}>Reset filters</button>
         </div>
-        <details className="monitoring-advanced-filters">
+        <details className="monitoring-advanced-filters" open={advancedOpen}
+            onToggle={event => setAdvancedOpen(event.currentTarget.open)}>
             <summary>Scope and time filters{advancedCount ? ' · ' + advancedCount + ' active' : ''}</summary>
             <div className="activity-filters monitoring-filters">
                 {projectId && <label>Workspace
