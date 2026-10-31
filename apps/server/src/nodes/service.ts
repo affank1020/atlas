@@ -48,7 +48,9 @@ export class NodeService {
     async list() { if (this.local) await this.registerLocalNode(); return (await this.repository.list()).map(node => this.effective(node)); }
     async listForMonitoring() { if (this.local) await this.registerLocalNode(); return (await (this.repository.listForMonitoring?.() ?? this.repository.list())).map(node => this.effective(node)); }
     async get(id: string) { if (this.local) await this.registerLocalNode(); return this.effective(await this.repository.get(id)); }
-    /** Minimal sender-scoped directory; never return unrelated registry details. */
+    /** Legacy five-field directory. Existing Android 0.6 and older Mac Nodes
+     * parse recipients strictly: do not expand this wire response shape.
+     */
     async shareRecipients(sourceId: string) {
         const approved = await this.requireShareApprovals().targetsFor(sourceId);
         if (!approved.size) return [];
@@ -61,6 +63,30 @@ export class NodeService {
                 status: node.status,
                 available: node.status === 'online' && node.capabilities.includes('device.share.receive'),
             })).slice(0,64);
+    }
+
+    /** New authenticated opt-in directory; source identity comes from the
+     * registered Node socket. Offline eligibility uses durable last-known
+     * capabilities, not transient runtime attachments.
+     */
+    async inboxRecipients(sourceId: string) {
+        const approved = await this.requireShareApprovals().targetsFor(sourceId);
+        if (!approved.size) return [];
+        if (this.local) await this.registerLocalNode();
+        const nodes = await this.repository.list();
+        return nodes.filter(node => approved.has(node.id.toLowerCase())
+            && node.id.toLowerCase() !== sourceId.toLowerCase()
+            && node.credentialState === 'active')
+            .map(node => {
+                const live = this.effective(node);
+                return {
+                    nodeId: node.id, name: node.name, platform: node.platform,
+                    status: live.status,
+                    available: live.status === 'online' &&
+                        live.capabilities.includes('device.share.receive'),
+                    queueCapable: node.capabilities.includes('device.share.receive'),
+                };
+            }).slice(0,64);
     }
     async call(name: NodeToolName, input: unknown, caller: ShareAuditClient = 'atlas-server') {
         const parsed = nodeSchemas[name].safeParse(input);
