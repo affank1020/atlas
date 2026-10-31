@@ -12,7 +12,11 @@ import { WorkspaceFiles } from '../../capabilities/workspace-files/files.js';
 import { MacShareReceiver } from '../../capabilities/device-share/mac-receiver.js';
 import { startMacShareControlServer } from '../../capabilities/device-share/mac-sender-control.js';
 import { NodeOfflineFileQueue } from '../../core/file-queue.js';
+import { createNodeRuntimeLogger } from '../../core/runtime-logger.js';
 
+// Linux stdout/stderr are captured directly into the private service log;
+// journalctl no longer adds event timestamps to the stored output.
+const log = createNodeRuntimeLogger();
 loadEnv({ path: process.env.ATLAS_NODE_ENV_FILE || '.env.node', quiet: true });
 const id = z.string().uuid().parse(process.env.ATLAS_NODE_ID);
 const name = (process.env.ATLAS_NODE_NAME || hostname()).trim();
@@ -46,11 +50,11 @@ function drainOfflineQueue() {
     if (!offlineQueue || !node.isOnline) return;
     void offlineQueue.flush().then(result => {
         // Aggregate diagnostics only; never log file contents, names or secrets.
-        if (result.delivered) console.log('Atlas Node delivered ' + result.delivered + ' queued file(s).');
+        if (result.delivered) log.info('Atlas Node delivered ' + result.delivered + ' queued file(s).');
         if (result.blocked || result.unreadable)
-            console.warn('Atlas Node has blocked or unreadable uploads; inspect local queue status.');
+            log.warn('Atlas Node has blocked or unreadable uploads; inspect local queue status.');
     }).catch(() => {
-        console.error('Atlas Node offline file queue cannot be read or flushed.');
+        log.error('Atlas Node offline file queue cannot be read or flushed.');
     });
 }
 if (offlineQueue) {
@@ -76,7 +80,7 @@ function publishStatus() {
         renameSync(temporary, statusPath);
     } catch (error) {
         // Diagnostics must never take down the Node.
-        console.error('Could not write local Atlas Node diagnostics:', error instanceof Error ? error.message : 'unknown error');
+        log.error('Could not write local Atlas Node diagnostics: ' + (error instanceof Error ? error.message : 'unknown error'));
     }
 }
 function setConnectionState(state: ConnectionState, message = '') {
@@ -87,18 +91,18 @@ function setConnectionState(state: ConnectionState, message = '') {
 }
 node.on('online', () => {
     setConnectionState('connected');
-    console.log(`Atlas Node ${id} connected to Atlas Server.`);
+    log.info(`Atlas Node ${id} connected to Atlas Server.`);
     drainOfflineQueue();
 });
-node.on('offline', () => console.log(`Atlas Node ${id} disconnected; reconnecting.`));
+node.on('offline', () => log.info(`Atlas Node ${id} disconnected; reconnecting.`));
 node.on('socketClosed', (code: number, reason: string) => {
     const description = `WebSocket closed (code ${code}${reason ? ': ' + reason : ''})`;
     if (connectionState !== 'stopping') setConnectionState('reconnecting', description);
-    console.warn(`Atlas Node ${description}; reconnecting.`);
+    log.warn(`Atlas Node ${description}; reconnecting.`);
 });
 node.on('connectionError', (message: string) => {
     if (connectionState !== 'stopping') setConnectionState('reconnecting', message);
-    console.error(`Atlas Node connection failed: ${message}. Retrying.`);
+    log.error(`Atlas Node connection failed: ${message}. Retrying.`);
 });
 publishStatus();
 setInterval(publishStatus, 10_000).unref();
@@ -108,7 +112,7 @@ node.start();
 // already-authenticated Node. Failure must not take down Workspace hosting.
 const shareControl = shareSenderEnabled
     ? await startMacShareControlServer(node).catch(() => {
-        console.error('Atlas Mac sharing control is unavailable; check private local socket permissions.');
+        log.error('Atlas Mac sharing control is unavailable; check private local socket permissions.');
         return undefined;
     }) : undefined;
 let stopping = false;
@@ -121,7 +125,7 @@ const stop = async () => {
     // cross-process mutation lock to be released within the service deadline.
     if (offlineQueue) {
         try { await offlineQueue.stop(); }
-        catch { console.error('Atlas Node failed to stop its offline queue cleanly; inspect the local lock.'); }
+        catch { log.error('Atlas Node failed to stop its offline queue cleanly; inspect the local lock.'); }
     }
     await shareControl?.close().catch(() => undefined);
     await node.stop();
