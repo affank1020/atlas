@@ -8,6 +8,11 @@ on:
       - "packages/protocol/**"
       - "package.json"
       - "package-lock.json"
+      - "scripts/macos-node-update.py"
+      - "scripts/macos-node-stage.py"
+      - "scripts/macos-node-lifecycle.py"
+      - "scripts/linux-node-host-updater.py"
+      - "scripts/macos-node-operator.py"
       - "scripts/package-node-release.mjs"
       - "scripts/node-release-publication-check.sh"
       - ".github/workflows/node-package.yml"
@@ -18,6 +23,11 @@ on:
       - "packages/protocol/**"
       - "package.json"
       - "package-lock.json"
+      - "scripts/macos-node-update.py"
+      - "scripts/macos-node-stage.py"
+      - "scripts/macos-node-lifecycle.py"
+      - "scripts/linux-node-host-updater.py"
+      - "scripts/macos-node-operator.py"
       - "scripts/package-node-release.mjs"
       - "scripts/node-release-publication-check.sh"
       - ".github/workflows/node-package.yml"
@@ -42,6 +52,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build:node
+      - name: Check bundled macOS operator sources
+        run: python3 -m py_compile scripts/macos-node-update.py scripts/macos-node-stage.py scripts/macos-node-lifecycle.py scripts/linux-node-host-updater.py scripts/macos-node-operator.py
       - name: Package immutable Node artifact
         run: node scripts/package-node-release.mjs
       - name: Verify archive installs and loads shared protocol
@@ -97,6 +109,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/atlas-node-mac"
           tar -xzf "$archive" -C "${RUNNER_TEMP}/atlas-node-mac"
           cd "${RUNNER_TEMP}/atlas-node-mac"
+          python3 -m py_compile scripts/*.py
           npm ci --omit=dev --ignore-scripts --workspace @atlas/node --workspace @atlas/protocol --include-workspace-root=false
           node --input-type=module -e "import('@atlas/protocol/node-protocol').then(m => { if (m.NODE_PROTOCOL_VERSION !== 2) process.exit(1); })"
 
