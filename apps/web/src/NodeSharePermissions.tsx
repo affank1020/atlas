@@ -34,7 +34,15 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
                 setApprovals(value);
                 setLoaded(true);
             }
-        }).catch(err => { if (live) setError(err instanceof Error ? err.message : String(err)); })
+        }).catch(err => {
+            if (!live) return;
+            // A failed refresh invalidates previously displayed grants. Do not
+            // present old approvals as verified after a registry read fails.
+            setLoaded(false);
+            setApprovals([]);
+            setNotice('');
+            setError(err instanceof Error ? err.message : String(err));
+        })
           .finally(() => { if (live) setLoading(false); });
         return () => { live = false; };
     }, [source.id, revision]);
