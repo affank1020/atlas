@@ -34,14 +34,16 @@ test('managed summary renders bounded latest saved structured evidence, without 
     const output = renderManagedSummary(repository, prNumber, round() as any, 4);
     assert.equal(output.marker, managedSummaryMarker(repository, prNumber));
     assert.ok(output.body.endsWith(output.marker));
-    assert.match(output.body, /Sev3 1/);
-    assert.match(output.body, /new 1/);
-    assert.match(output.body, /4 rounds recorded in Atlas/);
+    assert.match(output.body, /1 Sev3/);
+    assert.match(output.body, /Reviewer-asserted fixes:\*\* 0/);
+    assert.match(output.body, /Saved rounds:\*\* 4/);
+    assert.match(output.body, /\[!CAUTION\]/);
+    assert.ok(output.body.split('\n').length <= 15, 'summary stays scannable');
     assert.doesNotMatch(output.body, /Unvalidated <!--/);
     assert.match(output.body, /Unvalidated &lt;/);
     assert.doesNotMatch(output.body, /Unvalidated <!--/);
     assert.ok(output.body.includes('user input'));
-    assert.match(output.body, /absence is not evidence|does not become fixed/);
+    assert.match(output.body, /missing findings are not proof of a fix/i);
     assert.equal(output.fullEvidence, true);
 
     const resolution = renderManagedSummary(repository, prNumber, round({
@@ -49,14 +51,16 @@ test('managed summary renders bounded latest saved structured evidence, without 
         resolutions: [{ lineageKey: 'input-root', state: 'resolved',
             evidence: 'Verified with the new regression at the reviewed head.' }],
     }) as any, 5);
-    assert.match(resolution.body, /reviewer-asserted resolved 1/);
-    assert.match(resolution.body, /Verified with the new regression/);
+    assert.match(resolution.body, /Reviewer-asserted fixes:\*\* 1/);
+    assert.doesNotMatch(resolution.body, /Verified with the new regression/,
+        'detailed fix evidence belongs in its own thread, not the PR summary');
     const imported = renderManagedSummary(repository, prNumber, round({
         source: 'historical', findingCoverage: 'historical_partial',
     }) as any, 1);
     assert.equal(imported.fullEvidence, false);
-    assert.match(imported.body, /Complete severity and lifecycle totals unavailable/);
-    assert.doesNotMatch(imported.body, /Severity observations:/);
+    assert.match(imported.body, /Finding counts:\*\* unavailable/);
+    assert.match(imported.body, /Partial evidence/);
+    assert.doesNotMatch(imported.body, /Latest round:/);
     for (const invalid of ['../repo', './repo', 'owner/..', 'owner/.', 'owner/repo/path',
         'owner//repo', 'owner/repo?x=1']) {
         assert.throws(() => managedSummaryMarker(invalid, 118), /Invalid managed summary/);
@@ -84,9 +88,30 @@ test('Markdown payloads remain inside one finding and code spans retain literal 
     assert.ok(result.body.includes(slash + '#' + slash + '# Forged approval'));
     assert.ok(result.body.includes('&gt; ' + slash + '[' + slash + '!TIP' + slash + ']'));
     assert.ok(result.body.includes('``` src/review`part``other.ts ## Unsafe ```'));
-    assert.ok(result.body.includes('``` issue`with``ticks ```'));
+    assert.ok(!result.body.includes('issue`with``ticks'),
+        'implementation lineage keys should not clutter the PR-level summary');
     assert.ok(!result.body.includes(newline + '[admin]('));
     assert.ok(result.body.endsWith(managedSummaryMarker(repository, prNumber)));
+});
+
+
+test('managed summary caps the visible finding index and never invents an outstanding backlog', () => {
+    const observations = Array.from({ length: 8 }, (_, index) => ({
+        ...round().findings[0],
+        id: String(index), title: 'Finding ' + index, severity: 'sev3',
+    }));
+    const result = renderManagedSummary(repository, prNumber,
+        round({ findings: observations, totalFindingObservations: 8 }) as any, 12);
+    assert.match(result.body, /8 Sev3/);
+    assert.match(result.body, /\+3 more findings/);
+    assert.match(result.body, /Finding 4/);
+    assert.doesNotMatch(result.body, /Finding 5/);
+    assert.doesNotMatch(result.body, /outstanding|all fixed/i);
+    const clean = renderManagedSummary(repository, prNumber,
+        round({ verdict: 'no_findings', findings: [], totalFindingObservations: 0 }) as any, 12);
+    assert.match(clean.body, /\[!TIP\]/);
+    assert.match(clean.body, /0 findings/);
+    assert.match(clean.body, /missing findings are not proof of a fix/i);
 });
 
 function githubReader(pages: unknown[][], botId = 77) {
@@ -177,7 +202,7 @@ test('managed summary is read-only and scoped to one PR and its stored findings'
             lookups++;
             assert.equal(repo, repository);
             assert.equal(pr, prNumber);
-            assert.match(body, /Sev3 1/);
+            assert.match(body, /1 Sev3/);
             return { status: 'no_owned_comment' };
         },
     } as any);
