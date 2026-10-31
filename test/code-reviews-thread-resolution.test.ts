@@ -78,7 +78,7 @@ async function fixture(){
                 headSha:fixedSha,claimedAt:'2026-10-30T20:05:00.000Z',replyCommentId:501}}}},
     }));
     let resolved=false,viewerCanResolve=true,outdated=false,failedHead=false,
-        uncertain=false,throwRead=false,missingFix=false;
+        uncertain=false,throwRead=false,missingFix=false,headFailureAt=0;
     const events={head:0,tokens:0,reads:0,writes:0,rest:0};
     const rest={inspect:async()=>{
         events.rest++;
@@ -108,7 +108,10 @@ async function fixture(){
             if(uncertain)throw Error('Timeout after GraphQL already resolved');
         },
     };
-    const head={checkHead:async()=>{events.head++;if(failedHead)throw Error('PR head moved')}};
+    const head={checkHead:async()=>{
+        events.head++;
+        if(failedHead||events.head===headFailureAt)throw Error('PR head moved');
+    }};
     const service=new ReviewThreadResolutionService(catalog,rest as any,read as any,
         gateway as any,head as any,new Set([repository]));
     return {catalog,runs,findings,run,original,events,service,gateway,rest,
@@ -118,6 +121,7 @@ async function fixture(){
         writable:(v:boolean)=>{viewerCanResolve=v},
         stale:(v:boolean)=>{outdated=v},
         badHead:(v:boolean)=>{failedHead=v},
+        headFailsOn:(n:number)=>{headFailureAt=n},
         uncertain:(v:boolean)=>{uncertain=v},
         failRead:(v:boolean)=>{throwRead=v},
         dropFix:(v:boolean)=>{missingFix=v},
@@ -225,4 +229,29 @@ test('GraphQL resolution gateway checks mutation response and uses write token',
         pullRequestPublishToken:async()=> 'write-token',
     },(async()=>new Response(JSON.stringify({errors:[{message:'not allowed'}]}),{status:200})) as typeof fetch);
     await assert.rejects(rejected.resolve('PRRT_123456789','write-token'),/unverified/);
+});
+
+test('a prewrite failure retains the claim but never sends GraphQL mutation',async()=>{
+    const f=await fixture();
+    f.headFailsOn(2);
+    assert.equal((await f.publish(true)).status,'prewrite_recovery_required');
+    assert.equal(f.events.writes,0);
+    assert.equal((await f.publish(true)).status,'mutation_outcome_uncertain');
+    assert.equal(f.events.writes,0);
+});
+
+test('a pending resolution claim remains read-only even after a newer review',async()=>{
+    const f=await fixture();
+    f.uncertain(true);
+    assert.equal((await f.publish(true)).status,'mutation_outcome_uncertain');
+    const newer=await f.catalog.createRecord({projectId:CODE_REVIEWS_PROJECT_ID,storeId:f.runs.id,
+        data:{repository,prNumber,headSha:'c'.repeat(40),reviewer:'Code Reviewer',
+            verdict:'no_findings',reviewedAt:'2026-10-30T23:00:00.000Z',
+            coverage:{source:'atlas_structured_submission',
+                submissionId:'b248a65f-844d-4020-8844-3ead10e11d54',
+                payloadSha256:'c'.repeat(64),findingCount:0,authenticatedCaller:actor}}},
+    );
+    assert.ok(newer.id);
+    assert.equal((await f.publish(true)).status,'resolved_on_github_attribution_unknown');
+    assert.equal(f.events.writes,1);
 });
