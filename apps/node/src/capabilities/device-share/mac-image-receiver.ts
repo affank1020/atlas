@@ -34,8 +34,8 @@ async function osascript(script: string, language: string[], timeoutMs: number, 
 export async function promptMacImage(input: IncomingImage, signal?: AbortSignal): Promise<boolean> {
     const src = input.sourceNodeId.slice(0, 8);
     const format = input.mimeType === 'image/png' ? 'PNG' : 'JPEG';
-    const script = `display dialog "Atlas image from Node ${src} (${format}, ${Math.ceil(input.bytes.length / 1024)} KiB)" with title "Atlas" buttons {"Decline", "Copy image"} default button "Decline" giving up after 15
-return button returned of result
+    const script = `set response to display dialog "Atlas image from Node ${src} (${format}, ${Math.ceil(input.bytes.length / 1024)} KiB)" with title "Atlas" buttons {"Decline", "Copy image"} default button "Decline" giving up after 15
+return button returned of response
 `;
     try { return await osascript(script, [], 18_000, signal) === 'Copy image'; }
     catch { return false; }
@@ -48,6 +48,10 @@ export function imagePasteboardScript(input: IncomingImage): string {
     return `ObjC.import('AppKit');
 const data = $.NSData.alloc.initWithBase64EncodedStringOptions($('${encoded}'), 0);
 if (!data || data.length !== ${input.bytes.length}) throw Error('Invalid image bytes');
+// Decode before altering the clipboard; a valid magic header is not proof
+// the user's source image contains complete, pasteable pixels.
+const decoded = $.NSBitmapImageRep.alloc.initWithData(data);
+if (!decoded || decoded.pixelsWide < 1 || decoded.pixelsHigh < 1) throw Error('Invalid image encoding');
 const pasteboard = $.NSPasteboard.generalPasteboard;
 const imageType = $('${type}');
 pasteboard.declareTypesOwner($.NSArray.arrayWithObject(imageType), null);
@@ -69,6 +73,8 @@ export class MacImageReceiver {
             input.bytes.length > MAX_DEVICE_IMAGE_BYTES ||
             createHash('sha256').update(input.bytes).digest('hex') !== input.sha256)
             throw new AtlasError('Image expired or invalid.', 'SHARE_INVALID');
+        if (!validImage(input.bytes, input.mimeType))
+            throw new AtlasError('Unsupported or malformed image.', 'SHARE_INVALID');
         const old = this.seen.get(input.deliveryId);
         if (old) {
             if (old.digest !== input.sha256) throw new AtlasError('Image ID reused.', 'SHARE_REPLAY');
@@ -93,4 +99,19 @@ export class MacImageReceiver {
         if (this.seen.size >= 512) this.seen.delete(this.seen.keys().next().value!);
         this.seen.set(input.deliveryId, { digest: input.sha256, accepted, at: Date.now() });
     }
+}
+
+/** Independent receiver-side magic/signature/dimension checks. Native
+ * NSBitmapImageRep performs full image decoding before pasteboard mutation.
+ */
+export function validImage(bytes: Buffer, type: string): boolean {
+    if (type === 'image/png') return bytes.length >= 24 &&
+        bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) &&
+        bytes.toString('ascii',12,16) === 'IHDR' &&
+        bytes.readUInt32BE(16) >= 1 && bytes.readUInt32BE(20) >= 1 &&
+        bytes.readUInt32BE(16) <= 16384 && bytes.readUInt32BE(20) <= 16384;
+    if (type === 'image/jpeg') return bytes.length >= 24 &&
+        bytes[0] === 0xff && bytes[1] === 0xd8 &&
+        bytes[bytes.length-2] === 0xff && bytes[bytes.length-1] === 0xd9;
+    return false;
 }
