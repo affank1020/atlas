@@ -33,7 +33,7 @@ function safeMetadata(input: unknown, eventOperation: string): Record<string, st
         'node.update_intent_claimed', 'node.update_outcome_reported'].includes(eventOperation);
     if (nodeControl) {
         const fixed = {
-            transport: ['http', 'mcp', 'server', 'node-credential', 'enrolment-token'],
+            transport: ['http', 'mcp', 'server'],
             actorKind: ['transport', 'node-credential', 'enrolment-token'],
         } as const;
         for (const [key, allowed] of Object.entries(fixed)) {

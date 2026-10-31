@@ -82,7 +82,7 @@ test('node correlation metadata is strictly allowlisted and arbitrary actor clai
     const nodeId = '44444444-4444-4444-8444-444444444444';
     const intentId = '55555555-5555-4555-8555-555555555555';
     const full = projectMonitoringEvent({ ...audit({
-        nodeId, intentId, transport: 'node-credential', actorKind: 'node-credential',
+        nodeId, intentId, transport: 'http', actorKind: 'node-credential',
         status: 'claimed', reportedState: 'requires_reconciliation',
         approved: false, executable: false, verified: false, clearsClaim: false,
         operatorId: 'user-secret', actorName: 'admin', error: 'password=secret',
