@@ -1,6 +1,6 @@
 import { config as loadEnv } from 'dotenv';
 import { randomUUID } from 'node:crypto';
-import { recordR2SeedObservation } from './operational-audit.js';
+import { runObservedR2Seed } from './operational-audit.js';
 import { Pool } from 'pg';
 import { loadPortfolioConfig, requireDatabaseUrl } from './config.js';
 import { LocalObjectStore, R2ObjectStore } from './file-storage.js';
@@ -17,23 +17,26 @@ try {
     const primaryConfig = primaryStorage.r2;
     const recoveryConfig = loadRecoveryR2Config(process.env, primaryConfig);
     pool = new Pool({ connectionString: requireDatabaseUrl(), connectionTimeoutMillis: 5000 });
-    const report = await seedR2Backup({
+    // Allocate an ID before the first R2 read or PUT. A thrown operation may
+    // have written externally before its acknowledgement failed, so both
+    // successes and aborts need independent best-effort audit evidence.
+    const runId = randomUUID();
+    const result = await runObservedR2Seed(pool, runId, args.apply ? 'apply' : 'dry-run', () => seedR2Backup({
         database: pool, primary: createR2SeedPrimarySource(
             new R2ObjectStore(primaryConfig!), new LocalObjectStore(primaryStorage.mediaRoot)),
         backup: new R2ObjectStore(recoveryConfig), ...args,
-    });
-    // R2 writes and PostgreSQL audit cannot commit atomically. Record only
-    // a bounded observation, and surface audit failure without asserting that
-    // any already-completed copy was rolled back.
-    const runId = randomUUID();
-    console.log(JSON.stringify({ runId, ...report }, null, 2));
-    try {
-        await recordR2SeedObservation(pool, runId, report);
-    } catch {
-        console.error('R2 seed outcome recorded by CLI but Monitoring audit unavailable; copies may exist. Check recovery storage before retrying.');
+    }));
+    if (result.kind === 'aborted') {
+        console.error('Atlas Files R2 backup seeding aborted or inconclusive; copies may exist. Inspect recovery storage before retrying.');
+        process.exitCode = 1;
+    } else {
+        console.log(JSON.stringify({ runId, ...result.report }, null, 2));
+        if (result.report.status === 'failed' || result.report.status === 'empty') process.exitCode = 2;
+    }
+    if (!result.auditRecorded) {
+        console.error('R2 seed Monitoring audit unavailable; the reported or aborted operation may have written copies. Inspect recovery storage before retrying.');
         process.exitCode = 3;
     }
-    if ((report.status === 'failed' || report.status === 'empty') && process.exitCode !== 3) process.exitCode = 2;
 } catch {
     // Raw exceptions can contain endpoints, credentials, signed headers or
     // private metadata. Do not print them to CLI logs.

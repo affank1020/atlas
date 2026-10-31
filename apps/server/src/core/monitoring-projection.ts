@@ -36,7 +36,7 @@ function safeMetadata(input: unknown, eventOperation: string, eventClient: strin
     if (eventOperation === 'backup.r2_seed_observed' && eventClient === 'atlas-backup-cli' && source.source === 'operator-cli') {
         if (typeof source.runId === 'string' && uuid.test(source.runId)) output.runId = source.runId;
         if (['dry-run','apply'].includes(String(source.mode))) output.mode = source.mode as string;
-        if (['ready','completed','failed','partial','empty'].includes(String(source.status)))
+        if (['ready','completed','failed','partial','empty','aborted'].includes(String(source.status)))
             output.status = source.status as string;
         if (source.source === 'operator-cli') output.source = 'operator-cli';
         for (const key of ['checked','existingVerified','planned','createdVerified','racedVerified',
