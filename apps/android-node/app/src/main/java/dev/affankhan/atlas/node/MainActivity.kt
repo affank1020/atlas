@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
 
     private fun setBackgroundReceiving(enabled: Boolean) {
         if (!enabled) {
-            model.setPushEnabled(false)
+            model.updatePushConsent(false)
             stopService(Intent(this, BackgroundReceiverService::class.java))
             model.stopBackgroundReceiving()
             return
