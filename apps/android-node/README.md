@@ -1,15 +1,15 @@
-# Atlas Android Node (0.6.0 development build)
+# Atlas Android Node (0.7.0 development build)
 
 Native Kotlin / Jetpack Compose companion, Samsung tablet-first. This is **not** an Android port of the Atlas Web UI.
 
-## Current scope (v0.6.0)
+## Current scope (v0.7.0)
 
 - Native Kotlin/Compose phone/tablet app with Devices, Send, Inbox and Settings.
 - One-use enrolment via publicly trusted HTTPS; Android Keystore-encrypted Node credentials and authenticated WSS (foreground by default, optional background service).
 - Android Sharesheet text/link import with memory-only draft. Since merged PR #161, user-selected PNG/JPEG images (up to 8 MiB) can also be imported and previewed locally. **Images cannot yet be sent**: the image Send button stays disabled until a separately authorized binary transport is implemented. See [image handoff plan](../../docs/MOBILE_IMAGE_HANDOFF.md). Text sends still require an approved recipient and explicit Send.
 - Advertises `device.share.send` and `device.share.receive`; the Node disconnects on backgrounding unless the operator turns on Background receiving in Settings. Recipient discovery and every delivery require directional server approval; unauthorised/offline devices aren't selectable.
-- Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or background receiver.
-- No Workspace capabilities, persistent inbox/history, file transfer, automatic send or blanket clipboard permission. The optional remote-messaging foreground service provides best-effort live receiving; it is not offline delivery.
+- Inbound text appears in a short-lived native Copy/Decline dialog on top of any screen. **Only** a human Copy action writes the Android clipboard and causes an accepted receipt; dismissal and timeout decline. No auto-copy or implicit background clipboard write.
+- No Workspace capabilities, on-device plaintext inbox persistence, file transfer, automatic send or blanket clipboard permission. The optional remote-messaging foreground service provides best-effort live receiving; it is not offline delivery.
 
 This is a **test build**, not a production-ready mobile Node. A first Samsung → Mac text-copy test succeeded, but the full acceptance matrix, the negative-case Mac → Android physical acceptance matrix, and production signing/release remain outstanding; the local persistent debug signer described below is only for physical development testing. Native integration must not pass Caddy Basic Auth credentials to the app or silently share selected content. See [physical acceptance and rollback](../../docs/MOBILE_SHARE_E2E.md).
 
@@ -27,6 +27,12 @@ CI builds a debug APK on Android-specific changes, but its runner-specific signi
 
 The app intentionally lives inside `apps/` without a `package.json` and does not change the npm build/test graph.
 
+## 0.7.0 — Explicit queued-text Inbox
+
+Android retrieves encrypted-at-rest queued text from Atlas only after it reconnects and the user opens **Inbox → Refresh**. Listings disclose only sender IDs and delivery metadata, and **Review** obtains one decrypted item into process memory. Copy and Decline are explicit user decisions. Neither the server nor Android automatically changes the clipboard, and no text goes to SavedState or disk.
+
+Requires a server-only `ATLAS_DEVICE_INBOX_KEY` and the Mac `./atlasctl share --queue` command from the corresponding Node update. Does not include FCM, instant screen-off delivery or image transport. See [offline inbox setup](../../docs/MOBILE_OFFLINE_INBOX.md).
+
 ## Version contract
 
 See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle properties are the single source for `versionName` and `versionCode`. The Android app version is independent from Atlas Server/Node npm `2.0.0` and the wire protocol `2`.
@@ -38,7 +44,9 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 3. Opt-in Mac receiver, directional managed approvals and explicit Android text send — implemented; first real Samsung → Mac copy confirmed.
 4. Approved receiver discovery by name — implemented in Android 0.4.0.
 5. Foreground Android Copy/Decline receiver — implemented in 0.5.0. Mac-side sender merged in PR #82; an initial physical Mac → Samsung text Copy transfer succeeded on 31 October 2026. The negative cases still need acceptance.
-6. **Next gate:** physically verify Android 0.6.0 notification-based receiving in another app; complete screen-off, declined, timeout and revocation [E2E cases](../../docs/MOBILE_BACKGROUND_RECEIVER.md). Preview-only screenshot import is merged but still cannot send images.
+6. Android 0.6.0 adds an opt-in background service and content-free notifications for *live* text receiving while using other apps.
+7. Android 0.7.0 connects its Inbox tab to the encrypted offline queue from server PR #175, with manual Refresh, Review, Copy and Decline. The Mac sender queues text with `./atlasctl share --queue` and its separate native confirmation. A queued receipt does **not** mean copied.
+8. **Next gate:** physical Samsung queued-text acceptance and FCM wake-up for sleeping tablets; complete [E2E cases](../../docs/MOBILE_BACKGROUND_RECEIVER.md). Screenshot import remains preview-only.
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
