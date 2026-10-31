@@ -23,7 +23,11 @@ export class LiveImageRelay {
     private readonly sourceActive = new Set<string>();
     private readonly entries = new Map<string, Entry>();
     private readonly seenIds = new Map<string, number>();
-    constructor(private readonly nodes: NodeService, private readonly approvals: NodeShareApprovals) {}
+    constructor(private readonly nodes: NodeService, private readonly approvals: NodeShareApprovals,
+        private readonly imagePairs: ReadonlySet<string> = new Set()) {}
+    private imageAllowed(source: string, target: string) {
+        return this.imagePairs.has(source.toLowerCase() + ':' + target.toLowerCase());
+    }
 
     async admit(sourceId: string, targetId: string, credential: string): Promise<{
         target: RemoteNodeRuntime; sourceRuntime: object; release: () => void;
@@ -55,6 +59,7 @@ export class LiveImageRelay {
                 !receiver.capabilities.includes('device.image.receive') ||
                 !(targetRuntime instanceof RemoteNodeRuntime) ||
                 !targetRuntime.getCapabilities().includes('device.image.receive') ||
+                !this.imageAllowed(source, target) ||
                 !(await this.approvals.allowedForInbox(source, target)))
                 throw new AtlasError('Image transfer to that Node is not authorised.', 'SHARE_DENIED');
             return { target: targetRuntime, sourceRuntime: senderRuntime, release };
@@ -81,7 +86,8 @@ export class LiveImageRelay {
             this.nodes.runtimes.get(targetId) !== admitted.target)
             throw new AtlasError('Image target disconnected.', 'NODE_DISCONNECTED');
         await this.nodes.identity!.authenticate(sourceId, credential);
-        if (!(await this.approvals.allowedForInbox(sourceId, targetId)))
+        if (!this.imageAllowed(sourceId,targetId) ||
+            !(await this.approvals.allowedForInbox(sourceId, targetId)))
             throw new AtlasError('Image permission was revoked.', 'SHARE_DENIED');
         if (this.entries.has(key) || this.seenIds.has(key) ||
             this.nodes.runtimes.get(sourceId) !== admitted.sourceRuntime ||
@@ -115,7 +121,8 @@ export class LiveImageRelay {
             this.nodes.runtimes.get(target) !== entry.targetRuntime)
             throw new AtlasError('Image is unavailable or expired.', 'NOT_FOUND');
         await this.nodes.identity!.authenticate(target, credential);
-        if (!(await this.approvals.allowedForInbox(entry.sourceId, target)) ||
+        if (!this.imageAllowed(entry.sourceId,target) ||
+            !(await this.approvals.allowedForInbox(entry.sourceId, target)) ||
             this.nodes.runtimes.get(target) !== entry.targetRuntime)
             throw new AtlasError('Image access was revoked.', 'SHARE_DENIED');
         if (entry.claimed || entry.expiresAt <= Date.now())
