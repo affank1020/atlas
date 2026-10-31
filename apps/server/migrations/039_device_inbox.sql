@@ -6,9 +6,9 @@ CREATE TABLE device_inbox (
   source_node_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
   target_node_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
   submission_hash text NOT NULL CHECK (length(submission_hash)=64),
-  payload_ciphertext bytea NOT NULL CHECK (octet_length(payload_ciphertext) BETWEEN 17 AND 66000),
-  payload_nonce bytea NOT NULL CHECK (octet_length(payload_nonce)=12),
-  payload_tag bytea NOT NULL CHECK (octet_length(payload_tag)=16),
+  payload_ciphertext bytea CHECK (payload_ciphertext IS NULL OR octet_length(payload_ciphertext) BETWEEN 1 AND 32768),
+  payload_nonce bytea CHECK (payload_nonce IS NULL OR octet_length(payload_nonce)=12),
+  payload_tag bytea CHECK (payload_tag IS NULL OR octet_length(payload_tag)=16),
   state text NOT NULL DEFAULT 'queued'
     CHECK (state IN ('queued','user_copied','declined','expired')),
   expires_at timestamptz NOT NULL,
@@ -16,8 +16,10 @@ CREATE TABLE device_inbox (
   decided_at timestamptz,
   CONSTRAINT device_inbox_pair_id_unique UNIQUE (source_node_id,id),
   CONSTRAINT device_inbox_decision_consistency CHECK (
-    (state='queued' AND decided_at IS NULL) OR
-    (state<>'queued' AND decided_at IS NOT NULL)
+    (state='queued' AND decided_at IS NULL AND payload_ciphertext IS NOT NULL
+      AND payload_nonce IS NOT NULL AND payload_tag IS NOT NULL) OR
+    (state<>'queued' AND decided_at IS NOT NULL AND payload_ciphertext IS NULL
+      AND payload_nonce IS NULL AND payload_tag IS NULL)
   )
 );
 CREATE INDEX device_inbox_target_pending ON device_inbox(target_node_id,expires_at,created_at)
