@@ -3,6 +3,10 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { serveNodeImages } from '../apps/server/src/api/http/node-images.js';
+import { LiveImageRelay } from '../apps/server/src/nodes/live-image-relay.js';
+import { AtlasError } from '../apps/server/src/shared/errors.js';
+import type { NodeService } from '../apps/server/src/nodes/service.js';
+import type { NodeShareApprovals } from '../apps/server/src/nodes/share-approvals.js';
 import type { ServerServices } from '../apps/server/src/server/composition.js';
 
 const source='11111111-1111-4111-8111-111111111111';
@@ -92,4 +96,56 @@ test('image transport refuses unsupported methods and missing metadata',async()=
         });
         assert.equal(upload.status,400);
     });
+});
+
+test('reverse-proxy integration: forged credentials cannot block a valid sender sharing the same peer',async()=>{
+    // All HTTP requests arrive over 127.0.0.1, as they would share the single
+    // Caddy container bridge address in production. XFF remains untrusted.
+    let attempts=0;
+    const legitimate='g'.repeat(43);
+    const forged='f'.repeat(43);
+    const senderRuntime={getCapabilities:()=>['device.image.send']};
+    const receiverRuntime={
+        getCapabilities:()=>['device.image.receive'],
+        deliverDeviceImage:async()=>({accepted:false}),
+    };
+    const runtimes=new Map<string,unknown>([[source,senderRuntime],[target,receiverRuntime]]);
+    const nodes={
+        runtimes,
+        identity:{authenticate:async(_id:string,credential:string)=>{
+            attempts++;
+            if(credential!==legitimate)
+                throw new AtlasError('Invalid credential','NODE_AUTH_INVALID');
+        }},
+        get:async(id:string)=>id===source
+            ? {platform:'android',credentialState:'active',capabilities:['device.image.send']}
+            : {platform:'darwin',credentialState:'active',capabilities:['device.image.receive']},
+    } as unknown as NodeService;
+    const approvals={allowedForInbox:async()=>true} as unknown as NodeShareApprovals;
+    const relay=new LiveImageRelay(nodes,approvals,new Set([source+':'+target]));
+    await withServer(relay,async origin=>{
+        for(let i=0;i<60;i++) {
+            const denied=await fetch(origin+'/node/images/upload',{
+                method:'POST',headers:{...headers,authorization:'Bearer '+forged,
+                    'x-forwarded-for':'198.51.100.99'},body:bytes,
+            });
+            assert.equal(denied.status,401);
+        }
+        const throttled=await fetch(origin+'/node/images/upload',{
+            method:'POST',headers:{...headers,authorization:'Bearer '+forged},body:bytes,
+        });
+        assert.equal(throttled.status,400);
+        assert.deepEqual(await throttled.json(),{error:'SHARE_RATE_LIMIT'});
+
+        const accepted=await fetch(origin+'/node/images/upload',{
+            method:'POST',headers:{...headers,authorization:'Bearer '+legitimate},body:bytes,
+        });
+        assert.equal(accepted.status,200);
+        assert.deepEqual(await accepted.json(),{accepted:false},
+            'Mac explicitly declined; upload must never claim clipboard success');
+    });
+    assert.equal(attempts,61,'only bad fingerprint throttled before DB authentication');
+    assert.equal(relay.authenticatedRateEntries,1);
+    assert.equal(relay.pendingAuthCount,0);
+    assert.ok(relay.preAuthRateEntries<=128);
 });
