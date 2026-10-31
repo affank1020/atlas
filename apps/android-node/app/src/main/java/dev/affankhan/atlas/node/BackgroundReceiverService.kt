@@ -162,7 +162,9 @@ class BackgroundReceiverService : Service() {
             // Keep this service as the WebSocket owner while Atlas Server
             // handles the correlated unregister. A bounded 8s timeout ensures
             // Stop cannot leave the foreground service running indefinitely.
-            model.revokePushBeforeShutdown {
+            model.requestBackgroundStop {
+                // This completion is revision-guarded. A newer Start
+                // supersedes the old Stop even when its ack arrives later.
                 model.stopBackgroundReceiving()
                 stopSelf(startId)
             }
@@ -208,8 +210,10 @@ class BackgroundReceiverService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        model.startBackgroundReceiving()
-        model.updatePushConsent(true)
+        model.requestBackgroundStart {
+            model.startBackgroundReceiving()
+            model.updatePushConsent(true)
+        }
         handler.removeCallbacks(verifyChannels)
         handler.postDelayed(verifyChannels, 10_000L)
         // No automatic restart after process death. The user must launch Atlas
