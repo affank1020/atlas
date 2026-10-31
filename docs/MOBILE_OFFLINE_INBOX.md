@@ -49,3 +49,56 @@ FCM wake-up and neutral opaque notifications remain the next reliability slice f
 - Run migrations before enabling any future endpoint. Preserve previous ciphertext until retention expires.
 - Schedule expiry purge in a controlled server process and add monitoring on queue count, expiry and failed decrypts **without recording payloads**.
 - PostgreSQL integration tests exercise one-connection and fully occupied pools, concurrent distinct approved pairs, managed grant revocation, environment-approved sender revocation and rotation/re-enrolment, receiver rotation, 50-item stale inbox quota cleanup, ciphertext erasure and terminal replay receipts. Additional rollout tests remain necessary for duplicate delivery IDs across process restart, quota boundaries, rollback and actual encrypted-at-rest inspection.
+
+## Optional FCM wake-up (Android 0.8.0 / PR #187)
+
+This is a **best-effort notification path**, not a delivery acknowledgement, background clipboard operation or guaranteed wake-up under Doze/force-stop. The already-authenticated Node socket is still the only way to list/read/decide inbox contents. FCM carries precisely an opaque delivery UUID and a fixed `kind=atlas_inbox` discriminator, never text, a Node credential, an Android token, a sender name or a file.
+
+**Server preparation (operator only):**
+
+1. Apply additive migration `040_device_push_tokens.sql` after `039_device_inbox.sql`. The registration table binds a device token to the active Node credential generation and encrypts it with domain-separated AES-256-GCM under the existing **server-only** `ATLAS_DEVICE_INBOX_KEY`. Rotated/revoked credentials cannot use a stale registration; token ciphertext does not appear in audits or database logs.
+2. Create and restrict a dedicated Firebase service account with Cloud Messaging API access for the selected Firebase project. Supply its **full service-account JSON** via a private server secret `ATLAS_FCM_SERVICE_ACCOUNT_JSON`; do not commit the JSON, upload it to Atlas, include it in CI or pass it to the Android build. Both the inbox encryption key and FCM configuration are required to enable pushing. Without FCM settings, existing queued inbox behaviour remains available.
+3. Verify the FCM HTTP v1 API is enabled and that the Firebase Android application is registered for `dev.affankhan.atlas.node`. Enrollments/grants remain controlled by Atlas. FCM cannot grant share permissions.
+4. Deploy the compatible Server and Mac Node independently; a queued sender gets its **queued** receipt immediately after a database commit even if OAuth/FCM is unavailable. An FCM delivery is not a clipboard write or a proof that Android displayed the notification.
+
+**Android preparation (same enrolled identity):**
+
+1. Provide the Firebase client identifiers using local Gradle properties or `-P` values: `atlasFirebaseAppId`, `atlasFirebaseSenderId`, `atlasFirebaseApiKey`, `atlasFirebaseProjectId`. They must all refer to the same Firebase application/project. **No server service-account credentials belong in Gradle.** Without these four properties, the APK builds without Firebase registration and remains a foreground/manual inbox client.
+2. Build **0.8.0 (versionCode 8)** using the enrolled tablet's **existing private signing key**; verify the certificate and use `adb install -r`. Never uninstall or replace the enrolled APK with a differently signed CI artifact, or re-enroll the Node as a shortcut.
+3. Launch Atlas and enable **Background receiving** from the visible Settings UI, approve notifications and verify both Atlas notification channels remain enabled. This also opts in to push registration on the authenticated Node socket. Android preserves the push opt-in across process death; a stopped foreground service does not automatically restart. The visible **Stop** action or disabling background receiving opts out again. Firebase auto-initialisation/analytics are disabled until opt-in.
+4. Mac: run `./atlasctl share --queue` and explicitly approve the **Queue** dialog with a directionally approved Android 0.8 receiver. Expect the server's *queued* delivery ID. The Android notification opens Inbox for manual Refresh/Review/Copy/Decline. The payload is encrypted only in Atlas PostgreSQL; no plaintext is cached in the notification or Android persistent state.
+
+**Physical Samsung acceptance:** test another app (including Samsung Notes), screen off/Doze, app process killed, swipe-away, reboot, force-stop (FCM may not reach a force-stopped package), notification permission denied, disabled channels, network loss, FCM credentials absent/invalid, duplicate queued UUID, source/target grant revocation, Node credential rotation, expiry and Unicode clipboard exactness. Check encrypted database token contents, no payload in FCM and correct queued-vs-copied receipts. Confirm that declining/expired items do not silently copy. Record results before closing #163.
+
+**Operational constraints:** FCM high-priority data messages are sent only for a new user-initiated queue admission; retries with the same delivery UUID do not emit another notification. Push failure does not erase the inbox row or silently resubmit it. The server sends with a one-hour FCM TTL and collapse key (a single wake hint may represent several queued items); the inbox retains its separate 24-hour expiry. Device may delay/suppress pushes due to battery modes, connectivity and Android policy. Server deletes an explicitly FCM-unregistered token, but never erases a token merely on a network failure. Token registration itself is authenticated, bound to the current Node credential, and revocable. Regular server cleanup purges expired inbox rows every 15 minutes while running.
+
+
+### FCM opt-out and transient registration failures (PR #187 review corrections)
+
+The Node gateway processes push register/unregister requests **in socket arrival order**, including their asynchronous credential checks and PostgreSQL commits. This prevents a delayed registration from restoring an FCM token after a later opt-out on the same socket. Each socket has bounded pending work; a stale/disconnected socket cannot overwrite the active session's token row.
+
+Android parses both success and failure responses for its own correlated push request ID. For transient errors/timeouts, it makes at most five automatic retries with 1/2/4/8/16-second delays while the same Node session stays connected, and shows the status in Settings. Authorization/configuration errors are non-retryable without user/operator intervention. Disabling notifications locally immediately prevents displaying FCM alerts; Android requests server-side token removal and reports whether confirmation is still pending. If the socket is offline or interrupted before receipt, Android reconciles the opt-out at its next authenticated connection. **Offline local opt-out alone does not prove immediate server-side token deletion**, and it does not guarantee the server cannot briefly attempt an FCM request while the device is disconnected.
+
+
+### Stop/Forget push-revocation ordering
+
+Android's **Stop** action (including the notification action) and **Forget** do not
+immediately cancel their authenticated Node WebSocket after sending
+`device.push.unregister`. They retain the service/Activity connection until a
+matching server unregistration acknowledgement, or an 8-second bounded deadline.
+Android independently requests `FirebaseMessaging.deleteToken()` on opt-out
+to invalidate the existing FCM delivery token even if Atlas is unreachable.
+
+If Atlas fails to acknowledge before the deadline, **Stop** still terminates
+background receiving but explicitly reports that server revocation is unconfirmed
+and persists a pending-revocation marker for the next authenticated reconnect.
+**Forget refuses to clear the Node credential** in that case when Firebase is
+configured: reconnect and retry, or revoke the Node from Atlas Web before
+removing its enrolment. A successful local Firebase token deletion does **not**
+count as successful Atlas Server token-row deletion. Android process death,
+force-stop and network loss cannot be treated as proof of server-side revocation.
+
+
+### Re-enable while opt-out is in progress
+
+The Android background-receiving toggle displays the **latest requested** On/Off state. If the user turns receiving On again while an earlier FCM unregistration is pending, Atlas queues the new Start until the unregister/Firebase-delete gate completes (acknowledgement or its eight-second deadline). Stop callbacks carry an intent revision and cannot stop a newer Start. The same ordering applies to notification Stop and subsequent foreground-service restarts; a newer service start does not lose its socket owner when an older Stop completes. Settings shows the pending-revocation state. Explicit Forget overrides a pending re-enable.

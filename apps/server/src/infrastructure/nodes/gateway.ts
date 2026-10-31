@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -9,13 +10,17 @@ import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, device
     deviceInboxEnqueueSchema, deviceInboxListSchema, deviceInboxReadSchema, deviceInboxDecideSchema,
     deviceInboxRecipientsRequestSchema, deviceInboxRecipientsResultSchema } from '@atlas/protocol/device-protocol';
 import type { DeviceOfflineInbox } from '../../nodes/offline-inbox.js';
+import type { DevicePushService } from '../../nodes/device-push.js';
+import { OrderedPushMutations } from '../../nodes/ordered-push-mutations.js';
+const pushRegisterSchema=z.object({type:z.literal('device.push.register'),requestId:z.string().uuid(),token:z.string().min(32).max(4096)}).strict();
+const pushUnregisterSchema=z.object({type:z.literal('device.push.unregister'),requestId:z.string().uuid()}).strict();
 import { DeviceShareRelay } from './share-relay.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
 const DEFAULT_TIMING: GatewayTiming = { heartbeatMs: 15_000, staleMs: 45_000, registrationMs: 5_000, persistMs: 60_000 };
-type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean; inboxPending: boolean; lastInboxCommand: number };
+type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean; inboxPending: boolean; lastInboxCommand: number; pushMutations: OrderedPushMutations };
 /** HTTP upgrade boundary. All Workspace execution still flows through NodeRouter. */
 export class RemoteNodeGateway {
     private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_NODE_FRAME_BYTES });
@@ -25,7 +30,7 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals, private readonly offlineInbox?: DeviceOfflineInbox) {
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals, private readonly offlineInbox?: DeviceOfflineInbox, private readonly push?: DevicePushService) {
         this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
     }
     private track(task: Promise<unknown>) {
@@ -92,7 +97,7 @@ export class RemoteNodeGateway {
                     clearTimeout(registrationTimer);
                     const runtime = new RemoteNodeRuntime(socket, registration.capabilities);
                     const now = Date.now();
-                    session = { id: sessionId, socket, runtime, lastPong: now, lastPersisted: now, lastDirectoryRead: 0, directoryPending: false, inboxPending: false, lastInboxCommand: 0,
+                    session = { id: sessionId, socket, runtime, lastPong: now, lastPersisted: now, lastDirectoryRead: 0, directoryPending: false, inboxPending: false, lastInboxCommand: 0, pushMutations: new OrderedPushMutations(),
                         heartbeat: setInterval(() => this.heartbeat(registration.nodeId, session!), this.timing.heartbeatMs) };
                     const previous = this.sessions.get(registration.nodeId);
                     this.sessions.set(registration.nodeId, session);
@@ -185,6 +190,45 @@ export class RemoteNodeGateway {
             }
             // An explicit offline inbox never replaces the synchronous live
             // share path; only registered, capable, authenticated Nodes may use it.
+            const pushRegister=pushRegisterSchema.safeParse(message);
+            const pushUnregister=pushUnregisterSchema.safeParse(message);
+            if (pushRegister.success || pushUnregister.success) {
+                const request=pushRegister.success?pushRegister.data:pushUnregister.data!;
+                const originId=id, current=session;
+                const respond=(ok:boolean, value:unknown)=>{
+                        if(socket.readyState===WebSocket.OPEN && this.sessions.get(originId)===current)
+                            socket.send(JSON.stringify(ok
+                                ? {type:'response',requestId:request.requestId,ok:true,result:value}
+                                : {type:'response',requestId:request.requestId,ok:false,error:value}));
+                    };
+                const operation=async()=>{
+                    try {
+                        if(!this.push || !current || this.sessions.get(originId)!==current ||
+                            !current.runtime.getCapabilities().includes('device.inbox.receive'))
+                            throw new AtlasError('Push registration unavailable.','SHARE_DENIED');
+                        await this.nodes.identity!.authenticate(originId,credential);
+                        if (this.sessions.get(originId)!==current)
+                            throw new AtlasError('Node session changed.','NODE_DISCONNECTED');
+                        const node=await this.nodes.get(originId);
+                        if(node.platform!=='android' || node.credentialState!=='active' ||
+                            !node.capabilities.includes('device.inbox.receive'))
+                            throw new AtlasError('Push registration denied.','SHARE_DENIED');
+                        if(pushRegister.success) await this.push.register(originId,pushRegister.data.token,current.id);
+                        else await this.push.unregister(originId,current.id);
+                        respond(true,{registered:pushRegister.success});
+                    }catch(error){
+                        const known=error instanceof AtlasError;
+                        respond(false,{code:known?error.code:'SHARE_UNAVAILABLE',
+                            message:known?error.message.slice(0,200):'Push registration unavailable.'});
+                    }
+                };
+                // A WebSocket preserves frame order, not the order of independent
+                // asynchronous authentication/SQL continuations. Serialize each
+                // socket's register/unregister until the previous commit finishes.
+                const task=current ? current.pushMutations.run(operation) : operation();
+                this.track(task.catch(()=>respond(false,{code:'SHARE_BUSY',message:'Push registration busy.'})));
+                return;
+            }
             const enqueue = deviceInboxEnqueueSchema.safeParse(message);
             const listing = deviceInboxListSchema.safeParse(message);
             const reading = deviceInboxReadSchema.safeParse(message);
@@ -233,6 +277,12 @@ export class RemoteNodeGateway {
                             throw new AtlasError('Invalid inbox request.','INVALID_REQUEST');
                         }
                         respond(true,output);
+                        // A push is a best-effort wake hint only, sent after the
+                        // durable queue transaction commits. Never delay or relabel
+                        // the queue acknowledgement based on an FCM outcome.
+                        if (enqueue.success && (output as {queued?:boolean}).queued && this.push)
+                            this.track(this.push.notifyQueued(originId,enqueue.data.targetNodeId,
+                                enqueue.data.deliveryId).catch(()=>undefined));
                     } catch(error) {
                         const known=error instanceof AtlasError;
                         respond(false,{code:known?error.code:'SHARE_UNAVAILABLE',

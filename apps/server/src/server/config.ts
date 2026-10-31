@@ -241,6 +241,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
         deviceShares: loadDeviceShareConfig(env),
         deviceInboxKey: env.ATLAS_DEVICE_INBOX_KEY?.trim(),
+        fcmServiceAccountJson: env.ATLAS_FCM_SERVICE_ACCOUNT_JSON?.trim(),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio, projectVersionedWrites,
         codeReviews: { trustedPublishers: loadReviewPublisherTrust(env),

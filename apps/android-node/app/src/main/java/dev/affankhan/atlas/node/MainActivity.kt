@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 
 /** Explicit text sharing UI with an optional app-scoped background receiver. */
 class MainActivity : ComponentActivity() {
+    private var notificationInboxRefreshPending = false
     private val model: CompanionViewModel get() = (application as AtlasNodeApp).model
 
     private val askNotifications = registerForActivityResult(
@@ -73,17 +74,25 @@ class MainActivity : ComponentActivity() {
                 "Atlas notifications or one of its channels are disabled. Review notification settings.")
             return
         }
-        try {
-            startForegroundService(Intent(this, BackgroundReceiverService::class.java))
-        } catch (_: RuntimeException) {
-            model.reportBackgroundError("Android did not allow background receiving to start.")
+        model.requestBackgroundStart {
+            try {
+                applicationContext.startForegroundService(
+                    Intent(applicationContext, BackgroundReceiverService::class.java))
+            } catch (_: RuntimeException) {
+                model.reportBackgroundError("Android did not allow background receiving to start.")
+            }
         }
     }
 
     private fun setBackgroundReceiving(enabled: Boolean) {
         if (!enabled) {
-            stopService(Intent(this, BackgroundReceiverService::class.java))
-            model.stopBackgroundReceiving()
+            // Do not cancel the only authenticated socket until the server
+            // acknowledges removal, or the bounded revocation gate expires.
+            model.requestBackgroundStop {
+                applicationContext.stopService(
+                    Intent(applicationContext, BackgroundReceiverService::class.java))
+                model.stopBackgroundReceiving()
+            }
             return
         }
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -108,6 +117,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Recreated Activities must not replay their old Sharesheet Intent onto edited drafts.
         if (savedInstanceState == null) model.receive(intent)
+        openInboxFromNotification(intent)
         setContent {
             AtlasCompanion(
                 session = model.session,
@@ -154,8 +164,10 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onDeclineIncoming = model::declineIncomingShare,
-                backgroundReceiving = model.backgroundReceivingRunning,
+                backgroundReceiving = model.backgroundReceivingDesired,
+                pushRevocationPending = model.pushRevocationPending,
                 backgroundReceiveError = model.backgroundReceiveError,
+                pushRegistrationStatus = model.pushRegistrationStatus,
                 onToggleBackgroundReceiving = ::setBackgroundReceiving,
                 onOpenNotificationSettings = ::openNotificationSettings,
             )
@@ -165,6 +177,10 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.startConnection()
+        if (notificationInboxRefreshPending) {
+            notificationInboxRefreshPending = false
+            model.refreshQueuedInbox()
+        }
     }
 
     override fun onStop() {
@@ -177,6 +193,21 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         // A distinct ACTION_SEND Intent is always a distinct event, even for identical text.
         model.receive(intent)
+        openInboxFromNotification(intent)
+    }
+
+    private fun openInboxFromNotification(intent: Intent?) {
+        if (intent?.getBooleanExtra(BackgroundReceiverService.EXTRA_OPEN_INBOX,false)==true) {
+            model.navigate(Section.INBOX)
+            // Activity may not have entered onStart yet. Defer until visible
+            // so a push tap reliably refreshes an already-online receiver.
+            notificationInboxRefreshPending = true
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                notificationInboxRefreshPending = false
+                model.refreshQueuedInbox()
+            }
+            intent.removeExtra(BackgroundReceiverService.EXTRA_OPEN_INBOX)
+        }
     }
 }
 
@@ -225,7 +256,9 @@ internal fun AtlasCompanion(
     onCopyIncoming: () -> Unit = {},
     onDeclineIncoming: () -> Unit = {},
     backgroundReceiving: Boolean = false,
+    pushRevocationPending: Boolean = false,
     backgroundReceiveError: String? = null,
+    pushRegistrationStatus: String = "",
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
 ) {
@@ -274,7 +307,9 @@ internal fun AtlasCompanion(
                             onRefreshQueuedInbox = onRefreshQueuedInbox,
                             onOpenQueuedInboxItem = onOpenQueuedInboxItem,
                             backgroundReceiving = backgroundReceiving,
+                            pushRevocationPending = pushRevocationPending,
                             backgroundReceiveError = backgroundReceiveError,
+                            pushRegistrationStatus = pushRegistrationStatus,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
                             onOpenNotificationSettings = onOpenNotificationSettings,
                             modifier = Modifier.weight(1f),
@@ -311,7 +346,9 @@ internal fun AtlasCompanion(
                             onRefreshQueuedInbox = onRefreshQueuedInbox,
                             onOpenQueuedInboxItem = onOpenQueuedInboxItem,
                             backgroundReceiving = backgroundReceiving,
+                            pushRevocationPending = pushRevocationPending,
                             backgroundReceiveError = backgroundReceiveError,
+                            pushRegistrationStatus = pushRegistrationStatus,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
                             onOpenNotificationSettings = onOpenNotificationSettings,
                             modifier = Modifier.weight(1f),
@@ -414,7 +451,9 @@ private fun CompanionContent(
     onRefreshQueuedInbox: () -> Unit = {},
     onOpenQueuedInboxItem: (String) -> Unit = {},
     backgroundReceiving: Boolean = false,
+    pushRevocationPending: Boolean = false,
     backgroundReceiveError: String? = null,
+    pushRegistrationStatus: String = "",
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -478,14 +517,23 @@ private fun CompanionContent(
                     enabled = node != null,
                     modifier = Modifier.testTag("background-receiving-toggle"),
                 )
+                if (pushRevocationPending) {
+                    Text("Finishing the previous push opt-out; the latest switch setting will apply afterwards.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("background-receiving-pending"))
+                }
                 Text(
                     if (backgroundReceiving)
-                        "A persistent notification keeps the Node connection active while using other apps. " +
-                            "Open an incoming notification to approve Copy within 15 seconds."
-                    else "Off. Turn on to receive while using other apps. " +
-                        "Screen-off delivery is not guaranteed; there is no offline inbox or push yet.",
+                        "Enabled. Atlas may keep a foreground connection while Android allows it. " +
+                            "With Firebase configured, queued transfers can notify you even after the app closes. " +
+                            "Open Inbox to review; copying always requires a tap."
+                    else "Off. Turn on to enable the foreground receiver and opt in to queued-transfer notifications. " +
+                        "Queued text remains available from Inbox while connected.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (pushRegistrationStatus.isNotEmpty()) {
+                    InfoCard("Push registration", pushRegistrationStatus)
+                }
                 if (backgroundReceiveError != null) {
                     InfoCard("Background receiving unavailable", backgroundReceiveError)
                     Button(

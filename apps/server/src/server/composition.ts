@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { DeviceOfflineInbox } from '../nodes/offline-inbox.js';
 import { readInboxKey } from '../nodes/offline-inbox-crypto.js';
+import { DevicePushService, parseFcmCredentials } from '../nodes/device-push.js';
 import { NodeIdentity } from '../nodes/identity.js';
 import { NodeShareApprovals } from '../nodes/share-approvals.js';
 import { NodeService } from '../nodes/service.js';
@@ -92,10 +93,22 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const offlineInbox = config.deviceInboxKey
         ? new DeviceOfflineInbox(repository.pool, readInboxKey(config.deviceInboxKey), shareApprovals)
         : undefined;
-    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox);
+    // FCM is strictly opt-in, independent of the encrypted inbox read path.
+    if (config.fcmServiceAccountJson && !config.deviceInboxKey)
+        throw new Error('FCM requires ATLAS_DEVICE_INBOX_KEY.');
+    const fcmCredentials = parseFcmCredentials(config.fcmServiceAccountJson);
+    const push = fcmCredentials && config.deviceInboxKey
+        ? new DevicePushService(repository.pool, readInboxKey(config.deviceInboxKey), fcmCredentials, shareApprovals)
+        : undefined;
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox, push);
+    // Bounded periodic retention cleanup, including while the inbox is idle.
+    const inboxCleanup = offlineInbox && setInterval(() => {
+        void offlineInbox.purgeExpired().catch(() => undefined);
+    }, 15 * 60_000);
+    inboxCleanup?.unref();
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
-    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
+    const lifecycle = new ServerLifecycle([{ close: async () => { if (inboxCleanup) clearInterval(inboxCleanup); try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
                     try { await diagnosticPool.end(); } finally {
                         try { await healthPool.end(); } finally { await repository.close(); }
                     }
