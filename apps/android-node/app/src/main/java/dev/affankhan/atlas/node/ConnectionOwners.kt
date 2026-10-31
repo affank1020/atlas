@@ -6,9 +6,15 @@ package dev.affankhan.atlas.node
  * WebSocket; stopping the service must not close a visible Activity's socket.
  */
 internal data class ConnectionOwners(
-    val activityVisible: Boolean = false,
+    val visibleActivities: Int = 0,
     val serviceRunning: Boolean = false,
 ) {
+    val activityVisible: Boolean get() = visibleActivities > 0
     val connected: Boolean get() = activityVisible || serviceRunning
     val canApproveClipboard: Boolean get() = activityVisible
+
+    fun activityStarted(): ConnectionOwners = copy(visibleActivities = visibleActivities + 1)
+    fun activityStopped(): ConnectionOwners = copy(
+        visibleActivities = (visibleActivities - 1).coerceAtLeast(0),
+    )
 }
