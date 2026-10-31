@@ -222,7 +222,7 @@ export function Files() {
         <div className="files-collection-head">
             <div className="files-collection-info">
                 <h2>{currentFolder?.name ?? 'Project files'}</h2>
-                <span>{busy || (!owner && projects.isLoading) ? <Skeleton width={90} height={12} /> : `${entries.length} files · ${prettySize(totalBytes)}`}</span>
+                <span>{busy || (!owner && projects.isLoading) ? <Skeleton width={90} height={12} /> : !owner ? "—" : `${entries.length} files · ${prettySize(totalBytes)}`}</span>
             </div>
             <div className="files-collection-controls">
                 <label className="files-status-control">Status
