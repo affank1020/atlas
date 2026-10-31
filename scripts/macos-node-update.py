@@ -230,12 +230,23 @@ def main(argv: list[str]) -> int:
         ["status"], ["status", "--json"], ["check"], ["check", "--json"],
         ["update"], ["update", "--migrate"], ["rollback"],
     )
-    if argv not in valid:
+    monitor = argv[0] == "monitor" if argv else False
+    if not monitor and argv not in valid:
         print("Usage: macos-node-update.py status [--json] | check [--json] | "
-              "update [--migrate] | rollback", file=sys.stderr)
+              "update [--migrate] | rollback | monitor status [--json] | "
+              "monitor enable | monitor disable", file=sys.stderr)
+        return 2
+    if monitor and argv[1:] not in (
+        ["status"], ["status", "--json"], ["enable"], ["disable"]
+    ):
+        print("Usage: macos-node-update.py monitor status [--json] | "
+              "monitor enable | monitor disable", file=sys.stderr)
         return 2
     ensure_operator()
     layout = lifecycle.Layout(Path.home(), os.getuid())
+    if monitor:
+        operator = load_helper("macos-node-operator.py")
+        return operator.monitor_manage(layout, argv[1:])
     if argv[0] == "rollback":
         if not sys.stdin.isatty() or input("Type ROLLBACK to restore the prior Node: ") != "ROLLBACK":
             raise Refused("Rollback requires explicit interactive confirmation.")
