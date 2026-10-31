@@ -114,10 +114,11 @@ jobs:
                   process.exit(1);
                 }
               });'
-      - name: Validate host-local Linux Node updater
+      - name: Validate host-local Linux Node updater and lifecycle acceptance
         run: |
           python3 -m unittest discover -s test -p 'test_linux_node_host_updater.py' -v
-          python3 -m py_compile scripts/linux-node-host-updater.py
+          python3 -m unittest discover -s test -p 'test_linux_node_lifecycle_integration.py' -v
+          python3 -m py_compile scripts/linux-node-host-updater.py test/test_linux_node_lifecycle_integration.py
 
       - name: Install dependencies
         run: npm ci

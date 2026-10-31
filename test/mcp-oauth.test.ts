@@ -52,7 +52,13 @@ test('Atlas verifies Auth0 RS256 JWT signature, issuer, resource audience, subje
     ]) assert.equal(await verifier.authenticate('Bearer ' + jwt(altered)), false, JSON.stringify(altered));
 
     assert.equal(await verifier.authenticate('Bearer ' + jwt({}, { alg: 'none' })), false);
-    assert.equal(await verifier.authenticate('Bearer ' + jwt().slice(0,-2) + 'xx'), false);
+    // Alter a significant Base64URL signature byte, not the trailing characters:
+    // replacing the tail with "xx" can decode to the original signature.
+    const signedToken = jwt();
+    const [tokenHeader, tokenClaims, signature] = signedToken.split('.');
+    const tamperedSignature = (signature![0] === 'A' ? 'B' : 'A') + signature!.slice(1);
+    assert.notDeepEqual(Buffer.from(tamperedSignature, 'base64url'), Buffer.from(signature!, 'base64url'));
+    assert.equal(await verifier.authenticate('Bearer ' + [tokenHeader, tokenClaims, tamperedSignature].join('.')), false);
     assert.equal(await verifier.authenticate('Basic credentials'), false);
     assert.equal(await verifier.authenticate(undefined), false);
     assert.equal(await verifier.authenticate('Bearer ' + jwt({ scope: '', permissions: ['atlas:access'] })), true);
