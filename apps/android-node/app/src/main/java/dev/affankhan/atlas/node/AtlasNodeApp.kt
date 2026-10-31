@@ -12,6 +12,11 @@ import androidx.lifecycle.ViewModelStoreOwner
  * Nothing from a share is serialized to the ViewModelStore or to disk.
  */
 class AtlasNodeApp : Application(), ViewModelStoreOwner {
+    override fun onCreate() {
+        super.onCreate()
+        AtlasPush.initialize(this)
+    }
+
     override val viewModelStore: ViewModelStore by lazy { ViewModelStore() }
 
     internal val model: CompanionViewModel by lazy {
