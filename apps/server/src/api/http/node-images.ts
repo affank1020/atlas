@@ -66,11 +66,10 @@ export async function serveNodeImages(request: IncomingMessage, response: Server
                 throw new AtlasError('Invalid image metadata.', 'SHARE_INVALID');
             // Authenticate, verify live sender/receiver capabilities and grants,
             // and reserve capacity BEFORE reading any user-controlled binary.
-            // The peer address comes from Node's socket, never X-Forwarded-For or
-            // another caller-controlled header. This is separate from the
-            // authenticated sender's own transfer budget.
-            const admitted = await relay.admit(nodeId, targetId, credential,
-                request.socket.remoteAddress ?? 'unknown');
+            // Every Node routes through the same Caddy TCP peer in
+            // production. Only the presented credential's private keyed
+            // fingerprint is rate-limited before sender authentication.
+            const admitted = await relay.admit(nodeId, targetId, credential);
             release = admitted.release;
             // Absolute transfer deadline: a slow-drip client must not occupy
             // an authenticated 8-MiB slot indefinitely by sending one byte
