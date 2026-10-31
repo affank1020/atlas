@@ -158,9 +158,14 @@ class BackgroundReceiverService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val model = (application as AtlasNodeApp).model
         if (intent?.action == ACTION_STOP) {
-            model.updatePushConsent(false)
-            model.stopBackgroundReceiving()
-            stopSelf()
+            handler.removeCallbacks(verifyChannels)
+            // Keep this service as the WebSocket owner while Atlas Server
+            // handles the correlated unregister. A bounded 8s timeout ensures
+            // Stop cannot leave the foreground service running indefinitely.
+            model.revokePushBeforeShutdown {
+                model.stopBackgroundReceiving()
+                stopSelf(startId)
+            }
             return START_NOT_STICKY
         }
         if (model.pairedNode == null || !hasUsableNotifications(this)) {
