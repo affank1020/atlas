@@ -293,3 +293,42 @@ exists. Installation or running a default command never performs R2 writes
 or cuts over old storage keys. Unified independent R2 recovery and an isolated
 matching-PostgreSQL restore (issue #109, Stages 5–6) remain mandatory before
 any destructive cleanup, automatic cutover or retention.
+
+
+## Stage 5/6 — independent Project recovery manifests and isolated checks
+
+Migration 038_project_recovery_manifests.sql adds immutable operator recovery
+metadata, separate from the Stage 4 key-copy ledger. A capture checks actual
+bytes from native Project Files and all Portfolio originals and derivatives,
+including archived assets. Variants have no historical SHA-256, so the
+operator reads and hashes each bounded source object before storing the
+result. The tool rechecks Project catalogue metadata and fails closed on
+invalid, absent, corrupt, oversized or changed sources.
+
+Captures can be **legacy-only** before any Project key-copy migration, or
+optionally include every versioned object from a *fully receipted* Stage 4B
+run. The latter requires matching catalogue identity, checksum and versioned
+source bytes for every item. Captures explicitly say whether versioned copies
+were included; a legacy-only capture never certifies unreferenced v1 keys.
+
+The independent R2 seeder uses the persisted manifest, with a maximum of
+five objects per invocation. Dry-run is read-only; apply requires a separate
+environment gate and an exact confirmation. Source and destination bytes
+are both preflighted before any create-only conditional PUT. A corrupt
+existing backup is never overwritten, and no source objects or rows are
+deleted. Partial pages are never full-backup acceptance.
+
+The **isolated recovery verifier** reads only the restored database and the
+independent recovery-account bucket. It explicitly forbids primary R2 and
+primary PostgreSQL environment configuration, and does not load server .env.
+It verifies the recovered catalogue fingerprint, persisted manifest SHA-256
+and actual bytes of each recovered legacy and optional versioned object.
+Passing requires a complete full-manifest invocation; a page is partial.
+The verifier has no primary object-store argument or object-write methods.
+
+A verified Project recovery manifest still does **not** prove the archive's
+offsite custody, host isolation, Atlas boot, matching DB/R2 quiescence, whole
+legacy Workspace/Application Files coverage or a production cutover.
+Capture, seed and isolated verification must be explicitly run by a trusted
+operator and linked to one separately verified encrypted PostgreSQL snapshot.
+See RECOVERY_ACCEPTANCE.md for the manual commands and outstanding gates.
