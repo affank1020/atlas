@@ -21,10 +21,14 @@ test('demo nodes include inspectable desktop and Android mobile fixtures', () =>
     expect(nodes).toHaveLength(4);
     expect(nodes.find(node => node.name === 'Demo Linux VPS')?.status).toBe('offline');
     expect(nodes.find(node => node.name === 'Demo MacBook')?.status).toBe('online');
-    for (const [name, deviceType] of [['Demo Android Tablet', 'tablet'], ['Demo Android Phone', 'phone']]) {
-        const mobile = nodes.find(node => node.name === name);
-        expect(mobile).toMatchObject({ status: 'online', platform: 'android', deviceType, hostedWorkspaceCount: 0 });
-    }
+    // The tablet previews an online mobile Node and the phone previews
+    // its offline counterpart; both remain discoverable in mock mode.
+    expect(nodes.find(node => node.name === 'Demo Android Tablet')).toMatchObject({
+        status: 'online', platform: 'android', deviceType: 'tablet', hostedWorkspaceCount: 0,
+    });
+    expect(nodes.find(node => node.name === 'Demo Android Phone')).toMatchObject({
+        status: 'offline', platform: 'android', deviceType: 'phone', hostedWorkspaceCount: 0,
+    });
     for (const node of nodes) {
         const detail = mockTool<{ workspaces: Array<{ nodeId: string }> }>('get_node', { nodeId: node.id });
         expect(detail.workspaces).toHaveLength(node.hostedWorkspaceCount);
