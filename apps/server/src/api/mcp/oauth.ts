@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature } from 'node:crypto';
+import { createHash, createPublicKey, timingSafeEqual, verify as verifySignature } from 'node:crypto';
 
 export type McpAuthOptions = {
     enabled: boolean;
@@ -7,6 +7,7 @@ export type McpAuthOptions = {
     resource: string;
     subject: string;
     scope: string;
+    relayTokenHash?: string;
 };
 
 type JwtHeader = { alg?: unknown; kid?: unknown; typ?: unknown };
@@ -99,4 +100,15 @@ export function createMcpTokenVerifier(config: McpAuthOptions, fetchImpl: typeof
         } catch { return false; }
     }
     return { authenticate };
+}
+
+// Private service token path; no OAuth access-token semantics are implied.
+// Accept only an operator-generated 32-byte random hexadecimal bearer token.
+// Atlas stores just its SHA-256 hash, Relay holds the underlying random token.
+export function verifyRelayServiceToken(headerValue: string | undefined, hash: string | undefined): boolean {
+    if (!hash || !/^[a-f0-9]{64}$/.test(hash) || !headerValue) return false;
+    const match = /^Bearer ([a-f0-9]{64})$/i.exec(headerValue);
+    if (!match) return false;
+    const candidate = createHash('sha256').update(match[1]!, 'utf8').digest();
+    return timingSafeEqual(candidate, Buffer.from(hash, 'hex'));
 }

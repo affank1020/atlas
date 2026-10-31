@@ -16,13 +16,25 @@ const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
 const client = { client: z.string().optional() };
 const include = { includeArchived: z.boolean().optional() };
 const viewQuery = z.object({ name: z.string(), storeId: z.string().uuid(), filters: z.array(z.object({ field: z.string(), operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"]), value: z.unknown() })).optional(), sort: z.array(z.object({ field: z.string(), direction: z.enum(["asc", "desc"]).optional() })).optional(), limit: z.number().int().min(1).max(100).optional() });
+// Trust boundary: a Relay service credential is read-only even if its own
+// agent client is compromised. Do not make this a global MCP restriction.
+export const RELAY_READ_TOOLS: ReadonlySet<string> = new Set([
+    'get_atlas_status', 'list_projects', 'get_project', 'list_nodes', 'get_node',
+    'list_workspaces', 'get_workspace', 'list_logical_workspaces', 'list_project_workspaces',
+    'list_applications', 'get_application', 'list_stores', 'get_store', 'list_records',
+    'get_record', 'list_views', 'get_view', 'workspace_list_files', 'workspace_read_file',
+    'workspace_search_files', 'workspace_git_status', 'workspace_git_diff', 'workspace_list_dev_tasks',
+]);
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 
-export function createMcpTransport(services: TransportServices, oauthScope?: string, authenticatedCaller?: ApplicationCaller) {
+export function createMcpTransport(services: TransportServices, oauthScope?: string, authenticatedCaller?: ApplicationCaller, allowedTools?: ReadonlySet<string>) {
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
-    const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => server.registerTool(name,
+    const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => {
+      if (allowedTools && !allowedTools.has(name)) return;
+      return server.registerTool(name,
       { description, inputSchema, ...(oauthScope ? { securitySchemes: [{ type: 'oauth2' as const, scopes: [oauthScope] }] } : {}) },
       async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
+    };
 
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
     // Prioritize active Application workflows while retaining the same registry

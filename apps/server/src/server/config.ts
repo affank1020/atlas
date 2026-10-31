@@ -159,6 +159,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const oauthSubject = env.ATLAS_MCP_OAUTH_ALLOWED_SUBJECT?.trim() || '';
     const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
     const scope = 'atlas:access';
+    const relayTokenHash = env.ATLAS_MCP_RELAY_TOKEN_SHA256?.trim() || '';
+    if (relayTokenHash && !/^[a-f0-9]{64}$/.test(relayTokenHash))
+        throw new Error('ATLAS_MCP_RELAY_TOKEN_SHA256 must be a lowercase SHA-256 hex digest.');
     if (oauthIssuer || oauthSubject || mcpResource) {
         if (!oauthIssuer || !oauthSubject || !mcpResource) throw new Error('Atlas MCP OAuth requires ATLAS_MCP_OAUTH_ISSUER, ATLAS_MCP_OAUTH_ALLOWED_SUBJECT and ATLAS_MCP_RESOURCE together.');
         const issuer = new URL(oauthIssuer);
@@ -177,7 +180,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         serverDiagnosticsEnabled: env.ATLAS_SERVER_DIAGNOSTICS_ENABLED !== 'false',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
-            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
+            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope, relayTokenHash },
         nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
         // Fail closed until the separately reviewed host executor is installed.
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
