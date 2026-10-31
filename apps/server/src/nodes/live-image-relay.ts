@@ -23,6 +23,7 @@ export class LiveImageRelay {
     private readonly sourceActive = new Set<string>();
     private readonly entries = new Map<string, Entry>();
     private readonly seenIds = new Map<string, number>();
+    private readonly rate = new Map<string, { window: number; count: number }>();
     constructor(private readonly nodes: NodeService, private readonly approvals: NodeShareApprovals,
         private readonly imagePairs: ReadonlySet<string> = new Set()) {}
     private imageAllowed(source: string, target: string) {
@@ -36,6 +37,20 @@ export class LiveImageRelay {
         if (!UUID.test(source) || !UUID.test(target) || source === target ||
             this.active >= LIMIT_CONCURRENT || this.sourceActive.has(source))
             throw new AtlasError('Image transfer is unavailable or busy.', 'SHARE_BUSY');
+        // Per-sender admission budget is bounded before DB or body reads;
+        // concurrent limits alone would permit repeated expensive dialogs.
+        const now = Date.now();
+        if (this.rate.size >= 512) {
+            for (const [id, entry] of this.rate)
+                if (now - entry.window >= 60_000) this.rate.delete(id);
+        }
+        const previous = this.rate.get(source);
+        const budget = previous && now - previous.window < 60_000
+            ? previous : { window: now, count: 0 };
+        if (budget.count >= 12)
+            throw new AtlasError('Image transfer rate limited.', 'SHARE_RATE_LIMIT');
+        budget.count++;
+        this.rate.set(source, budget);
         // Reserve before async DB authentication and before reading any bytes.
         this.active++;
         this.sourceActive.add(source);
