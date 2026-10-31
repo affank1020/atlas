@@ -90,9 +90,9 @@ test('Linux Node diagnostics carry UTC event times through the real private-file
     await withFixture(async dir => {
         const emitted: string[] = [];
         const sink = {
-            log: (line: string) => emitted.push(line + '\\n'),
-            warn: (line: string) => emitted.push(line + '\\n'),
-            error: (line: string) => emitted.push(line + '\\n'),
+            log: (line: string) => emitted.push(line + '\n'),
+            warn: (line: string) => emitted.push(line + '\n'),
+            error: (line: string) => emitted.push(line + '\n'),
         };
         const times = [
             new Date('2026-10-31T14:40:00.000Z'),
@@ -102,7 +102,7 @@ test('Linux Node diagnostics carry UTC event times through the real private-file
         const logger = createNodeRuntimeLogger('linux', sink, () => times.shift()!);
         logger.info('Atlas Node connected to Atlas Server.');
         logger.warn('Atlas Node WebSocket closed (code 1006); reconnecting.');
-        logger.error('Atlas Node connection failed: timeout\\ninvestigate retry. Retrying.');
+        logger.error('Atlas Node connection failed: timeout\ninvestigate retry. Retrying.');
         // These are emitted via the same source logger used in main.ts,
         // not timestamped fixture strings fabricated in the reader.
         await writeFile(join(dir, 'service.log'), emitted.join(''), { mode: 0o600 });
@@ -115,7 +115,7 @@ test('Linux Node diagnostics carry UTC event times through the real private-file
             '2026-10-31T14:40:05.950Z investigate retry. Retrying.',
         ]);
         assert.ok(result.lines.every(line =>
-            /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z /.test(line)));
+            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /.test(line)));
     });
 });
 
@@ -134,8 +134,8 @@ test('macOS output format is preserved and Linux logger keeps severity streams',
         { level: 'error', text: 'failed' },
     ]);
     const linux = createNodeRuntimeLogger('linux', sink, now);
-    linux.warn('failed\\rnext attempt');
+    linux.warn('failed\rnext attempt');
     assert.deepEqual(events, [{
-        level: 'warn', text: '2026-10-31T14:40:00.000Z failed\\n2026-10-31T14:40:00.000Z next attempt',
+        level: 'warn', text: '2026-10-31T14:40:00.000Z failed\n2026-10-31T14:40:00.000Z next attempt',
     }]);
 });
