@@ -70,7 +70,7 @@ function renderReply(finding: AtlasRecord, evidence: string, headSha: string, ma
         throw new AtlasError('Invalid persisted finding for inline reply.', 'CONFLICT');
     const body = '**Still present · ' + finding.data.severity.toUpperCase() + '** — ' +
         escapeMarkdown(finding.data.title, 200) + '\n\n' +
-        escapeMarkdown(evidence, 4_000) + '\n\n_Reviewed commit ' +
+        escapeMarkdown(evidence, 1_500) + '\n\n_Reviewed commit ' +
         '`' + headSha + '` · Atlas finding ' + finding.id + '_\n\n' + marker;
     if (body.length > 8_000)
         throw new AtlasError('Managed inline reply is too large.', 'INVALID_REQUEST');
