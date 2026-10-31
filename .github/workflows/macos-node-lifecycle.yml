@@ -5,12 +5,20 @@ on:
   pull_request:
     paths:
       - "scripts/macos-node-lifecycle.py"
+      - "scripts/macos-node-update.py"
+      - "scripts/macos-node-stage.py"
+      - "scripts/linux-node-host-updater.py"
+      - "test/test_macos_node_update.py"
       - "test/test_macos_node_lifecycle.py"
       - ".github/workflows/macos-node-lifecycle.yml"
   push:
     branches: [main]
     paths:
       - "scripts/macos-node-lifecycle.py"
+      - "scripts/macos-node-update.py"
+      - "scripts/macos-node-stage.py"
+      - "scripts/linux-node-host-updater.py"
+      - "test/test_macos_node_update.py"
       - "test/test_macos_node_lifecycle.py"
       - ".github/workflows/macos-node-lifecycle.yml"
 
@@ -30,4 +38,5 @@ jobs:
       - name: Test isolated launchd activation and rollback
         run: |
           python3 -m unittest discover -s test -p 'test_macos_node_lifecycle.py' -v
-          python3 -m py_compile scripts/macos-node-lifecycle.py
+          python3 -m unittest discover -s test -p 'test_macos_node_update.py' -v
+          python3 -m py_compile scripts/macos-node-lifecycle.py scripts/macos-node-update.py

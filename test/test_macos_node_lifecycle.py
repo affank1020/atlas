@@ -31,6 +31,7 @@ class FakeLaunchd:
         self.loaded = True
         self.recovery_loaded = False
         self.fail_watchdog_bootstrap = False
+        self.fail_watchdog_bootstrap_once = False
         self.pid = 12345
         self.commands = []
         self.online = True
@@ -46,11 +47,15 @@ class FakeLaunchd:
                 raise subprocess.CalledProcessError(113, args)
             return f"state = running\npid = {self.pid}\n"
         if args[:2] == ("launchctl", "bootout"):
-            self.loaded = False
+            if args[2] == self.test.layout.recovery_target:
+                self.recovery_loaded = False
+            else:
+                self.loaded = False
             return ""
         if args[:2] == ("launchctl", "bootstrap"):
             if args[3] == str(self.test.layout.recovery_plist):
-                if self.fail_watchdog_bootstrap:
+                if self.fail_watchdog_bootstrap or self.fail_watchdog_bootstrap_once:
+                    self.fail_watchdog_bootstrap_once = False
                     raise subprocess.CalledProcessError(5, args)
                 self.recovery_loaded = True
             else:
@@ -147,6 +152,107 @@ class MacLifecycleTests(unittest.TestCase):
         self.assertEqual(self.plist()["ProgramArguments"][1],
                          str(self.release / lifecycle.ENTRYPOINT))
 
+    def test_refresh_watchdog_upgrades_loaded_old_script_without_changing_node(self):
+        self.with_watchdog()
+        old_plist = self.layout.plist.read_bytes()
+        old_pid = self.fake.pid
+        self.layout.recovery_script.write_bytes(b"#!/usr/bin/env python3\n# previous reviewed watchdog\n")
+        self.fake.commands.clear()
+        lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertEqual(self.layout.recovery_script.read_bytes(), SCRIPT.read_bytes())
+        self.assertEqual(self.layout.plist.read_bytes(), old_plist)
+        self.assertEqual(self.fake.pid, old_pid)
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+        self.assertIn(("launchctl", "bootout", self.layout.recovery_target), self.fake.commands)
+        self.assertIn(("launchctl", "bootstrap", f"gui/{self.layout.uid}",
+                       str(self.layout.recovery_plist)), self.fake.commands)
+
+    def test_refresh_watchdog_bootstrap_failure_restores_previous_loaded_watchdog(self):
+        self.with_watchdog()
+        prior = b"#!/usr/bin/env python3\n# previous reviewed watchdog\n"
+        self.layout.recovery_script.write_bytes(prior)
+        old_plist = self.layout.recovery_plist.read_bytes()
+        old_node = self.layout.plist.read_bytes()
+        self.fake.fail_watchdog_bootstrap_once = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertEqual(self.layout.recovery_script.read_bytes(), prior)
+        self.assertEqual(self.layout.recovery_plist.read_bytes(), old_plist)
+        self.assertEqual(self.layout.plist.read_bytes(), old_node)
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+
+    def test_refresh_watchdog_verification_failure_restores_previous_watcher(self):
+        self.with_watchdog()
+        prior = b"#!/usr/bin/env python3\n# old watchdog source\n"
+        self.layout.recovery_script.write_bytes(prior)
+        old_plist = self.layout.recovery_plist.read_bytes()
+        with patch.object(lifecycle, "require_watchdog",
+                          side_effect=lifecycle.Refused("simulated post-bootstrap mismatch")):
+            with self.assertRaisesRegex(lifecycle.Refused, "post-bootstrap mismatch"):
+                lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertEqual(self.layout.recovery_script.read_bytes(), prior)
+        self.assertEqual(self.layout.recovery_plist.read_bytes(), old_plist)
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+
+    def test_refresh_watchdog_rejects_unexpected_old_plist_without_bootout(self):
+        self.with_watchdog()
+        plist = plistlib.loads(self.layout.recovery_plist.read_bytes())
+        plist["ProgramArguments"][1] = "/tmp/not-atlas-recovery.py"
+        self.layout.recovery_plist.write_bytes(plistlib.dumps(plist))
+        self.fake.commands.clear()
+        with self.assertRaisesRegex(lifecycle.Refused, "not the expected per-user job"):
+            lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertFalse(any(cmd[:2] == ("launchctl", "bootout") for cmd in self.fake.commands))
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+
+    def test_refresh_watchdog_rejects_pending_node_recovery(self):
+        self.with_watchdog()
+        self.layout.recovery_script.write_bytes(b"old script")
+        self.layout.pending.write_text("{}")
+        self.fake.commands.clear()
+        with self.assertRaisesRegex(lifecycle.Refused, "Node activation recovery is pending"):
+            lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertFalse(any(cmd[:2] == ("launchctl", "bootout") for cmd in self.fake.commands))
+
+    def test_refresh_watchdog_rejects_without_explicit_confirmation(self):
+        self.with_watchdog()
+        self.fake.commands.clear()
+        with self.assertRaisesRegex(lifecycle.Refused, "require --confirm"):
+            lifecycle.manage(self.layout, ["refresh-watchdog"])
+        self.assertFalse(any(cmd[:2] == ("launchctl", "bootout") for cmd in self.fake.commands))
+
+    def test_interrupted_watchdog_replacement_can_be_restored(self):
+        self.with_watchdog()
+        old_script = b"#!/usr/bin/env python3\n# old watchdog\n"
+        self.layout.recovery_script.write_bytes(old_script)
+        old_plist = self.layout.recovery_plist.read_bytes()
+        old_node = self.layout.plist.read_bytes()
+        original_stop = lifecycle.stop_watchdog
+
+        def killed_after_bootout(layout):
+            original_stop(layout)
+            raise SystemExit("simulated updater SIGKILL after watchdog bootout")
+
+        with patch.object(lifecycle, "stop_watchdog", side_effect=killed_after_bootout):
+            with self.assertRaises(SystemExit):
+                lifecycle.manage(self.layout, ["refresh-watchdog", "--confirm"])
+        self.assertFalse(self.fake.recovery_loaded)
+        self.assertTrue(self.layout.watchdog_refresh.exists())
+        with self.assertRaisesRegex(lifecycle.Refused, "upgrade is pending"):
+            lifecycle.require_watchdog(self.layout)
+        with self.assertRaisesRegex(lifecycle.Refused, "restored before installation"):
+            lifecycle.manage(self.layout, ["install-watchdog"])
+        lifecycle.manage(self.layout, ["restore-watchdog", "--confirm"])
+        self.assertTrue(self.fake.recovery_loaded)
+        self.assertEqual(self.layout.recovery_script.read_bytes(), old_script)
+        self.assertEqual(self.layout.recovery_plist.read_bytes(), old_plist)
+        self.assertEqual(self.layout.plist.read_bytes(), old_node)
+        self.assertFalse(self.layout.watchdog_refresh.exists())
+
     def test_watchdog_bootstrap_failure_can_retry_existing_identical_files(self):
         self.fake.fail_watchdog_bootstrap = True
         with self.assertRaises(subprocess.CalledProcessError):
@@ -182,6 +288,21 @@ class MacLifecycleTests(unittest.TestCase):
         self.assertFalse(self.layout.pending.exists())
         self.assertEqual(self.fake.commands, [])
         self.assertEqual((Path(self.old_env)).read_text(), "PLACEHOLDER_SECRET_NOT_A_REAL_NODE_TOKEN\n")
+
+    def test_pinned_entrypoint_refuses_racing_manager_before_cutover(self):
+        self.with_watchdog()
+        before = self.layout.plist.read_bytes()
+        before_count = len(self.fake.commands)
+        with self.assertRaisesRegex(lifecycle.Refused, "changed since update confirmation"):
+            lifecycle.manage(self.layout, ["activate", self.tag, "--confirm",
+                                           "--expect-entrypoint", "/other/checkout/main.js"])
+        self.assertEqual(self.layout.plist.read_bytes(), before)
+        self.assertFalse(self.layout.pending.exists())
+        self.assertFalse(any(cmd[:2] == ("launchctl", "bootout")
+                             for cmd in self.fake.commands[before_count:]))
+        lifecycle.manage(self.layout, ["activate", self.tag, "--confirm",
+                                       "--expect-entrypoint", str(self.home / "Documents/Atlas" / lifecycle.ENTRYPOINT)])
+        self.assertEqual(self.plist()["ProgramArguments"][1], str(self.release / lifecycle.ENTRYPOINT))
 
     def test_verified_release_activates_with_new_pid_and_original_env(self):
         self.with_watchdog()

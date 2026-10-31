@@ -55,15 +55,20 @@ directory is reused. Network/install failure leaves the running Node alone;
 the private temporary directory is removed. The command's cross-platform
 unit tests run in normal Atlas CI, and on macOS during Node packaging.
 
-## Separate macOS activation and rollback gate
+## Activation and rollback
 
-**This is not yet the macOS update/install or auto-update feature.** The
-runtime LaunchAgent still points at the development checkout after staging.
-The next phase must add a separately installed, launchd-managed updater and
-an explicitly approved migration that preserves the existing `ATLAS_NODE_ID`,
-credential file, workspace roots, Node share permissions and user login
-session. That migration must check for duplicate processes and conflicting
-Node managers before changing any plist.
+The separately delivered lifecycle and the interactive
+[macOS Node updater](MAC_NODE_UPDATE.md) now provide explicit
+operator-confirmed launchd cutover, rollback and a one-command
+`check` / `update` experience. The first migration from the developer
+checkout requires `update --migrate`; unattended installation is **off**.
+
+The signed-staging command in this document is still useful when preparing
+a specific immutable release without touching launchd. The coordinator
+reuses the same staging verification and lifecycle recovery rather than
+introducing a new installer. The standalone scripts currently depend on a
+repository checkout for invocation, and production activation remains gated
+on real-host acceptance.
 
 Before enabling activation, test on an actual disposable macOS user/host:
 

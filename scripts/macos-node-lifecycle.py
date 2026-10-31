@@ -51,6 +51,7 @@ class Layout:
         self.recovery_script = self.state / "macos-node-lifecycle.py"
         self.pending = self.state / "pending.json"
         self.previous = self.state / "previous.plist"
+        self.watchdog_refresh = self.state / "watchdog-refresh.json"
         self.lock = self.state / ".lifecycle.lock"
 
 
@@ -396,7 +397,9 @@ def watchdog_plist(layout: Layout, script: Path) -> bytes:
     }, fmt=plistlib.FMT_XML)
 
 
-def require_watchdog(layout: Layout) -> None:
+def require_watchdog(layout: Layout, *, during_refresh: bool = False) -> None:
+    if not during_refresh and (layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink()):
+        raise Refused("Recovery watchdog upgrade is pending; restore it first.")
     require_private(layout.state, layout.uid)
     script = layout.recovery_script
     if script.is_symlink() or not script.is_file() or not script.read_bytes() == Path(__file__).read_bytes():
@@ -411,6 +414,8 @@ def install_watchdog(layout: Layout) -> None:
     # root. Provision no unattended installer or update policy.
     if layout.pending.exists() or layout.pending.is_symlink():
         raise Refused("Cannot repair a watchdog while recovery is pending.")
+    if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
+        raise Refused("Interrupted watchdog upgrade must be restored before installation.")
     if launch_loaded(layout, layout.recovery_target):
         raise Refused("Recovery LaunchAgent is already loaded; refusing to overwrite it.")
     # A prior bootstrap may fail after the private files were installed.
@@ -439,6 +444,141 @@ def install_watchdog(layout: Layout) -> None:
     require_watchdog(layout)
 
 
+def clear_watchdog_refresh(layout: Layout) -> None:
+    layout.watchdog_refresh.unlink()
+    directory = os.open(layout.state, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def watchdog_refresh_backup(layout: Layout) -> tuple[bytes, bytes]:
+    """Read the durable rollback snapshot, including after a killed updater."""
+    require_private(layout.watchdog_refresh, layout.uid, directory=False)
+    if layout.watchdog_refresh.stat().st_size > 200000:
+        raise Refused("Recovery watchdog upgrade journal exceeds its size limit.")
+    try:
+        data = json.loads(layout.watchdog_refresh.read_text())
+        if not isinstance(data, dict) or data.get("schema") != 1:
+            raise Refused("Unexpected watchdog upgrade journal.")
+        script = base64.b64decode(data["script"], validate=True)
+        plist = base64.b64decode(data["plist"], validate=True)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Refused("Invalid recovery watchdog upgrade journal.") from exc
+    if (not script or len(script) > 100000 or
+        hashlib.sha256(script).hexdigest() != data.get("scriptSha256") or
+        hashlib.sha256(plist).hexdigest() != data.get("plistSha256")):
+        raise Refused("Recovery watchdog upgrade journal is inconsistent.")
+    validate_existing_watchdog_plist(layout, plist)
+    return script, plist
+
+
+def validate_existing_watchdog_plist(layout: Layout, raw: bytes) -> None:
+    """Accept only the known per-user recovery job shape, not an arbitrary job."""
+    if not raw or len(raw) > MAX_PLIST:
+        raise Refused("Recovery watchdog plist is oversized or missing.")
+    try:
+        actual = plistlib.loads(raw)
+        expected = plistlib.loads(watchdog_plist(layout, layout.recovery_script))
+    except (TypeError, ValueError, plistlib.InvalidFileException) as exc:
+        raise Refused("Recovery watchdog plist is invalid.") from exc
+    args = actual.get("ProgramArguments") if isinstance(actual, dict) else None
+    if (not isinstance(args, list) or len(args) != 3 or
+        not isinstance(args[0], str) or not os.path.isabs(args[0]) or
+        not Path(args[0]).is_file() or
+        args[1:] != [str(layout.recovery_script), "recover"]):
+        raise Refused("Recovery watchdog is not the expected per-user job.")
+    expected["ProgramArguments"][0] = args[0]
+    if actual != expected:
+        raise Refused("Recovery watchdog plist has unexpected settings.")
+
+
+def stop_watchdog(layout: Layout) -> None:
+    pid = launch_pid(layout, layout.recovery_target)
+    if launch_loaded(layout, layout.recovery_target):
+        command("launchctl", "bootout", layout.recovery_target)
+    if pid is not None:
+        for _ in range(20):
+            if not pid_exists(pid):
+                break
+            time.sleep(0.5)
+        else:
+            raise Refused("Prior recovery watchdog PID is still running; refusing replacement.")
+    if launch_loaded(layout, layout.recovery_target):
+        raise Refused("Recovery watchdog is still loaded after bootout.")
+
+
+def restore_watchdog_refresh(layout: Layout) -> None:
+    """Explicit or failure-path rollback; retain journal until old job is loaded."""
+    old_script, old_plist = watchdog_refresh_backup(layout)
+    if layout.pending.exists() or layout.pending.is_symlink():
+        raise Refused("Node recovery is pending; do not replace its watchdog.")
+    for path in (layout.recovery_script, layout.recovery_plist):
+        if path.is_symlink():
+            raise Refused("Refusing to restore a symlinked watchdog path.")
+        if path.exists():
+            require_private(path, layout.uid, directory=False)
+    stop_watchdog(layout)
+    atomic_write(layout.recovery_script, old_script)
+    atomic_write(layout.recovery_plist, old_plist)
+    command("launchctl", "bootstrap", f"gui/{layout.uid}", str(layout.recovery_plist))
+    if not launch_loaded(layout, layout.recovery_target):
+        raise Refused("Previous recovery watchdog did not reload; journal preserved.")
+    clear_watchdog_refresh(layout)
+
+
+def refresh_watchdog(layout: Layout) -> None:
+    """Explicit, locked migration of an existing loaded watchdog to this script.
+
+    A private journal is committed before bootout, allowing a manual restore
+    if the updater is killed. Never modify a running watchdog's script.
+    """
+    if layout.pending.exists() or layout.pending.is_symlink():
+        raise Refused("Node activation recovery is pending; refusing watchdog migration.")
+    if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
+        raise Refused("Interrupted watchdog migration must be restored first.")
+    if not launch_loaded(layout, layout.recovery_target):
+        raise Refused("No loaded watchdog to migrate; use install-watchdog.")
+    script = layout.recovery_script
+    require_private(script, layout.uid, directory=False)
+    original = script.read_bytes()
+    if not original or len(original) > 100000:
+        raise Refused("Existing recovery script is missing or oversized.")
+    old_plist = exact_plist_bytes(layout.recovery_plist, layout.uid)
+    validate_existing_watchdog_plist(layout, old_plist)
+    candidate = Path(__file__).read_bytes()
+    new_plist = watchdog_plist(layout, script)
+    if original == candidate and old_plist == new_plist:
+        require_watchdog(layout)
+        return
+    json_write(layout.watchdog_refresh, {
+        "schema": 1,
+        "script": base64.b64encode(original).decode(),
+        "scriptSha256": hashlib.sha256(original).hexdigest(),
+        "plist": base64.b64encode(old_plist).decode(),
+        "plistSha256": hashlib.sha256(old_plist).hexdigest(),
+    })
+    try:
+        stop_watchdog(layout)
+        atomic_write(script, candidate)
+        atomic_write(layout.recovery_plist, new_plist)
+        command("launchctl", "bootstrap", f"gui/{layout.uid}", str(layout.recovery_plist))
+        if not launch_loaded(layout, layout.recovery_target):
+            raise Refused("Updated recovery watchdog is not loaded.")
+        # Check exact source/plist and a loaded job while the rollback
+        # journal still exists. Never commit away the recovery path first.
+        require_watchdog(layout, during_refresh=True)
+        clear_watchdog_refresh(layout)
+    except (Refused, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        try:
+            restore_watchdog_refresh(layout)
+        except (Refused, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            # Preserve the backup for an explicit restore-watchdog --confirm.
+            pass
+        raise
+
+
 def manage(layout: Layout, argv: list[str]) -> None:
     action = argv[0] if argv else ""
     if action == "plan" and len(argv) == 2:
@@ -448,10 +588,16 @@ def manage(layout: Layout, argv: list[str]) -> None:
                           "identityConfigPath": current["EnvironmentVariables"]["ATLAS_NODE_ENV_FILE"],
                           "action": "plan-only; no Node change"}, indent=2))
         return
-    if action not in ("status", "install-watchdog", "activate", "rollback", "recover"):
-        raise Refused("Usage: status | plan vVERSION-SHA | install-watchdog | activate vVERSION-SHA --confirm | rollback --confirm | recover")
-    if action == "activate" and (len(argv) != 3 or argv[2] != "--confirm"):
+    if action not in ("status", "install-watchdog", "refresh-watchdog", "restore-watchdog", "activate", "rollback", "recover"):
+        raise Refused("Usage: status | plan vVERSION-SHA | install-watchdog | refresh-watchdog --confirm | restore-watchdog --confirm | activate vVERSION-SHA --confirm | rollback --confirm | recover")
+    if action == "activate" and not (
+        (len(argv) == 3 and argv[2] == "--confirm") or
+        (len(argv) == 5 and argv[2] == "--confirm" and
+         argv[3] == "--expect-entrypoint" and argv[4].startswith("/"))
+    ):
         raise Refused("Activation requires an exact staged version and --confirm.")
+    if action in ("refresh-watchdog", "restore-watchdog") and argv != [action, "--confirm"]:
+        raise Refused("Watchdog migration and restoration require --confirm.")
     if action == "rollback" and argv != ["rollback", "--confirm"]:
         raise Refused("Rollback requires --confirm.")
     if action in ("status", "install-watchdog", "recover") and len(argv) != 1:
@@ -459,23 +605,34 @@ def manage(layout: Layout, argv: list[str]) -> None:
     with lock_state(layout):
         if action == "status":
             print(json.dumps({"launchdPid": launch_pid(layout), "recoveryPending": layout.pending.exists(),
+                              "watchdogRefreshPending": layout.watchdog_refresh.exists(),
                               "previousRecorded": layout.previous.exists()}, indent=2))
         elif action == "install-watchdog":
             install_watchdog(layout)
             print("Per-user recovery LaunchAgent installed; no update activated.")
         elif action == "recover":
             print("Recovered interrupted Node activation." if recover(layout) else "No overdue recovery.")
+        elif action == "refresh-watchdog":
+            refresh_watchdog(layout)
+            print("Recovery watchdog refreshed under lifecycle lock; Node unchanged.")
+        elif action == "restore-watchdog":
+            restore_watchdog_refresh(layout)
+            print("Previous recovery watchdog restored; Node unchanged.")
         else:
             require_watchdog(layout)
             if layout.pending.exists() or layout.pending.is_symlink():
                 raise Refused("Pending transaction requires recovery; refusing another update.")
             current = exact_plist_bytes(layout.plist, layout.uid)
-            decode_plist(current, layout)
+            current_data = decode_plist(current, layout)
+            if action == "activate" and len(argv) == 5 and (
+                current_data["ProgramArguments"][1] != argv[4]
+            ):
+                raise Refused("Node LaunchAgent changed since update confirmation; refusing cutover.")
             if launch_pid(layout) is None:
                 raise Refused("Current launchd Node has no live PID.")
             if action == "activate":
                 selected = release_path(layout, argv[1])
-                if decode_plist(current, layout)["ProgramArguments"][1] == str(selected / ENTRYPOINT):
+                if current_data["ProgramArguments"][1] == str(selected / ENTRYPOINT):
                     raise Refused("Selected Node release is already active.")
                 new = make_plist(current, layout, selected)
                 complete(layout, new, current, action)
