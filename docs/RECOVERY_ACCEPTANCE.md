@@ -301,7 +301,13 @@ Result interpretation: **passed** = a nonempty complete legacy catalogue
 Workspace/Application records in the restored DB, not positive byte
 evidence; **partial** = the catalogue exceeds the chosen bound and full
 coverage cannot be claimed; **failed** = missing/corrupt objects, invalid
-metadata, or detected catalogue drift. The summary reports counts and an
+metadata, or detected catalogue drift. **Only passed exits 0.** Empty,
+partial and failed each exit 2 while retaining their distinct JSON statuses,
+so scripts checking exit codes cannot treat a zero-object restored snapshot
+as successful recovery. Environment/configuration errors exit 1. An empty
+result can only be accepted as an explicit, independently documented
+zero-legacy-file inventory; it never proves recovered object bytes.
+The summary reports counts and an
 inventory SHA-256 only, not individual file names, object keys or owner IDs.
 If more than 2,000 records exist, do not claim full verification without a
 separately reviewed expanded coverage mechanism.
