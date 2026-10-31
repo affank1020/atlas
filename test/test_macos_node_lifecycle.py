@@ -230,7 +230,7 @@ class MacLifecycleTests(unittest.TestCase):
         self.assertTrue(self.layout.watchdog_refresh.exists())
         with self.assertRaisesRegex(lifecycle.Refused, "upgrade is pending"):
             lifecycle.require_watchdog(self.layout)
-        with self.assertRaisesRegex(lifecycle.Refused, "restored first"):
+        with self.assertRaisesRegex(lifecycle.Refused, "restored before installation"):
             lifecycle.manage(self.layout, ["install-watchdog"])
         lifecycle.manage(self.layout, ["restore-watchdog", "--confirm"])
         self.assertTrue(self.fake.recovery_loaded)
