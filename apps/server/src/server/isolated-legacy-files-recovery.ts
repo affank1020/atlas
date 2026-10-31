@@ -5,7 +5,8 @@ import type { RecoveryObjectStore } from "./r2-recovery-verification.js";
 
 const FILE_KEY=/^files-[a-f0-9]{32}-[a-f0-9]{64}$/;
 const SHA=/^[a-f0-9]{64}$/;
-const UUID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+const APP_ID=/^[a-z][a-z0-9-]{0,79}$/;
 const MAX_BYTES=25*1024*1024;
 export const ISOLATED_LEGACY_MAX_RECORDS=2000;
 export const ISOLATED_LEGACY_DEFAULT_RECORDS=100;
@@ -31,7 +32,8 @@ function valid(row:LegacyRow){
     const size=Number(row.byte_size);
     return UUID.test(row.id)&&
         (row.owner_kind==="workspace"||row.owner_kind==="application")&&
-        typeof row.owner_id==="string"&&row.owner_id.length>0&&
+        typeof row.owner_id==="string"&&
+        (row.owner_kind==="workspace"?UUID.test(row.owner_id):APP_ID.test(row.owner_id))&&
         (row.status==="active"||row.status==="archived")&&
         typeof row.storage_key==="string"&&isLegacyObjectKey(row.storage_key)&&
         FILE_KEY.test(row.storage_key)&&SHA.test(row.checksum)&&
