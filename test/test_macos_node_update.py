@@ -245,6 +245,26 @@ class MacUpdateTests(unittest.TestCase):
             self.layout, self.tag2.removeprefix("node-"), require_existing=True
         )
 
+    def test_operator_promotion_failure_does_not_misreport_successful_node_cutover(self):
+        candidate = {
+            "candidate": self.tag2, "candidateSource": "d" * 40,
+            "candidateDigest": "b" * 64, "currentEntrypoint": "/test/node.js",
+            "installed": self.tag1.removeprefix("node-"), "mode": "release",
+            "state": "available", "launchdPid": 123, "recoveryPending": False,
+        }
+        with patch.object(update, "discover", return_value=candidate), patch.object(
+            update.sys.stdin, "isatty", return_value=True
+        ), patch("builtins.input", return_value="UPDATE " + self.tag2), patch.object(
+            update, "prepared_release"
+        ), patch.object(update.lifecycle, "require_watchdog"), patch.object(
+            update.lifecycle, "manage"
+        ) as activate, patch.object(
+            update, "sync_installed_operator", side_effect=RuntimeError("operator pointer refused")
+        ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
+            self.assertIn("Node activated but standalone updater", stderr.getvalue())
+        activate.assert_called_once()
+
     def test_successful_flow_verifies_staging_then_reuses_lifecycle(self):
         old = self.tag1.removeprefix("node-")
         candidate = {
