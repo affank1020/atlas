@@ -11,7 +11,7 @@ export function macShareSocketPath(): string {
 }
 
 const MAX_LOCAL_REQUEST = 80 * 1024; // UTF-8 JSON up to 16,384 UTF-16 characters.
-type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare' | 'queueDeviceShare'>;
+type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'inboxRecipients' | 'sendDeviceShare' | 'queueDeviceShare'>;
 type Approve = (targetId: string, text: string, mode?: 'live' | 'queue') => Promise<boolean>;
 
 /** A local socket caller is not proof that the user consented. Require a
@@ -115,6 +115,8 @@ export async function startMacShareControlServer(
                     let result: unknown;
                     if (data.action === 'recipients' && Object.keys(data).length === 1) {
                         result = { recipients: await node.shareRecipients() };
+                    } else if (data.action === 'queueRecipients' && Object.keys(data).length === 1) {
+                        result = { recipients: await node.inboxRecipients() };
                     } else if (data.action === 'send' && Object.keys(data).length === 3 &&
                         typeof data.targetNodeId === 'string' && typeof data.text === 'string') {
                         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
