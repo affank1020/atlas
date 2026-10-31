@@ -26,7 +26,7 @@ internal class AtlasTransport {
         .build()
 
     private val imageClient = client.newBuilder().readTimeout(55, TimeUnit.SECONDS)
-        .callTimeout(60, TimeUnit.SECONDS).build()
+        .callTimeout(80, TimeUnit.SECONDS).build()
 
     /** Upload real PNG/JPEG bytes over native-Node HTTPS, not Node JSON.
      * The returned accepted bit represents the Mac user's actual clipboard
