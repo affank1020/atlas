@@ -55,6 +55,37 @@ class CompanionSessionTest {
         assertNull(session.editDraft("now valid").error)
     }
 
+    @Test fun imageImportReplacesTextAndClearsOnEdit() {
+        val image = SharedImageDraft("image/png", byteArrayOf(1, 2))
+        var session = CompanionSession().importShare(ShareDelivery(1, text = "previous"))
+        session = session.importShare(ShareDelivery(2, image = image))
+        assertEquals("", session.draft)
+        assertEquals(image, session.image)
+        session = session.editDraft("now text")
+        assertNull(session.image)
+        assertEquals("now text", session.draft)
+    }
+
+    @Test fun asynchronousImageCompletionDoesNotClobberNewerShare() {
+        val image = SharedImageDraft("image/png", byteArrayOf(1, 2))
+        val pending = CompanionSession().importShare(ShareDelivery(1, error = "Opening shared image…"))
+        val newer = pending.importShare(ShareDelivery(2, text = "new text"))
+        val stale = newer.completeImageImport(ShareDelivery(1, image = image))
+        assertEquals("new text", stale.draft)
+        assertNull(stale.image)
+        assertEquals(2L, stale.lastDeliveryId)
+    }
+
+    @Test fun imageImportCompletesDeferredShareWithoutReplacingSentText() {
+        val image = SharedImageDraft("image/png", byteArrayOf(1, 2))
+        var session = CompanionSession().importShare(ShareDelivery(1, text = "sending"))
+            .receiveShare(ShareDelivery(2, error = "Opening shared image…"), sending = true)
+        session = session.completeImageImport(ShareDelivery(2, image = image))
+        assertEquals("sending", session.draft)
+        assertEquals(image, session.deferredShare?.image)
+        assertEquals(image, session.loadDeferredShare().image)
+    }
+
     @Test fun draftLimitIsEnforced() {
         assertEquals(MAX_SHARE_CHARACTERS,
             CompanionSession().editDraft("a".repeat(MAX_SHARE_CHARACTERS + 50)).draft.length)
