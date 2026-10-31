@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AtlasNode } from './Nodes';
 import './node-sharing.css';
+import { SkeletonRows } from './Skeletons';
 
 export type ShareApproval = {
     sourceNodeId: string;
@@ -20,10 +21,12 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [revision, setRevision] = useState(0);
+    const previousSource = useRef(source.id);
     useEffect(() => {
         let live = true;
         setLoading(true);
-        setLoaded(false);
+        if (previousSource.current !== source.id) { setLoaded(false); setApprovals([]); }
+        previousSource.current = source.id;
         setError('');
         callTool<ShareApproval[]>('list_node_share_approvals').then(value => {
             if (live) {
@@ -79,7 +82,7 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
             Receiving Nodes must still be online and explicitly accept every share.</p>
         {error && <p role="alert" className="node-page-notice">{error}</p>}
         {notice && <p role="status" className="node-page-notice">{notice}</p>}
-        {loading ? <p role="status">Loading sharing approvals…</p>
+        {loading && !loaded && !error ? <SkeletonRows label="Loading sharing approvals" variant="list" rows={3} />
             : !loaded ? <p role="status">Sharing approval state is unknown. Refresh approvals to retry.</p>
             : !targets.length ? <p>No other Nodes are enrolled yet.</p>
             : <ul className="node-share-list">
