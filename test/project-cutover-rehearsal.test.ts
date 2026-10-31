@@ -164,3 +164,25 @@ test("Wrong Project, missing independent receipts and stale catalogue all fail w
             /catalogue|blocked|changed/);
     }finally{await ctx.close();}
 });
+
+
+test("Direct engine refuses the non-disposable database even when CLI validation is bypassed",async()=>{
+    const ctx=await fixture();
+    try{
+        await add(ctx,"safety-boundary");
+        const state=await prepared(ctx);
+        // Remove the fixture's atlas_test_* search_path, leaving the shared
+        // test server's non-disposable database schema. The engine must fail
+        // before its first BEGIN or table lock, regardless of valid run IDs.
+        const url=new URL(ctx.db);
+        url.searchParams.delete("options");
+        const unsafe=new Pool({connectionString:url.toString()});
+        try{
+            await assert.rejects(rehearseProjectCutover({database:unsafe,
+                projectId:ctx.project,keyRunId:state.keyRun.id,
+                recoveryRunId:state.recovery.id}),/Only disposable PostgreSQL/);
+        }finally{await unsafe.end();}
+        const before=await readProjectKeySnapshot(ctx.files.pool,ctx.project);
+        await verifyUnchanged(ctx,before.sha256);
+    }finally{await ctx.close();}
+});
