@@ -195,7 +195,7 @@ class MacUpdateTests(unittest.TestCase):
         ), patch("builtins.input", return_value="UPDATE " + self.tag2), patch.object(
             update, "prepared_release", side_effect=lambda *_: events.append("stage")
         ), patch.object(update.lifecycle, "require_watchdog",
-                        side_effect=update.lifecycle.Refused("old script")), patch.object(
+                        side_effect=[update.lifecycle.Refused("old script"), None]), patch.object(
             update.lifecycle, "launch_loaded", return_value=True
         ), patch.object(update.lifecycle, "manage", side_effect=lambda _layout, args: events.append(tuple(args))):
             self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
@@ -285,7 +285,7 @@ class MacUpdateTests(unittest.TestCase):
             update.lifecycle, "manage", side_effect=lambda *args: events.append(tuple(args[1]))
         ):
             self.assertEqual(update.apply_update(self.layout, migrate=False), 0)
-        self.assertEqual(events, ["stage", "watchdog",
+        self.assertEqual(events, ["stage", "watchdog", "watchdog",
                                   ("activate", self.tag2.removeprefix("node-"), "--confirm",
                                    "--expect-entrypoint", "/test/node.js")])
 
