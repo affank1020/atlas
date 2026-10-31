@@ -201,13 +201,13 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun startConnection() {
-        owners = owners.copy(activityVisible = true)
+        owners = owners.activityStarted()
         BackgroundReceiverService.cancelIncoming(getApplication())
         if (pairedNode != null && socket == null) connect()
     }
 
     fun stopConnection() {
-        owners = owners.copy(activityVisible = false)
+        owners = owners.activityStopped()
         if (owners.connected) {
             if (incomingShare != null) {
                 val remaining = incomingDeadlineElapsedMs - SystemClock.elapsedRealtime()
@@ -532,7 +532,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun forget() {
-        val wasVisible = owners.activityVisible
+        val visibleActivities = owners.visibleActivities
         // Stop the independently running receiver before deleting its identity.
         getApplication<AtlasNodeApp>().stopService(Intent(
             getApplication(), BackgroundReceiverService::class.java))
@@ -553,7 +553,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         session = CompanionSession()
         // Forgetting while the Activity is open must not prevent a new pair
         // from opening its socket immediately after enrolment.
-        owners = ConnectionOwners(activityVisible = wasVisible)
+        owners = ConnectionOwners(visibleActivities = visibleActivities)
     }
 
     fun clearRecoveryNotice() {
