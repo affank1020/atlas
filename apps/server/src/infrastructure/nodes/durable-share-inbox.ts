@@ -122,7 +122,10 @@ export class DurableDeviceShareInbox {
             await this.verifySession(input.sourceId, input.runtime, input.credential, 'device.share.send');
             if (!(await this.authorized(source, target)))
                 throw new AtlasError('The directional grant was revoked.', 'SHARE_DENIED');
-            const targetNode = await this.nodes.get(target);
+            // Queue targets are intentionally offline. NodeService.get()
+            // masks all capabilities when no runtime is attached; use the
+            // durable last-registered capabilities and version from the registry.
+            const targetNode = await this.nodes.repository.get(target);
             if (targetNode.platform !== 'android' || targetNode.credentialState !== 'active' ||
                 !supportsAndroidInbox(targetNode.version) ||
                 !targetNode.capabilities.includes('device.share.receive'))
