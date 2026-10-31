@@ -186,3 +186,54 @@ test("Direct engine refuses the non-disposable database even when CLI validation
         await verifyUnchanged(ctx,before.sha256);
     }finally{await ctx.close();}
 });
+
+
+test("Empty matching test schema cannot fall through to another schema's live catalogue before LOCK",async()=>{
+    const ctx=await fixture();
+    const url=new URL(ctx.db);
+    url.searchParams.delete("options");
+    const admin=new Pool({connectionString:url.toString()});
+    const empty="atlas_test_"+randomUUID().replaceAll("-","");
+    let created=false;
+    try{
+        await add(ctx,"schema-fallback");
+        const state=await prepared(ctx);
+        const original=await readProjectKeySnapshot(ctx.files.pool,ctx.project);
+        const real=(await ctx.files.pool.query<{name:string}>(
+            "SELECT current_schema() AS name")).rows[0]!.name;
+        assert.match(real,/^atlas_test_[a-f0-9]{32}$/);
+        await admin.query("CREATE SCHEMA "+empty);created=true;
+
+        // A matching but EMPTY schema is first. PostgreSQL name resolution
+        // would fall through to the populated fixture schema below it,
+        // exactly as it can fall through to public in production.
+        const disguised=new URL(ctx.db);
+        disguised.searchParams.set("options",
+            "-csearch_path="+empty+","+real+",public");
+        const bad=new Pool({connectionString:disguised.toString()});
+        try{
+            const probe=await bad.query<{current:string;actual:string}>(
+                "SELECT current_schema() AS current, "+
+                "(SELECT n.nspname FROM pg_class c "+
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "+
+                "WHERE c.oid=to_regclass('atlas_files')) AS actual");
+            assert.equal(probe.rows[0]!.current,empty);
+            assert.equal(probe.rows[0]!.actual,real);
+            await assert.rejects(rehearseProjectCutover({database:bad,
+                projectId:ctx.project,keyRunId:state.keyRun.id,
+                recoveryRunId:state.recovery.id}),
+                /relations resolve outside the disposable catalogue schema/);
+        }finally{await bad.end();}
+        // The preflight never reaches BEGIN or LOCK of the populated tables.
+        await verifyUnchanged(ctx,original.sha256);
+        const valid=await rehearseProjectCutover({database:ctx.files.pool,
+            projectId:ctx.project,keyRunId:state.keyRun.id,
+            recoveryRunId:state.recovery.id});
+        assert.equal(valid.status,"passed",
+            "real disposable fixture schema still allows the transaction rehearsal");
+    }finally{
+        if(created)await admin.query("DROP SCHEMA IF EXISTS "+empty+" CASCADE");
+        await admin.end();
+        await ctx.close();
+    }
+});
