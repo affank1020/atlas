@@ -125,3 +125,121 @@ test("Versioned writes default off, reject unsafe flags and require primary R2",
         } as NodeJS.ProcessEnv,true),/must be true or false/);
     }
 });
+
+
+async function portfolioFailureFixture() {
+    const database=await databaseFixture();
+    const root=await mkdtemp(path.join(os.tmpdir(),"atlas-portfolio-failed-upload-"));
+    const media=new PortfolioMediaService(database.databaseUrl,root,null,true);
+    const image=await sharp({create:{width:24,height:21,channels:4,
+        background:{r:81,g:39,b:97,alpha:1}}}).png().toBuffer();
+    const input={fileName:"uncommitted.png",mimeType:"image/png",
+        base64:image.toString("base64"),altText:"Uncommitted media"};
+    return {media,input,async close(){await media.close();await rm(root,{recursive:true,force:true});}};
+}
+
+/** Inject a lost SQL acknowledgement either before or after a real command.
+ * The wrapped connection still executes actual PostgreSQL transactions. */
+function interceptMediaQuery(media:PortfolioMediaService,
+    decide:(sql:string)=>"before"|"after"|null) {
+    const connect=media.pool.connect.bind(media.pool);
+    media.pool.connect=(async()=>{
+        const client=await connect();
+        const query=client.query.bind(client);
+        return new Proxy(client,{get(target,property){
+            if(property==="query")return async (sql:string,values?:unknown[])=>{
+                const mode=decide(sql);
+                if(mode==="before")throw new Error("injected database failure");
+                const result=await query(sql,values);
+                if(mode==="after")throw new Error("lost database acknowledgement");
+                return result;
+            };
+            const value=Reflect.get(target,property);
+            return typeof value==="function"?value.bind(target):value;
+        }});
+    }) as typeof media.pool.connect;
+}
+
+test("Versioned Portfolio reclaims both attempted objects after a mid-variant PUT loses its acknowledgement",async()=>{
+    const {media,input,close}=await portfolioFailureFixture();
+    const attempted:string[]=[],removed:string[]=[];
+    const put=media.objects.put.bind(media.objects),discard=media.objects.delete.bind(media.objects);
+    try{
+        media.objects.put=async(key,bytes,mime)=>{
+            attempted.push(key);
+            await put(key,bytes,mime);
+            if(attempted.length===2)throw new Error("lost variant PUT acknowledgement");
+        };
+        media.objects.delete=async key=>{removed.push(key);await discard(key);};
+        await assert.rejects(media.upload(input),/lost variant PUT acknowledgement/);
+        assert.equal(attempted.length,2);
+        assert.deepEqual(removed,attempted);
+        for(const key of attempted)await assert.rejects(media.objects.get(key));
+        const assets=await media.pool.query("SELECT id FROM media_assets");
+        assert.equal(assets.rowCount,0);
+    }finally{await close();}
+});
+
+test("Failed Portfolio variant INSERT rolls back and cleans all UUID-based original/variant bytes",async()=>{
+    const {media,input,close}=await portfolioFailureFixture();
+    const attempted:string[]=[],removed:string[]=[];
+    const put=media.objects.put.bind(media.objects),discard=media.objects.delete.bind(media.objects);
+    try{
+        media.objects.put=async(key,bytes,mime)=>{attempted.push(key);await put(key,bytes,mime);};
+        media.objects.delete=async key=>{removed.push(key);await discard(key);};
+        interceptMediaQuery(media,sql=>sql.startsWith("INSERT INTO media_variants")?"before":null);
+        await assert.rejects(media.upload(input),/injected database failure/);
+        assert.equal(attempted.length,3);
+        assert.deepEqual(removed,attempted);
+        for(const key of attempted)await assert.rejects(media.objects.get(key));
+        const assets=await media.pool.query("SELECT id FROM media_assets");
+        const variants=await media.pool.query("SELECT asset_id FROM media_variants");
+        assert.equal(assets.rowCount,0);
+        assert.equal(variants.rowCount,0);
+    }finally{await close();}
+});
+
+test("Ambiguous COMMIT after success retains all Portfolio bytes and committed metadata",async()=>{
+    const {media,input,close}=await portfolioFailureFixture();
+    const attempted:string[]=[],removed:string[]=[];
+    const put=media.objects.put.bind(media.objects),discard=media.objects.delete.bind(media.objects);
+    try{
+        media.objects.put=async(key,bytes,mime)=>{attempted.push(key);await put(key,bytes,mime);};
+        media.objects.delete=async key=>{removed.push(key);await discard(key);};
+        interceptMediaQuery(media,sql=>sql==="COMMIT"?"after":null);
+        await assert.rejects(media.upload(input),/lost database acknowledgement/);
+        assert.equal(attempted.length,3);
+        assert.deepEqual(removed,[]);
+        const asset=await media.pool.query<{id:string;storage_key:string}>(
+            "SELECT id,storage_key FROM media_assets");
+        assert.equal(asset.rowCount,1);
+        assert.ok(attempted.includes(asset.rows[0]!.storage_key));
+        const variant=await media.pool.query<{storage_key:string}>(
+            "SELECT storage_key FROM media_variants WHERE asset_id=$1",[asset.rows[0]!.id]);
+        assert.equal(variant.rowCount,2);
+        for(const key of attempted)assert.ok((await media.objects.get(key)).length>0);
+    }finally{await close();}
+});
+
+test("Portfolio preserves unreferenced objects when database lookup cannot prove their absence",async()=>{
+    const {media,input,close}=await portfolioFailureFixture();
+    const attempted:string[]=[],removed:string[]=[];
+    const put=media.objects.put.bind(media.objects),discard=media.objects.delete.bind(media.objects);
+    const query=media.pool.query.bind(media.pool);
+    try{
+        media.objects.put=async(key,bytes,mime)=>{
+            attempted.push(key);await put(key,bytes,mime);
+            throw new Error("R2 response lost");
+        };
+        media.objects.delete=async key=>{removed.push(key);await discard(key);};
+        media.pool.query=((sql:string,params?:unknown[])=>{
+            if(sql.includes("SELECT EXISTS(SELECT 1 FROM media_assets"))
+                throw new Error("database unavailable during cleanup");
+            return query(sql,params);
+        }) as typeof media.pool.query;
+        await assert.rejects(media.upload(input),/R2 response lost/);
+        assert.equal(attempted.length,1);
+        assert.deepEqual(removed,[]);
+        assert.ok((await media.objects.get(attempted[0]!)).length>0);
+    }finally{await close();}
+});
