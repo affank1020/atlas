@@ -35,6 +35,7 @@ RUN_ID = os.environ.get("GITHUB_RUN_ID", "0")
 if not RUN_ID.isdecimal() or len(RUN_ID) > 20:
     raise RuntimeError("Unsafe GitHub run ID for launchd test.")
 TEST_LABEL = "com.affank1020.atlas.node.update-check.acceptance." + RUN_ID
+TEST_RECOVERY_LABEL = "com.affank1020.atlas.node.recover.acceptance." + RUN_ID
 VERSION = "v0.0.0-0000deadbeef"
 COMMIT = "0000deadbeef" + "0" * 28
 
@@ -50,18 +51,32 @@ class RealMacLaunchdCheckOnly(unittest.TestCase):
     def setUp(self):
         if os.geteuid() == 0:
             self.fail("Refusing launchd acceptance as root.")
+        self.original_recovery_label = operator.lifecycle.RECOVERY_LABEL
+        # Both smoke labels are different from any production Atlas service.
+        # This is restored in cleanup_host even if an assertion fails.
+        operator.lifecycle.RECOVERY_LABEL = TEST_RECOVERY_LABEL
         self.layout = operator.lifecycle.Layout(Path.home(), os.getuid())
         # This smoke necessarily uses the actual runner user's HOME because
         # the real launchd Python subprocess builds Layout(Path.home()) itself.
         # Never overwrite a pre-existing Atlas installation or Node identity.
         if self.layout.app.exists() or self.layout.app.is_symlink():
+            operator.lifecycle.RECOVERY_LABEL = self.original_recovery_label
             self.fail("Host already contains Atlas NodeSoftware; refusing test setup.")
         if self.layout.plist.exists() or self.layout.plist.is_symlink():
+            operator.lifecycle.RECOVERY_LABEL = self.original_recovery_label
             self.fail("Host already has an Atlas Node LaunchAgent; refusing test setup.")
-        if self.layout.recovery_plist.exists() or self.layout.recovery_plist.is_symlink():
+        production_recovery = (
+            Path.home() / "Library/LaunchAgents" /
+            (self.original_recovery_label + ".plist")
+        )
+        if (production_recovery.exists() or production_recovery.is_symlink() or
+            self.layout.recovery_plist.exists() or self.layout.recovery_plist.is_symlink()):
+            operator.lifecycle.RECOVERY_LABEL = self.original_recovery_label
             self.fail("Host already has an Atlas recovery LaunchAgent; refusing test setup.")
         self.original_label = operator.CHECK_LABEL
         operator.CHECK_LABEL = TEST_LABEL
+        self.test_logs_dir = Path.home() / "Library/Logs/Atlas"
+        self.logs_dir_preexisting = self.test_logs_dir.exists()
         self.addCleanup(self.cleanup_host)
         if operator.lifecycle.launch_loaded(self.layout, operator.check_target(self.layout)):
             self.fail("A test-labelled LaunchAgent is already loaded; refusing takeover.")
@@ -109,25 +124,24 @@ class RealMacLaunchdCheckOnly(unittest.TestCase):
     def cleanup_host(self):
         try:
             operator.CHECK_LABEL = TEST_LABEL
-            plist, _ = operator.check_paths(self.layout)
-            loaded = operator.lifecycle.launch_loaded(
-                self.layout, operator.check_target(self.layout)
-            )
-            if loaded:
-                # Only the per-run acceptance label is eligible for cleanup.
-                operator.lifecycle.command(
-                    "launchctl", "bootout", operator.check_target(self.layout)
-                )
-            if operator.lifecycle.launch_loaded(
-                self.layout, operator.check_target(self.layout)
+            for label, path in (
+                (operator.check_target(self.layout), operator.check_paths(self.layout)[0]),
+                (self.layout.recovery_target, self.layout.recovery_plist),
             ):
-                self.fail("Test LaunchAgent still loaded: retaining fixture for diagnosis.")
-            if plist.exists() or plist.is_symlink():
-                plist.unlink()
+                if operator.lifecycle.launch_loaded(self.layout, label):
+                    # Both labels are generated uniquely for this runner job.
+                    operator.lifecycle.command("launchctl", "bootout", label)
+                if operator.lifecycle.launch_loaded(self.layout, label):
+                    self.fail("Acceptance LaunchAgent is still loaded; preserving fixture.")
+                if path.exists() or path.is_symlink():
+                    path.unlink()
             if self.layout.app.exists() and not self.layout.app.is_symlink():
                 shutil.rmtree(self.layout.app)
+            if not self.logs_dir_preexisting and self.test_logs_dir.is_dir():
+                shutil.rmtree(self.test_logs_dir)
         finally:
             operator.CHECK_LABEL = self.original_label
+            operator.lifecycle.RECOVERY_LABEL = self.original_recovery_label
 
     def test_actual_launchctl_check_only_bootstrap_run_and_bootout(self):
         # No real Node plist is installed at any point in this test.
@@ -179,6 +193,41 @@ class RealMacLaunchdCheckOnly(unittest.TestCase):
         self.assertFalse(plist.exists())
         self.assertFalse(self.layout.plist.exists())
         self.assertFalse(self.layout.recovery_plist.exists())
+
+
+    def test_actual_launchctl_recovery_watchdog_bootstrap_and_bootout(self):
+        # Probe the actual watchdog's known per-user launchd shape, without
+        # installing or restarting a Node service. With no pending journal,
+        # the real watchdog process performs only its safe no-op recover.
+        operator.lifecycle.manage(self.layout, ["install-watchdog"])
+        operator.lifecycle.require_watchdog(self.layout)
+        self.assertTrue(
+            operator.lifecycle.launch_loaded(self.layout, self.layout.recovery_target)
+        )
+        self.assertFalse(self.layout.plist.exists())
+        self.assertFalse(self.layout.pending.exists())
+
+        job = plistlib.loads(self.layout.recovery_plist.read_bytes())
+        self.assertEqual(job["Label"], TEST_RECOVERY_LABEL)
+        self.assertEqual(job["StartInterval"], 60)
+        self.assertEqual(job["ProgramArguments"][-1], "recover")
+        self.assertEqual(
+            job["ProgramArguments"][1], str(self.layout.recovery_script)
+        )
+        self.assertEqual(
+            self.layout.recovery_script.read_bytes(),
+            (ROOT / "scripts/macos-node-lifecycle.py").read_bytes(),
+        )
+        self.assertEqual(self.layout.recovery_script.stat().st_mode & 0o077, 0)
+
+        # Verify the real launchd job can be unloaded, without stopping a Node
+        # (there is deliberately no Node process or runtime LaunchAgent).
+        operator.lifecycle.command("launchctl", "bootout", self.layout.recovery_target)
+        self.assertFalse(
+            operator.lifecycle.launch_loaded(self.layout, self.layout.recovery_target)
+        )
+        self.assertFalse(self.layout.plist.exists())
+        self.assertFalse(self.layout.pending.exists())
 
 
 if __name__ == "__main__":
