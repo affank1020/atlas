@@ -56,3 +56,16 @@ This is **an on-demand, point-in-time snapshot**, not a continuously monitored S
 * Monitoring URLs use hash query strings, e.g. `#/monitoring?tab=activity&projectId=...` and `#/monitoring?tab=logs&nodeId=...`. `#/activity` maps to Monitoring Activity for old bookmarks.
 * Queries use parameterised SQL and bounded limits; records outside a selected scope must not appear.
 * Tests cover deep links, legacy API continuity, filter-before-pagination and Node log boundary semantics. Review CI and production logs separately before retiring old feeds.
+
+
+## Node lifecycle and update attribution
+
+Monitoring now preserves a constrained distinction between *entrypoint* and *actor*. A Node-control mutation received through the trusted HTTP/MCP dispatch is recorded as `atlas-http` / `atlas-mcp` with fixed `transport` and `actorKind=transport`. The `x-atlas-client` header and arbitrary tool payload cannot change this identity. Local invocations retain `atlas-server` / `server`. These fields do **not** attest to a human operator; they only identify the call path.
+
+A successful one-use enrolment ticket is labelled `atlas-node-enrolment` / `enrolment-token`. Authenticated Node update claim and outcome report events use `atlas-node-credential` / `node-credential`, separate from the HTTP/MCP requester that prepared the update. This does not constitute host-root approval or verified software installation. The safe projection retains a validated update-intent UUID, fixed status/outcome words and explicit `approved/executable/verified/clearsClaim` booleans while excluding release metadata, arbitrary names, credentials and errors.
+
+Workspace Node placement now persists `project_id` and `workspace_id` on its immutable audit row in the same transaction. Project/checkout scoped Activity can find the placement, and the before/after Node IDs can each be used as Node Activity filters and navigation links. Historical rows are not rewritten; older unscoped placements remain historical and may not appear in a Project-filtered view.
+
+Share approvals already stored source/target Node UUIDs; their audit rows now also carry trusted transport metadata. Node-scoped filtering continues to admit source/target metadata *only* for share approval/revocation events to avoid accidental association by unrelated JSON keys.
+
+No broader Files/backup/automation human attribution is claimed. Those pathways need a separately reviewed audit of their authorization boundaries, atomic writes, actor evidence, and retention before they are classified as complete in #110.
