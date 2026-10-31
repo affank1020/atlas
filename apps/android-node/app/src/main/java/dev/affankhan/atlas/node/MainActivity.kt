@@ -74,10 +74,13 @@ class MainActivity : ComponentActivity() {
                 "Atlas notifications or one of its channels are disabled. Review notification settings.")
             return
         }
-        try {
-            startForegroundService(Intent(this, BackgroundReceiverService::class.java))
-        } catch (_: RuntimeException) {
-            model.reportBackgroundError("Android did not allow background receiving to start.")
+        model.requestBackgroundStart {
+            try {
+                applicationContext.startForegroundService(
+                    Intent(applicationContext, BackgroundReceiverService::class.java))
+            } catch (_: RuntimeException) {
+                model.reportBackgroundError("Android did not allow background receiving to start.")
+            }
         }
     }
 
@@ -85,8 +88,9 @@ class MainActivity : ComponentActivity() {
         if (!enabled) {
             // Do not cancel the only authenticated socket until the server
             // acknowledges removal, or the bounded revocation gate expires.
-            model.revokePushBeforeShutdown {
-                stopService(Intent(this, BackgroundReceiverService::class.java))
+            model.requestBackgroundStop {
+                applicationContext.stopService(
+                    Intent(applicationContext, BackgroundReceiverService::class.java))
                 model.stopBackgroundReceiving()
             }
             return
@@ -160,7 +164,8 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onDeclineIncoming = model::declineIncomingShare,
-                backgroundReceiving = model.pushEnabled,
+                backgroundReceiving = model.backgroundReceivingDesired,
+                pushRevocationPending = model.pushRevocationPending,
                 backgroundReceiveError = model.backgroundReceiveError,
                 pushRegistrationStatus = model.pushRegistrationStatus,
                 onToggleBackgroundReceiving = ::setBackgroundReceiving,
@@ -251,6 +256,7 @@ internal fun AtlasCompanion(
     onCopyIncoming: () -> Unit = {},
     onDeclineIncoming: () -> Unit = {},
     backgroundReceiving: Boolean = false,
+    pushRevocationPending: Boolean = false,
     backgroundReceiveError: String? = null,
     pushRegistrationStatus: String = "",
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
@@ -301,6 +307,7 @@ internal fun AtlasCompanion(
                             onRefreshQueuedInbox = onRefreshQueuedInbox,
                             onOpenQueuedInboxItem = onOpenQueuedInboxItem,
                             backgroundReceiving = backgroundReceiving,
+                            pushRevocationPending = pushRevocationPending,
                             backgroundReceiveError = backgroundReceiveError,
                             pushRegistrationStatus = pushRegistrationStatus,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
@@ -339,6 +346,7 @@ internal fun AtlasCompanion(
                             onRefreshQueuedInbox = onRefreshQueuedInbox,
                             onOpenQueuedInboxItem = onOpenQueuedInboxItem,
                             backgroundReceiving = backgroundReceiving,
+                            pushRevocationPending = pushRevocationPending,
                             backgroundReceiveError = backgroundReceiveError,
                             pushRegistrationStatus = pushRegistrationStatus,
                             onToggleBackgroundReceiving = onToggleBackgroundReceiving,
@@ -443,6 +451,7 @@ private fun CompanionContent(
     onRefreshQueuedInbox: () -> Unit = {},
     onOpenQueuedInboxItem: (String) -> Unit = {},
     backgroundReceiving: Boolean = false,
+    pushRevocationPending: Boolean = false,
     backgroundReceiveError: String? = null,
     pushRegistrationStatus: String = "",
     onToggleBackgroundReceiving: (Boolean) -> Unit = {},
@@ -508,6 +517,11 @@ private fun CompanionContent(
                     enabled = node != null,
                     modifier = Modifier.testTag("background-receiving-toggle"),
                 )
+                if (pushRevocationPending) {
+                    Text("Finishing the previous push opt-out; the latest switch setting will apply afterwards.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("background-receiving-pending"))
+                }
                 Text(
                     if (backgroundReceiving)
                         "Enabled. Atlas may keep a foreground connection while Android allows it. " +
