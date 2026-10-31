@@ -34,18 +34,24 @@ export class NodeShareApprovals {
         if (from === to) return false;
         const db = client ?? this.pool;
         const environmentGranted = this.environmentPairs.has(this.key(from, to));
-        const live = await db.query(`
+        // One statement snapshot for identity + grants on ordinary reads.
+        const authorised = await db.query(`
             SELECT 1 FROM nodes sender CROSS JOIN nodes receiver
             WHERE sender.id=$1 AND receiver.id=$2
               AND sender.credential_state='active'
               AND receiver.credential_state='active'
-        `, [from, to]);
-        if (!live.rowCount) return false;
-        if (environmentGranted) return true;
-        const grant = await db.query(`
+              AND ($3::boolean OR EXISTS (
+                  SELECT 1 FROM node_share_approvals
+                  WHERE source_node_id=$1 AND target_node_id=$2
+              ))
+        `, [from, to, environmentGranted]);
+        if (!authorised.rowCount) return false;
+        if (environmentGranted || !client) return true;
+        // In an enqueue transaction also hold the managed grant row through
+        // COMMIT, preventing revocation between this check and storage.
+        const grant = await client.query(`
             SELECT 1 FROM node_share_approvals
-            WHERE source_node_id=$1 AND target_node_id=$2
-            ${client ? 'FOR SHARE' : ''}
+            WHERE source_node_id=$1 AND target_node_id=$2 FOR SHARE
         `, [from, to]);
         return (grant.rowCount ?? 0) > 0;
     }
