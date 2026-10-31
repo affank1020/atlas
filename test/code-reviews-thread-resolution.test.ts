@@ -140,7 +140,14 @@ test('resolution allowlist is independent and owner identity is mandatory',async
     await assert.rejects(new ReviewThreadResolutionService(f.catalog,{} as any,{} as any,
         {} as any,{} as any).publish(repository,prNumber,f.run.id,lineage,true,actor),/disabled/);
     await assert.rejects(f.publish(true,{...actor,subject:'stranger'}),/authenticated submitting reviewer/);
-    await assert.rejects(f.publish(true,undefined),/authenticated MCP OAuth/);
+    await assert.rejects(f.publish(true,{...actor,issuer:'https://other-issuer.example/'}),
+        /authenticated submitting reviewer/);
+    // Do not pass undefined through the fixture's default parameter: that
+    // would silently substitute actor and fail to exercise this auth check.
+    await assert.rejects(
+        f.service.publish(repository,prNumber,f.run.id,lineage,true,undefined),
+        /authenticated MCP OAuth/);
+    assert.equal(f.events.tokens,0);
     assert.equal(f.events.writes,0);
 });
 
