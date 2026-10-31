@@ -73,7 +73,7 @@ export async function serveNodeImages(request: IncomingMessage, response: Server
             const receipt = await relay.deliver(admitted, {
                 sourceId: nodeId, targetId, deliveryId, sha256,
                 mimeType: mimeType as 'image/png' | 'image/jpeg', bytes,
-            });
+            }, credential);
             reply(response, 200, receipt);
         } else {
             if (!UUID.test(readId!)) throw new AtlasError('Invalid image ID.', 'INVALID_REQUEST');
