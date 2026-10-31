@@ -221,9 +221,10 @@ export function FootballGeneralistExperience() {
         {assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
         {notice && <p className="fg-notice" role="status">{notice}</p>}
         <nav className="fg-nav" aria-label="Football sections">{tabs.map(t =>
-            <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>
+            <button type="button" key={t.id} disabled={loading && !manifest} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>
         {tab === 'home' && (loading && !manifest && !error
             ? <FootballGeneralistContentLoading />
+            : !manifest && error ? null
             : <div className="fg-stack">
             <section className="fg-panel fg-active-panel" aria-label="Active training and evaluations">
                 <div className="fg-panel-title"><h2>Active activity</h2>
