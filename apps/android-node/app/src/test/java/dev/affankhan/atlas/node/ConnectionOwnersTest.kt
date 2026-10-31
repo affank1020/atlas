@@ -37,4 +37,16 @@ class ConnectionOwnersTest {
         assertFalse(ConnectionOwners(serviceRunning = true).canApproveClipboard)
         assertTrue(ConnectionOwners(visibleActivities = 1).canApproveClipboard)
     }
+    @Test fun stopWithoutActivityRetainsSocketUntilPushAckOrDeadline() {
+        val stopping = ConnectionOwners(serviceRunning = true).copy(serviceRunning = false)
+        assertFalse(stopping.mayReleaseSocket(revocationPending = true))
+        assertTrue(stopping.mayReleaseSocket(revocationPending = false))
+    }
+
+    @Test fun forgetWithActivityLeavingRetainsSocketUntilPushAckOrDeadline() {
+        val leaving = ConnectionOwners(visibleActivities = 1).activityStopped()
+        assertFalse(leaving.mayReleaseSocket(revocationPending = true))
+        assertTrue(leaving.mayReleaseSocket(revocationPending = false))
+    }
+
 }
