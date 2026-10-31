@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /** The server never places cleartext device content in PostgreSQL or audit logs. */
 export type InboxEnvelope = { nonce: Buffer; tag: Buffer; ciphertext: Buffer };
@@ -50,8 +50,10 @@ export function openInboxText(key: Buffer, source: string, target: string, deliv
     return text;
 }
 
-export function digestInboxSubmission(target: string, text: string): string {
-    return createHash('sha256').update(target.toLowerCase()).update('\0')
+export function digestInboxSubmission(key: Buffer, target: string, text: string): string {
+    if (key.length !== 32) throw new Error('Invalid inbox digest key.');
+    // Keyed digest avoids offline dictionary attacks against predictable short notes.
+    return createHmac('sha256', key).update(target.toLowerCase()).update('\0')
         .update(validateInboxText(text)).digest('hex');
 }
 
