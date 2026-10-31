@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import type { Pool } from 'pg';
 import { AtlasError } from '../../shared/errors.js';
 import type { NodeService } from '../../nodes/service.js';
@@ -118,7 +118,12 @@ export class DurableDeviceShareInbox {
             const text = input.submission.text;
             if (!text.trim() || text.length > 16_384)
                 throw new AtlasError('Invalid queued text.', 'SHARE_INVALID');
-            const digest = createHash('sha256').update(target).update('\0').update(text).digest('hex');
+            // Keyed fingerprint: a plain SHA-256 of short user text would leak
+            // dictionary-guessable content from the encrypted queue metadata.
+            const fingerprintKey = createHmac('sha256', this.key)
+                .update('atlas-device-queue-dedupe-v1').digest();
+            const digest = createHmac('sha256', fingerprintKey)
+                .update(target).update('\0').update(text).digest('hex');
             const client = await this.pool.connect();
             try {
                 await client.query('BEGIN');
