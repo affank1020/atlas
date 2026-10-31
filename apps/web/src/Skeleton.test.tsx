@@ -9,7 +9,7 @@ test('skeleton rows announce a single busy region without interactive placeholde
     const region = screen.getByRole('status', { name: 'Loading activity' });
     expect(region).toHaveAttribute('aria-busy', 'true');
     expect(container.querySelectorAll('.atlas-skeleton-row')).toHaveLength(4);
-    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(4);
+    expect(Array.from(container.querySelectorAll('.atlas-skeleton-row')).every(row => row.getAttribute('aria-hidden') === 'true')).toBe(true);
     expect(container.querySelectorAll('button, a, input')).toHaveLength(0);
 });
 
