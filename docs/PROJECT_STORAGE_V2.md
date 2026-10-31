@@ -537,9 +537,12 @@ change live flags, source database keys or any R2 object.
 
 ## Stage 12 — operator-only Project/Portfolio key cutover (feature delivery)
 
-Migration `040_project_storage_cutover.sql` records an atomic metadata
-switch for each Project. The **immutable Stage 4B key run** is the durable
-rollback map; old R2 objects are retained. An explicit operator command
+Migration `040_project_storage_cutover.sql` records each atomic
+metadata switch as a distinct audit attempt per Project. The **immutable Stage
+4B key run** is that attempt's durable rollback map; old R2 objects are
+retained. One Project may have only one `applied` attempt at a time;
+`rolled_back` attempts are preserved indefinitely with their original run IDs,
+manifest digests and timestamps, not reset or overwritten. An explicit operator command
 supports read-only status, one-way apply, and a constrained reverse while the
 catalogue is still unchanged. All three authoritative tables are updated
 inside a single serializable PostgreSQL transaction, with table locks,
@@ -613,9 +616,32 @@ recovery is to keep v1 reads active; restoring legacy-only metadata requires
 a separately designed reconciliation. Do not assume a blanket production
 rollback remains available after new writes.
 
+### Safely reattempting after a complete rollback
+
+If an operator rolls back before any new writes or metadata changes, a Project
+may be cut over again **only with a NEW Stage 4B key-run UUID**. The original
+run is single-use forever, even if the Project's catalogue returned to the
+exact same legacy keys. There is no manual reset, `DELETE`, truncation, or
+audit-history override.
+
+While all writers remain stopped, capture a **fresh** manifest, run the
+create-only copy/receipt tool for its entire catalogue (existing byte-identical
+v1 destinations are verified and reused), and independently re-audit old and
+new primary R2 bytes. Then inspect `--status` and repeat the normal
+`--apply --key-run=NEW_RUN_UUID` procedure with its exact confirmation and
+environment gate. The engine revalidates full catalogue identity, fresh run
+receipt completeness, old and new SHA-256 bytes, and database metadata inside
+the serialized transaction; any mismatch aborts without adding a new attempt.
+The unique single-use key-run constraint and a unique active-Project index
+remain in force even for concurrent operator commands. Each successful retry
+gets a new monotonically allocated `attempt_id`; the old rolled-back attempt
+and exact source/target map remain available for investigation.
+
 An interrupted database commit can have an **unknown** outcome. Inspect
-`--status` and actual object references before retrying; a Project with
-an applied or rolled-back record will not silently apply the same run again.
+`--status` and actual object references before deciding whether an attempt
+committed; never blindly reapply the old run. The latest attempt is returned
+by `--status`; older rows remain stored in
+`atlas_project_storage_cutovers` under their immutable attempt IDs.
 Never delete old objects or relax retention based on this cutover. The
 full independent PostgreSQL/R2 recovery exercise and future automated
 retention policy remain separate work.
