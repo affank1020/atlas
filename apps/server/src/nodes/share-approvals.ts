@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { AtlasError } from '../shared/errors.js';
 import { toolAuditOrigin } from './audit-origin.js';
 
@@ -17,6 +17,85 @@ export class NodeShareApprovals {
         const result = await this.pool.query(
             'SELECT 1 FROM node_share_approvals WHERE source_node_id=$1 AND target_node_id=$2', [source, target]);
         return (result.rowCount ?? 0) > 0;
+    }
+
+    /**
+     * Offline shares require BOTH Node credentials to remain active, including
+     * for environment-managed grants. Check credentials and directional policy
+     * in the same SQL snapshot, with no nested pool checkout when a transaction
+     * client is supplied by enqueue().
+     *
+     * A managed grant is locked by a transactional caller so revocation cannot
+     * overtake admission between checking the policy and committing the item.
+     * For nontransactional list/read the statement is a point-in-time check.
+     */
+    async allowedForInbox(source: string, target: string, client?: PoolClient): Promise<boolean> {
+        const from = source.toLowerCase(), to = target.toLowerCase();
+        if (from === to) return false;
+        const db = client ?? this.pool;
+        const environmentGranted = this.environmentPairs.has(this.key(from, to));
+        // One statement snapshot for identity + grants on ordinary reads.
+        const authorised = await db.query(`
+            SELECT 1 FROM nodes sender CROSS JOIN nodes receiver
+            WHERE sender.id=$1 AND receiver.id=$2
+              AND sender.credential_state='active'
+              AND receiver.credential_state='active'
+              AND ($3::boolean OR EXISTS (
+                  SELECT 1 FROM node_share_approvals
+                  WHERE source_node_id=$1 AND target_node_id=$2
+              ))
+        `, [from, to, environmentGranted]);
+        if (!authorised.rowCount) return false;
+        if (environmentGranted || !client) return true;
+        // In an enqueue transaction also hold the managed grant row through
+        // COMMIT, preventing revocation between this check and storage.
+        const grant = await client.query(`
+            SELECT 1 FROM node_share_approvals
+            WHERE source_node_id=$1 AND target_node_id=$2 FOR SHARE
+        `, [from, to]);
+        return (grant.rowCount ?? 0) > 0;
+    }
+
+    /**
+     * Retire stale, no-longer-retrievable queued shares in the existing enqueue
+     * transaction, before checking quotas. This uses the same approval overlay
+     * as allowedForInbox (including immutable environment grants).
+     *
+     * Only rows touching the admission's sender or recipient are considered:
+     * both source and target quotas must be free of hidden stale entries.
+     * Keep non-content tombstones to prevent idempotent retries from
+     * resurrecting invalidated delivery IDs.
+     */
+    async retireInaccessibleInboxRows(client: PoolClient, source: string, target: string): Promise<number> {
+        const pairs = [...this.environmentPairs];
+        const result = await client.query(`
+            UPDATE device_inbox inbox
+            SET state='expired', decided_at=now(),
+                payload_ciphertext=NULL, payload_nonce=NULL, payload_tag=NULL
+            WHERE inbox.state='queued'
+              AND (inbox.source_node_id=$1::uuid OR inbox.target_node_id=$2::uuid)
+              AND (
+                NOT EXISTS (
+                    SELECT 1 FROM nodes sender JOIN nodes receiver
+                      ON receiver.id=inbox.target_node_id
+                    WHERE sender.id=inbox.source_node_id
+                      AND sender.credential_state='active'
+                      AND receiver.credential_state='active'
+                      AND sender.credential_updated_at=inbox.source_credential_updated_at
+                      AND receiver.credential_updated_at=inbox.target_credential_updated_at
+                )
+                OR (
+                    NOT ((inbox.source_node_id::text || ':' || inbox.target_node_id::text)
+                        = ANY($3::text[]))
+                    AND NOT EXISTS (
+                        SELECT 1 FROM node_share_approvals grant_row
+                        WHERE grant_row.source_node_id=inbox.source_node_id
+                          AND grant_row.target_node_id=inbox.target_node_id
+                    )
+                )
+              )
+        `, [source.toLowerCase(), target.toLowerCase(), pairs]);
+        return result.rowCount ?? 0;
     }
 
     /** Used only after Node socket auth. Never enumerate all configured pairs to a device. */
@@ -85,6 +164,25 @@ export class NodeShareApprovals {
                     [sourceNodeId, targetNodeId]);
                 if (environmentGranted && !removed.rowCount)
                     throw new AtlasError('Only the server environment grants this pair; remove that setting and restart the Server.', 'SHARE_ENV_MANAGED');
+                if (removed.rowCount) {
+                    // Revocation is permanent for already-queued content, even
+                    // if this pair is immediately reapproved without another
+                    // enqueue. Preserve delivery-ID tombstones for replay safety.
+                    //
+                    // When an environment overlay also grants the pair, its
+                    // future sends remain allowed; explicitly revoking the
+                    // managed grant still erases old pending content. This
+                    // deliberately favours the operator's privacy intent.
+                    await db.query(`
+                        UPDATE device_inbox SET
+                            state='expired', decided_at=now(),
+                            payload_ciphertext=NULL,
+                            payload_nonce=NULL,
+                            payload_tag=NULL
+                        WHERE source_node_id=$1 AND target_node_id=$2
+                          AND state='queued'
+                    `, [sourceNodeId, targetNodeId]);
+                }
             }
             // Only UUIDs and trusted transport provenance, never shared
             // content or an unverified human operator identity.

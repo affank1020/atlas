@@ -228,6 +228,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         // Fail closed until the separately reviewed host executor is installed.
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
         deviceShares: loadDeviceShareConfig(env),
+        deviceInboxKey: env.ATLAS_DEVICE_INBOX_KEY?.trim(),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
         codeReviews: { trustedPublishers: loadReviewPublisherTrust(env),

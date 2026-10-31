@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
+import { DeviceOfflineInbox } from '../nodes/offline-inbox.js';
+import { readInboxKey } from '../nodes/offline-inbox-crypto.js';
 import { NodeIdentity } from '../nodes/identity.js';
 import { NodeShareApprovals } from '../nodes/share-approvals.js';
 import { NodeService } from '../nodes/service.js';
@@ -83,7 +85,12 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool, healthPool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
     const health = new MonitoringHealthService(healthPool, { list: () => nodes.listForMonitoring() },
         undefined, undefined, undefined, diagnosticHistory);
-    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
+    // No new wire operations are enabled until the server has an explicit key.
+    // Missing secret leaves existing live device shares unchanged.
+    const offlineInbox = config.deviceInboxKey
+        ? new DeviceOfflineInbox(repository.pool, readInboxKey(config.deviceInboxKey), shareApprovals)
+        : undefined;
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
