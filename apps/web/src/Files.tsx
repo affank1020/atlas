@@ -71,16 +71,18 @@ export function Files() {
         let live = true;
         if (!owner) { setEntries([]); setFolders([]); setMediaEntries([]); setBusy(false); return; }
         setBusy(true); setEntries([]); setFolders([]); setMediaEntries([]); setError(''); setMediaError('');
-        // Portfolio is an independent, read-only catalogue projection. A
-        // transient failure in it must not make ordinary Project files vanish.
-        const projected = folderId === null
-            ? listPortfolioProjectMedia(owner.id).catch(reason => {
-                if (live) setMediaError(reason instanceof Error ? reason.message : 'Portfolio media could not be loaded.');
-                return [] as PortfolioProjectMedia[];
-            }) : Promise.resolve([] as PortfolioProjectMedia[]);
-        void Promise.all([listFiles(owner, fileStatus, folderId), listProjectFolders(owner.id), projected])
-            .then(([files, folderRows, mediaRows]) => {
-                if (live) { setEntries(files); setFolders(folderRows); setMediaEntries(mediaRows); }
+        // Portfolio is optional: its latency or failure must never block the
+        // native Project files, folder navigation or write controls.
+        if (folderId === null) {
+            void listPortfolioProjectMedia(owner.id)
+                .then(mediaRows => { if (live) setMediaEntries(mediaRows); })
+                .catch(reason => {
+                    if (live) setMediaError(reason instanceof Error ? reason.message : 'Portfolio media could not be loaded.');
+                });
+        }
+        void Promise.all([listFiles(owner, fileStatus, folderId), listProjectFolders(owner.id)])
+            .then(([files, folderRows]) => {
+                if (live) { setEntries(files); setFolders(folderRows); }
             })
             .catch(reason => { if (live) setError(reason instanceof Error ? reason.message : 'Could not load Project files.'); })
             .finally(() => { if (live) setBusy(false); });
