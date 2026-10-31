@@ -8,7 +8,7 @@ const marker=inlineThreadMarker(repository,prNumber,'finding-key');
 const graphThread=(root:string|number=73, id='PRRT_123456789')=>({
     id,isResolved:false,isOutdated:false,viewerCanResolve:true,
     path:'src/a.ts',originalLine:10,
-    comments:{nodes:[{fullDatabaseId:root}]},
+    comments:{nodes:[{fullDatabaseId:root,replyTo:null}]},
 });
 const page=(nodes:unknown[],hasNextPage=false,endCursor:string|null=null)=>
     ({data:{repository:{pullRequest:{reviewThreads:{
@@ -64,7 +64,8 @@ test('fail closed on duplicate roots, node IDs and missing initial comment',asyn
         [graphThread(73),graphThread(73,'PRRT_987654321')],
         [graphThread(73),graphThread(74,'PRRT_123456789')],
         [{...graphThread(73),comments:{nodes:[]}}],
-        [{...graphThread(73),comments:{nodes:[{fullDatabaseId:'9007199254740999'}]}}],
+        [{...graphThread(73),comments:{nodes:[{fullDatabaseId:'9007199254740999',replyTo:null}]}}],
+        [{...graphThread(73),comments:{nodes:[{fullDatabaseId:'74',replyTo:{id:'PRRC_123456'}}]}}],
         [{...graphThread(73),viewerCanResolve:null}],
         [{...graphThread(73),originalLine:'10'}],
     ];
