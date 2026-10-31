@@ -338,6 +338,11 @@ test('retention failure is non-fatal, remains visible, and recovers on a later s
     const { setTimeout: pause } = await import('node:timers/promises');
     let failuresRemaining = 1;
     let deletes = 0;
+    // Keep the successful retry pending until the test has observed the
+    // failure state. Otherwise an active CI runner may schedule both sweeps
+    // before the polling assertion runs, making 'unavailable' transient.
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>(resolve => { releaseRecovery = resolve; });
     const service = new ServerDiagnosticHistory({
         query: async sql => {
             if (sql.startsWith('DELETE')) {
@@ -346,21 +351,33 @@ test('retention failure is non-fatal, remains visible, and recovers on a later s
                     failuresRemaining--;
                     throw new Error('private pg maintenance error');
                 }
+                await recoveryGate;
                 return { rows: [] };
             }
             return { rows: [] };
         },
-    }, true, undefined, 90);
-    const deadline = Date.now() + 1200;
-    while ((await service.status()).retentionCleanup !== 'unavailable' && Date.now() < deadline) await pause(5);
-    const unavailable = await service.status();
-    assert.equal(unavailable.state, 'available', 'reader can work despite failed expiry cleanup');
-    assert.equal(unavailable.retentionCleanup, 'unavailable');
-    assert.ok(!JSON.stringify(unavailable).includes('private'));
-    while ((await service.status()).retentionCleanup !== 'caught-up' && Date.now() < deadline) await pause(5);
-    assert.equal((await service.status()).retentionCleanup, 'caught-up');
-    assert.ok(deletes >= 2);
-    await service.close();
+    }, true, undefined, 30);
+    try {
+        const failDeadline = Date.now() + 3000;
+        while ((await service.status()).retentionCleanup !== 'unavailable'
+            && Date.now() < failDeadline) await pause(5);
+        const unavailable = await service.status();
+        assert.equal(unavailable.state, 'available', 'reader can work despite failed expiry cleanup');
+        assert.equal(unavailable.retentionCleanup, 'unavailable');
+        assert.ok(!JSON.stringify(unavailable).includes('private'));
+        assert.equal(failuresRemaining, 0, 'inject exactly one failed DELETE');
+
+        releaseRecovery();
+        const recoveryDeadline = Date.now() + 3000;
+        while ((await service.status()).retentionCleanup !== 'caught-up'
+            && Date.now() < recoveryDeadline) await pause(5);
+        assert.equal((await service.status()).retentionCleanup, 'caught-up');
+        assert.ok(deletes >= 2);
+    } finally {
+        // Never leave a blocked sweep behind if an assertion fails.
+        releaseRecovery();
+        await service.close();
+    }
 });
 
 test('retention intervals cannot overlap an unfinished sweep and closing drains it', async () => {
