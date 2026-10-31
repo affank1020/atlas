@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { AtlasError } from '../shared/errors.js';
+import type { ShareAuditClient } from './share-approvals.js';
+import { nodeCredentialOrigin, toolAuditOrigin, type NodeAuditOrigin } from './audit-origin.js';
 import type { NodeRelease } from './releases.js';
 
 /**
@@ -65,15 +67,18 @@ export class NodeUpdateIntentLedger {
         } finally { client.release(); }
     }
 
-    private async audit(client: PoolClient, operation: string, details: Record<string, unknown>) {
-        // Same central Monitoring stream as Node identity events. Actor is
-        // explicitly the API transport, NOT an asserted human approval.
+    private async audit(client: PoolClient, operation: string, details: Record<string, unknown>,
+        origin: NodeAuditOrigin = toolAuditOrigin('atlas-server')) {
+        // Only verified Node credentials identify a Node; HTTP/MCP callers
+        // are transport labels, never a claim of human operator identity.
         await client.query(`INSERT INTO audit_events(id,client,operation,after_state,created_at)
-            VALUES(gen_random_uuid(),'atlas-node-update-intent',$1,$2,now())`, [operation, details]);
+            VALUES(gen_random_uuid(),$1,$2,$3,now())`,
+            [origin.client, operation,
+                { ...details, transport: origin.transport, actorKind: origin.actorKind }]);
     }
 
     async prepare(nodeId: string, expectedVersion: string, expectedCredentialUpdatedAt: string | null,
-        candidate: NodeRelease): Promise<NodeUpdateIntent> {
+        candidate: NodeRelease, caller: ShareAuditClient = 'atlas-server'): Promise<NodeUpdateIntent> {
         if (candidate.platform !== 'linux' || candidate.channel !== 'stable' ||
             candidate.provenance !== 'unverified' || candidate.protocol !== 2 ||
             !/^[0-9a-f]{40}$/.test(candidate.sourceCommit) ||
@@ -109,7 +114,7 @@ export class NodeUpdateIntentLedger {
                 nodeId, intentId: intent.id, status: intent.status,
                 installedVersion: expectedVersion, targetVersion: candidate.version,
                 targetCommit: candidate.commit, approved: false, executable: false,
-            });
+            }, toolAuditOrigin(caller));
             return intent;
         });
     }
@@ -178,7 +183,7 @@ export class NodeUpdateIntentLedger {
             await this.audit(client, 'node.update_intent_claimed', {
                 nodeId, intentId, status: 'claimed', installedVersion: expectedInstalledVersion,
                 targetCommit: item.target_commit.trim(), approved: false, executable: false,
-            });
+            }, nodeCredentialOrigin);
             return present(result.rows[0]!);
         });
     }
@@ -228,14 +233,14 @@ export class NodeUpdateIntentLedger {
                 await this.audit(client, 'node.update_outcome_reported', {
                     nodeId,intentId,reportedState,verified:false,clearsClaim:false,
                     approved:false,executable:false,
-                });
+                }, nodeCredentialOrigin);
             }
             return { intentId,nodeId,reportedState,reportedAt: new Date(reportedAt!).toISOString(),
                 verified:false,clearsClaim:false };
         });
     }
 
-    async cancel(nodeId: string, intentId: string): Promise<NodeUpdateIntent> {
+    async cancel(nodeId: string, intentId: string, caller: ShareAuditClient = 'atlas-server'): Promise<NodeUpdateIntent> {
         return this.transaction(async client => {
             const result = await client.query<Row>(`SELECT * FROM node_update_intents
                 WHERE id=$1 AND node_id=$2 FOR UPDATE`, [intentId, nodeId]);
@@ -247,7 +252,7 @@ export class NodeUpdateIntentLedger {
                 SET status='cancelled',resolved_at=now() WHERE id=$1 RETURNING *`, [intentId]);
             await this.audit(client, 'node.update_intent_cancelled', {
                 nodeId, intentId, status: 'cancelled', approved: false, executable: false,
-            });
+            }, toolAuditOrigin(caller));
             return present(updated.rows[0]!);
         });
     }

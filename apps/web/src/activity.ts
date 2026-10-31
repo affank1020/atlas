@@ -1,5 +1,5 @@
 import type { AuditEvent } from './types';
-export type ActivityCategory = 'core' | 'view' | 'workspace' | 'files' | 'unity' | 'git' | 'dev' | 'error';
+export type ActivityCategory = 'core' | 'view' | 'node' | 'workspace' | 'files' | 'unity' | 'git' | 'dev' | 'error';
 export type ActivityPresentation = {
     id: string; timestamp: string; client: string; projectId?: string; workspaceId?: string; workspaceName?: string;
     category: ActivityCategory; title: string; description?: string; status: 'pending' | 'completed' | 'failed';
@@ -60,7 +60,7 @@ export function presentActivity(events: AuditEvent[], names: Record<string, stri
         const command = str(data.command); const path = str(data.path); const task = str(data.task); const durationMs = typeof data.durationMs === 'number' ? data.durationMs : undefined;
         const failed = event.operation.endsWith('_failed') || ['failed', 'failed_or_uncertain', 'editor_error', 'error'].includes(str(data.outcome) ?? '');
         const status = failed ? 'failed' : event.operation === 'workspace.mutation_requested' ? 'pending' : 'completed';
-        let [category, title, kind] = (workspace ? lookup(operations, suffix) : undefined) ?? [workspace ? 'workspace' : event.operation.startsWith('view.') ? 'view' : 'core', readable(operation), workspace ? 'execution' : 'mutation'];
+        let [category, title, kind] = (workspace ? lookup(operations, suffix) : undefined) ?? [workspace ? 'workspace' : event.operation.startsWith('view.') ? 'view' : event.operation.startsWith('node.') ? 'node' : 'core', readable(operation), workspace ? 'execution' : 'mutation'];
         if (suffix === 'unity_invoked') {
             category = 'unity'; title = command ? lookup(unityLabels, command) ?? readable(command) : 'Invoked Unity';
             kind = command && /^(get_|read_|list_|capture_|console|.*_status$)/.test(command) ? 'inspection' : 'execution';
@@ -74,7 +74,10 @@ export function presentActivity(events: AuditEvent[], names: Record<string, stri
             workspaceId: event.workspaceId, workspaceName, category, title, status, kind: failed ? 'failure' : kind,
             description: failed ? error ?? (suffix === 'dev_invoked' ? data.timedOut ? 'Task timed out.' : `Task exited with code ${data.exitCode ?? 'unknown'}.` : 'The operation failed; inspect the details or client response.') : undefined,
             attemptId: str(data.attemptId), details: { operation: event.operation, requestedOperation: operation,
-                command, task, nodeId: data.nodeId, sourceNodeId: data.sourceNodeId, targetNodeId: data.targetNodeId, durationMs, exitCode: data.exitCode, timedOut: data.timedOut, success: data.success, stdoutTruncated: data.stdoutTruncated, stderrTruncated: data.stderrTruncated, attemptId: data.attemptId, workspace: workspaceName, workspaceId: event.workspaceId,
+                command, task, nodeId: data.nodeId, previousNodeId: data.previousNodeId, sourceNodeId: data.sourceNodeId, targetNodeId: data.targetNodeId,
+                intentId: data.intentId, transport: data.transport, actorKind: data.actorKind, status: data.status,
+                reportedState: data.reportedState, approved: data.approved, executable: data.executable,
+                verified: data.verified, clearsClaim: data.clearsClaim, durationMs, exitCode: data.exitCode, timedOut: data.timedOut, success: data.success, stdoutTruncated: data.stdoutTruncated, stderrTruncated: data.stderrTruncated, attemptId: data.attemptId, workspace: workspaceName, workspaceId: event.workspaceId,
                 projectId: event.projectId, storeId: event.storeId, recordId: event.recordId, viewId: event.viewId,
                 client: event.client, outcome: data.outcome ?? status, path, error, timestamp: group[0].occurredAt,
                 ...(event.id !== group[0].id && { evidenceTimestamp: event.occurredAt }),

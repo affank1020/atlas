@@ -77,3 +77,34 @@ test('safe projection preserves workspace identity in the envelope but never rel
     assert.deepEqual(projected.resulting, { task: 'build' });
     assert.ok(!JSON.stringify(projected).includes('TOP_SECRET'));
 });
+
+test('node correlation metadata is strictly allowlisted and arbitrary actor claims are not projected', () => {
+    const nodeId = '44444444-4444-4444-8444-444444444444';
+    const intentId = '55555555-5555-4555-8555-555555555555';
+    const full = projectMonitoringEvent({ ...audit({
+        nodeId, intentId, transport: 'http', actorKind: 'node-credential',
+        status: 'claimed', reportedState: 'requires_reconciliation',
+        approved: false, executable: false, verified: false, clearsClaim: false,
+        operatorId: 'user-secret', actorName: 'admin', error: 'password=secret',
+        path: '/private/secret', token: 'secret',
+    }), operation: 'node.update_intent_claimed' as AuditEvent['operation'] });
+    assert.deepEqual(full.resulting, {
+        nodeId, intentId, transport: 'http', actorKind: 'node-credential',
+        status: 'claimed', reportedState: 'requires_reconciliation',
+        approved: false, executable: false, verified: false, clearsClaim: false,
+    });
+    const invalid = projectMonitoringEvent({ ...audit({
+        intentId: 'not-a-uuid', transport: 'http-from-user', actorKind: 'admin',
+        status: 'credential=secret', reportedState: 'credential=secret',
+        approved: 'false', verified: 'true', operatorId: 'private',
+    }), operation: 'node.update_intent_claimed' as AuditEvent['operation'] });
+    assert.equal(invalid.resulting, undefined);
+    // A Workspace audit may contain arbitrary transport-looking metadata;
+    // never present it as proof of an authenticated Node action.
+    const spoofed = projectMonitoringEvent(audit({
+        transport: 'mcp', actorKind: 'transport', intentId, status: 'claimed',
+        executable: true, approved: true,
+    }));
+    assert.equal(spoofed.resulting, undefined);
+    assert.ok(!JSON.stringify(full).includes('password=secret'));
+});
