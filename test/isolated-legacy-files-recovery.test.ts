@@ -31,6 +31,9 @@ async function fixture(){
 }
 async function add(ctx:Awaited<ReturnType<typeof fixture>>,
     owner:{kind:"workspace"|"application"|"project";id:string},value:string){
+    if(owner.kind==="project")await ctx.files.pool.query(
+        "INSERT INTO projects(id,name,created_at,updated_at) VALUES($1,$2,now(),now()) ON CONFLICT (id) DO NOTHING",
+        [owner.id,"Project "+owner.id]);
     const uploaded=await ctx.files.upload({owner,fileName:value+".bin",
         mimeType:"application/octet-stream",bytes:Buffer.from(value)});
     const row=await ctx.files.pool.query<{storage_key:string}>(
