@@ -73,7 +73,9 @@ test("Complete all-owner recovery verifies native Project, Portfolio originals/v
         assert.equal(r.projectCount,2);
         assert.equal(r.catalogObjects,4);
         assert.equal(r.projectVerified,2);
-        assert.equal(r.projectBytesVerified,4);
+        assert.equal(r.projectEntriesVerified,4,"four manifest entries, not bytes");
+        assert.equal("projectBytesVerified" in r,false,
+            "operator output cannot mislabel a count as byte volume");
         assert.equal(r.legacyStatus,"passed");
         assert.equal(r.legacyChecked,1);
         assert.equal(r.legacyVerified,1);
@@ -172,4 +174,39 @@ test("An empty recovered catalogue cannot pass without object bytes",async()=>{
         assert.equal(selected.legacyVerified,1);
         assert.equal(selected.disasterRecoveryReady,false);
     }finally{await ctx.close();}
+});
+
+
+test("More than 1,000 Project source rows fails before any backup GET, even if a versioned run could exceed 2,000 manifest entries",async()=>{
+    // Simulate the exact boundary without doing 1,001 physical uploads. A
+    // versioned recovery manifest doubles each source row and its persisted
+    // schema explicitly caps immutable entries at 2,000.
+    const project=randomUUID();
+    const rows=Array.from({length:1001},(_,i)=>({
+        project_id:project,source:"atlas-file",file_id:randomUUID(),
+        variant:"original",storage_key:"files-test-"+i,checksum:"f".repeat(64),
+        byte_size:1,mime_type:"text/plain",status:"active",
+    }));
+    let statementCount=0,objectGets=0;
+    const restoredDatabase={
+        async query(sql:string,params?:unknown[]){
+            statementCount++;
+            assert.match(sql,/atlas_project_storage_objects/);
+            assert.deepEqual(params,[1001],
+                "the source inventory must enforce 1,000 source objects, not 2,000");
+            return {rows};
+        },
+    };
+    const backup={async getBounded(){
+        objectGets++;
+        throw new Error("backup GET must not run after catalogue overflow");
+    }};
+    await assert.rejects(verifyIsolatedRecoveryCoverage({
+        restoredDatabase:restoredDatabase as unknown as
+            Parameters<typeof verifyIsolatedRecoveryCoverage>[0]["restoredDatabase"],
+        backup,projectRuns:[{projectId:project,runId:randomUUID()}],
+        expectNoLegacy:true,
+    }),/exceeds 1,000 source rows/);
+    assert.equal(statementCount,1);
+    assert.equal(objectGets,0);
 });
