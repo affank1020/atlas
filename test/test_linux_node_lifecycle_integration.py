@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -21,9 +22,10 @@ SHA = ("1" * 40, "2" * 40, "3" * 40)
 RELEASES = tuple("v2.0.0-" + commit[:12] for commit in SHA)
 
 # Run the real lifecycle shell script while replacing ONLY external service
-# management and npm dependency inspection. A restart generates the private
-# heartbeat that the lifecycle independently checks against MainPID. The
-# optional hard kill simulates the invoking SSH/updater process disappearing.
+# management and npm dependency inspection. Each restart rotates the fake
+# systemd MainPID and normally writes a matching private heartbeat; a stale
+# heartbeat scenario deliberately skips that write. An optional SIGKILL
+# simulates the invoking SSH/updater process disappearing.
 FAKE_SYSTEMCTL = r'''#!/usr/bin/env python3
 import json
 import os
@@ -35,7 +37,8 @@ args = sys.argv[1:]
 root = Path(os.environ["ATLAS_LIFECYCLE_ROOT"])
 status = Path(os.environ["ATLAS_LIFECYCLE_STATUS_FILE"])
 history = Path(os.environ["FAKE_SYSTEMCTL_HISTORY"])
-pid = int(os.environ["FAKE_SYSTEMCTL_PID"])
+pid_file = Path(os.environ["FAKE_SYSTEMCTL_PID_FILE"])
+pid = int(pid_file.read_text())
 if args[:1] == ["is-active"]:
     if "--quiet" not in args:
         print("active")
@@ -49,13 +52,18 @@ if args == ["restart", "atlas-node"]:
     current = (root / "current").resolve(strict=True).name
     with history.open("a", encoding="utf-8") as log:
         log.write("restart:" + current + "\n")
+    # Simulate systemd spawning a *new* Node process on every restart.
+    # Otherwise an old status file with the fixed PID would look healthy.
+    pid += 1
+    pid_file.write_text(str(pid))
     if current == os.environ.get("FAKE_KILL_ON"):
         # Durable journal and symlink must already exist at this point.
         os.kill(os.getppid(), signal.SIGKILL)
         sys.exit(21)
-    state = "disconnected" if current == os.environ.get("FAKE_FAIL_ON") else "connected"
-    status.parent.mkdir(parents=True, exist_ok=True)
-    status.write_text(json.dumps({"state": state, "pid": pid}))
+    if current != os.environ.get("FAKE_STALE_HEARTBEAT_ON"):
+        state = "disconnected" if current == os.environ.get("FAKE_FAIL_ON") else "connected"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text(json.dumps({"state": state, "pid": pid}))
     sys.exit(0)
 print("Unexpected mock systemctl invocation", args, file=sys.stderr)
 sys.exit(22)
@@ -82,6 +90,8 @@ class DisposableHost(unittest.TestCase):
         self.status.write_text(json.dumps({"state": "connected", "pid": 4242}))
         self.history = Path(self.temp.name) / "restart-history"
         self.history.write_text("")
+        self.pid_file = Path(self.temp.name) / "service-main-pid"
+        self.pid_file.write_text("4242")
         for commit, name in zip(SHA, RELEASES):
             self._make_release(commit, name)
         (self.root / "current").symlink_to(self.releases / RELEASES[0])
@@ -95,9 +105,9 @@ class DisposableHost(unittest.TestCase):
             "ATLAS_LIFECYCLE_LOCK_FILE": str(Path(self.temp.name) / "lifecycle.lock"),
             "ATLAS_LIFECYCLE_TIMEOUT": "1",
             "FAKE_SYSTEMCTL_HISTORY": str(self.history),
-            "FAKE_SYSTEMCTL_PID": "4242",
+            "FAKE_SYSTEMCTL_PID_FILE": str(self.pid_file),
         })
-        for name in ("FAKE_FAIL_ON", "FAKE_KILL_ON"):
+        for name in ("FAKE_FAIL_ON", "FAKE_KILL_ON", "FAKE_STALE_HEARTBEAT_ON"):
             self.env.pop(name, None)
 
     def _fake_binary(self, name, body):
@@ -142,6 +152,12 @@ class DisposableHost(unittest.TestCase):
     def restarts(self):
         return self.history.read_text().splitlines()
 
+    def main_pid(self):
+        return int(self.pid_file.read_text())
+
+    def heartbeat_pid(self):
+        return json.loads(self.status.read_text())["pid"]
+
     def assert_success(self, command):
         self.assertEqual(command.returncode, 0, command.stdout + "\n" + command.stderr)
 
@@ -152,6 +168,8 @@ class DisposableHost(unittest.TestCase):
         self.assertEqual(self.previous(), RELEASES[0])
         self.assertFalse(self.journal().exists())
         self.assertEqual(self.restarts(), ["restart:" + RELEASES[1]])
+        self.assertEqual(self.main_pid(), 4243)
+        self.assertEqual(self.heartbeat_pid(), self.main_pid())
         self.assertIn("WebSocket: connected (live PID verified)", result.stdout)
 
     def test_bad_reconnect_auto_rolls_back_to_old_release(self):
@@ -164,10 +182,25 @@ class DisposableHost(unittest.TestCase):
         self.assertEqual(self.restarts(), ["restart:" + RELEASES[1], "restart:" + RELEASES[0]])
         self.assertIn("Rollback completed", result.stderr)
 
+    def test_stale_heartbeat_from_old_pid_cannot_complete_activation(self):
+        self.env["FAKE_STALE_HEARTBEAT_ON"] = RELEASES[1]
+        stale_pid = self.heartbeat_pid()
+        result = self.lifecycle("activate", RELEASES[1], "--expect-current", RELEASES[0])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.current(), RELEASES[0])
+        self.assertEqual(self.restarts(), ["restart:" + RELEASES[1], "restart:" + RELEASES[0]])
+        # The new process had a distinct PID, but never wrote a heartbeat.
+        # The lifecycle must reject it even though the old file said connected.
+        self.assertEqual(stale_pid, 4242)
+        self.assertEqual(self.main_pid(), 4244)
+        self.assertEqual(self.heartbeat_pid(), 4244)
+        self.assertFalse(self.journal().exists())
+        self.assertIn("Rollback completed", result.stderr)
+
     def test_sigkill_during_restart_leaves_journal_for_recovery(self):
         self.env["FAKE_KILL_ON"] = RELEASES[1]
         interrupted = self.lifecycle("activate", RELEASES[1])
-        self.assertNotEqual(interrupted.returncode, 0)
+        self.assertEqual(interrupted.returncode, -signal.SIGKILL, interrupted.stderr)
         self.assertEqual(self.current(), RELEASES[1])
         self.assertEqual(self.journal().read_text().splitlines(),
                          [RELEASES[0], RELEASES[1], "activate"])
@@ -191,7 +224,7 @@ class DisposableHost(unittest.TestCase):
         self.assert_success(self.lifecycle("activate", RELEASES[1]))
         self.env["FAKE_KILL_ON"] = RELEASES[0]
         interrupted = self.lifecycle("rollback")
-        self.assertNotEqual(interrupted.returncode, 0)
+        self.assertEqual(interrupted.returncode, -signal.SIGKILL, interrupted.stderr)
         self.assertEqual(self.current(), RELEASES[0])
         self.assertTrue(self.journal().exists())
         del self.env["FAKE_KILL_ON"]
