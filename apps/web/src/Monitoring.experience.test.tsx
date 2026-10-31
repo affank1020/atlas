@@ -59,7 +59,7 @@ test('health summary distinguishes known states and missing physical retention e
         },
     } as never);
     render(<MonitoringPage />);
-    const summary = await screen.findByLabelText('Health signal summary');
+    const summary = await screen.findByRole('group', { name: 'Health signal summary' });
     expect(within(summary).getByText('reachable')).toBeInTheDocument();
     expect(within(summary).getByText('available')).toBeInTheDocument();
     expect(within(summary).getByText('unknown')).toBeInTheDocument();
@@ -72,7 +72,7 @@ test('Logs explains the bounded Node and Server evidence sources', async () => {
     vi.mocked(callTool).mockResolvedValue([] as never);
     render(<MonitoringPage />);
     expect(screen.getByLabelText('Log target')).toHaveValue('node');
-    const guide = screen.getByLabelText('Log source boundaries');
+    const guide = screen.getByRole('group', { name: 'Log source boundaries' });
     expect(within(guide).getByText('Node tails')).toBeInTheDocument();
     expect(within(guide).getByText('Server signals')).toBeInTheDocument();
     expect(within(guide).getByText(/not Docker logs/)).toBeInTheDocument();
