@@ -138,8 +138,8 @@ export async function copyProjectKeys(input: {
     );
     if (result.rows.length > maxFiles + 1) throw new Error("Project key copy catalog exceeded batch limit.");
     const rows = result.rows.slice(0, maxFiles), remaining = result.rows.length > maxFiles;
-    return copyProjectKeyPage({ rows, remaining, projectId: input.projectId ??
-        (rows[0]?.project_id ?? ""), source:input.source, destination:input.destination, apply });
+    return copyProjectKeyPage({ rows, remaining, projectId:input.projectId,
+        source:input.source, destination:input.destination, apply });
 }
 
 /** Copies exactly the explicitly supplied immutable manifest page, never a
@@ -148,17 +148,18 @@ export async function copyProjectKeys(input: {
  * The caller must separately check that its snapshot still matches the
  * authoritative catalogue; beforeWrite runs after preflight for added safety. */
 export async function copyProjectKeyPage(input: {
-    rows: readonly ProjectKeyCopyRow[]; remaining: boolean; projectId: string;
+    rows: readonly ProjectKeyCopyRow[]; remaining: boolean; projectId?: string;
     source: BoundedCopyStore; destination: BoundedCopyStore;
     apply?: boolean; beforeWrite?: () => Promise<void>;
 }): Promise<KeyCopyReport> {
     const rows = input.rows;
     const remaining = input.remaining;
     const apply = input.apply === true;
-    if (!(UUID.test(input.projectId) || rows.length === 0 && !apply && input.projectId === "") || typeof remaining !== "boolean" ||
+    if ((input.projectId !== undefined && !UUID.test(input.projectId)) ||
+        apply && !input.projectId || typeof remaining !== "boolean" ||
         rows.length > MAX_BATCH || (apply && !input.destination.putIfAbsent))
         throw new Error("Invalid immutable Project copy page.");
-    if (rows.some(row => row.project_id !== input.projectId))
+    if (input.projectId && rows.some(row => row.project_id !== input.projectId))
         throw new Error("Immutable Project copy page contains an out-of-scope row.");
     const maxFiles = rows.length;
     const report: KeyCopyReport = {
