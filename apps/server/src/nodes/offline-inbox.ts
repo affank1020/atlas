@@ -35,6 +35,10 @@ export class DeviceOfflineInbox {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
+            // Remove expired encrypted payloads during authenticated admissions.
+            // A separate scheduled maintenance worker is still required when
+            // the inbox is idle for long periods.
+            await client.query('DELETE FROM device_inbox WHERE expires_at<=now()');
             // Enforce per-source and per-target quotas across server replicas.
             // Sort lock keys to avoid deadlocks between opposite-direction sends.
             const lockKeys = ['inbox-source:' + source, 'inbox-target:' + target].sort();
