@@ -174,7 +174,7 @@ export class StandaloneNode extends EventEmitter {
      * duplicate registration or direct credential handoff to the local CLI.
      * The Server independently verifies directional approvals for every send.
      */
-    private requestOutbound(kind: 'directory' | 'share', body: Record<string, unknown>): Promise<unknown> {
+    private requestOutbound(kind: 'directory' | 'share' | 'queue', body: Record<string, unknown>): Promise<unknown> {
         const socket = this.socket;
         if (!this.running || !this.registered || !socket || socket.readyState !== WebSocket.OPEN ||
             !this.runtime.getCapabilities().includes('device.share.send'))
@@ -182,7 +182,7 @@ export class StandaloneNode extends EventEmitter {
         if (this.outbound.size >= 2)
             return Promise.reject(new AtlasError('Another share operation is active.', 'SHARE_BUSY'));
         const requestId = randomUUID();
-        const timeoutMs = kind === 'directory' ? 10_000 : 55_000;
+        const timeoutMs = kind === 'directory' ? 10_000 : kind === 'queue' ? 15_000 : 55_000;
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.outbound.delete(requestId);
@@ -220,6 +220,28 @@ export class StandaloneNode extends EventEmitter {
             type: 'device.share.submit', deliveryId: randomUUID(), targetNodeId: id, text: payload,
         });
         return deviceShareReceiptSchema.parse(result);
+    }
+
+    /**
+     * Explicit user-initiated offline enqueue. The returned state is *only*
+     * server storage acceptance; it never confirms clipboard delivery.
+     * The delivery UUID is created by the caller and reused solely for an
+     * intentional retry after an ambiguous Node response.
+     */
+    async queueDeviceShare(targetNodeId: string, text: string, deliveryId: string):
+        Promise<{deliveryId: string; status: 'queued'|'expired'|'declined'|'user_copied'; queued: boolean}> {
+        const id = z.string().uuid().parse(targetNodeId);
+        const key = z.string().uuid().parse(deliveryId);
+        const payload = deviceShareTextSchema.parse(text);
+        if (!payload.trim()) throw new AtlasError('Share text cannot be blank.', 'SHARE_INVALID');
+        const result = await this.requestOutbound('queue', {
+            type: 'device.inbox.enqueue',deliveryId:key,targetNodeId:id,text:payload,
+        });
+        return z.object({
+            deliveryId:z.string().uuid(),
+            status:z.enum(['queued','expired','declined','user_copied']),
+            queued:z.boolean(),
+        }).strict().parse(result);
     }
 
     private rejectOutbound(code: string) {
