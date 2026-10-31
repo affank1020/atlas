@@ -41,9 +41,11 @@ export class DeviceOfflineInbox {
             for (const lockKey of lockKeys)
                 await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
             const peers = await client.query(
-                "SELECT id,credential_state FROM nodes WHERE id IN ($1,$2) FOR SHARE",
+                "SELECT id,credential_state,capabilities FROM nodes WHERE id IN ($1,$2) FOR SHARE",
                 [source,target]);
             if (peers.rowCount !== 2 || peers.rows.some(p => p.credential_state !== 'active') ||
+                !peers.rows.some(p => String(p.id).toLowerCase() === target &&
+                    Array.isArray(p.capabilities) && p.capabilities.includes('device.share.receive')) ||
                 !(await this.allowed(source,target)))
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
             const previous = await client.query(
@@ -85,7 +87,11 @@ export class DeviceOfflineInbox {
             WHERE target_node_id=$1 AND state='queued' AND expires_at>now()
             ORDER BY created_at,id LIMIT 50
         `,[target]);
-        return result.rows.map(r => ({
+        // Do not expose metadata for sources whose directional permission
+        // was revoked after they queued their item.
+        const allowed = await Promise.all(result.rows.map(r =>
+            this.allowed(String(r.source_node_id),target)));
+        return result.rows.filter((_,i) => allowed[i]).map(r => ({
             deliveryId:String(r.id),sourceNodeId:String(r.source_node_id),
             createdAt:new Date(r.created_at).toISOString(),
             expiresAt:new Date(r.expires_at).toISOString(),
