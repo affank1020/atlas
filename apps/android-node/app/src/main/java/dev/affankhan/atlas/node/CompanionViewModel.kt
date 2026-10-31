@@ -305,7 +305,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
-    private fun onPushReply(reply: PushRegistrationReply, generation: Int) {
+    private fun onPushReply(reply: PushRegistrationReply, generation: Long) {
         if (generation != connectionGeneration) return
         val command = pendingPush ?: return
         if (command.requestId != reply.requestId) return
@@ -322,7 +322,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
-    private fun schedulePushRetry(command: PendingPushCommand, errorCode: String, generation: Int) {
+    private fun schedulePushRetry(command: PendingPushCommand, errorCode: String, generation: Long) {
         if (command.register != pushEnabled || generation != connectionGeneration) return
         val delay = pushRetryPolicy.nextDelay(errorCode)
         if (delay == null) {
