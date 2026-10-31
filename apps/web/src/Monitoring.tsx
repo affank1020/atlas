@@ -393,7 +393,8 @@ type HealthSnapshot = {
         database: { status: 'reachable' | 'unavailable'; latencyMs?: number } };
     diagnostics?: { status: 'available' | 'unavailable' | 'disabled' | 'unknown';
         coverage: 'incomplete-possible'; retentionDays: number;
-        droppedSinceStart: number | null; queuedForWrite: number | null; writePaused: boolean | null };
+        droppedSinceStart: number | null; queuedForWrite: number | null; writePaused: boolean | null;
+        retentionCleanup?: 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable' | 'disabled' | 'unknown' };
     nodes: { available: boolean; summary: { total: number; healthy: number; stale: number;
         offline: number; unavailable: number; revoked: number; unknown: number }; items: HealthNode[] };
 };
@@ -405,7 +406,8 @@ function displayedHealthOverall(snapshot: HealthSnapshot): HealthSnapshot['overa
     if (snapshot.overall !== 'healthy') return snapshot.overall;
     const archive = snapshot.diagnostics;
     if (!archive || (archive.status !== 'available' && archive.status !== 'disabled')
-        || archive.writePaused === true || (archive.droppedSinceStart ?? 0) > 0) return 'unknown';
+        || archive.writePaused === true || (archive.droppedSinceStart ?? 0) > 0
+        || (archive.status === 'available' && archive.retentionCleanup !== 'caught-up')) return 'unknown';
     return 'healthy';
 }
 function MonitoringHealthPanel() {
@@ -460,6 +462,15 @@ function MonitoringHealthPanel() {
                             : 'Pending-write count unknown'}
                     </small>}
                 {snapshot.diagnostics?.writePaused && <small role="status">Archive writes are backing off after a failure; recent events may be missing.</small>}
+                {snapshot.diagnostics?.status === 'available' && <small role="status">
+                    {snapshot.diagnostics.retentionCleanup === 'caught-up'
+                        ? 'Physical expiry sweep caught up at its last check (not a guarantee of ongoing retention).'
+                        : snapshot.diagnostics.retentionCleanup === 'more-possible'
+                            ? 'Expiry cleanup reached its bounded work budget; older rows may remain until a later sweep.'
+                        : snapshot.diagnostics.retentionCleanup === 'unavailable'
+                            ? 'Expiry cleanup failed; disk retention may be behind even though reads remain limited to 14 days.'
+                        : 'Physical expiry has not been verified in this Server process.'}
+                </small>}
                 <small>Historical coverage is never guaranteed. <a href={monitoringHash('logs', { target: 'server', history: '1' })}>View retained diagnostics</a></small></span>
                 <span className={`badge ${badge(snapshot.diagnostics?.status ?? 'unknown')}`}>{snapshot.diagnostics?.status ?? 'unknown'}</span>
             </div>
