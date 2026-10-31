@@ -13,7 +13,7 @@ import {
     LocalObjectStore, ObjectNotFound, R2ObjectStore, projectStorageKey, isProjectObjectKey, isLegacyObjectKey,
 } from "../apps/server/src/server/file-storage.js";
 import {
-    copyProjectKeys, decodeKeyCopyCursor, encodeKeyCopyCursor, parseKeyCopyArgs, PROJECT_KEY_COPY_CONFIRMATION,
+    copyProjectKeys, copyProjectKeyPage, decodeKeyCopyCursor, encodeKeyCopyCursor, parseKeyCopyArgs, PROJECT_KEY_COPY_CONFIRMATION,
     type BoundedCopyStore,
 } from "../apps/server/src/server/project-key-migration.js";
 
@@ -270,4 +270,21 @@ test("A competing conditional PUT winner is read back and verified rather than o
     assert.equal(result.createdVerified,0);
     assert.equal(attempts,1);
     assert.deepEqual(objects.get(projectStorageKey(projectId,entry.file_id)),bytes);
+});
+
+test("Immutable page copies exactly supplied manifest rows, never extra live objects", async () => {
+    const acceptedBytes=Buffer.from("manifest-original"),extraBytes=Buffer.from("unmanifested");
+    const accepted=row(acceptedBytes),unmanifested=row(extraBytes);
+    const objects=new Map([[accepted.storage_key,acceptedBytes],[unmanifested.storage_key,extraBytes]]);
+    const target=new Map<string,Buffer>(),writes:string[]=[];
+    const result=await copyProjectKeyPage({rows:[accepted],remaining:false,projectId,
+        source:store(objects),destination:store(target,writes),apply:true});
+    assert.equal(result.status,"completed");
+    assert.equal(result.createdVerified,1);
+    assert.deepEqual(writes,[projectStorageKey(projectId,accepted.file_id)]);
+    assert.equal(target.has(projectStorageKey(projectId,unmanifested.file_id)),false);
+    const elsewhere={...accepted,project_id:randomUUID()};
+    await assert.rejects(copyProjectKeyPage({rows:[elsewhere],remaining:false,projectId,
+        source:store(objects),destination:store(target,writes),apply:true}),/out-of-scope/);
+    assert.equal(writes.length,1,"a wrong-Project row must fail before any PUT");
 });
