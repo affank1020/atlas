@@ -152,3 +152,70 @@ Rollback is non-destructive: remove the new view, optional service route and
 Files UI projection. No existing `media_assets`, `media_variants`,
 `atlas_files`, revision/publication records, public media endpoints, local
 files or R2 objects were mutated or copied by this change.
+
+## Stage 4A — versioned key compatibility and guarded, copy-only migration
+
+**No automatic migration or key cutover.** Both object adapters now validate
+the exact `projects/<project-uuid>/objects/<file-uuid>/v1` and
+`projects/<project-uuid>/objects/<file-uuid>/variants/<variant>/v1`
+formats alongside legacy flat keys. Identifiers are immutable UUIDs; variant
+segments are a bounded ASCII slug. All other paths, encodings, dot segments,
+alternative versions such as `v01`, and noncanonical IDs fail closed.
+Cloudflare SigV4 requests encode each path component separately. Local fallback
+stores the logical slash-containing key as an encoded **single filename**, never
+as attacker-controlled directory segments, and refuses symlink leaf reads.
+
+The manual command is installed as `npm run files:r2:project-key-copy -- ...`
+(after building the server package). It reads the existing
+`atlas_project_storage_objects` view and processes at most **five** objects
+per invocation, including **archived** Portfolio originals/variants and native
+Project Files. The default is a bounded **read-only dry run** that reads and
+SHA-256 hashes source bytes, verifies any existing target, and reports planned
+missing targets. A variant has **no stored checksum**, so its SHA-256 is
+calculated from bounded source bytes and compared byte-for-byte by digest
+against any destination. Unsupported/malformed metadata, oversized/missing
+objects, source mismatches or corrupt existing targets **fail closed**.
+
+Operator flow (not authorised to run on production by merging code):
+
+```sh
+# 1. Check database / primary R2 configuration, inventory and independent
+#    recovery readiness. These commands never perform an Atlas production copy.
+npm run build:server
+npm run files:r2:project-key-copy -- --dry-run --project=PROJECT_UUID --max-files=3
+
+# 2. Only after separate operator approval and backup verification:
+#    ATLAS_PROJECT_KEY_COPY_ENABLED=1, --apply, exact --confirm, and an
+#    explicit --project scope are all REQUIRED. Keep credentials private.
+ATLAS_PROJECT_KEY_COPY_ENABLED=1 npm run files:r2:project-key-copy -- \
+  --apply --confirm=CREATE_PROJECT_KEY_COPIES --project=PROJECT_UUID --max-files=3
+
+# 3. Save the receipt with its nextCursor. Resume by adding
+#    --cursor=OPAQUE_NEXT_CURSOR to the same command and Project.
+#    On any ambiguous write, repeat the CURRENT batch without advancing.
+```
+
+**Apply copies only** to the *existing primary* R2 bucket, with an atomic
+SigV4 `If-None-Match: *` conditional PUT and bounded read-after-write
+size/SHA-256 verification. An existing object is accepted only after verifying
+its exact contents; no overwrite, delete or metadata update is supported.
+Every bounded batch is completely preflighted **before any write**, reducing
+partial writes from corrupt source metadata. Unexpected errors or lost
+acknowledgements fail closed and **never return a new checkpoint cursor**;
+rerunning the original batch rechecks copied bytes and is idempotent. Each
+completed batch returns a deterministic identity-tuple `nextCursor` receipt
+for operator retention, but **there is no durable server-side checkpoint
+ledger or catalog-wide consistency snapshot yet**. A completed page is not
+evidence that the entire catalog, independent backups or a matching database
+snapshot are complete.
+
+**Required before production activation or switching reads to new keys:**
+review copy receipts, independently verify all Portfolio variants and archived
+objects, account for catalog changes during paging, establish durable
+audit/checkpoint evidence, prove recovery-only restore without live primary
+access, and explicitly approve a separate metadata-cutover/rollback design.
+Legacy `storage_key` rows, public `/api/media` delivery, Node ingest,
+credentials, source objects, cleanup and retention remain unchanged. The
+existing R2 Files inventory tool remains **legacy-prefix-only**; do not infer
+that it inventories Project-versioned objects until Stage 5 implements a
+unified catalog-based verifier.
