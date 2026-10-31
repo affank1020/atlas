@@ -27,6 +27,7 @@ const sourceNodeEntrypoint = join(nodeDir, "src/platforms/desktop/main.ts");
 const launchdLabel = "com.affank1020.atlas.node";
 const launchdDirectory = join(controlHome, "Library/LaunchAgents");
 const launchdPlist = join(launchdDirectory, `${launchdLabel}.plist`);
+const macLifecyclePendingFile = join(controlHome, "Library/Application Support/Atlas/NodeSoftware/activation/pending.json");
 const launchdLogDirectory = join(controlHome, "Library/Logs/Atlas");
 const launchdStdout = join(launchdLogDirectory, "node.log");
 const launchdStderr = join(launchdLogDirectory, "node-error.log");
@@ -273,6 +274,20 @@ function launchdPath() {
   return [...new Set(values.filter(value => value.startsWith("/")))].join(":");
 }
 
+function macLifecyclePending() {
+  return existsSync(macLifecyclePendingFile);
+}
+
+function isReleaseManagedLaunchAgent() {
+  // A release-managed plist is owned by the explicit macOS lifecycle.
+  // Never silently point it back at a development checkout.
+  if (!existsSync(launchdPlist)) return false;
+  try {
+    const content = readFileSync(launchdPlist, "utf8");
+    return content.includes("/NodeSoftware/releases/") && content.includes(launchdLabel);
+  } catch { return false; }
+}
+
 function launchdConfiguration() {
   const strings = [process.execPath, compiledNodeEntrypoint].map(value => `      <string>${xmlEscape(value)}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -338,6 +353,14 @@ async function installLaunchd() {
     console.error("Atlas Node launchd integration requires macOS and launchctl.");
     return false;
   }
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing to replace its LaunchAgent.");
+    return false;
+  }
+  if (isReleaseManagedLaunchAgent()) {
+    console.error("Atlas Node is release-managed. Use macos-node-lifecycle.py rollback; refusing to overwrite its LaunchAgent with a development checkout.");
+    return false;
+  }
   const configError = hostedConfigurationError();
   if (configError) {
     console.error(configError);
@@ -390,6 +413,10 @@ async function installLaunchd() {
 async function uninstallLaunchd() {
   if (controlPlatform !== "darwin" || !commandExists("launchctl")) {
     console.error("Atlas Node launchd integration requires macOS and launchctl.");
+    return false;
+  }
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing to uninstall its LaunchAgent.");
     return false;
   }
   const current = launchdState();
@@ -637,6 +664,10 @@ async function stopService(name, service = services[name]) {
 }
 
 async function startLaunchdNode() {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing a separate start.");
+    return false;
+  }
   const current = launchdState();
   if (!current.loaded) {
     console.error("The Atlas Node LaunchAgent is installed but not loaded. Run './atlasctl launchd install' to repair it.");
@@ -661,6 +692,10 @@ async function startLaunchdNode() {
 }
 
 async function stopLaunchdNode() {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing a separate stop.");
+    return false;
+  }
   const current = launchdState();
   if (!current.loaded || !current.pid) {
     console.log("Hosted Atlas Node is already stopped; its LaunchAgent remains installed for the next login.");
@@ -683,6 +718,10 @@ async function stopLaunchdNode() {
 }
 
 async function startHostedNode({ build = true } = {}) {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing an unrelated start.");
+    return false;
+  }
   const configError = hostedConfigurationError();
   if (configError) {
     console.error(configError);
@@ -728,10 +767,15 @@ async function stopHostedNode() {
 }
 
 async function restartHostedNode() {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing an unrelated restart.");
+    return false;
+  }
   const configError = hostedConfigurationError();
   if (configError) { console.error(configError); return false; }
-  if (!buildHostedNode()) return false;
   const launchd = launchdState();
+  // Restarting an installed release must not rebuild the unrelated dev checkout.
+  if (!isReleaseManagedLaunchAgent() && !buildHostedNode()) return false;
   if (launchd.loaded) {
     const restarted = spawnSync("launchctl", ["kickstart", "-k", launchdTarget], { encoding: "utf8" });
     if (restarted.status !== 0) {
@@ -895,6 +939,26 @@ async function down(includePostgres, hosted = true) {
 }
 
 const [command = "status", argument] = process.argv.slice(2);
+
+// Serialize every hosted Node / launchd mutation with the Python lifecycle's
+// fcntl.flock on NodeSoftware/activation/.lifecycle.lock. Holding the lock
+// across a potentially slow npm build prevents a second terminal from
+// activating a signed release while atlasctl is preparing a dev checkout.
+// The Python helper passes its lock fd to this child so a killed supervisor
+// cannot leave an unlocked Node process running.
+const mutatesHostedLaunchd =
+  ["up", "down", "restart"].includes(command) ||
+  (command === "launchd" && ["install", "uninstall"].includes(argument)) ||
+  (["start", "stop"].includes(command) && ["node", "atlas-node"].includes(argument));
+if (controlPlatform === "darwin" && mutatesHostedLaunchd &&
+    process.env.ATLAS_CONTROL_LIFECYCLE_LOCK_HELD !== "1") {
+  const helper = join(dirname(fileURLToPath(import.meta.url)), "macos-node-lifecycle.py");
+  const guarded = spawnSync("python3", [helper, "guard-atlasctl", process.execPath, ...process.argv.slice(2)], {
+    stdio: "inherit",
+  });
+  if (guarded.error) console.error("Cannot acquire Atlas Node lifecycle lock: " + guarded.error.message);
+  process.exit(guarded.status ?? 1);
+}
 function vpsCommand(action = "status", service) {
   const valid = new Set(["status", "health", "https", "mcp", "nodes", "migrations", "logs", "follow", "diagnose", "node-preflight", "node-status", "node-upgrade"]);
   const targets = new Set(["server", "postgres", "ingress"]);
