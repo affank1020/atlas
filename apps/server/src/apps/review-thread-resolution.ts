@@ -62,9 +62,9 @@ function parsedClaim(run:AtlasRecord,lineage:string):Claim|undefined {
  * use a token issued with pull_requests:write, not the read-token's viewer.
  */
 export class GitHubThreadResolutionGateway {
-    constructor(private readonly broker: Pick<GitHubBroker,'pullRequestPublishToken'>,
+    constructor(private readonly broker: Pick<GitHubBroker,'pullRequestResolutionToken'>,
         private readonly http:typeof fetch=fetch) {}
-    async token(repository:string){return this.broker.pullRequestPublishToken(repository)}
+    async token(repository:string){return this.broker.pullRequestResolutionToken(repository)}
     async inspect(repository:string,prNumber:number,token:string){
         const reader=new GitHubReviewThreadStateReader({
             pullRequestReadToken:async()=>token,
