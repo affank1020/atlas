@@ -18,10 +18,15 @@ const safeInteger = (n: unknown): n is number =>
     typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 const safeRootId = (n: unknown): n is number => safeInteger(n) && n > 0;
 const keyPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+const graphNodeId = /^[A-Za-z0-9_+/=-]{8,256}$/;
 function validStatus(input: unknown, repository: string, prNumber: number): input is ThreadState {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const value = input as Partial<ThreadState>;
-    return value.repository === repository && value.prNumber === prNumber &&
+    const mapped = Array.isArray(value.ownedThreads)
+        ? value.ownedThreads.filter(t => t?.mappingState === 'verified').length : -1;
+    return mapped === value.mappedOwnedRoots &&
+        value.mappingComplete === (mapped === value.ownedRootCount) &&
+        value.repository === repository && value.prNumber === prNumber &&
         value.readOnly === true && value.resolutionSupported === false &&
         safeInteger(value.totalGitHubThreads) && safeInteger(value.ownedRootCount) &&
         safeInteger(value.mappedOwnedRoots) && value.mappedOwnedRoots <= value.ownedRootCount &&
@@ -30,7 +35,10 @@ function validStatus(input: unknown, repository: string, prNumber: number): inpu
         value.ownedThreads.every(t => t && (t.mappingState === 'verified' || t.mappingState === 'unmapped') &&
             (t.resolutionState === 'resolved_on_github' || t.resolutionState === 'open_on_github' || t.resolutionState === 'unknown') &&
             safeRootId(t.rootCommentId) &&
-            (t.mappingState !== 'verified' || typeof t.threadId === 'string')) &&
+            (t.mappingState === 'verified'
+                ? (typeof t.threadId === 'string' && graphNodeId.test(t.threadId) &&
+                    t.resolutionState !== 'unknown')
+                : (t.resolutionState === 'unknown' && t.threadId === undefined))) &&
         Array.isArray(value.resolutions) && value.resolutions.every(r =>
             r && typeof r.lineageKey === 'string' && keyPattern.test(r.lineageKey) &&
             r.thread && (r.thread.mappingState === 'verified' || r.thread.mappingState === 'unmapped'));
