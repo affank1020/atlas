@@ -486,7 +486,7 @@ def validate_existing_watchdog_plist(layout: Layout, raw: bytes) -> None:
     args = actual.get("ProgramArguments") if isinstance(actual, dict) else None
     if (not isinstance(args, list) or len(args) != 3 or
         not isinstance(args[0], str) or not os.path.isabs(args[0]) or
-        Path(args[0]).is_symlink() or not Path(args[0]).is_file() or
+        not Path(args[0]).is_file() or
         args[1:] != [str(layout.recovery_script), "recover"]):
         raise Refused("Recovery watchdog is not the expected per-user job.")
     expected["ProgramArguments"][0] = args[0]
