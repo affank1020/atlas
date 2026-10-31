@@ -273,7 +273,7 @@ export function CodeReviewsDashboard() {
                     </div>
                     {expandedKey === group.key && <PrDetails key={group.key + ':' + refreshVersion} group={group} refreshVersion={refreshVersion} olderPage={olderPage}/>} 
                 </article>)}
-                {shown.length === 0 && <p className="cr-empty">{incomplete ? 'No matching PRs on this page.' : 'No matching PRs.'}</p>
+                {shown.length === 0 && <p className="cr-empty">{incomplete ? 'No matching PRs on this page.' : 'No matching PRs.'}</p>}
             </>}
             {runs.data && runs.data.total > 100 && <div className="cr-pagination">
                 <button type="button" className="ghost" disabled={offset === 0 || runs.isFetching}
