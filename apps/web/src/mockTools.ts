@@ -1,5 +1,6 @@
 import type { AtlasRecord, AtlasStatus, AuditEvent, Page, Project, Store } from './types';
 import type { AtlasNode } from './Nodes';
+import { mockCodeReviewTool } from './mockCodeReviews';
 
 /**
  * Deterministic read-only fixture backend. No network, credentials, or database.
@@ -129,6 +130,7 @@ const portfolioEntries = [
 const applications = [
     { type: 'portfolio', slug: 'portfolio', name: 'Portfolio', description: 'Browse sample portfolio records in read-only preview.', projectId: mockProjects[1].id },
     { type: 'football-training', slug: 'football-training', name: 'Football Training', description: 'Explore sample training runs and policies.', projectId: mockProjects[2].id },
+    { type: 'code-reviews', slug: 'code-reviews', name: 'Code Reviews', description: 'Explore simulated review rounds, findings and PR timelines. Local demo data only.', projectId: mockProjects[0].id },
 ];
 const status: AtlasStatus = { product: 'Atlas Demo', version: '2.0.0-demo', storage: 'In-memory mock', schemaVersion: 1, projects: mockProjects.length, stores: stores.length, records: records.length };
 const str = (value: unknown) => typeof value === 'string' ? value : '';
@@ -257,7 +259,10 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
                 .slice(0, Number(input.limit) || 200); break;
         case 'list_all_applications': result = applications; break;
         case 'list_applications': result = applications.filter(a => a.projectId === projectId); break;
-        case 'get_application': result = applications.find(a => a.projectId === projectId && a.slug === input.slug); break;
+        case 'get_application': result = applications.find(a => (!projectId || a.projectId === projectId) && a.slug === input.slug); break;
+        case 'code_reviews_overview': case 'code_reviews_list_runs': case 'code_reviews_list_findings':
+        case 'code_reviews_pr_summary': case 'code_reviews_pr_timeline': case 'code_reviews_review_thread_state':
+            result = mockCodeReviewTool(name, input); break;
         case 'get_portfolio_schemas': result = portfolioTypes.map(contentType => ({
             contentType, storeId: uuid(41, portfolioTypes.indexOf(contentType) + 1), name: contentType, fields: portfolioFields[contentType],
         })); break;

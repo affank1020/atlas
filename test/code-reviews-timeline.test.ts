@@ -56,7 +56,7 @@ function fixture(override: { rounds?: any[]; findings?: Record<string, any[]>; c
             queries.push(q);
             const filter = Object.fromEntries((q.filters ?? []).map((f: any) => [f.field, f.value]));
             if (q.storeId === runsId) {
-                assert.deepEqual(filter, { repository: repo, prNumber: 116 });
+                assert.deepEqual(filter, { prNumber: 116 });
                 return { total: allRounds.length, items: allRounds.slice(q.offset, q.offset + q.limit) };
             }
             assert.equal(q.storeId, findingsId);
@@ -86,7 +86,7 @@ test('timeline keeps review rounds, explicitly asserted root causes and unlinked
         [['same-root', 2, 'observed_multiple_times_in_page']]);
     assert.equal(result.rounds[0].findings[0].state, 'new', 'persisting is not inferred from repeat keys');
     assert.equal(queries.length, 4);
-    assert.equal(queries[0].limit, 5);
+    assert.equal(queries[0].limit, 100, 'canonical history scan is bounded independently of requested page size');
     assert.equal(queries[0].projectId, CODE_REVIEWS_PROJECT_ID);
     for (const query of queries.slice(1)) {
         assert.equal(query.projectId, CODE_REVIEWS_PROJECT_ID);
@@ -108,7 +108,7 @@ test('pagination only claims lineage occurrences within the loaded page', async 
     assert.equal(older.lineages[0].observationsInPage, 1);
     assert.equal(older.storedWindowComplete, false);
     assert.equal(older.rounds[0].runId, ids[1]);
-    assert.equal(queries[0].limit, 1);
+    assert.equal(queries[0].limit, 100, 'canonical history scan is bounded independently of requested page size');
     await assert.rejects(app.invoke('code_reviews_pr_timeline',
         { repository: repo, prNumber: 116, limit: 11 }), /10|less_than_equal|too_big/i);
     await assert.rejects(app.invoke('code_reviews_pr_timeline',

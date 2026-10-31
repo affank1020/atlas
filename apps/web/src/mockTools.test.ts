@@ -104,3 +104,46 @@ test('mock Monitoring fails closed for unsupported logical Workspace scopes', ()
     expect(mockTool<{ total: number }>('query_monitoring_activity', {}).total)
         .toBe(unfiltered.total);
 });
+
+test('local demo exposes Code Reviews with paginated, internally consistent synthetic review data', () => {
+    const atlasProject = mockProjects[0].id;
+    const applications = mockTool<Array<{ projectId: string; slug: string }>>('list_all_applications');
+    expect(applications.some(app => app.projectId === atlasProject && app.slug === 'code-reviews')).toBe(true);
+    expect(mockTool<{ slug: string }>('get_application', { projectId: atlasProject, slug: 'code-reviews' }).slug)
+        .toBe('code-reviews');
+
+    const overview = mockTool<{ reviewRuns: number; findingObservations: number }>('code_reviews_overview');
+    const firstPage = mockTool<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 2, offset: 0 });
+    const secondPage = mockTool<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 2, offset: 2 });
+    expect(firstPage.total).toBe(overview.reviewRuns);
+    expect(firstPage.items).toHaveLength(2);
+    expect(secondPage.items).toHaveLength(2);
+    expect(new Set([...firstPage.items, ...secondPage.items].map(run => run.id)).size)
+        .toBe(overview.reviewRuns);
+    expect(firstPage.items[0].data.repository).toBe('example/atlas-demo');
+
+    const findings = mockTool<Page<AtlasRecord>>('code_reviews_list_findings',
+        { reviewRunId: firstPage.items[0].id, limit: 50 });
+    expect(findings.total).toBeGreaterThan(0);
+    expect(findings.items[0].data.reviewRunId).toBe(firstPage.items[0].id);
+    const timeline = mockTool<{
+        recordedRounds: number; rounds: Array<{ runId: string; totalFindingObservations: number }>;
+        lineages: Array<{ key: string }>;
+    }>('code_reviews_pr_timeline', { repository: 'example/atlas-demo', prNumber: 42, limit: 5, offset: 0 });
+    expect(timeline.recordedRounds).toBe(2);
+    expect(timeline.rounds).toHaveLength(2);
+    expect(timeline.lineages.some(lineage => lineage.key === 'demo-token-expiry')).toBe(true);
+});
+
+test('Code Reviews demo never claims to have verified GitHub or published a review', () => {
+    const summary = mockTool<{
+        currentHead: { state: string }; latestReviewHead: string;
+    }>('code_reviews_pr_summary', { repository: 'example/atlas-demo', prNumber: 42 });
+    expect(summary.currentHead.state).toBe('unavailable');
+    expect(summary.latestReviewHead).toBe('unknown');
+    expect(() => mockTool('code_reviews_review_thread_state',
+        { repository: 'example/atlas-demo', prNumber: 42 })).toThrow(/unavailable in local demo mode/);
+    expect(() => mockTool('code_reviews_managed_summary_publish', { apply: true }))
+        .toThrow(/unavailable in local mock mode/);
+});
+

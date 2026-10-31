@@ -453,6 +453,22 @@ test('PostgreSQL managed summary includes legacy mixed-case historical runs with
             verdict: 'no_findings', coverage: { source: 'github_pull_request_review' },
         },
     });
+    // The app UI uses these read APIs. Both must treat historical spelling
+    // as the same repository without including identical PR numbers in other repos.
+    const history = new CodeReviewsService(catalog);
+    const summary = await history.prSummary(repository, prNumber);
+    assert.equal(summary.recordedRounds, 2);
+    assert.equal(summary.latest?.runId, historical.id);
+    assert.equal(summary.latest?.source, 'historical');
+    assert.equal(summary.latestReviewHead, 'unknown');
+    const timeline = await history.prTimeline(repository, prNumber, 10, 0);
+    assert.equal(timeline.recordedRounds, 2);
+    assert.deepEqual(timeline.rounds.map(round => round.runId), [historical.id,
+        (await catalog.queryRecords({ projectId: CODE_REVIEWS_PROJECT_ID, storeId: runs.id,
+            filters: [{ field: 'repository', operator: 'eq', value: repository }] })).items[0]!.id]);
+    const mixedSpelling = await history.prSummary('Affank1020/Atlas', prNumber);
+    assert.equal(mixedSpelling.recordedRounds, 2);
+
     const managed = new ManagedSummaryPreviewService(catalog, {
         inspect: async (name: string, actualNumber: number, body: string) => {
             assert.equal(name, repository);

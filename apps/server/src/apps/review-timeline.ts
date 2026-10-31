@@ -131,7 +131,7 @@ function parseFinding(record: AtlasRecord, round: Round, submissionId: unknown):
  * in memory. The explicit cap fails closed: no partial counts or false empty
  * summaries if older data exceeds the supported read window.
  */
-async function readCanonicalPrPage(catalog: Reader, runsId: string,
+export async function readCanonicalPrPage(catalog: Reader, runsId: string,
     repository: string, prNumber: number, limit: number, offset: number) {
     const maximumCandidates = 1_000;
     const pageSize = 100;
