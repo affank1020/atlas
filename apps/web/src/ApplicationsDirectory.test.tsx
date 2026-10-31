@@ -78,3 +78,19 @@ test('an unavailable catalogue is an error, not an empty app list', async () => 
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn\'t load applications');
     expect(screen.queryByText('No applications are registered yet.')).not.toBeInTheDocument();
 });
+
+test('cold-load directory reserves four desktop cards, then replaces them with real applications', async () => {
+    let resolve!: (items: typeof apps) => void;
+    const pending = new Promise<typeof apps>(complete => { resolve = complete; });
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_all_applications') return pending as never;
+        throw new Error('Unexpected tool ' + name);
+    });
+    const { container } = render(<ApplicationsDirectory />);
+    expect(screen.getByRole('status', { name: 'Loading applications' })).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelectorAll('.applications-directory > .atlas-skeleton-grid .atlas-skeleton-card')).toHaveLength(4);
+    expect(screen.queryByText('0 applications')).not.toBeInTheDocument();
+    resolve(apps);
+    expect(await screen.findByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading applications' })).not.toBeInTheDocument();
+});

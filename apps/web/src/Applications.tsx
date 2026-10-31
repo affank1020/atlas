@@ -7,6 +7,7 @@ const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: mo
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
 const CodeReviews = lazy(() => import('./CodeReviews').then(module => ({ default: module.CodeReviews })));
 import './applications.css';
+import { SkeletonProjectApplications, SkeletonApplicationWindow } from './Skeleton';
 
 export type ApplicationManifest = {
     type: string;
@@ -30,18 +31,18 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
     const previousRefresh = useRef(refreshVersion);
     useEffect(() => { if (previousRefresh.current !== refreshVersion) void refetch(); previousRefresh.current = refreshVersion; }, [refreshVersion, refetch]);
     return <section className="panel project-applications" aria-label="Project Applications">
-        <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{applications.length} available <button onClick={() => void refetch()}>Refresh</button></span></div>
+        <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{busy ? '— available' : `${applications.length} available`} <button onClick={() => void refetch()}>Refresh</button></span></div>
         <p className="application-section-copy">Applications open within Atlas. Unlike Views, they provide dedicated tools and workflows.</p>
-        {busy && <p role="status" className="application-status">Loading Applications…</p>}
+        {busy && applications.length === 0 && <SkeletonProjectApplications />}
         {error && <div role="alert" className="notice error">{error}</div>}
         {!busy && !error && applications.length === 0 && <p className="application-status">No Applications are registered in this Project yet.</p>}
-        <div className="application-grid">
+        {applications.length > 0 && <div className="application-grid">
             {applications.map(app => <article className="application-card" key={app.slug}>
                 <div className="application-card-icon" aria-hidden="true">{app.name.slice(0, 2).toUpperCase()}</div>
                 <div className="application-card-details"><h3>{app.name}</h3><p>{app.description}</p><small>{app.type} Application</small></div>
                 <a className="button application-launch" href={`#/projects/${projectId}/applications/${app.slug}`} onClick={() => rememberWork({ href: `#/projects/${projectId}/applications/${app.slug}`, name: app.name, projectId, kind: 'Application' })} aria-label={`Launch ${app.name}`}>Launch →</a>
             </article>)}
-        </div>
+        </div>}
     </section>;
 }
 
@@ -67,10 +68,10 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
             <span className="application-window-name" title={application?.name ?? slug}>{application?.name ?? 'Application'}</span>
         </nav>} />
         <main className="application-window-main">
-            {busy && <p role="status" className="application-status">Loading Application…</p>}
+            {busy && !application && <SkeletonApplicationWindow />}
             {error && <div role="alert" className="notice error">{error} <button type="button" className="ghost" onClick={() => void refetch()}>Retry</button></div>}
             {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
-            {Component && !busy && <Suspense fallback={<p role="status">Loading application interface…</p>}><Component /></Suspense>}
+            {Component && <Suspense fallback={<SkeletonApplicationWindow />}><Component /></Suspense>}
         </main>
     </div>;
 }

@@ -4,6 +4,9 @@
 .application-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); padding: 20px; display: flex; align-items: center; gap: 16px; }
 .application-card-icon { width: 46px; height: 46px; border-radius: 10px; flex: none; background: var(--surface-hover); display: grid; place-items: center; color: var(--text-primary); font-weight: 700; }
 .application-card-details { flex: 1; min-width: 0; }
+/* First-load placeholders inherit the exact application-grid inset and card layout. */
+.application-card-skeleton-icon { width: 46px; height: 46px; border-radius: 10px; }
+.application-card-skeleton-launch { display: block; flex: none; width: 91px; height: 38px; border-radius: 7px; }
 .application-card-details h3 { margin: 0 0 5px; font-size: 1.03rem; }
 .application-card-details p { margin: 0 0 5px; color: var(--text-secondary); }
 .application-card-details small { color: var(--text-muted); }
@@ -89,6 +92,7 @@
 @media (max-width: 680px) {
   .application-card { flex-wrap: wrap; }
   .application-launch { width: 100%; }
+  .application-card-skeleton-launch { width: 100%; }
   .application-window .atlas-header-context { margin-left: 12px; }
   .application-breadcrumb { gap: 8px; font-size: .73rem; }
 }
