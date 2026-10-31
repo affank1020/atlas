@@ -68,7 +68,8 @@ class CompanionSessionTest {
 
     @Test fun asynchronousImageCompletionDoesNotClobberNewerShare() {
         val image = SharedImageDraft("image/png", byteArrayOf(1, 2))
-        val pending = CompanionSession().importShare(ShareDelivery(1, error = "Opening shared image…"))
+        val pending = CompanionSession().importShare(
+            ShareDelivery(1, error = "Opening shared image…", importingImage = true))
         val newer = pending.importShare(ShareDelivery(2, text = "new text"))
         val stale = newer.completeImageImport(ShareDelivery(1, image = image))
         assertEquals("new text", stale.draft)
@@ -79,11 +80,61 @@ class CompanionSessionTest {
     @Test fun imageImportCompletesDeferredShareWithoutReplacingSentText() {
         val image = SharedImageDraft("image/png", byteArrayOf(1, 2))
         var session = CompanionSession().importShare(ShareDelivery(1, text = "sending"))
-            .receiveShare(ShareDelivery(2, error = "Opening shared image…"), sending = true)
+            .receiveShare(ShareDelivery(2, error = "Opening shared image…", importingImage = true),
+                sending = true)
         session = session.completeImageImport(ShareDelivery(2, image = image))
         assertEquals("sending", session.draft)
         assertEquals(image, session.deferredShare?.image)
         assertEquals(image, session.loadDeferredShare().image)
+    }
+
+    @Test fun deferredScreenshotCompletesAfterTextReceiptAndDraftEdit() {
+        // Text send is awaiting a Mac receipt when a screenshot arrives.
+        val image = SharedImageDraft("image/png", byteArrayOf(1, 2, 3))
+        var session = CompanionSession().importShare(ShareDelivery(1, text = "sent text"))
+            .receiveShare(
+                ShareDelivery(2, error = "Opening shared image…", importingImage = true),
+                sending = true,
+            )
+        // Text receipt resolves (sending=false); user edits the previous draft
+        // while the deferred screenshot is still reading its content URI.
+        session = session.editDraft("edited after receipt")
+        assertEquals("edited after receipt", session.draft)
+        assertEquals(true, session.deferredShare?.importingImage)
+        session = session.completeImageImport(ShareDelivery(2, image = image))
+        assertEquals("edited after receipt", session.draft)
+        assertEquals(image, session.deferredShare?.image)
+        assertEquals(false, session.deferredShare?.importingImage)
+        session = session.loadDeferredShare()
+        assertEquals(image, session.image)
+        assertEquals(2L, session.lastDeliveryId)
+        assertNull(session.deferredShare)
+    }
+
+    @Test fun textEditCancelsOnlyTheActiveImagePlaceholder() {
+        val image = SharedImageDraft("image/png", byteArrayOf(1, 2, 3))
+        val loading = CompanionSession().importShare(
+            ShareDelivery(1, error = "Opening shared image…", importingImage = true))
+        val edited = loading.editDraft("manually entered text")
+        val lateCompletion = edited.completeImageImport(ShareDelivery(1, image = image))
+        assertEquals("manually entered text", lateCompletion.draft)
+        assertNull(lateCompletion.image)
+        assertEquals(false, lateCompletion.importingImage)
+        assertEquals(edited, lateCompletion)
+    }
+
+    @Test fun editingLoadedDeferredScreenshotCancelsItsLateCompletion() {
+        val image = SharedImageDraft("image/jpeg", byteArrayOf(3, 2, 1))
+        val loaded = CompanionSession().importShare(ShareDelivery(1, text = "sending"))
+            .receiveShare(
+                ShareDelivery(2, error = "Opening shared image…", importingImage = true),
+                sending = true,
+            ).loadDeferredShare()
+        val edited = loaded.editDraft("user replaced pending screenshot")
+        val lateCompletion = edited.completeImageImport(ShareDelivery(2, image = image))
+        assertNull(lateCompletion.image)
+        assertEquals("user replaced pending screenshot", lateCompletion.draft)
+        assertEquals(edited, lateCompletion)
     }
 
     @Test fun draftLimitIsEnforced() {
