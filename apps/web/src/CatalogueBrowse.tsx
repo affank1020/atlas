@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from 'react';
 import './catalogue.css';
+import { Skeleton } from './Skeletons';
 
 /** Token-based, case-insensitive catalogue search shared by Projects and Applications. */
 export function filterCatalogue<T>(items: readonly T[], query: string, searchText: (item: T) => string): T[] {
@@ -26,7 +27,7 @@ export function CatalogueToolbar({
     placeholder: string;
     query: string;
     onQueryChange: (query: string) => void;
-    count: number;
+    count: number | null;
     itemName: string;
     children?: ReactNode;
 }) {
@@ -37,6 +38,6 @@ export function CatalogueToolbar({
                 onChange={event => onQueryChange(event.currentTarget.value)} />
         </label>
         {children}
-        <span aria-live="polite">{count} {itemName}{count === 1 ? '' : 's'}</span>
+        <span aria-live="polite">{count === null ? <Skeleton width={80} height={12} /> : `${count} ${itemName}${count === 1 ? '' : 's'}`}</span>
     </div>;
 }
