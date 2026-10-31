@@ -89,6 +89,8 @@ class BackgroundReceiverService : Service() {
         }
         if (model.pairedNode == null || !hasNotificationPermission(this)) {
             model.stopBackgroundReceiving()
+            model.reportBackgroundError(
+                "Pair the Node and allow notifications before enabling background receiving.")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -120,6 +122,8 @@ class BackgroundReceiverService : Service() {
             }
         } catch (_: RuntimeException) {
             model.stopBackgroundReceiving()
+            model.reportBackgroundError(
+                "Android refused to start the receiving service. Check system restrictions.")
             stopSelf()
             return START_NOT_STICKY
         }
