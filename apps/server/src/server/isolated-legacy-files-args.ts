@@ -1,3 +1,4 @@
+import type { IsolatedLegacyRecoveryReport } from "./isolated-legacy-files-recovery.js";
 import {
     ISOLATED_LEGACY_DEFAULT_RECORDS,ISOLATED_LEGACY_MAX_RECORDS,
 } from "./isolated-legacy-files-recovery.js";
@@ -20,4 +21,13 @@ export function parseIsolatedLegacyFilesArgs(args:string[]):{maxRecords:number}{
        maxRecords>ISOLATED_LEGACY_MAX_RECORDS)
         throw new Error("Isolated legacy Files verification limit must be 1..2000.");
     return {maxRecords};
+}
+
+/** Operator-facing exit policy used by the CLI: only a complete, nonempty
+ * verification is success. Keep empty distinct in JSON but fail closed for
+ * shell scripts and CI that only inspect the process exit code. */
+export function isolatedLegacyVerificationExitCode(
+    report: Pick<IsolatedLegacyRecoveryReport,"status"|"checked"|"entireLegacyCatalogVerified">,
+):0|2 {
+    return report.status==="passed"&&report.entireLegacyCatalogVerified&&report.checked>0?0:2;
 }
