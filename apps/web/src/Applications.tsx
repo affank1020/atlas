@@ -33,7 +33,7 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
     return <section className="panel project-applications" aria-label="Project Applications">
         <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{busy ? '— available' : `${applications.length} available`} <button onClick={() => void refetch()}>Refresh</button></span></div>
         <p className="application-section-copy">Applications open within Atlas. Unlike Views, they provide dedicated tools and workflows.</p>
-        {busy && <SkeletonCards label="Loading project applications" />}
+        {busy && applications.length === 0 && <SkeletonCards label="Loading project applications" />}
         {error && <div role="alert" className="notice error">{error}</div>}
         {!busy && !error && applications.length === 0 && <p className="application-status">No Applications are registered in this Project yet.</p>}
         <div className="application-grid">
@@ -68,10 +68,10 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
             <span className="application-window-name" title={application?.name ?? slug}>{application?.name ?? 'Application'}</span>
         </nav>} />
         <main className="application-window-main">
-            {busy && <SkeletonApplicationWindow />}
+            {busy && !application && <SkeletonApplicationWindow />}
             {error && <div role="alert" className="notice error">{error} <button type="button" className="ghost" onClick={() => void refetch()}>Retry</button></div>}
             {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
-            {Component && !busy && <Suspense fallback={<SkeletonApplicationWindow />}><Component /></Suspense>}
+            {Component && <Suspense fallback={<SkeletonApplicationWindow />}><Component /></Suspense>}
         </main>
     </div>;
 }
