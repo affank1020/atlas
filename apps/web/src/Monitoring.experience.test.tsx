@@ -29,6 +29,19 @@ test('common Activity filters are visible; technical scopes remain accessible an
     expect(params.has('offset')).toBe(false);
 });
 
+test('Reset filters also clears search and technical edits that have not been applied', () => {
+    location.hash = '#/monitoring?tab=activity';
+    vi.mocked(callTool).mockResolvedValue(emptyActivity as never);
+    render(<MonitoringPage />);
+    const search = screen.getByLabelText('Search activity');
+    fireEvent.change(search, { target: { value: 'draft search' } });
+    expect(screen.getByRole('button', { name: 'Reset filters' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    expect(search).toHaveValue('');
+    const params = new URLSearchParams(location.hash.split('?')[1]);
+    expect(params.has('search')).toBe(false);
+});
+
 test('resetting Project Activity filters cannot escape the pinned Project boundary', async () => {
     location.hash = '#/projects/project-1/activity?outcome=failed&nodeId=node-1';
     vi.mocked(callTool).mockImplementation(async name =>
