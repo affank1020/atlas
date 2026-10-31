@@ -44,7 +44,7 @@ test("Project recovery CLI scopes all modes, confirmations and bounds",()=>{
 const primary="a".repeat(32),backup="b".repeat(32);
 const valid={
     ATLAS_RECOVERY_HOST_APPROVED:"1",
-    ATLAS_RESTORED_DATABASE_URL:"postgresql://restorer:secret@127.0.0.1:9999/isolated",
+    ATLAS_RESTORED_DATABASE_URL:"postgresql://restorer:secret@127.0.0.1:9999/atlas_recovery",
     ATLAS_R2_PRIMARY_ACCOUNT_ID:primary,
     ATLAS_R2_RECOVERY_ENDPOINT:"https://"+backup+".r2.cloudflarestorage.com/",
     ATLAS_R2_RECOVERY_BUCKET:"offline-backups",
@@ -68,6 +68,9 @@ test("Isolated verification refuses primary credentials, DB environment and same
         {ATLAS_R2_RECOVERY_ENDPOINT:"https://"+backup+".r2.cloudflarestorage.com/other"},
         {ATLAS_R2_RECOVERY_ACCESS_KEY_ID:""},
         {ATLAS_RESTORED_DATABASE_URL:""},
+        {ATLAS_RESTORED_DATABASE_URL:"postgresql://restorer@production-db.internal/atlas_recovery"},
+        {ATLAS_RESTORED_DATABASE_URL:"postgresql://restorer@127.0.0.1:5432/atlas"},
+        {ATLAS_RESTORED_DATABASE_URL:"postgresql://restorer@127.0.0.1:5432/atlas_recovery?host=production-db.internal"},
         {ATLAS_R2_PRIMARY_ACCOUNT_ID:"unknown"},
     ]) assert.throws(()=>loadIsolatedRecoveryConfig({...valid,...extra}),JSON.stringify(extra));
 });
