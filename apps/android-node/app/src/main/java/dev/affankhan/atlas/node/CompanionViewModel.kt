@@ -4,6 +4,7 @@ import android.app.Application
 import java.util.UUID
 import android.content.Intent
 import android.net.Uri
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -566,9 +567,18 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             viewModelScope.launch {
                 val delivery = try {
                     val image = withContext(Dispatchers.IO) {
-                        getApplication<Application>().contentResolver.openInputStream(uri)?.use {
+                        val imported = getApplication<Application>().contentResolver.openInputStream(uri)?.use {
                             readSharedImage(it, specificType)
                         } ?: throw IllegalArgumentException("The image could not be opened.")
+                        // Validate dimensions without allocating a full bitmap.
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(imported.bytes, 0, imported.bytes.size, bounds)
+                        require(bounds.outWidth in 1..MAX_IMAGE_DIMENSION &&
+                            bounds.outHeight in 1..MAX_IMAGE_DIMENSION &&
+                            bounds.outWidth.toLong() * bounds.outHeight.toLong() <= 64_000_000L) {
+                            "The shared image has invalid or excessive dimensions."
+                        }
+                        imported
                     }
                     ShareDelivery(nextId, image = image)
                 } catch (error: CancellationException) {
