@@ -12,7 +12,7 @@ export function ProjectNav({ projectId, section }: { projectId: string; section:
     return <nav className="tabs project-nav" aria-label="Project sections">{sections.map(item => <a key={item} aria-current={section === item ? 'page' : undefined} className={section === item ? 'active' : ''} href={`#/projects/${projectId}${item === 'overview' ? '' : `/${item}`}`}>{item[0].toUpperCase() + item.slice(1)}</a>)}</nav>;
 }
 
-export function AppShell({ page, projectId, contentClass, children }: { page: string; projectId?: string; contentClass: string; children: ReactNode }) {
+export function AppShell({ page, projectId, routeKey, contentClass, children }: { page: string; projectId?: string; routeKey?: string; contentClass: string; children: ReactNode }) {
     const { data: projects = [], error, isLoading, refetch } = useListProjectsQuery({ includeArchived: false });
     const recent = useRecentWork();
     const [open, setOpen] = useState(false);
@@ -59,7 +59,7 @@ export function AppShell({ page, projectId, contentClass, children }: { page: st
             </nav>
         </aside>
         <div className="content-frame" ref={contentFrameRef}>
-            <main id="main-content" tabIndex={-1} className={contentClass}>{children}</main>
+            <main key={routeKey ?? `${page}:${projectId ?? ''}`} id="main-content" tabIndex={-1} className={contentClass}>{children}</main>
         </div>
     </div>;
 }

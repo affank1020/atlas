@@ -1,5 +1,4 @@
-.workspaces-manager { display:grid; gap:20px; min-width:0; animation:wm-in .18s ease-out; }
-@keyframes wm-in { from { opacity:.65; transform:translateY(5px) } to { opacity:1; transform:translateY(0) } }
+.workspaces-manager { display:grid; gap:20px; min-width:0; }
 .app-shell .workspaces-manager > .page-head { margin-bottom:0; }
 .wm-panel { min-width:0; border:1px solid var(--border); background:var(--surface); border-radius:var(--radius-md); padding:22px; }
 .wm-title { display:flex; justify-content:space-between; gap:14px; align-items:center; margin-bottom:16px; min-width:0; }
@@ -64,7 +63,6 @@
 .wm-tree button { flex:none; }
 .wm-changes { padding-left:17px; font: .74rem/1.6 var(--font-mono); overflow-wrap:anywhere; }
 @media(max-width:610px) { .wm-panel { padding:15px; } .wm-browser { padding:0; } .wm-fields { grid-template-columns:1fr; } .wm-row { padding:10px; } .wm-title { flex-wrap:wrap; } }
-@media(prefers-reduced-motion:reduce) { .workspaces-manager { animation:none; } }
 /* Layout-matched loading placeholders avoid an empty initial browser or inspector. */
 .wm-skeleton { display:block; border-radius:5px; background:var(--surface-elevated); background-image:linear-gradient(90deg,transparent 0%,var(--bg-secondary) 45%,transparent 90%); background-size:220% 100%; animation:wm-shimmer 1.6s ease-in-out infinite; }
 @keyframes wm-shimmer { from { background-position:100% 0; } to { background-position:-100% 0; } }

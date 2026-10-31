@@ -55,7 +55,12 @@ it('shows node details below the map and refreshes selected presence', async () 
     expect(callTool).toHaveBeenCalledWith('query_monitoring_activity', {
         nodeId: node.id, offset: 0, limit: 5, groupOperations: true, safeDetails: true,
     }, expect.any(AbortSignal));
-    expect(within(details).getByRole('link', { name: 'View all activity →' }))
+    const activity = within(details).getByRole('region', { name: 'Recent activity' });
+    const activityCard = activity.closest('.node-detail-card');
+    expect(activityCard).toHaveClass('node-detail-activity');
+    expect(activityCard?.querySelectorAll('.activity-preview')).toHaveLength(1);
+    expect(within(activity).getByRole('button', { name: 'Refresh activity' })).toBeInTheDocument();
+    expect(within(activity).getByRole('link', { name: 'View all activity →' }))
         .toHaveAttribute('href', '#/monitoring?tab=activity&nodeId=' + node.id);
     expect(within(details).queryByRole('list', { name: 'Legacy recent activity' })).not.toBeInTheDocument();
     for (const title of ['Hosted workspaces', 'Recent activity', 'Technical details']) {

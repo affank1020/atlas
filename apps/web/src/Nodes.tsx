@@ -127,7 +127,7 @@ function NodeDetails({ node, detail, loading, detailError, refreshVersion }: {
                     <a href={'#/workspaces?workspace=' + encodeURIComponent(workspace.id)}>{workspace.name}</a>
                 </li>)}</ul> : loading && !detail ? <SkeletonRows label="Loading hosted workspaces" variant="list" rows={2} /> : <p className="node-detail-empty">{detail ? 'No active workspaces.' : detailError ? 'Workspace details unavailable.' : 'Workspace details pending.'}</p>}
             </section>
-            <div className="node-detail-activity">
+            <div className="node-detail-card node-detail-activity">
                 <ActivityPreview nodeId={node.id} title="Recent activity" refreshVersion={refreshVersion} />
             </div>
             <section className="node-detail-card node-detail-technical">

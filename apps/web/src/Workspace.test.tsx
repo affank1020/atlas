@@ -140,12 +140,21 @@ test('recent work tolerates invalid storage and remains bounded and deduplicated
     expect(readRecentWork()).toHaveLength(8);
     rememberWork(readRecentWork()[3]); expect(readRecentWork()).toHaveLength(8);
 });
-test('Monitoring shows system connectivity and links into consolidated Activity', async () => {
+test('Monitoring uses the standard page header and exposes Activity and Logs without tabs', async () => {
     const { store } = createAtlasStore();
     render(<Provider store={store}><MonitoringOverview /></Provider>);
     expect(screen.getByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Activity feed/ })).toHaveAttribute('href', '#/monitoring?tab=activity');
-    expect(await screen.findByText('Atlas Linux VPS')).toBeInTheDocument();
+    expect(screen.queryByText('Atlas workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Server health and connectivity across Atlas.')).not.toBeInTheDocument();
+    const tools = screen.getByRole('navigation', { name: 'Monitoring tools' });
+    expect(within(tools).getByRole('link', { name: 'Activity →' })).toHaveAttribute('href', '#/monitoring?tab=activity');
+    expect(within(tools).getByRole('link', { name: 'Logs →' })).toHaveAttribute('href', '#/monitoring?tab=logs');
+    const server = screen.getByRole('region', { name: 'Atlas Server' });
+    const nodes = screen.getByRole('region', { name: 'Remote nodes' });
+    expect(server).toHaveClass('monitoring-card--server');
+    expect(nodes).toHaveClass('monitoring-card--nodes');
+    expect(await within(server).findByText('Version')).toBeInTheDocument();
+    expect(await within(nodes).findByText('Atlas Linux VPS')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Manage nodes/ })).toHaveAttribute('href', '#/nodes');
 });
 test('Developer tools are discoverable through Settings, not the primary sidebar', () => {

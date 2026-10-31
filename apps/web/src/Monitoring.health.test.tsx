@@ -30,6 +30,9 @@ test('Monitoring health distinguishes DB success from diagnostic archive backoff
     } as never);
     render(<MonitoringPage />);
     expect(await screen.findByText('Server diagnostic archive')).toBeInTheDocument();
+    const healthCard = screen.getByRole('region', { name: 'Live operational health' });
+    expect(healthCard).toHaveClass('monitoring-card--health');
+    expect(healthCard.closest('.monitoring-overview-grid')).toBeInTheDocument();
     expect(screen.getByText(/4 dropped since restart/)).toBeInTheDocument();
     expect(screen.getByText(/Archive writes are backing off/)).toBeInTheDocument();
     expect(screen.getByText(/Database query succeeded/)).toBeInTheDocument();
