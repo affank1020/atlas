@@ -26,6 +26,7 @@ internal object AtlasPush {
     fun setEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(ENABLED, enabled).apply()
+        if (configured(context)) FirebaseMessaging.getInstance().isAutoInitEnabled = enabled
     }
 
     fun configured(context: Context): Boolean = FirebaseApp.getApps(context).isNotEmpty()
@@ -42,6 +43,7 @@ internal object AtlasPush {
             .setProjectId(BuildConfig.ATLAS_FCM_PROJECT_ID)
             .build()
         FirebaseApp.initializeApp(application, options)
+        FirebaseMessaging.getInstance().isAutoInitEnabled = enabled(application)
     }
 
     fun currentToken(context: Context, onToken: (String) -> Unit) {
