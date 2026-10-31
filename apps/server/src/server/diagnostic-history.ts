@@ -24,9 +24,23 @@ export class ServerDiagnosticHistory {
     private writesSincePrune = 0;
     private dropped = 0;
     private stopped = false;
+    private sweepTimer?: ReturnType<typeof setInterval>;
+    private sweeping?: Promise<void>;
 
     constructor(private readonly database: DiagnosticDatabase, private readonly enabled = true,
-        private readonly clock: () => number = () => Date.now()) {}
+        private readonly clock: () => number = () => Date.now()) {
+        if (enabled) {
+            // Read filtering is immediate; physical expiry also runs on quiet
+            // installations even when no diagnostic events arrive for weeks.
+            this.sweepTimer = setInterval(() => {
+                if (this.stopped || this.sweeping) return;
+                const job = this.pruneExpired(10);
+                this.sweeping = job;
+                void job.finally(() => { if (this.sweeping === job) this.sweeping = undefined; });
+            }, 86_400_000);
+            this.sweepTimer.unref();
+        }
+    }
 
     record(event: ServerDiagnosticEvent): void {
         if (!this.enabled || this.stopped) return;
@@ -60,13 +74,9 @@ export class ServerDiagnosticHistory {
                 this.writesSincePrune += batch.length;
                 if (this.writesSincePrune >= 128) {
                     this.writesSincePrune = 0;
-                    // Incremental deletion limits lock time and query pressure. The
-                    // reader separately enforces the age window before returning rows.
-                    await this.database.query(
-                        'DELETE FROM atlas_server_diagnostic_events WHERE id IN ' +
-                        '(SELECT id FROM atlas_server_diagnostic_events ' +
-                        "WHERE occurred_at < NOW() - INTERVAL '14 days' ORDER BY occurred_at LIMIT 1000)",
-                    ).catch(() => undefined);
+                    // Small opportunistic batch; a separate daily sweep handles
+                    // quiet processes where this threshold is never reached.
+                    await this.pruneExpired(1);
                 }
             } catch {
                 this.dropped += batch.length + this.pending.length;
@@ -77,13 +87,32 @@ export class ServerDiagnosticHistory {
         }
     }
 
+    private async pruneExpired(maxBatches: number): Promise<void> {
+        try {
+            for (let attempt = 0; attempt < maxBatches; attempt++) {
+                const removed = await this.database.query(
+                    'DELETE FROM atlas_server_diagnostic_events WHERE id IN ' +
+                    '(SELECT id FROM atlas_server_diagnostic_events ' +
+                    "WHERE occurred_at < NOW() - INTERVAL '14 days' ORDER BY occurred_at LIMIT 1000) " +
+                    'RETURNING id',
+                );
+                if (removed.rows.length < 1000) break;
+            }
+        } catch {
+            // A failed cleanup must not affect tool dispatch; readers still
+            // enforce the 14-day window even when physical expiry is delayed.
+        }
+    }
+
     async flush(): Promise<void> {
         await this.writing;
     }
 
     async close(): Promise<void> {
         this.stopped = true;
+        if (this.sweepTimer) clearInterval(this.sweepTimer);
         await this.flush();
+        await this.sweeping;
     }
 
     async read(raw: unknown = {}) {
