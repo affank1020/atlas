@@ -199,7 +199,7 @@ export class RemoteNodeGateway {
                         ? { type:'response',requestId:request.requestId,ok:true,result:value }
                         : { type:'response',requestId:request.requestId,ok:false,error:value }));
                 };
-                const requires = enqueue.success ? 'device.share.send' : 'device.share.receive';
+                const requires = enqueue.success ? 'device.share.send' : 'device.inbox.receive';
                 const now = Date.now();
                 if (!this.offlineInbox || !current || this.sessions.get(originId) !== current ||
                     !current.runtime.getCapabilities().includes(requires) ||
