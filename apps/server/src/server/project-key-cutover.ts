@@ -173,7 +173,13 @@ export async function executeProjectKeyCutover(input:{
         // Compare the entire live catalogue (not merely the changed page)
         // under table locks, after waiting for any in-flight writer.
         await assertCatalogue(client,run,input.mode==="apply"?"old":"new");
-        await verifiedReceipts(client,run);
+        const lockedReceipts=await verifiedReceipts(client,run);
+        for(let i=0;i<receipts.length;i++){
+            if(lockedReceipts[i]!.ordinal!==receipts[i]!.ordinal||
+               lockedReceipts[i]!.sha256!==receipts[i]!.sha256||
+               Number(lockedReceipts[i]!.byte_size)!==Number(receipts[i]!.byte_size))
+                throw new Error("Project Storage byte receipts changed after R2 verification.");
+        }
         const entries=changes(run.items);
         const tables:Record<CutoverTable,number>={
             atlas_files:0,media_assets:0,media_variants:0,
