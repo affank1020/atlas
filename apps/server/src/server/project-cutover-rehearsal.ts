@@ -82,10 +82,47 @@ export async function rehearseProjectCutover(input:{
         const environment=await client.query<{db:string;schema:string}>(
             "SELECT current_database() AS db,current_schema() AS schema");
         const location=environment.rows[0];
-        if(!location||!(/^atlas_test_[a-f0-9]{32}$/.test(location.schema)||
-            /^atlas_cutover_rehearsal(?:_[a-z0-9_]+)?$/.test(location.db)))
+        const fixtureSchema=location&&/^atlas_test_[a-f0-9]{32}$/.test(location.schema);
+        const isolatedDatabase=location&&
+            /^atlas_cutover_rehearsal(?:_[a-z0-9_]+)?$/.test(location.db)&&
+            location.schema==="public";
+        if(!location||!(fixtureSchema||isolatedDatabase))
             throw new Error("Only disposable PostgreSQL rehearsal or isolated test schemas are permitted.");
+
+        // current_schema() alone is not a table isolation barrier: with
+        // search_path=empty_atlas_test_schema,public, unqualified relation
+        // names silently resolve to production public objects. Resolve ALL
+        // catalogue and receipt relations through PostgreSQL's actual name
+        // lookup rules before BEGIN or acquiring any table locks.
+        const resolved=await client.query<{name:string;namespace:string|null;kind:string|null}>(`
+            SELECT expected.name,n.nspname AS namespace,c.relkind::text AS kind
+            FROM (VALUES
+                ('projects','r'),
+                ('atlas_files','r'),
+                ('media_assets','r'),
+                ('media_variants','r'),
+                ('atlas_project_storage_objects','v'),
+                ('atlas_project_key_runs','r'),
+                ('atlas_project_key_manifest','r'),
+                ('atlas_project_key_receipts','r'),
+                ('atlas_project_recovery_runs','r'),
+                ('atlas_project_recovery_entries','r'),
+                ('atlas_project_recovery_receipts','r')
+            ) AS expected(name,kind)
+            LEFT JOIN pg_class c ON c.oid=to_regclass(expected.name)
+            LEFT JOIN pg_namespace n ON n.oid=c.relnamespace
+        `);
+        if(resolved.rows.length!==11||
+           resolved.rows.some(row=>row.namespace!==location.schema||
+               (row.name==="atlas_project_storage_objects"?row.kind!=="v":row.kind!=="r")))
+            throw new Error("Cutover rehearsal relations resolve outside the disposable catalogue schema.");
+
         await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");begun=true;
+        // Prevent fallback to public after the preflight even if a relation
+        // in the selected schema is concurrently dropped before LOCK.
+        // The schema name is regex/identity checked above and SQL-quoted by
+        // PostgreSQL; this setting is transaction-local and always rolled back.
+        await client.query("SELECT set_config('search_path',quote_ident($1),true)",[location.schema]);
         await client.query("SET LOCAL lock_timeout='2500ms'");
         await client.query("SET LOCAL statement_timeout='15000ms'");
         // These locks serialize INSERT/UPDATE/DELETE across all three tables
