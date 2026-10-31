@@ -47,7 +47,7 @@ See [mobile architecture and releases](../../docs/MOBILE_NODES.md). Gradle prope
 6. Android 0.6.0 adds an opt-in background service and content-free notifications for *live* text receiving while using other apps.
 7. Android 0.7.0 connects its Inbox tab to the encrypted offline queue from server PR #175, with manual Refresh, Review, Copy and Decline. The Mac sender queues text with `./atlasctl share --queue` and its separate native confirmation. A queued receipt does **not** mean copied.
 8. Android 0.8.0 adds opt-in Firebase wake-up hints for encrypted queued text; physical FCM acceptance remains pending.
-9. Android 0.9.0 adds explicit PNG/JPEG image transfer (including cropped snips) to a Mac with `ATLAS_NODE_IMAGE_RECEIVE_ENABLED=true` and existing directional approval. Physical Mac image clipboard paste acceptance is pending; see [MOBILE_IMAGE_HANDOFF.md](../../docs/MOBILE_IMAGE_HANDOFF.md).
+9. Android 0.9.0 adds explicit PNG/JPEG image transfer (including cropped snips) to a Mac with `ATLAS_NODE_IMAGE_RECEIVE_ENABLED=true`, existing directional approval, **and** separate server `ATLAS_DEVICE_IMAGE_PAIRS` opt-in. Physical Mac image clipboard paste acceptance is pending; see [MOBILE_IMAGE_HANDOFF.md](../../docs/MOBILE_IMAGE_HANDOFF.md).
 
 Refer to [Atlas Connect](../../docs/atlas-connect-roadmap.md) for the broader milestones.
 
