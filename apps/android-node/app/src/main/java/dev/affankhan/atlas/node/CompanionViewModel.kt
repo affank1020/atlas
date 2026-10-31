@@ -222,6 +222,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     fun stopConnection() {
         owners = owners.activityStopped()
+        // Never retain decrypted preview text when the last visible Activity
+        // is backgrounded. The server remains the durable encrypted source.
+        if (!owners.activityVisible) queuedInboxPreview = null
         if (owners.connected) {
             // A different Activity may still be visible. Only issue a
             // background notification once the final visible Activity stops.
