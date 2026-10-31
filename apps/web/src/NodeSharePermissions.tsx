@@ -40,7 +40,7 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
     }, [source.id, revision]);
 
     async function change(target: AtlasNode, enabled: boolean) {
-        if (busyId || loading || !loaded) return;
+        if (busyId || loading || !loaded || error) return;
         const environmentGranted = approvals.some(entry =>
             entry.origin === 'environment' &&
             entry.sourceNodeId.toLowerCase() === source.id.toLowerCase() &&
@@ -104,7 +104,7 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
                         </div>
                         {env && !managed ? <span className="badge muted">Read-only</span>
                             : <button type="button" className={managed ? 'ghost danger' : 'ghost'}
-                                disabled={busyId !== null || (!permission && !canApprove)}
+                                disabled={loading || !!error || busyId !== null || (!permission && !canApprove)}
                                 title={!permission && !canApprove ? 'Both Nodes require active credentials' : undefined}
                                 onClick={() => void change(target, !managed)}>
                                 {busyId === target.id ? 'Saving…' : managed && env ? 'Revoke Atlas approval' : managed ? 'Revoke access' : 'Approve sharing'}
