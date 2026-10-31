@@ -7,6 +7,7 @@ import type { Project } from './types';
 import type { AtlasNode } from './Nodes';
 import { callTool } from './api';
 import './workspace-overview.css';
+import { SkeletonRows } from './Skeletons';
 
 export function WorkspaceHeading({ title, copy, children }: { title: string; copy: string; children?: React.ReactNode }) {
     return <header className="page-head"><div><p className="eyebrow">Atlas workspace</p><h1>{title}</h1><p>{copy}</p></div><div className="actions">{children}</div></header>;
