@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { AtlasError } from '@atlas/protocol/errors';
 import { MAX_DEVICE_IMAGE_BYTES, type DeviceImageDelivery } from '@atlas/protocol/device-protocol';
+import { imageDimensions } from '@atlas/protocol/image-format';
 
 export type IncomingImage = Omit<DeviceImageDelivery, 'type' | 'kind' | 'requestId'> & { bytes: Buffer };
 type Approve = (input: IncomingImage, signal?: AbortSignal) => Promise<boolean>;
@@ -105,13 +106,5 @@ export class MacImageReceiver {
  * NSBitmapImageRep performs full image decoding before pasteboard mutation.
  */
 export function validImage(bytes: Buffer, type: string): boolean {
-    if (type === 'image/png') return bytes.length >= 24 &&
-        bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) &&
-        bytes.toString('ascii',12,16) === 'IHDR' &&
-        bytes.readUInt32BE(16) >= 1 && bytes.readUInt32BE(20) >= 1 &&
-        bytes.readUInt32BE(16) <= 16384 && bytes.readUInt32BE(20) <= 16384;
-    if (type === 'image/jpeg') return bytes.length >= 24 &&
-        bytes[0] === 0xff && bytes[1] === 0xd8 &&
-        bytes[bytes.length-2] === 0xff && bytes[bytes.length-1] === 0xd9;
-    return false;
+    return imageDimensions(bytes,type)!==null;
 }
