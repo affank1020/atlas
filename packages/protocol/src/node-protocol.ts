@@ -20,7 +20,7 @@ const workspaceSchema = z.object({
 }).strict();
 export const nodeRequestSchema = z.discriminatedUnion('kind', [
     z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('bind'), rootPath: z.string().min(1).max(4096) }).strict(),
-    z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('node_logs'), source: z.enum(['stdout', 'stderr', 'journal']), lines: z.number().int().min(1).max(200) }).strict(),
+    z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('node_logs'), source: z.enum(['stdout', 'stderr', 'journal', 'service']), lines: z.number().int().min(1).max(200) }).strict(),
     z.object({ type: z.literal('request'), requestId: z.string().uuid(), kind: z.literal('execute'), workspace: workspaceSchema,
         operation: z.enum(Object.keys(requiredCapability) as [keyof typeof requiredCapability, ...(keyof typeof requiredCapability)[]]),
         input: z.record(z.string(), z.unknown()),
