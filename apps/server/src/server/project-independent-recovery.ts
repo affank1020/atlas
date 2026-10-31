@@ -165,9 +165,29 @@ export async function loadProjectRecoveryManifest(database:Pick<Pool,"query">,
 }
 async function assertCatalog(database:Pick<Pool,"query">,m:ProjectRecoveryManifest){
     const current=await readProjectKeySnapshot(database,m.projectId);
-    if(current.sha256!==m.catalogSha256||
-       current.items.length!==(m.versionedCopyRunId?m.entries.length/2:m.entries.length))
+    const stride=m.versionedCopyRunId?2:1;
+    if(current.sha256!==m.catalogSha256||current.items.length*stride!==m.entries.length)
         throw new Error("Project recovery catalogue does not match the captured manifest.");
+    // Bind every recovery key to its authoritative catalog identity, not just
+    // to an internally consistent checksum. In particular a restored DB must
+    // not pass with an unrelated old key or unreceipted versioned destination.
+    for(let i=0;i<current.items.length;i++){
+        const item=current.items[i]!,row=item.row,original=m.entries[i*stride]!;
+        if(original.keyKind!=="legacy"||original.source!==row.source||
+           original.fileId!==row.file_id||original.variant!==row.variant||
+           original.storageKey!==row.storage_key||original.status!==row.status||
+           original.byteSize!==Number(row.byte_size)||
+           row.checksum!==null&&original.sha256!==row.checksum)
+            throw new Error("Project recovery manifest key does not match the authoritative catalogue.");
+        if(stride===2){
+            const copy=m.entries[i*stride+1]!;
+            if(copy.keyKind!=="versioned"||copy.storageKey!==item.target||
+               copy.source!==original.source||copy.fileId!==original.fileId||
+               copy.variant!==original.variant||copy.sha256!==original.sha256||
+               copy.byteSize!==original.byteSize||copy.status!==original.status)
+                throw new Error("Versioned Project recovery entry does not match its source.");
+        }
+    }
 }
 export type SeedRecoveryReport = {mode:"dry-run"|"apply";status:"ready"|"completed"|"partial"|"failed";
     checked:number;existingVerified:number;planned:number;createdVerified:number;
