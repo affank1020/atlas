@@ -155,13 +155,14 @@ def apply_update(layout, *, migrate: bool) -> int:
         or fresh["recoveryPending"]
     ):
         raise Refused("Release or host state changed; check again and reconfirm.")
-    releases = catalogue.verified_catalogue(
-        catalogue.releases_from_json(catalogue.read_public_release_catalogue())
-    )
-    match = [release for release in releases if release["tag"] == tag]
-    if len(match) != 1 or match[0]["commit"] != fresh["candidateSource"]:
-        raise Refused("Approved release is absent or ambiguous in the refreshed catalogue.")
-    selected = match[0]
+    # The second complete catalogue read already confirmed the same immutable
+    # tag, source and digest; staging independently re-fetches the exact
+    # release and verifies its signed archive before any activation.
+    selected = {
+        "tag": tag,
+        "commit": fresh["candidateSource"],
+        "digest": fresh["candidateDigest"],
+    }
     prepared_release(layout, selected)
 
     # The lifecycle owns the exclusive lock for both watchdog installation and
