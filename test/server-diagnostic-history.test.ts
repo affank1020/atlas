@@ -304,3 +304,105 @@ test('expired rows and future-dated rows stay excluded across diagnostic history
     assert.equal(second.nextCursor, undefined);
     await history.close();
 });
+
+test('startup and recurring bounded retention sweeps catch up on a quiet large backlog', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let expiredRows = 23_500;
+    let deletes = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                const n = Math.min(1000, expiredRows);
+                expiredRows -= n;
+                return { rows: Array.from({ length: n }, () => ({ occurred_at: new Date(), code: 'server_initialised' })) };
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 20);
+    const start = await service.status();
+    assert.ok(['not-checked', 'more-possible'].includes(start.retentionCleanup));
+    const deadline = Date.now() + 2000;
+    while (expiredRows && Date.now() < deadline) await pause(10);
+    const observed = await service.status();
+    assert.equal(expiredRows, 0, 'a bounded recurring sweep should eventually drain a backlog larger than one budget');
+    assert.equal(observed.retentionCleanup, 'caught-up');
+    assert.ok(deletes >= 24, 'multiple batches and sweeps required');
+    await service.close();
+    const afterClose = deletes;
+    await pause(70);
+    assert.equal(deletes, afterClose, 'no timer should restart maintenance after close');
+});
+
+test('retention failure is non-fatal, remains visible, and recovers on a later sweep', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let failures = 1;
+    let deletes = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                if (failures--) throw new Error('private pg maintenance error');
+                return { rows: [] };
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 90);
+    const deadline = Date.now() + 1200;
+    while ((await service.status()).retentionCleanup !== 'unavailable' && Date.now() < deadline) await pause(5);
+    const unavailable = await service.status();
+    assert.equal(unavailable.state, 'available', 'reader can work despite failed expiry cleanup');
+    assert.equal(unavailable.retentionCleanup, 'unavailable');
+    assert.ok(!JSON.stringify(unavailable).includes('private'));
+    while ((await service.status()).retentionCleanup !== 'caught-up' && Date.now() < deadline) await pause(5);
+    assert.equal((await service.status()).retentionCleanup, 'caught-up');
+    assert.ok(deletes >= 2);
+    await service.close();
+});
+
+test('retention intervals cannot overlap an unfinished sweep and closing drains it', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let started!: () => void;
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const firstStarted = new Promise<void>(resolve => { started = resolve; });
+    let active = 0;
+    let peak = 0;
+    let deletes = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                active++;
+                peak = Math.max(peak, active);
+                started();
+                await pending;
+                active--;
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 15);
+    await firstStarted;
+    await pause(55);
+    assert.equal(deletes, 1, 'later timers must not launch overlapping SELECT/DELETEs');
+    assert.equal(peak, 1);
+    const closing = service.close();
+    finish();
+    await closing;
+    assert.equal(active, 0);
+    const finalDeletes = deletes;
+    await pause(45);
+    assert.equal(deletes, finalDeletes, 'shutdown must cancel both startup and periodic timers');
+});
+
+test('disabled diagnostic archive never schedules maintenance', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let calls = 0;
+    const service = new ServerDiagnosticHistory({
+        query: async () => { calls++; return { rows: [] }; },
+    }, false, undefined, 10);
+    await pause(40);
+    assert.equal((await service.status()).retentionCleanup, 'disabled');
+    assert.equal(calls, 0);
+    await service.close();
+});

@@ -20,6 +20,7 @@ const base = () => ({
 const diagnostics = {
     status: 'available', coverage: 'incomplete-possible', retentionDays: 14,
     droppedSinceStart: 0, queuedForWrite: 0, writePaused: false,
+    retentionCleanup: 'caught-up',
 };
 
 test('Monitoring health distinguishes DB success from diagnostic archive backoff and links retained evidence', async () => {
@@ -127,4 +128,40 @@ test('verified archive and explicitly disabled archive retain a healthy aggregat
         expect(screen.getByLabelText('Overall health')).toHaveClass('success');
         view.unmount();
     }
+});
+
+test('retention backlog and failed cleanup remain visible even with a readable archive', async () => {
+    for (const [retentionCleanup, explanation] of [
+        ['more-possible', /Expiry cleanup reached its bounded work budget/],
+        ['unavailable', /Expiry cleanup failed/],
+        ['not-checked', /Physical expiry has not been verified/],
+    ] as const) {
+        location.hash = '#/monitoring?tab=overview';
+        vi.mocked(callTool).mockResolvedValue({ ...base(), overall: 'unknown',
+            diagnostics: { ...diagnostics, retentionCleanup },
+        } as never);
+        const view = render(<MonitoringPage />);
+        expect(await screen.findByText(explanation)).toBeInTheDocument();
+        expect(screen.getByLabelText('Overall health')).toHaveTextContent('unknown');
+        expect(screen.getByText(/Database query succeeded/)).toBeInTheDocument();
+        view.unmount();
+    }
+});
+
+test('older archive health without retention evidence does not paint the aggregate green', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    const { retentionCleanup: _unused, ...oldDiagnostics } = diagnostics;
+    vi.mocked(callTool).mockResolvedValue({ ...base(), diagnostics: oldDiagnostics } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Physical expiry has not been verified/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Overall health')).toHaveTextContent('unknown');
+    expect(screen.getByLabelText('Overall health')).not.toHaveClass('success');
+});
+
+test('caught-up retention remains explicitly best-effort and does not change archive-healthy status', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockResolvedValue({ ...base(), diagnostics } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Physical expiry sweep caught up/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Overall health')).toHaveTextContent('healthy');
 });
