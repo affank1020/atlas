@@ -85,9 +85,10 @@ separately inspected maintenance action.
 ## Operational caveats and acceptance
 
 The standard `./atlasctl launchd install` still manages a **development
-checkout**. Do not rerun it over a release-managed plist: restore the previous
-config using this lifecycle's rollback or follow an explicit manual recovery
-procedure. If an update fails to restore local connectivity, the pending
+checkout**. It refuses to replace a release-managed plist; the normal
+`atlasctl` Node start/stop/restart/uninstall entrypoints also refuse to touch
+an in-progress lifecycle transaction. Use this lifecycle's rollback or an
+explicit manual recovery procedure to change the selected release. If an update fails to restore local connectivity, the pending
 journal is left for recovery; investigate before attempting another update.
 The recovery watchdog runs as a per-user LaunchAgent and therefore requires
 that the logged-in user session exists; it is **not** an always-on system

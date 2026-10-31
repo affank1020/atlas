@@ -27,6 +27,7 @@ const sourceNodeEntrypoint = join(nodeDir, "src/platforms/desktop/main.ts");
 const launchdLabel = "com.affank1020.atlas.node";
 const launchdDirectory = join(controlHome, "Library/LaunchAgents");
 const launchdPlist = join(launchdDirectory, `${launchdLabel}.plist`);
+const macLifecyclePendingFile = join(controlHome, "Library/Application Support/Atlas/NodeSoftware/activation/pending.json");
 const launchdLogDirectory = join(controlHome, "Library/Logs/Atlas");
 const launchdStdout = join(launchdLogDirectory, "node.log");
 const launchdStderr = join(launchdLogDirectory, "node-error.log");
@@ -273,6 +274,10 @@ function launchdPath() {
   return [...new Set(values.filter(value => value.startsWith("/")))].join(":");
 }
 
+function macLifecyclePending() {
+  return existsSync(macLifecyclePendingFile);
+}
+
 function isReleaseManagedLaunchAgent() {
   // A release-managed plist is owned by the explicit macOS lifecycle.
   // Never silently point it back at a development checkout.
@@ -348,6 +353,10 @@ async function installLaunchd() {
     console.error("Atlas Node launchd integration requires macOS and launchctl.");
     return false;
   }
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing to replace its LaunchAgent.");
+    return false;
+  }
   if (isReleaseManagedLaunchAgent()) {
     console.error("Atlas Node is release-managed. Use macos-node-lifecycle.py rollback; refusing to overwrite its LaunchAgent with a development checkout.");
     return false;
@@ -404,6 +413,10 @@ async function installLaunchd() {
 async function uninstallLaunchd() {
   if (controlPlatform !== "darwin" || !commandExists("launchctl")) {
     console.error("Atlas Node launchd integration requires macOS and launchctl.");
+    return false;
+  }
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing to uninstall its LaunchAgent.");
     return false;
   }
   const current = launchdState();
@@ -651,6 +664,10 @@ async function stopService(name, service = services[name]) {
 }
 
 async function startLaunchdNode() {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing a separate start.");
+    return false;
+  }
   const current = launchdState();
   if (!current.loaded) {
     console.error("The Atlas Node LaunchAgent is installed but not loaded. Run './atlasctl launchd install' to repair it.");
@@ -675,6 +692,10 @@ async function startLaunchdNode() {
 }
 
 async function stopLaunchdNode() {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing a separate stop.");
+    return false;
+  }
   const current = launchdState();
   if (!current.loaded || !current.pid) {
     console.log("Hosted Atlas Node is already stopped; its LaunchAgent remains installed for the next login.");
@@ -742,6 +763,10 @@ async function stopHostedNode() {
 }
 
 async function restartHostedNode() {
+  if (macLifecyclePending()) {
+    console.error("A Mac Node activation or rollback is pending recovery; refusing an unrelated restart.");
+    return false;
+  }
   const configError = hostedConfigurationError();
   if (configError) { console.error(configError); return false; }
   const launchd = launchdState();
