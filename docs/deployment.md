@@ -96,7 +96,36 @@ the corresponding Compose manifest has completed and the Server container has
 been recreated. The workflow uploads the manifest, **never** the private
 environment file.
 
-For a deliberately approved Code Reviews test repository, configure only:
+To enable native Code Reviews comments for **all** repositories accessible to
+the installed GitHub App, set these variables in the private production
+`infra/production.env`:
+
+```env
+ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=
+ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES=true
+ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES=
+```
+
+This single global opt-in covers managed PR summaries, new inline finding
+threads, continuing inline replies and fix-evidence replies. It does **not**
+enable the legacy COMMENT-review publisher, approve/merge pull requests,
+automatically publish reviews, or resolve GitHub GraphQL conversations.
+Explicit `apply:true`, the saved-review OAuth submitter, current head checks,
+Bot-owned thread verification, durable claims, and repository-scoped GitHub App
+`pull_requests:write` permission remain mandatory. Any existing per-repository
+native flags are validated but do not restrict global publishing while active.
+
+**Before cutover:** The legacy review publisher must be disabled for *every*
+repository, including those not previously opted into native publishing.
+Startup fails if the legacy repository allowlist is nonempty while global
+native mode is enabled. Ensure the Code Reviewer skill is not independently
+posting the same review through its legacy GitHub path; do not republish
+previously reviewed rounds. Deploy the updated Compose manifest, recreate the
+Server with the private flag, and verify dry-run plus explicit live publication
+on fresh PRs in both Atlas and Relay. A deployment alone does not change the
+private VPS environment; the env edit is required once, not for each new repo.
+
+For a deliberately approved Code Reviews test repository instead, configure:
 
 ```env
 ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=

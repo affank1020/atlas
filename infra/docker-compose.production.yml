@@ -50,7 +50,10 @@ services:
       ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON: ${ATLAS_CODE_REVIEW_TRUSTED_PUBLISHERS_JSON:-}
       # Disabled by default; enables explicit GitHub COMMENT reviews only.
       ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: ${ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES:-}
-      # Native GitHub comment publishers are independently opted in per repository.
+      # Explicit global native opt-in for all repositories accessible to the GitHub App.
+      # Never enables legacy reviews or GraphQL thread resolution.
+      ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: ${ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES:-false}
+      # Native GitHub comment publishers can alternatively be opted in per repository.
       # Defaults deny all writes. Keep legacy COMMENT publisher disabled during cutover.
       ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES: ${ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES:-}
       ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES: ${ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES:-}
