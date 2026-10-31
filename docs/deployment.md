@@ -59,10 +59,11 @@ Atlas data snapshots from Docker build contexts.
   `ghcr.io/affank1020/atlas-server` and `ghcr.io/affank1020/atlas-web`
   tagged with the exact Git commit SHA and with `latest`. It uses the
   short-lived GitHub Actions token rather than a stored registry password.
-- **Atlas Deploy** is manual-only (`workflow_dispatch`) and restricted to
-  `main`. It deploys the images tagged with the workflow's commit SHA using
-  `docker compose pull` and `up --no-build --wait`. It does not run Node
-  on the VPS or copy the repository's local data.
+- **Atlas Deploy** runs after successful `main` Atlas CI via
+  `workflow_run`, or by an explicit `workflow_dispatch` on `main`. It deploys
+  the immutable image tag matching the selected commit using `docker compose
+  pull` and `up --no-build --wait`. It does not run Node on the VPS or copy
+  the repository's local data.
 
 Before first deployment:
 
@@ -85,6 +86,69 @@ Before first deployment:
    the persistent VPS volume. A fresh production volume starts empty.
 5. Confirm DNS points to the VPS, ports 80/443 are reachable, and HTTPS can
    be provisioned by Caddy. Then trigger **Atlas Deploy** in GitHub Actions.
+
+## Code Reviews: controlled GitHub publisher opt-in
+
+The production Compose manifest exposes separate **Server-only** repository
+allowlists, each empty by default. Setting a flag in the private
+`~/atlas-deploy/infra/production.env` does nothing until a deployment with
+the corresponding Compose manifest has completed and the Server container has
+been recreated. The workflow uploads the manifest, **never** the private
+environment file.
+
+To enable native Code Reviews comments for **all** repositories accessible to
+the installed GitHub App, set these variables in the private production
+`infra/production.env`:
+
+```env
+ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=
+ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES=true
+ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES=
+```
+
+This single global opt-in covers managed PR summaries, new inline finding
+threads, continuing inline replies and fix-evidence replies. It does **not**
+enable the legacy COMMENT-review publisher, approve/merge pull requests,
+automatically publish reviews, or resolve GitHub GraphQL conversations.
+Explicit `apply:true`, the saved-review OAuth submitter, current head checks,
+Bot-owned thread verification, durable claims, and repository-scoped GitHub App
+`pull_requests:write` permission remain mandatory. Any existing per-repository
+native flags are validated but do not restrict global publishing while active.
+
+**Before cutover:** The legacy review publisher must be disabled for *every*
+repository, including those not previously opted into native publishing.
+Startup fails if the legacy repository allowlist is nonempty while global
+native mode is enabled. Ensure the Code Reviewer skill is not independently
+posting the same review through its legacy GitHub path; do not republish
+previously reviewed rounds. Deploy the updated Compose manifest, recreate the
+Server with the private flag, and verify dry-run plus explicit live publication
+on fresh PRs in both Atlas and Relay. A deployment alone does not change the
+private VPS environment; the env edit is required once, not for each new repo.
+
+For a deliberately approved Code Reviews test repository instead, configure:
+
+```env
+ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=
+ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES=owner/repo
+ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES=owner/repo
+ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES=owner/repo
+ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES=owner/repo
+ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES=
+```
+
+The `PUBLISH_REPOSITORIES` flag is the **legacy** per-review GitHub COMMENT
+publisher; it must not overlap the native Atlas-managed flags. The Server
+explicitly rejects any repository present in both. GraphQL review-thread
+resolution is a separate, higher-permission feature that should remain disabled
+for initial comment-publishing acceptance.
+
+Only after the reviewed deployment is live, verify a current authenticated
+Code Reviewer skill, verified GitHub App `Pull requests:write` scope, and a
+fresh two-head test PR with explicit publisher approval. A dry-run preview is
+not publication; native writes require `apply:true` and durable GitHub
+read-back. Do not enable the old reviewer and native Atlas publishers
+simultaneously. Do not use historical already-reviewed PRs to generate
+duplicate live comments.
 
 The deploy workflow uploads only the Compose manifest, not the environment
 file. Images are chosen by `ATLAS_IMAGE_TAG`, which the workflow sets to the

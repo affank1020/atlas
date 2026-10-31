@@ -4,6 +4,7 @@ import { rememberWork } from './recentWork';
 import { CatalogueHeading, CatalogueToolbar, filterCatalogue } from './CatalogueBrowse';
 import type { ApplicationManifest } from './Applications';
 import './applications-directory.css';
+import { SkeletonCards } from './Skeleton';
 
 const launchHref = (app: ApplicationManifest) => app.projectId
     ? `#/projects/${app.projectId}/applications/${app.slug}`
@@ -32,18 +33,18 @@ export function ApplicationsDirectory() {
                 aria-label="Refresh applications">↻ Refresh</button>
         } />
         <CatalogueToolbar label="Search applications" placeholder="Find an application…" query={search}
-            onQueryChange={setSearch} count={visible.length} itemName="application" />
-        {isLoading && <p className="application-directory-state" role="status">Loading applications…</p>}
+            onQueryChange={setSearch} count={isLoading ? null : visible.length} itemName="application" />
+        {isLoading && <SkeletonCards count={4} label="Loading applications" />}
         {error && <div className="notice error" role="alert">Couldn't load applications. <button type="button" className="ghost" onClick={() => void refetch()}>Try again</button></div>}
         {isFetching && !isLoading && !error && <small role="status" className="applications-refresh-status">Refreshing applications…</small>}
         {!isLoading && !error && visible.length === 0 && <p className="application-directory-state">{applications.length === 0 ? 'No applications are registered yet.' : 'No applications match your search.'}</p>}
         {!isLoading && !error && <div className="applications-directory-grid">
             {visible.map(app => <a key={`${app.projectId ?? 'standalone'}/${app.slug}`}
-                className="applications-directory-card" href={launchHref(app)} target="_blank" rel="noopener noreferrer"
-                aria-label={`Launch ${app.name} in a new tab`}
+                className="applications-directory-card" href={launchHref(app)}
+                aria-label={`Launch ${app.name}`}
                 onClick={() => rememberWork({ href: launchHref(app), name: app.name, projectId: app.projectId, kind: 'Application' })}>
                 <span className="applications-directory-icon"><ApplicationSymbol type={app.type} /></span>
-                <span className="applications-directory-arrow" aria-hidden="true">↗</span>
+                <span className="applications-directory-arrow" aria-hidden="true">→</span>
                 <span className="applications-directory-card-name">{app.name}</span>
                 <span className="applications-directory-card-copy">{app.description}</span>
             </a>)}

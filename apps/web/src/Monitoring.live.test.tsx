@@ -231,3 +231,23 @@ test('a live Activity deep link opened in a hidden tab does not read until visib
     await flush();
     expect(callTool).toHaveBeenCalledTimes(1);
 });
+
+test('live failures back off without overlapping; a successful read restores the normal interval', async () => {
+    vi.useFakeTimers();
+    location.hash = '#/monitoring?tab=activity&live=1';
+    vi.mocked(callTool).mockRejectedValueOnce(new Error('temporary outage'))
+        .mockResolvedValue(activity('recovered') as never);
+    render(<MonitoringPage />);
+    await flush();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('temporary outage');
+    await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+    expect(callTool).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(callTool).toHaveBeenCalledTimes(3);
+});

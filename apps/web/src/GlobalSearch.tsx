@@ -30,7 +30,6 @@ function Icon({ kind }: { kind: SearchKind }) {
     if (kind === 'view') return <ShellIcon name="views" />;
     return <ShellIcon name="nodes" />;
 }
-function isExternalWindow(hit: Result) { return hit.kind === 'application'; }
 
 export function GlobalSearch({ onClose }: { onClose: () => void }) {
     const [query, setQuery] = useState('');
@@ -117,14 +116,13 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
                         const inner = <>
                             <span className="global-search-result-icon"><Icon kind={hit.kind} /></span>
                             <span className="global-search-result-copy"><strong>{hit.title}</strong><small>{hit.context}{hit.description ? ' · ' + hit.description : ''}</small></span>
-                            <span className="global-search-open" aria-hidden="true">↗</span>
+                            <span className="global-search-open" aria-hidden="true">{hit.kind === 'application' ? '→' : '↗'}</span>
                         </>;
                         const className = 'global-search-result' + (index === active ? ' selected' : '');
                         return <a key={hit.kind + hit.id + hit.href}
                                 ref={element => { linksRef.current[index] = element; }}
                                 className={className} aria-current={index === active ? 'true' : undefined}
-                                href={hit.href} target={isExternalWindow(hit) ? '_blank' : undefined}
-                                rel={isExternalWindow(hit) ? 'noopener noreferrer' : undefined}
+                                href={hit.href}
                                 onMouseEnter={() => setActive(index)} onClick={onClose}>{inner}</a>;
                     })}
                 </section>)}

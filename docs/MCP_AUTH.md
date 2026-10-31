@@ -163,3 +163,33 @@ Do **not** delete the old database or local private backup yet.
   streaming. Turn the flag off after diagnosis. Do not collect raw Authorization
   headers in Caddy access logs; remove temporary access logging when done.
 - Keep `/mcp` behind OAuth; don't remove Server validation to fix linking.
+
+
+## Relay client as a self-hosted MCP peer
+
+ChatGPT continues authenticating with Auth0. Relay can use a **dedicated service
+token**, generated privately once on a trusted terminal:
+
+```sh
+token="$(openssl rand -hex 32)"
+printf 'Atlas digest: '
+printf '%s' "$token" | shasum -a 256 | awk '{print $1}'
+# Save the generated $token privately into ~/relay/.env as ATLAS_MCP_TOKEN.
+# Store only its printed SHA-256 digest in ~/atlas-deploy/infra/production.env:
+# ATLAS_MCP_RELAY_TOKEN_SHA256=<digest>
+unset token
+```
+
+Never paste the token into ChatGPT, logs, issues, Git or shell history.
+On Relay set `ATLAS_MCP_URL=https://atlas.affankhan.dev/mcp` and
+`ATLAS_MCP_TOKEN=<raw-token>`; **no Auth0 client secret or OAuth app** is needed.
+Keep `ATLAS_MCP_OAUTH_ISSUER` and `ATLAS_MCP_OAUTH_ALLOWED_SUBJECT` unchanged
+for your ChatGPT connector.
+
+Atlas compares the service token digest in constant time. A valid Relay
+credential receives an Atlas-enforced read-only MCP catalogue; mutations and
+`workspace_run_dev_task` are not available to this identity. The server
+does not grant more authority simply because a caller advertises a tool.
+Start with a real `get_atlas_status` smoke test from Relay before extending
+permissions. If the token leaks, regenerate it, update both private env files,
+and redeploy Atlas and Relay.

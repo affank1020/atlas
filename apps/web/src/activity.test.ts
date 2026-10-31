@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clientName, filterActivity, presentActivity } from './activity';
+import { activityEvidence, clientName, filterActivity, presentActivity } from './activity';
 import type { AuditEvent } from './types';
 export const event = (id: string, operation: string, resulting: unknown = {}, extra: Partial<AuditEvent> = {}): AuditEvent => ({ id, operation, resulting, occurredAt: '2026-10-06T19:52:37Z', client: 'chatgpt', projectId: 'project', workspaceId: 'workspace', ...extra });
 describe('activity presentation', () => {
@@ -93,4 +93,48 @@ it('sorts correlated activity by latest member time, not selected failure eviden
         description: 'Rejected',
     });
     expect(items[1].timestamp).toBe('2026-10-22T08:01:00Z');
+});
+
+it('presents Node-control provenance as recorded metadata, not operator identity', () => {
+    const result = presentActivity([event('n', 'node.update_outcome_reported', {
+        transport: 'mcp', actorKind: 'node-credential',
+        nodeId: '11111111-1111-4111-8111-111111111111',
+        sourceNodeId: '22222222-2222-4222-8222-222222222222',
+        targetNodeId: '33333333-3333-4333-8333-333333333333',
+        intentId: '44444444-4444-4444-8444-444444444444',
+        reportedState: 'activated', status: 'reconciled',
+        approved: true, verified: false, clearsClaim: false,
+    }, { client: 'atlas-node' })])[0];
+    expect(activityEvidence(result)).toEqual(expect.arrayContaining([
+        { label: 'Recorded client', value: 'atlas-node' },
+        { label: 'Transport', value: 'mcp' },
+        { label: 'Credential class', value: 'node-credential' },
+        { label: 'Node-reported activation', value: 'activated' },
+        { label: 'Verification flag', value: 'false' },
+        { label: 'Source Node', value: '22222222-2222-4222-8222-222222222222' },
+        { label: 'Target Node', value: '33333333-3333-4333-8333-333333333333' },
+    ]));
+    expect(activityEvidence(result).some(row => /user|human|operator identity/i.test(row.label))).toBe(false);
+});
+
+it('rejects forged identity-like provenance on unrelated operations and malformed IDs', () => {
+    const raw = presentActivity([event('m', 'record.updated', {
+        transport: 'http', actorKind: 'admin', verified: true,
+        intentId: 'not-a-uuid', sourceNodeId: 'bad-source', targetNodeId: 'bad-target',
+        status: 'reconciled', reportedState: 'activated', source: 'operator-cli',
+    }, { workspaceId: undefined, client: 'browser' })])[0];
+    expect(activityEvidence(raw)).toEqual([{ label: 'Recorded client', value: 'browser' }]);
+});
+
+it('labels trusted Files triggers and backup CLI sources without creating human attribution', () => {
+    const files = presentActivity([event('f', 'files.record_updated', {
+        source: 'database-trigger', actorKind: 'person', transport: 'shell',
+    }, { client: 'atlas-files-db', workspaceId: undefined })])[0];
+    const backup = presentActivity([event('b', 'backup.r2_seed_observed', {
+        source: 'operator-cli', runId: '55555555-5555-4555-8555-555555555555',
+    }, { client: 'atlas-backup-cli', workspaceId: undefined })])[0];
+    expect(activityEvidence(files)).toContainEqual({ label: 'Recorded source', value: 'database-trigger' });
+    expect(activityEvidence(backup)).toContainEqual({ label: 'Recorded source', value: 'operator-cli' });
+    expect(activityEvidence(backup)).toContainEqual({ label: 'Backup run', value: '55555555-5555-4555-8555-555555555555' });
+    expect(activityEvidence(files).some(row => row.label === 'Credential class')).toBe(false);
 });

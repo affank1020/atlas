@@ -4,11 +4,22 @@ import type { AtlasNode } from '../nodes/model.js';
 const inputSchema = z.object({}).strict();
 export type MonitoringHealthState = 'healthy' | 'degraded' | 'unknown';
 export type NodeHealthState = 'healthy' | 'stale' | 'offline' | 'unavailable' | 'revoked' | 'unknown';
+export type DiagnosticArchiveState = 'available' | 'unavailable' | 'disabled' | 'unknown';
+export type DiagnosticArchiveHealth = {
+    status: DiagnosticArchiveState;
+    coverage: 'incomplete-possible';
+    retentionDays: 14;
+    droppedSinceStart: number | null;
+    queuedForWrite: number | null;
+    writePaused: boolean | null;
+    retentionCleanup: 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable' | 'disabled' | 'unknown';
+};
 export type MonitoringHealth = {
     checkedAt: string;
     overall: MonitoringHealthState;
     server: { status: 'healthy' | 'degraded'; startedAt: string; uptimeSeconds: number;
         database: { status: 'reachable' | 'unavailable'; latencyMs?: number } };
+    diagnostics: DiagnosticArchiveHealth;
     nodes: { available: boolean; summary: { total: number; healthy: number; stale: number; offline: number;
         unavailable: number; revoked: number; unknown: number };
         items: Array<{ id: string; name: string; platform: string; version: string | null;
@@ -30,7 +41,9 @@ function withinDeadline<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
 const STALE_MS = 90_000; // Gateway closes missed heartbeats after 45 s; allow scheduling jitter.
 function state(node: AtlasNode, nowMs: number): { state: NodeHealthState; ageSeconds: number | null } {
     const seenMs = node.lastSeen === null ? NaN : Date.parse(node.lastSeen);
-    const ageSeconds = Number.isFinite(seenMs) ? Math.max(0, Math.floor((nowMs - seenMs) / 1000)) : null;
+    // Allow slight clock skew, but far-future heartbeats are not evidence of connectivity.
+    const ageSeconds = Number.isFinite(seenMs) && seenMs <= nowMs + 30_000
+        ? Math.max(0, Math.floor((nowMs - seenMs) / 1000)) : null;
     if (node.credentialState === 'revoked') return { state: 'revoked', ageSeconds };
     if (node.status === 'offline') return { state: 'offline', ageSeconds };
     if (node.status !== 'online') return { state: 'unavailable', ageSeconds };
@@ -47,6 +60,12 @@ export class MonitoringHealthService {
         private readonly now: () => Date = () => new Date(),
         private readonly clock: () => number = () => performance.now(),
         private readonly deadlineMs = HEALTH_DEADLINE_MS,
+        private readonly archive?: { status(): Promise<{
+            state: 'available' | 'unavailable' | 'disabled';
+            coverage: 'incomplete-possible'; retentionDays: 14;
+            droppedSinceStart: number; pending: number; writePaused: boolean;
+            retentionCleanup?: 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable' | 'disabled';
+        }> },
     ) { this.startedAt = now().toISOString(); }
 
     async read(raw: unknown = {}): Promise<MonitoringHealth> {
@@ -63,7 +82,14 @@ export class MonitoringHealthService {
         // In production the dedicated pool separately limits acquisition & query
         // lifetime; this deadline guarantees a conservative snapshot response.
         const directoryRead = withinDeadline(Promise.resolve().then(() => this.registry.list()), this.deadlineMs);
-        const [db, directory] = await Promise.allSettled([probe, directoryRead]);
+        const archiveRead = this.archive
+            ? withinDeadline(Promise.resolve().then(() => this.archive!.status()), this.deadlineMs)
+            : Promise.resolve({
+                state: 'disabled' as const, coverage: 'incomplete-possible' as const,
+                retentionDays: 14 as const, droppedSinceStart: 0, pending: 0, writePaused: false,
+                retentionCleanup: 'disabled' as const,
+            });
+        const [db, directory, archive] = await Promise.allSettled([probe, directoryRead, archiveRead]);
         const database = db.status === 'fulfilled'
             ? { status: 'reachable' as const, latencyMs: databaseLatencyMs ?? 0 }
             : { status: 'unavailable' as const };
@@ -75,14 +101,32 @@ export class MonitoringHealthService {
         const summary = { total: items.length, healthy: 0, stale: 0, offline: 0,
             unavailable: 0, revoked: 0, unknown: 0 };
         for (const node of items) summary[node.state]++;
+        const diagnostics: DiagnosticArchiveHealth = archive.status === 'fulfilled'
+            ? {
+                status: archive.value.state, coverage: 'incomplete-possible', retentionDays: 14,
+                droppedSinceStart: archive.value.droppedSinceStart,
+                queuedForWrite: archive.value.pending,
+                writePaused: archive.value.writePaused,
+                retentionCleanup: archive.value.retentionCleanup ?? 'unknown',
+            }
+            : {
+                status: 'unknown', coverage: 'incomplete-possible', retentionDays: 14,
+                droppedSinceStart: null, queuedForWrite: null, writePaused: null,
+                retentionCleanup: 'unknown',
+            };
         const nodeIssue = summary.stale + summary.offline + summary.unavailable + summary.revoked > 0;
         const overall: MonitoringHealthState = database.status === 'unavailable' || nodeIssue
-            ? 'degraded' : directory.status === 'rejected' || summary.unknown > 0 ? 'unknown' : 'healthy';
+            ? 'degraded' : directory.status === 'rejected' || summary.unknown > 0
+                || diagnostics.status === 'unavailable' || diagnostics.status === 'unknown'
+                || diagnostics.writePaused === true || (diagnostics.droppedSinceStart ?? 0) > 0
+                || (diagnostics.status === 'available' && diagnostics.retentionCleanup !== 'caught-up')
+                ? 'unknown' : 'healthy';
         return {
             checkedAt: checkedAt.toISOString(), overall,
             server: { status: database.status === 'reachable' ? 'healthy' : 'degraded',
                 startedAt: this.startedAt, uptimeSeconds: Math.max(0, Math.floor((checkedAt.getTime() - Date.parse(this.startedAt)) / 1000)),
                 database },
+            diagnostics,
             nodes: { available: directory.status === 'fulfilled', summary, items },
         };
     }

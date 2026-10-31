@@ -146,6 +146,10 @@ export function reconcileGitHubReviews(
         !findingStore || findingStore.name !== REVIEW_FINDINGS_STORE)
         throw new AtlasError('Code Reviews project or Stores are unavailable.', 'CAPABILITY_UNAVAILABLE');
 
+    // New GitHub history records must share the canonical repository identity
+    // used by native structured submissions. Existing mixed-case records are
+    // still matched case-insensitively by immutable GitHub review ID.
+    repository = repository.toLowerCase();
     const prepared = prepareGitHubReviews(repository, prNumber, snapshot, trustedPublisherIds);
     const runs = new Map<string, { id: string; data: RecordData; archivedAt?: string }>();
     const findings = new Map<string, { id: string; data: RecordData; archivedAt?: string }>();

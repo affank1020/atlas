@@ -36,6 +36,11 @@ export class ReviewPublicationService {
         if (coverage?.source !== 'atlas_structured_submission' ||
             !coverage.submissionId || typeof coverage.payloadSha256 !== 'string')
             throw new AtlasError('Only native structured review runs can be published.', 'WORKSPACE_DENIED');
+        // The legacy one-shot COMMENT publisher cannot render lifecycle outcomes
+        // or reply to existing finding threads. Publishing these runs through it
+        // would misleadingly omit resolutions or duplicate inline conversations.
+        if (coverage.lifecycleResolutions !== undefined)
+            throw new AtlasError('Lifecycle review publication requires the future managed publisher.', 'CAPABILITY_UNAVAILABLE');
         const actor = coverage.authenticatedCaller as RecordData | undefined;
         if (!actor || actor.kind !== caller.kind || actor.subject !== caller.subject || actor.issuer !== caller.issuer)
             throw new AtlasError('Review belongs to another authenticated caller.', 'WORKSPACE_DENIED');
@@ -49,6 +54,12 @@ export class ReviewPublicationService {
         if (records.some(r => r.archivedAt) || records.length !== coverage.findingCount ||
             records.length > 30)
             throw new AtlasError('Stored review findings are incomplete.', 'CONFLICT');
+        if (records.some(r => {
+            const evidence = r.data.evidence;
+            return evidence && typeof evidence === 'object' && !Array.isArray(evidence) &&
+                (evidence as RecordData).lifecycleAssessment !== undefined;
+        }))
+            throw new AtlasError('Lifecycle review publication requires the future managed publisher.', 'CAPABILITY_UNAVAILABLE');
         const findings = records.map(r => {
             const f = r.data;
             if (typeof f.findingKey !== 'string' || !f.findingKey.startsWith('structured:' + coverage.submissionId + ':') ||

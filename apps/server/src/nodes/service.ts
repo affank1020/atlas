@@ -87,7 +87,7 @@ export class NodeService {
         }
         if (name === 'cancel_node_update_intent') {
             if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
-            return this.updateIntents.cancel(x.nodeId, x.intentId);
+            return this.updateIntents.cancel(x.nodeId, x.intentId, caller);
         }
         if (name === 'prepare_node_update') {
             if (!this.updateIntents) throw new AtlasError('Update intent storage unavailable.', 'NODE_UNAVAILABLE');
@@ -101,7 +101,7 @@ export class NodeService {
             const plan = buildNodeUpdatePlan(node, catalogue);
             if (plan.status !== 'candidate' || !plan.candidate || plan.candidate.commit !== x.targetCommit)
                 throw new AtlasError('Selected release is no longer an eligible update candidate.', 'CONFLICT');
-            return this.updateIntents.prepare(node.id, x.expectedVersion, x.expectedCredentialUpdatedAt, plan.candidate);
+            return this.updateIntents.prepare(node.id, x.expectedVersion, x.expectedCredentialUpdatedAt, plan.candidate, caller);
         }
         if (name === 'read_node_logs') {
             const node = await this.get(x.nodeId);
@@ -116,11 +116,11 @@ export class NodeService {
                 throw new AtlasError('Selected log source is not available on this Node.', 'CAPABILITY_UNAVAILABLE');
             return runtime.readLogs(source, x.lines);
         }
-        if (name === 'create_node_enrolment') return this.requireIdentity().ticket();
-        if (name === 'update_node') return this.requireIdentity().update(x.nodeId, x.name);
-        if (name === 'rotate_node_credential') return this.requireIdentity().ticket(x.nodeId, true);
-        if (name === 'revoke_node') return this.requireIdentity().revoke(x.nodeId);
-        if (name === 'assign_workspace_node') return this.requireIdentity().assign(x);
+        if (name === 'create_node_enrolment') return this.requireIdentity().ticket(undefined, false, caller);
+        if (name === 'update_node') return this.requireIdentity().update(x.nodeId, x.name, caller);
+        if (name === 'rotate_node_credential') return this.requireIdentity().ticket(x.nodeId, true, caller);
+        if (name === 'revoke_node') return this.requireIdentity().revoke(x.nodeId, caller);
+        if (name === 'assign_workspace_node') return this.requireIdentity().assign(x, caller);
 
         const node = await this.get((parsed.data as { nodeId: string }).nodeId);
         return { ...node, workspaces: await this.repository.hostedWorkspaces(node.id), activity: this.identity ? await this.identity.activity(node.id) : [] };

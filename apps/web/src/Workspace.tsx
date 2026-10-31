@@ -7,12 +7,13 @@ import type { Project } from './types';
 import type { AtlasNode } from './Nodes';
 import { callTool } from './api';
 import './workspace-overview.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 export function WorkspaceHeading({ title, copy, children }: { title: string; copy: string; children?: React.ReactNode }) {
     return <header className="page-head"><div><p className="eyebrow">Atlas workspace</p><h1>{title}</h1><p>{copy}</p></div><div className="actions">{children}</div></header>;
 }
 export function QueryNotice({ loading, error, retry }: { loading: boolean; error: unknown; retry: () => unknown }) {
-    return <>{loading && <p className="workspace-loading" role="status">Loading…</p>}{!!error && <div className="notice error" role="alert">Unable to load this section. <button className="ghost" onClick={() => retry()}>Try again</button></div>}</>;
+    return <>{loading && !error && <SkeletonRows label="Loading workspace section" variant="list" rows={3} />}{!!error && <div className="notice error" role="alert">Unable to load this section. <button className="ghost" onClick={() => retry()}>Try again</button></div>}</>;
 }
 export function ProjectRows({ projects }: { projects: Project[] }) {
     return <div className="home-project-grid">{projects.map(project =>
@@ -70,9 +71,9 @@ function HomeWorkspaces({ nodes, nodesUnavailable, refreshKey, projects, onDetai
     return <section className="overview-card" aria-label="Hosted workspaces">
         <div className="overview-card-head"><h2>Workspaces</h2><a href="#/workspaces">Browse <span aria-hidden="true">↗</span></a></div>
         <div className="overview-card-feature"><strong>{total ?? '—'}</strong><span>Hosted across {nodes?.length ?? '—'} nodes</span></div>
-        {loading && <p className="overview-muted" role="status">Loading workspace details…</p>}
+        {loading && !items.length && !failed && <SkeletonRows label="Loading workspace details" variant="list" rows={3} />}
         {!loading && items.length === 0 && <p className="overview-muted">{failed ? 'Open the Nodes view to inspect assignments.' : 'No workspaces currently assigned.'}</p>}
-        <div className="overview-compact-list">{!loading && items.slice(0, 5).map(workspace =>
+        <div className="overview-compact-list">{items.slice(0, 5).map(workspace =>
             <a key={workspace.id} href={`#/workspaces?workspace=${encodeURIComponent(workspace.id)}`} className="overview-compact-row">
                 <span className="overview-item-main"><strong>{workspace.name}</strong><small>{projectNames.get(workspace.projectId ?? '') ?? workspace.nodeName}</small></span>
                 <span aria-hidden="true">↗</span>
@@ -94,9 +95,9 @@ function HomeRecent({ items, projects }: {
         {filtered.length ? <div className="overview-compact-list">{filtered.map(item =>
             <a key={item.href} className="overview-compact-row" href={item.kind === 'View'
                 ? standaloneViewUrl({ projectId: item.projectId, id: item.href.split('/').pop()!, slug: item.viewSlug })
-                : item.href} target="_blank" rel="noopener noreferrer">
+                : item.href} target={item.kind === 'View' ? '_blank' : undefined} rel={item.kind === 'View' ? 'noopener noreferrer' : undefined}>
                 <span className="overview-item-main"><strong>{item.name}</strong><small>{item.kind} · {projectNames.get(item.projectId)}</small></span>
-                <span aria-hidden="true">↗</span>
+                <span aria-hidden="true">{item.kind === 'View' ? '↗' : '→'}</span>
             </a>)}</div> : <p className="overview-muted">No applications or views opened in this browser session.</p>}
     </section>;
 }
@@ -135,16 +136,16 @@ export function WorkspaceHome() {
             <a href="#/monitoring">Monitoring <span aria-hidden="true">↗</span></a>
         </aside>}
         <div className="overview-metrics" aria-label="Atlas totals">
-            <a href="#/projects" className="overview-metric"><span>Projects</span><strong>{projects.data?.length ?? '—'}</strong><small>Active projects</small></a>
-            <a href="#/data" className="overview-metric"><span>Data stores</span><strong>{status.data?.stores ?? '—'}</strong><small>{status.error ? 'Unavailable' : 'Atlas storage'}</small></a>
-            <a href="#/data" className="overview-metric"><span>Records</span><strong>{status.data?.records?.toLocaleString() ?? '—'}</strong><small>{status.error ? 'Unavailable' : 'Stored records'}</small></a>
-            <a href="#/nodes" className="overview-metric"><span>Connected nodes</span><strong>{online ?? '—'}<em>{nodes.data ? ` / ${nodes.data.length}` : ''}</em></strong><small>{workspaceCount ?? '—'} hosted workspaces</small></a>
+            <a href="#/projects" className="overview-metric"><span>Projects</span><strong>{projects.data?.length ?? (projects.isLoading && !projects.error ? <Skeleton width={52} height={28} /> : '—')}</strong><small>Active projects</small></a>
+            <a href="#/data" className="overview-metric"><span>Data stores</span><strong>{status.data?.stores ?? (status.isLoading && !status.error ? <Skeleton width={52} height={28} /> : '—')}</strong><small>{status.error ? 'Unavailable' : 'Atlas storage'}</small></a>
+            <a href="#/data" className="overview-metric"><span>Records</span><strong>{status.data?.records?.toLocaleString() ?? (status.isLoading && !status.error ? <Skeleton width={67} height={28} /> : '—')}</strong><small>{status.error ? 'Unavailable' : 'Stored records'}</small></a>
+            <a href="#/nodes" className="overview-metric"><span>Connected nodes</span><strong>{online ?? (nodes.isLoading && !nodes.error ? <Skeleton width={40} height={28} /> : '—')}<em>{nodes.data ? ` / ${nodes.data.length}` : ''}</em></strong><small>{workspaceCount ?? (nodes.isLoading && !nodes.error ? <Skeleton width={26} height={11} /> : '—')} hosted workspaces</small></a>
         </div>
         <div className="overview-content-grid">
             <div className="overview-content-column">
                 <section className="overview-card overview-projects" aria-label="Projects overview">
                     <div className="overview-card-head"><h2>Projects</h2><a href="#/projects">All projects <span aria-hidden="true">↗</span></a></div>
-                    <QueryNotice loading={projects.isLoading} error={projects.error} retry={projects.refetch} />
+                    <QueryNotice loading={projects.isLoading && !projects.data} error={projects.error} retry={projects.refetch} />
                     <ProjectRows projects={topProjects} />
                     {!projects.isLoading && !projects.error && projects.data?.length === 0 && <p className="overview-muted">No active projects.</p>}
                 </section>
@@ -156,17 +157,17 @@ export function WorkspaceHome() {
                     <div className="overview-service">
                         <span className="overview-item-main">
                             <strong>Atlas Server</strong>
-                            <small>{status.data ? `v${status.data.version} · ${status.data.storage}` : status.error ? 'Unable to reach server' : 'Checking connection…'}</small>
+                            <small>{status.data ? `v${status.data.version} · ${status.data.storage}` : status.error ? 'Unable to reach server' : <Skeleton width={110} height={12} />}</small>
                         </span>
-                        <span className={`overview-status ${status.error ? 'offline' : status.data ? 'online' : 'pending'}`}>{status.error ? 'Unavailable' : status.data ? 'Connected' : 'Checking'}</span>
+                        <span className={`overview-status ${status.error ? 'offline' : status.data ? 'online' : 'pending'}`}>{status.error ? 'Unavailable' : status.data ? 'Connected' : <Skeleton width={65} height={12} />}</span>
                     </div>
                     {nodes.data?.map(node => <div className="overview-service" key={node.id}>
                         <span className="overview-item-main"><strong>{node.name}</strong><small>{node.platform === 'linux' ? 'Linux node / server runtime' : node.platform === 'darwin' ? 'macOS node' : node.platform || 'Node'} · {node.hostedWorkspaceCount} workspaces</small></span>
                         <span className={`overview-status ${node.status === 'online' ? 'online' : 'offline'}`}>{node.status}</span>
                     </div>)}
-                    {nodes.isLoading && <p className="overview-muted" role="status">Loading nodes…</p>}
+                    {nodes.isLoading && !nodes.data && !nodes.error && <SkeletonRows label="Loading nodes" variant="list" rows={2} />}
                     {nodes.error && <p className="overview-muted">Node status unavailable. <button className="overview-inline-button" onClick={() => void nodes.refetch()}>Retry</button></p>}
-                    {nodes.data?.length === 0 && <p className="overview-muted">No nodes registered.</p>}
+                    {!nodes.isLoading && !nodes.error && nodes.data?.length === 0 && <p className="overview-muted">No nodes registered.</p>}
                 </section>
                 <HomeWorkspaces nodes={nodes.data} nodesUnavailable={!!nodes.error} refreshKey={workspaceRefresh} projects={projects.data ?? []} onDetailsUnavailable={setWorkspaceDetailsUnavailable} />
             </div>
@@ -193,7 +194,7 @@ export function WorkspaceLibrary({ kind }: { kind: 'views' | 'data' }) {
     const visibleProjects = (projects.data ?? []).filter(project => !selected || project.id === selected);
     return <>
         <WorkspaceHeading title={kind === 'views' ? 'Views' : 'Data'} copy={kind === 'views' ? 'Explore the interfaces built around your projects.' : 'The stores and records behind your work, organised by project.'} />
-        <QueryNotice loading={projects.isLoading} error={projects.error} retry={projects.refetch} />
+        <QueryNotice loading={projects.isLoading && !projects.data} error={projects.error} retry={projects.refetch} />
         {!!projects.data?.length && <div className="browse-toolbar">
             <label>Project<select value={selected} onChange={event => setSelected(event.target.value)}>
                 <option value="">All projects</option>
@@ -210,7 +211,7 @@ export function MonitoringOverview() {
     const nodes = useWorkspaceNodesQuery(undefined, { refetchOnMountOrArgChange: true });
     return <><WorkspaceHeading title="Monitoring" copy="Server health and connectivity across Atlas."><a className="ghost" href="#/monitoring?tab=activity">Activity feed →</a><button className="ghost" disabled={status.isFetching || nodes.isFetching} onClick={() => { void status.refetch(); void nodes.refetch(); }}>Refresh</button></WorkspaceHeading><QueryNotice loading={status.isLoading || nodes.isLoading} error={status.error || nodes.error} retry={() => { void status.refetch(); void nodes.refetch(); }} />
         {status.data && <section className="workspace-section"><div className="section-heading"><h2>Atlas Server</h2><span className={"badge " + (IS_MOCK_MODE ? "muted" : "success")}>{IS_MOCK_MODE ? "Simulated" : "Connected"}</span></div><dl className="settings-list"><div><dt>Endpoint</dt><dd>{IS_MOCK_MODE ? "Local fixture backend" : API_BASE}</dd></div><div><dt>Version</dt><dd>{status.data.version}</dd></div><div><dt>Storage</dt><dd>{status.data.storage}</dd></div></dl></section>}
-        <section className="workspace-section"><div className="section-heading"><h2>Remote nodes</h2><a href="#/nodes">Manage nodes & placement →</a></div>{nodes.data?.map(node => <a className="workspace-row" key={node.id} href="#/nodes"><span className="row-copy"><strong>{node.name}</strong><small>{node.hostedWorkspaceCount} workspaces · {node.platform || 'Remote runtime'}</small></span><span className={`badge ${node.status === 'online' ? 'success' : 'muted'}`}>{node.status}</span></a>)}{nodes.data?.length === 0 && <p className="quiet-empty">No remote nodes registered. <a href="#/nodes">Connect a node →</a></p>}</section>
+        <section className="workspace-section"><div className="section-heading"><h2>Remote nodes</h2><a href="#/nodes">Manage nodes & placement →</a></div>{nodes.data?.map(node => <a className="workspace-row" key={node.id} href="#/nodes"><span className="row-copy"><strong>{node.name}</strong><small>{node.hostedWorkspaceCount} workspaces · {node.platform || 'Remote runtime'}</small></span><span className={`badge ${node.status === 'online' ? 'success' : 'muted'}`}>{node.status}</span></a>)}{!nodes.isLoading && !nodes.error && nodes.data?.length === 0 && <p className="quiet-empty">No remote nodes registered. <a href="#/nodes">Connect a node →</a></p>}</section>
     </>;
 }
 export function WorkspaceSettings() {

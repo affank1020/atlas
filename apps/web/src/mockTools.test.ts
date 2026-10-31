@@ -21,10 +21,14 @@ test('demo nodes include inspectable desktop and Android mobile fixtures', () =>
     expect(nodes).toHaveLength(4);
     expect(nodes.find(node => node.name === 'Demo Linux VPS')?.status).toBe('offline');
     expect(nodes.find(node => node.name === 'Demo MacBook')?.status).toBe('online');
-    for (const [name, deviceType] of [['Demo Android Tablet', 'tablet'], ['Demo Android Phone', 'phone']]) {
-        const mobile = nodes.find(node => node.name === name);
-        expect(mobile).toMatchObject({ status: 'online', platform: 'android', deviceType, hostedWorkspaceCount: 0 });
-    }
+    // The tablet previews an online mobile Node and the phone previews
+    // its offline counterpart; both remain discoverable in mock mode.
+    expect(nodes.find(node => node.name === 'Demo Android Tablet')).toMatchObject({
+        status: 'online', platform: 'android', deviceType: 'tablet', hostedWorkspaceCount: 0,
+    });
+    expect(nodes.find(node => node.name === 'Demo Android Phone')).toMatchObject({
+        status: 'offline', platform: 'android', deviceType: 'phone', hostedWorkspaceCount: 0,
+    });
     for (const node of nodes) {
         const detail = mockTool<{ workspaces: Array<{ nodeId: string }> }>('get_node', { nodeId: node.id });
         expect(detail.workspaces).toHaveLength(node.hostedWorkspaceCount);
@@ -100,3 +104,46 @@ test('mock Monitoring fails closed for unsupported logical Workspace scopes', ()
     expect(mockTool<{ total: number }>('query_monitoring_activity', {}).total)
         .toBe(unfiltered.total);
 });
+
+test('local demo exposes Code Reviews with paginated, internally consistent synthetic review data', () => {
+    const atlasProject = mockProjects[0].id;
+    const applications = mockTool<Array<{ projectId: string; slug: string }>>('list_all_applications');
+    expect(applications.some(app => app.projectId === atlasProject && app.slug === 'code-reviews')).toBe(true);
+    expect(mockTool<{ slug: string }>('get_application', { projectId: atlasProject, slug: 'code-reviews' }).slug)
+        .toBe('code-reviews');
+
+    const overview = mockTool<{ reviewRuns: number; findingObservations: number }>('code_reviews_overview');
+    const firstPage = mockTool<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 2, offset: 0 });
+    const secondPage = mockTool<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 2, offset: 2 });
+    expect(firstPage.total).toBe(overview.reviewRuns);
+    expect(firstPage.items).toHaveLength(2);
+    expect(secondPage.items).toHaveLength(2);
+    expect(new Set([...firstPage.items, ...secondPage.items].map(run => run.id)).size)
+        .toBe(overview.reviewRuns);
+    expect(firstPage.items[0].data.repository).toBe('example/atlas-demo');
+
+    const findings = mockTool<Page<AtlasRecord>>('code_reviews_list_findings',
+        { reviewRunId: firstPage.items[0].id, limit: 50 });
+    expect(findings.total).toBeGreaterThan(0);
+    expect(findings.items[0].data.reviewRunId).toBe(firstPage.items[0].id);
+    const timeline = mockTool<{
+        recordedRounds: number; rounds: Array<{ runId: string; totalFindingObservations: number }>;
+        lineages: Array<{ key: string }>;
+    }>('code_reviews_pr_timeline', { repository: 'example/atlas-demo', prNumber: 42, limit: 5, offset: 0 });
+    expect(timeline.recordedRounds).toBe(2);
+    expect(timeline.rounds).toHaveLength(2);
+    expect(timeline.lineages.some(lineage => lineage.key === 'demo-token-expiry')).toBe(true);
+});
+
+test('Code Reviews demo never claims to have verified GitHub or published a review', () => {
+    const summary = mockTool<{
+        currentHead: { state: string }; latestReviewHead: string;
+    }>('code_reviews_pr_summary', { repository: 'example/atlas-demo', prNumber: 42 });
+    expect(summary.currentHead.state).toBe('unavailable');
+    expect(summary.latestReviewHead).toBe('unknown');
+    expect(() => mockTool('code_reviews_review_thread_state',
+        { repository: 'example/atlas-demo', prNumber: 42 })).toThrow(/unavailable in local demo mode/);
+    expect(() => mockTool('code_reviews_managed_summary_publish', { apply: true }))
+        .toThrow(/unavailable in local mock mode/);
+});
+

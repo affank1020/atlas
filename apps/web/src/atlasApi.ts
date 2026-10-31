@@ -131,7 +131,8 @@ export function useAtlasMutation() {
 export type ApplicationReadName = 'list_applications' | 'list_all_applications' | 'get_application' | 'list_workspaces' |
     'get_portfolio_schemas' | 'list_portfolio_entries' | 'get_portfolio_dashboard' | 'list_portfolio_media' | 'list_portfolio_revisions' |
     'football_generalist_manifest' | 'football_generalist_runs' | 'football_generalist_policies' | 'football_generalist_activity' | 'football_generalist_assessments' |
-    'code_reviews_overview' | 'code_reviews_list_runs' | 'code_reviews_list_findings';
+    'code_reviews_overview' | 'code_reviews_pr_summary' | 'code_reviews_pr_timeline' | 'code_reviews_review_thread_state' |
+    'code_reviews_list_runs' | 'code_reviews_list_findings';
 export function useApplicationRead<T>(name: ApplicationReadName, input: Record<string, unknown> = {}, live = false, skip = false) {
     const query = useApplicationReadQuery({ name, input }, { refetchOnMountOrArgChange: live, skip });
     return { ...query, isLoading: query.isFetching && query.currentData === undefined, data: query.currentData as T | undefined };

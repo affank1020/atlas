@@ -13,9 +13,49 @@
 .code-reviews-empty{padding:36px 20px;text-align:center;max-width:620px;margin:auto}
 .code-reviews-empty h3{margin:0 0 8px}
 .code-reviews-empty p{color:var(--text-muted,#84909c)}
-.code-reviews-row{padding:14px 16px;border-top:1px solid var(--border,#4446);display:flex;align-items:center;justify-content:space-between;gap:16px}
+.code-reviews-row{border-top:1px solid var(--border,#4446)}
+.code-reviews-row-main{padding:14px 16px}
+.code-reviews-row-summary{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.code-reviews-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;flex-wrap:wrap}
 .code-reviews-row a{font-weight:600}
 .code-reviews-subtitle{margin-top:5px}
 .code-reviews-verdict{font-size:12px;white-space:nowrap}
 .code-reviews-pagination{display:flex;justify-content:flex-end;gap:12px;align-items:center;padding:16px;border-top:1px solid var(--border,#4446)}
-@media(max-width:650px){.code-reviews{padding:14px}.code-reviews-metrics{grid-template-columns:1fr}.code-reviews-row{align-items:flex-start;flex-direction:column}.code-reviews-header{flex-wrap:wrap}}
+@media(max-width:650px){.code-reviews{padding:14px}.code-reviews-metrics{grid-template-columns:1fr}.code-reviews-row-summary{align-items:flex-start;flex-direction:column}.code-reviews-row-actions{justify-content:flex-start}.code-reviews-header{flex-wrap:wrap}}
+
+.code-reviews-detail{padding:16px 20px 20px;border-top:1px solid var(--border,#4446);background:var(--surface-raised,rgba(128,128,128,.035))}
+.code-reviews-detail-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.code-reviews-detail-header h3{margin:0;font-size:15px}
+.code-reviews-detail-header span{color:var(--text-muted,#84909c);font-size:12px}
+.code-reviews-finding{border-top:1px solid var(--border,#4446);padding:14px 0;overflow-wrap:anywhere}
+.code-reviews-finding-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.code-reviews-finding-title span{font-size:12px;color:var(--text-muted,#84909c)}
+.code-reviews-finding p{white-space:pre-wrap;margin:8px 0 0;line-height:1.5}
+
+.code-reviews-timeline{border-top:1px solid var(--border,#4446);margin-top:18px;padding-top:16px;display:grid;gap:12px}
+.code-reviews-timeline h4,.code-reviews-lineages h5{margin:0;font-size:14px}
+.code-reviews-timeline p{margin:3px 0;line-height:1.5}
+.code-reviews-lineages{display:grid;gap:10px}
+.code-reviews-lineage{border:1px solid var(--border,#4446);border-radius:8px;padding:12px;display:grid;gap:5px;overflow-wrap:anywhere}
+.code-reviews-lineage span{font-size:12px;color:var(--text-muted,#84909c)}
+.code-reviews-rounds{display:grid;gap:8px}
+.code-reviews-round{border:1px solid var(--border,#4446);border-radius:8px;padding:12px}
+.code-reviews-round summary{cursor:pointer;line-height:1.5;overflow-wrap:anywhere}
+.code-reviews-round .code-reviews-finding:last-child{padding-bottom:0}
+.code-reviews-timeline .code-reviews-pagination{padding:12px 0 0;justify-content:space-between}
+
+/* Remote GitHub state is loaded only on request inside one PR status panel. */
+.code-reviews-remote-toggle{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:18px}
+.code-reviews-remote{border-top:1px solid var(--border,#4446);margin-top:16px;padding-top:16px;display:grid;gap:10px}
+.code-reviews-remote h4,.code-reviews-remote h5{font-size:14px;margin:0}
+.code-reviews-remote p{margin:0;line-height:1.5}
+.code-reviews-thread-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px}
+.code-reviews-thread{border:1px solid var(--border,#4446);border-radius:8px;padding:12px;display:grid;gap:6px;overflow-wrap:anywhere;font-size:13px}
+.code-reviews-thread span{color:var(--text-muted,#84909c)}
+.code-reviews-thread a{font-weight:500}
+.code-reviews-remote-resolutions{border-top:1px solid var(--border,#4446);padding-top:12px;display:grid;gap:8px;overflow-wrap:anywhere}
+.code-reviews-remote-resolutions code{overflow-wrap:anywhere}
+
+.code-reviews-saved-receipts{border:1px solid var(--border,#4446);border-radius:8px;padding:12px;margin:14px 0;display:grid;gap:8px}
+.code-reviews-saved-receipts h4{font-size:14px;margin:0}
+.code-reviews-saved-receipts p{margin:0;line-height:1.5;overflow-wrap:anywhere}

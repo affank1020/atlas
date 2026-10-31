@@ -16,20 +16,31 @@ const scope = { projectId: z.string().uuid(), storeId: z.string().uuid() };
 const client = { client: z.string().optional() };
 const include = { includeArchived: z.boolean().optional() };
 const viewQuery = z.object({ name: z.string(), storeId: z.string().uuid(), filters: z.array(z.object({ field: z.string(), operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"]), value: z.unknown() })).optional(), sort: z.array(z.object({ field: z.string(), direction: z.enum(["asc", "desc"]).optional() })).optional(), limit: z.number().int().min(1).max(100).optional() });
+// Trust boundary: a Relay service credential is read-only even if its own
+// agent client is compromised. Do not make this a global MCP restriction.
+export const RELAY_READ_TOOLS: ReadonlySet<string> = new Set([
+    'get_atlas_status', 'list_projects', 'get_project', 'list_nodes', 'get_node',
+    'list_workspaces', 'get_workspace', 'list_logical_workspaces', 'list_project_workspaces',
+    'list_applications', 'get_application', 'list_stores', 'get_store', 'list_records',
+    'get_record', 'list_views', 'get_view', 'workspace_list_files', 'workspace_read_file',
+    'workspace_search_files', 'workspace_git_status', 'workspace_git_diff', 'workspace_list_dev_tasks',
+]);
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 
-export function createMcpTransport(services: TransportServices, oauthScope?: string, authenticatedCaller?: ApplicationCaller) {
+export function createMcpTransport(services: TransportServices, oauthScope?: string, authenticatedCaller?: ApplicationCaller, allowedTools?: ReadonlySet<string>) {
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
-    const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => server.registerTool(name,
+    const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => {
+      if (allowedTools && !allowedTools.has(name)) return;
+      return server.registerTool(name,
       { description, inputSchema, ...(oauthScope ? { securitySchemes: [{ type: 'oauth2' as const, scopes: [oauthScope] }] } : {}) },
       async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
+    };
 
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
-    // Register the active generalist evaluation flow first, without bypassing the
-    // existing Application input validation, project/Node routing or audit trail.
-    // These are the SAME registry tools, not a second execution path.
+    // Prioritize active Application workflows while retaining the same registry
+    // dispatch path, input validation and authenticated caller context.
     const appTools = services.applications.tools();
-    const priorityNames = [
+    const generalistPriorityNames = [
         'football_generalist_evaluate',
         'football_generalist_baseline',
         'football_generalist_status',
@@ -37,11 +48,42 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         'football_generalist_policies',
         'football_generalist_assessments',
     ];
-    const prioritized = new Set(priorityNames);
-    for (const name of priorityNames) {
+    const codeReviewPriorityNames = [
+        'code_reviews_overview',
+        'code_reviews_pr_summary',
+        'code_reviews_pr_timeline',
+        'code_reviews_managed_summary_preview',
+        'code_reviews_managed_summary_publish',
+        'code_reviews_inline_thread_preflight',
+        'code_reviews_inline_thread_inventory',
+        'code_reviews_review_thread_state',
+        'code_reviews_publish_initial_inline_root',
+        'code_reviews_publish_inline_reply',
+        'code_reviews_resolve_verified_thread',
+        'code_reviews_publish_fix_evidence',
+        'code_reviews_list_runs',
+        'code_reviews_list_findings',
+        'code_reviews_submit_structured',
+        'code_reviews_import_pull_request',
+        'code_reviews_discover_pull_requests',
+        'code_reviews_backfill_pull_requests',
+        'code_reviews_publish_github',
+    ];
+    const prioritized = new Set([...generalistPriorityNames, ...codeReviewPriorityNames]);
+    for (const name of generalistPriorityNames) {
         const definition = appTools.find(candidate => candidate.name === name);
         if (!definition) throw new Error(`Required generalist MCP tool missing from Application registry: ${name}`);
         tool(definition.name, definition.description, definition.inputSchema);
+    }
+    // Optional in unit-test and partial Application registries, but complete
+    // when the Code Reviews Application is installed. Fail fast on a partial
+    // installation instead of hiding a missing operation.
+    if (codeReviewPriorityNames.some(name => appTools.some(candidate => candidate.name === name))) {
+        for (const name of codeReviewPriorityNames) {
+            const definition = appTools.find(candidate => candidate.name === name);
+            if (!definition) throw new Error(`Required Code Reviews MCP tool missing from Application registry: ${name}`);
+            tool(definition.name, definition.description, definition.inputSchema);
+        }
     }
 
     for (const name of Object.keys(workspaceSchemas) as WorkspaceToolName[]) tool(name, workspaceDescriptions[name], workspaceSchemas[name].shape);
@@ -65,9 +107,13 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     };
     for (const name of Object.keys(nodeSchemas) as NodeToolName[]) tool(name, nodeDescriptions[name], nodeSchemas[name].shape);
 
-    tool("get_monitoring_health", "Read a bounded live Atlas Server database probe and Node connectivity/heartbeat health snapshot. No CPU, disk or external-service monitoring; no credentials or logs.", {});
+    tool("get_monitoring_health", "Read bounded live database and Node health probes plus diagnostic-archive availability and current-process loss status. No CPU, disk or container logs; unknown is not healthy.", {});
     tool("read_server_diagnostics", "Read bounded, non-sensitive Atlas Server process diagnostics since the current restart, not Docker stdout/stderr or retained container logs.", {
         limit: z.number().int().min(1).max(100).default(30),
+    });
+    tool("read_server_diagnostic_history", "Read up to 100 fixed-code Server diagnostic events per page from the last 14 days, using an optional opaque keyset cursor returned by a previous page. History is best-effort, not raw container logs.", {
+        limit: z.number().int().min(1).max(100).default(30),
+        cursor: z.string().min(1).max(160).optional(),
     });
     tool("get_atlas_status", "Report Atlas availability and structured-data counts.", {});
     tool("get_storage_usage", "Read PostgreSQL storage sizes and Cloudflare R2 analytics without credentials.", { refresh: z.boolean().optional() });
@@ -110,7 +156,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
         projectId: z.string().uuid().optional(), workspaceId: z.string().uuid().optional(), checkoutId: z.string().uuid().optional(),
         logicalWorkspaceId: z.string().uuid().optional(),
         storeId: z.string().uuid().optional(), recordId: z.string().uuid().optional(), nodeId: z.string().uuid().optional(),
-        operation: z.string().max(120).optional(), category: z.enum(['core','view','node','workspace','files','git','dev','unity']).optional(),
+        operation: z.string().max(120).optional(), category: z.enum(['core','view','node','workspace','files','backup','git','dev','unity']).optional(),
         client: z.string().max(200).optional(), outcome: z.enum(['completed','pending','failed']).optional(),
         search: z.string().max(200).optional(), from: z.string().datetime().optional(), to: z.string().datetime().optional(),
         limit: z.number().int().min(1).max(100).default(30), offset: z.number().int().min(0).max(10000).default(0),

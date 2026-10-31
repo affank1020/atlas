@@ -111,7 +111,20 @@ jobs:
           image_tag="$1"
           cd "$HOME/atlas-deploy"
           export ATLAS_IMAGE_TAG="$image_tag"
-          compose=(docker compose --env-file infra/production.env -f infra/docker-compose.production.yml)
+          # Source shared credentials from the independently managed VPS infra
+          # file when present. During the first deployment legacy Atlas admin
+          # values are still available as a backward-compatible fallback.
+          compose=(docker compose --env-file infra/production.env)
+          if test -s "$HOME/vps-infra/.env"; then
+            compose+=(--env-file "$HOME/vps-infra/.env")
+          fi
+          compose+=(-f infra/docker-compose.production.yml)
+
+          # Make the shared application ingress bridge available, even when
+          # the standalone public proxy has not yet been deployed.
+          if ! docker network inspect vps_ingress >/dev/null 2>&1; then
+            docker network create --driver bridge vps_ingress >/dev/null
+          fi
 
           "${compose[@]}" pull server ingress
           "${compose[@]}" up -d --no-build --wait

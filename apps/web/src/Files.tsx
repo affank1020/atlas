@@ -6,6 +6,7 @@ import {
     type AtlasFile, type FileOwner, type ProjectFolder, type PortfolioProjectMedia,
 } from './filesApi';
 import './files.css';
+import { Skeleton } from './Skeletons';
 
 const prettySize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
@@ -234,7 +235,7 @@ export function Files() {
         <div className="files-collection-head">
             <div className="files-collection-info">
                 <h2>{currentFolder?.name ?? 'Project files'}</h2>
-                <span>{entries.length} files · {prettySize(totalBytes)}</span>
+                <span>{busy || (!owner && projects.isLoading) ? <Skeleton width={90} height={12} /> : !owner ? "—" : `${entries.length} files · ${prettySize(totalBytes)}`}</span>
             </div>
             <div className="files-collection-controls">
                 <label className="files-status-control">Status
@@ -251,7 +252,7 @@ export function Files() {
                     value={search} onChange={event => setSearch(event.target.value)} />
             </div>
         </div>
-        {busy && <div className="files-skeleton-list" role="status" aria-label="Loading files">
+        {(busy || (projects.isLoading && !owner && !projects.error)) && <div className="files-skeleton-list" role="status" aria-label={owner ? "Loading files" : "Loading projects"} aria-busy="true">
             {[1, 2, 3].map(value => <div className="files-skeleton-row" key={value}><span /><div><i /><i /></div></div>)}
         </div>}
         {!busy && owner && (visibleFolders.length > 0 || visibleFiles.length > 0) && <div className="files-list" aria-label="Project folder contents">
@@ -324,7 +325,7 @@ export function Files() {
                 </div>)}
             </div>
         </section>}
-        {!busy && !error && !owner && <div className="files-empty">{projects.isLoading ? 'Loading Projects…' : 'No Projects available. Create a Project to store files.'}</div>}
+        {!busy && !error && !owner && !projects.isLoading && !projects.error && <div className="files-empty">No Projects available. Create a Project to store files.</div>}
         {!busy && !error && owner && !visibleFolders.length && !visibleFiles.length && !visibleMedia.length &&
             <div className="files-empty">{searchText
                 ? 'Nothing matches your search in this folder.'

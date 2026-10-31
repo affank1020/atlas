@@ -200,6 +200,7 @@ Call with a single `submission` object, for example:
     "summary": "One actionable issue; no confirmed merge blockers.",
     "findings": [{
       "key": "validate-input",
+      "lineageKey": "root-cause-input-validation",
       "severity": "sev3",
       "title": "Validate incoming review input",
       "description": "A malformed input reaches the handler unchecked.",
@@ -212,8 +213,25 @@ Call with a single `submission` object, for example:
 
 The example SHA is illustrative: **use the exact 40-character current GitHub
 PR head SHA**. Each caller must generate a stable UUID submission ID, retain
-it for retries, and supply unique finding keys within that review. Accepted
-verdicts are `changes_requested`, `concerns_to_verify`, `non_blocking`,
+it for retries, and supply unique finding keys within that review. An optional
+`lineageKey` (same bounded character format as `key`) identifies a **reviewer-asserted
+root cause across rounds of the same repository and PR**. When a re-review
+verifies that an observation concerns the same underlying issue, reuse its
+`lineageKey` even if the submission-local `key`, changed line or commit
+differs. Each explicit lineage key may occur only once within a review run.
+Do **not** invent a lineage key for uncertain matches; omission keeps the
+observation unlinked. A repeated key is an identity assertion, **not** proof
+that a finding persists or has been resolved. Cross-PR matches are never inferred.
+
+Atlas stores the optional key in the existing Review Findings
+`evidence.lineageKey` object without changing Store schemas or the immutable
+`findingKey: structured:<submissionId>:<key>` observation identity.
+Existing/historical imports have no asserted lineage keys; source GitHub
+comment IDs and similar descriptions must not be auto-matched. Without an explicit lifecycle
+assessment, the finding remains `new`; see the reviewer-asserted
+lifecycle protocol below.
+
+Accepted verdicts are `changes_requested`, `concerns_to_verify`, `non_blocking`,
 `no_findings` and `inconclusive`. A `no_findings` verdict cannot include
 findings. The server validates all fields strictly, bounds text and findings,
 and produces finding counts itself.
@@ -254,6 +272,88 @@ yet be cryptographically established. Publisher identity verification and
 GitHub review publication are a separate later milestone. Findings are saved
 with state `new`; their lifecycle is not inferred from subsequent GitHub
 commits. Existing historical imports stay unchanged.
+
+### Explicit review-round lifecycle assessments
+
+A structured review may now include **reviewer-supplied lifecycle assertions**
+for a previously observed root cause, without editing the older Review Runs or
+Review Findings. This is **not automatic resolution detection**, and Atlas does
+not independently execute or verify the claimed tests/fix. All assertions
+are attributed only to the authenticated MCP OAuth account and the particular
+GitHub PR head verified at submission.
+
+For a finding still observable at the new head, include an explicit
+`lineageKey` and, optionally, an `assessment`:
+
+```json
+{
+  "key": "still-reproducible",
+  "lineageKey": "root-cause-input-validation",
+  "severity": "sev3",
+  "title": "Input validation still fails",
+  "description": "Malformed values still reach the handler.",
+  "assessment": {
+    "state": "persisting",
+    "evidence": "Reproduced with the named input-validation regression case at this commit."
+  }
+}
+```
+
+Allowed observed assessments are `persisting` and `unverified`. The
+`evidence` must be a non-blank string between 20 and 4,000 characters.
+Without an assessment, an observation remains `new` and matching
+`lineageKey` values do **not** automatically mark it persisting.
+
+To explicitly assert a fix without submitting a new finding observation,
+include a `resolutions` array on the same authenticated structured review:
+
+```json
+{
+  "resolutions": [{
+    "lineageKey": "root-cause-input-validation",
+    "evidence": "Verified the fix at this reviewed head with a focused regression test."
+  }]
+}
+```
+
+A resolution is a **new immutable-through-the-review-operation assertion**
+stored on the new Review Run as `coverage.lifecycleResolutions`, not a
+destructive update to the prior finding. A `no_findings` review may include
+these assertions while its `findings` list remains empty. Every assertion
+must reference an **existing active, complete structured finding with the
+same lineage key in the exact same repository and PR**, checked inside the
+write transaction. The check considers only **complete source runs that
+actually supply a referenced root**. An unrelated older run with archived or
+damaged findings does not invalidate a lifecycle assertion backed by another
+complete run. An archived or otherwise incomplete **matching** run alone is
+never sufficient proof of identity. Untrusted historical Markdown, other PRs,
+same-round findings or invented keys cannot justify transitions.
+Each root cause may appear once per outcome collection and cannot be both
+observed and resolved in the same review. No implicit actions occur for
+unmentioned keys. Retries remain idempotent under the original submission UUID
+and fingerprint.
+
+Every persisted assessment records its supplied evidence, the verified
+reviewed SHA and the server timestamp. This is an **account-attributed reviewer
+claim**, not independent proof that the code is fixed, and it does not close
+or resolve GitHub threads, publish a review, modify PR permissions, or
+automatically reclassify the previous observation. The existing
+`code_reviews_publish_github` single-review COMMENT publisher explicitly
+**rejects** structured runs containing these new lifecycle assertions,
+including preview: it cannot render resolution evidence or safely reply
+inside existing GitHub inline threads. Wait for the separately reviewed
+managed-summary/thread publisher; do not double-publish through the old
+plugin or Atlas's legacy publisher.
+
+The PR timeline now returns explicit `round.resolutions`, optional
+`finding.lifecycleAssessment` and page-scoped lineage
+`assessments`/`latestAssessmentInPage`. The web PR-status expansion shows
+these assertions and their evidence. Historical reviews remain partial, and
+the newest assertion **in the loaded Atlas page** is not necessarily the
+globally latest GitHub status. No lifecycle outcome is inferred from a missing
+finding, changed commit or manually resolved GitHub conversation. Generic
+Store admin APIs can still mutate historical data, so these records are not
+a cryptographically immutable audit ledger.
 
 ### Native GitHub publication (explicit opt-in)
 
@@ -320,6 +420,772 @@ Atlas Store administrators can still mutate records, and GitHub may advance
 a head immediately after verification. Publication does not update the
 `Review Findings` lifecycle automatically.
 
+### Review-history details in the Atlas web UI
+
+Each saved Review Run can be expanded to read its linked findings through
+`code_reviews_list_findings` on demand. A review row shows the reviewed
+repository, PR, commit, verdict, review time, provenance and recorded severity
+counts where available. The details display the finding severity, title,
+description, location and recorded state; historical `unverified` observations
+are explicitly labelled as such. Native publication receipts may link to
+their GitHub review using a validated numeric review ID.
+
+The interface makes no inference that an empty finding Store proves a clean PR.
+It does not automatically update finding lifecycle after new commits, and it
+never infers publication from a stored summary. Review-run and finding pages
+are independently bounded to avoid fetching unrelated findings for collapsed
+rows. Missing Project/Store data, unsupported records and API failures have
+distinct error or empty states.
+
+### PR-level latest review status (read-only)
+
+`code_reviews_pr_summary({repository,prNumber})` reads a **single exact
+repository/PR identity** from the Code Reviews Project's Review Runs Store
+using a server-filtered, descending `reviewedAt` query (one row plus total
+count). The stored total is **review rounds recorded in Atlas**, not unique
+commits or complete GitHub review history. Queries are exact against stored
+repository names; use the recorded repository spelling for historical records.
+
+The response includes `recordedRounds`, `latest` (run ID, recorded head SHA,
+timestamp, verdict, source and *recorded* severity counts when valid),
+`currentHead` and `latestReviewHead`. Current GitHub head is read on demand
+using the existing repository-scoped GitHub App read token. The result
+distinguishes `open`, `closed` and `unavailable`; available heads have an
+observed `checkedAt` timestamp. Freshness is `current`, `outdated`,
+`unknown`, or `no_stored_review`. None implies a passing review:
+`no_stored_review` means **no matching rows in Atlas**, not that GitHub has
+never been reviewed; `unknown` means the GitHub head was not verified.
+
+Historical Markdown imports represent **partial finding coverage** even when
+their stored verdict is `no_findings`. A missing or invalid recorded
+`counts` object is returned as `severityCounts: null`, never as invented
+zero findings. Invalid latest record fields cause an explicit error rather
+than masking stored data problems. Unavailable GitHub responses do not
+silently make an old review appear current.
+
+The web Review history offers an **on-demand PR status** expansion beside
+the existing finding drill-down; the GitHub check is not performed for
+collapsed rows or every PR in a page. Manual Refresh revalidates the active
+expanded panel. This operation is read-only and does not backfill, publish,
+approve or resolve GitHub threads. The **write-enabled** persistent PR bot summary and dedicated publishing
+identity remain later milestones; a read-only managed-summary preflight now
+exposes the planned body and existing Bot-owned comment state.
+
+### Bounded PR timeline and explicit cross-round lineage (read-only)
+
+`code_reviews_pr_timeline({repository,prNumber,limit?,offset?})` reads the exact
+repository and PR from **Atlas's saved records only**. The default page has
+five rounds, maximum ten; rounds are sorted newest first and can be paginated
+with an offset. Each round queries at most 100 linked finding observations.
+The response includes `recordedRounds`, `rounds`, `hasMore`,
+`storedWindowComplete`, `unlinkedObservations` and `lineages`.
+`storedWindowComplete` means the selected page covers all **saved** rounds
+and their first 100 findings, **not** that GitHub review history is complete.
+More than 100 findings in a saved round is visibly labelled truncated.
+
+Each returned review round has its reviewed SHA, timestamp, verdict, source
+(`structured`, `historical` or `unknown`), finding completeness
+(`structured`, `historical_partial`, `unknown`), and saved finding
+observations. The result rejects invalid/mismatched Store records instead of
+silently hiding them. For structured submissions, the reader also requires
+a well-formed original `coverage.findingCount` (0–30) matching the total of
+active saved findings. Generic Store administration can archive records;
+a missing or changed count therefore fails closed rather than advertising
+complete structured evidence. Historical imports do not carry this
+structured-count guarantee: Markdown and missing inline comments remain
+partial source evidence.
+
+An observation enters a lineage **only** when a structured review explicitly
+submitted a valid `lineageKey` and its stored evidence matches that review's
+submission namespace. Key reuse across rounds means the reviewer asserted the
+same root cause: `observed_multiple_times_in_page` is not independently
+verified persistence. Unlinked or imported observations are **never**
+joined by title, file, line, comment ID or apparent disappearance. Within a
+page, duplicate asserted lineage keys in a single round cause an error rather
+than miscounting. `lineages[].observationsInPage` and recurrence labels are
+strictly scoped to that loaded page, including when additional older Atlas
+rounds exist. Different repository/PR identities are never combined.
+
+**No resolution is inferred** when an issue vanishes from a subsequent review,
+when a PR moves to a new SHA, or when a GitHub discussion becomes outdated.
+The response always carries `resolutionInferred:false`. The historical
+`state` field on a finding is merely its saved observation label, not a
+verified GitHub thread state or fresh fix confirmation. `no_findings` on a
+historical import does not establish complete issue coverage.
+
+The web application's existing **PR status** expansion now lazily retrieves
+this timeline alongside GitHub head freshness. Round details expand in place
+and older round pages can be navigated with Previous/Next; Refresh rechecks
+both active read operations. Collapsed rows perform neither PR-scoped read.
+No implicit background job, GitHub publication, Store mutation, lifecycle
+transition, historical import or permission change is involved.
+
+Explicit, evidence-backed lifecycle transitions, globally scoped finding
+queries and managed GitHub bot/thread publication remain later work.
+
+### Managed GitHub PR summary — read-only safety preflight
+
+`code_reviews_managed_summary_preview({repository,prNumber})` now produces a
+**deterministic, non-publishing draft** of the proposed one-comment-per-PR GitHub
+summary using only the *latest saved Atlas round* and its linked findings.
+It is not yet the write-enabled managed summary publisher. No GitHub POST,
+PATCH, claim, approval or thread resolution occurs, even if an owned comment
+already exists. It rejects invalid owner/repository path segments (including
+`.` and `..`) and canonicalizes valid repository names to lowercase
+before querying Atlas or inspecting GitHub, matching native structured-submission
+storage. New GitHub history imports also persist canonical lowercase names.
+Older GitHub history imports may still contain mixed-case names: the managed
+preview performs a **read-only, bounded, PR-number-scoped scan** (up to 1,000
+candidate runs), compares the complete repository identity case-insensitively,
+and sorts/selects the latest matching run from saved chronological order.
+Other repositories with the same PR number are excluded from both preview
+and recorded-round count. If the legacy scan exceeds its bound, changes count
+during pagination or returns incomplete/duplicate pages, preview fails
+closed instead of reporting a misleading empty or partial history.
+This does **not** rewrite/migrate existing stored records, and other
+exact-match Code Reviews timeline queries retain their current semantics.
+The preview only materializes the selected saved round's linked findings,
+preserving existing strict cardinality and lineage integrity checks; missing
+history never establishes a clean review.
+
+The managed PR summary is deliberately **compact**: one native GitHub verdict
+alert, abbreviated reviewed SHA, saved-round count, severity counts for the
+latest **complete structured** round, a maximum of five one-line finding
+titles/locations, and the count of reviewer-asserted fixes (not their full
+evidence). Remaining finding details and technical evidence belong to the
+original inline root and subsequent lineage-linked replies. This summary is
+updated **in place** by the separately opt-in managed publisher; it does not
+create a new large review body on every commit.
+
+Counts reflect the latest saved round, **not the outstanding unique defects**
+or all GitHub review history. Partial/historical reviews are explicitly labelled
+and do not receive fabricated counts. No outcome is inferred from a missing
+finding, an outdated GitHub discussion, or a reviewer-asserted fix. Titles and
+paths are safely Markdown-escaped; comments retain their unique, verified
+GitHub App Bot ownership markers. The summary is an index/status, not a
+replacement for detailed review evidence in Atlas.
+
+The proposed summary uses a **PR-scoped marker**, distinct from the legacy
+one-comment-per-review publisher:
+
+```text
+<!-- atlas-code-reviews-managed-summary:v1:owner/repo#123 -->
+```
+
+To inspect GitHub ownership, Atlas retrieves a repository-scoped GitHub App
+**read** token and independently verifies the App Bot's immutable GitHub
+user ID, not just the comment's claimed login or embedded marker. It
+paginates up to 500 issue/PR conversation comments. Results distinguish
+`no_owned_comment`, `current` and `needs_update`. A copied marker posted
+by another author does **not** count as an owned summary. Duplicate or
+malformed App-owned markers, incomplete pagination, unavailable GitHub or
+invalid JSON fail closed. A synthesized GitHub comment URL is based on the
+validated repository/PR and numeric comment ID rather than untrusted
+`html_url` fields. `publicationVerified:false` makes clear that a
+matching remote comment does not prove Atlas has a durable publication
+receipt. Missing records yield `no_saved_review` and no body.
+
+**Write publication is deliberately absent.** An owned-comment lookup is
+not enough to safely create/update comments across retries or concurrent
+review rounds. The next slice must implement an explicit opt-in publisher
+using an appropriately provisioned bot identity, strict permissions,
+durable claim and remote-body reconciliation for initial POST and subsequent
+PATCH. It must prohibit stale/out-of-order round updates and uncertain
+duplicate sends; existing Code Reviewer GitHub publication is already
+active and must remain the sole publisher until migration is reviewed.
+No `ATLAS_CODE_REVIEW_*` publish allowlist or GitHub App permission is
+changed by this work.
+
+### Opt-in managed GitHub PR summary publisher (draft implementation)
+
+**Global native publishing option:** The Server setting
+`ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES=true` allows managed summaries,
+initial inline roots, follow-up inline replies, and fix-evidence replies on
+every repository accessible to the installed GitHub App. It bypasses only the
+four native repository allowlists, **not** the verified OAuth submitter,
+GitHub App write permissions, current PR head, Bot ownership, durability,
+idempotency or explicit `apply:true`. The legacy COMMENT publisher must be
+disabled across *all* repositories; a nonempty legacy allowlist causes a
+configuration startup failure. GitHub GraphQL thread resolution remains on
+its separate per-repository allowlist. The new setting defaults to off and
+requires private production config plus a Server restart; see
+[deployment.md](deployment.md#code-reviews-controlled-github-publisher-opt-in).
+
+`code_reviews_managed_summary_publish({repository,prNumber,apply?})` builds
+on the managed preview. **Default `apply:false` never writes**. A deliberate
+`apply:true` requires the verified MCP OAuth caller to match the latest
+complete structured Review Run's saved submitter, an exact current open
+GitHub PR head, and an independently configured repository opt-in:
+
+```text
+ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES=owner/repo
+```
+
+This flag is **separate** from
+`ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES` (legacy comment-only GitHub
+reviews). Both default to disabled. No existing environment flag or GitHub App
+permission is changed by the PR. It uses the existing installation's
+pull-request read/write token; this is **not** an independently verified
+dedicated Code Reviewer bot. Production should remain disabled until
+independent approval and an authorized manual acceptance exercise.
+
+Publishing first uses the already verified GitHub App Bot comment inventory.
+An unclaimed bot-owned marker is a conflict, not automatically adopted.
+Without an owned comment or previous receipt, the operation plans exactly
+one new issue/PR conversation comment using the PR-scoped machine-readable
+marker. With a previously **published** receipt, the operation requires the
+same numeric bot comment ID and exact prior SHA-256 body hash before planning
+a PATCH to that comment. A previous review's publisher receipt is never
+removed or rewritten by later rounds.
+
+Before either POST or PATCH, Atlas checks that the latest complete structured
+review is for the still-open current GitHub head, acquires the repository's
+write-scoped token, and **persists a transactionally exclusive claim**
+(`coverage.githubManagedSummary`) on the latest Review Run. The transaction
+verifies a fingerprint of saved PR rounds and linked finding records, no
+other pending claim and stable previous publication identity. This is an
+Atlas-side concurrency fence, not a GitHub conditional-write guarantee.
+
+After persisting the claim, Atlas performs a final read-only GitHub PR
+head check **before initiating any POST/PATCH**. If this read fails, no remote
+write has been attempted: a serialized transaction conditionally removes
+only that exact claim ID. The caller receives the original head/read error
+and can submit a new reviewed head (or retry after a transient read error)
+without manually unlocking anything. If transactional release itself fails,
+the response is `prewrite_recovery_required` and Atlas leaves the claim
+intact for investigation; it never guesses that the claim was cleared.
+
+Once POST or PATCH has *started*, the outcome may be ambiguous and the
+claim must not be released automatically. A subsequent read from GitHub must
+verify the Bot-owned PR marker, unique comment ID and exact body hash before
+Atlas records a `published` receipt. A malformed response, HTTP failure,
+timeout or receipt-commit failure **after write initiation** leaves the claim
+unresolved. **Retry never repeats the POST/PATCH automatically.** It only
+inspects GitHub and, if the exact expected body and comment identity are
+attested, records the receipt. If a newer review arrives while an older
+claim is unresolved, the older claim must first be reconciled. Otherwise
+the operation remains `uncertain` and needs operator investigation.
+
+A previously published receipt whose remote comment was edited is reported
+as `published_remote_drift`; it is not silently overwritten or classified
+as current. Review completion is still reviewer-asserted; the comment does
+not approve a PR, resolve inline discussions, establish independent AI
+reviewer provenance, or infer a fix from absent findings.
+
+**Rollout limitations:** Explicit interactive calls only (no background
+scheduler or webhook). No automatic migration from an existing Code Reviewer
+GitHub review to a managed summary. The write flow assumes this GitHub App is
+the sole writer of its managed comment: GitHub's issue-comment PATCH API
+cannot provide an atomic compare-and-swap against external writers, so
+remote changes can race after preflight and must be handled operationally.
+Unresolved claims have no automated force-unlock. The separate inline GitHub
+conversation publisher and dedicated bot identity remain subsequent
+milestones. Full production acceptance requires checking the connected
+MCP catalogue, current deployed revision, reviewer identity, App permissions,
+initial POST, update PATCH and manual uncertain-response recovery.
+
+### Read-only inline thread anchor preflight
+
+`code_reviews_inline_thread_preflight({repository,prNumber})` analyzes the
+latest saved Code Reviews round to prepare for a **future, separately
+approved** inline discussion publisher. It never sends GitHub review
+comments, replies, thread-resolution mutations or publication claims.
+
+The operation reads the Code Reviews Stores with the existing bounded,
+legacy-case-aware latest-round timeline. When a round exists, it uses a
+repository-scoped GitHub App **read** token to obtain the PR and its changed
+files (one page, fewer than 100 files), then reads the PR again. A closed
+PR or reviewed-head mismatch cannot yield an eligible new thread location;
+a head change *during* inspection fails the entire preview instead.
+
+GitHub's file metadata must be structurally valid. Only `added` or
+`modified` files with complete, parseable unified diff hunks and exact
+`additions`/`deletions` totals can produce an added `RIGHT`-side line
+candidate. Renames, copies, deletions, missing/truncated patches, unchanged
+context lines, unknown locations and collisions where multiple findings
+name the same path/line stay **summary-only**. A full 100-file page is
+treated as incomplete rather than silently ignoring subsequent pages.
+
+The output labels each finding either `candidate` (a structurally
+verified new-side location for the latest current structured review) or
+`summary_only` with a specific reason. Persisting/unverified
+observations and reviewer-asserted resolutions require an existing
+GitHub thread identity and evidence before any reply or resolution action;
+historical imported Markdown never authorizes a new thread. The service
+does **not** match GitHub discussions across commits, claim thread
+ownership, establish the independent reviewer identity, or validate an
+already-published thread inventory. Even a `candidate` is **not permission
+to post**: the future publisher must separately verify author, existing
+GitHub thread IDs/markers, changed head and one-shot durable claims before
+the very first mutating HTTP request. This stage is diagnostic only.
+
+### Read-only GitHub inline thread identity inventory
+
+`code_reviews_inline_thread_inventory({repository,prNumber})` is a **read-only**
+inventory of possible existing inline conversations for the latest saved
+review. It does not create comments, adopt legacy threads, mark a finding
+fixed, resolve a GitHub discussion or write Atlas Store records.
+
+The identity design for a future reviewer-published inline thread uses a
+stable, opaque marker of the exact **canonical owner/repo, PR number and
+reviewer-asserted lineage key**:
+
+```text
+<!-- atlas-code-reviews-thread:v1:<sha256> -->
+```
+
+The marker must be the **single trailing marker** in a root inline comment.
+It is not an authentication secret. The reader independently resolves the
+installation's numeric GitHub App Bot user ID and requires that the comment
+was actually posted by that Bot. A copied marker from a human/other Bot
+is recorded as untrusted and cannot establish thread ownership. Replies
+(`in_reply_to_id`) cannot be adopted as new roots.
+
+The inventory reads the GitHub PR review-comments REST endpoint with
+installation-scoped **read-only** tokens, one page at a time, up to five
+100-comment pages. It validates every comment ID and fails closed for
+duplicate App-owned roots, malformed owned markers, missing reply parents,
+unreadable pages, invalid metadata and ambiguous full fifth pages.
+It preserves numeric root IDs and safe GitHub discussion links while
+identifying human/bot replies by count. It never treats
+`line === null` as evidence of a resolved finding: GitHub may merely
+indicate that the original diff location is outdated.
+
+Only the **exact structured lineage** saved in Atlas can match an owned
+root. Finding title, path, review timestamp and changing line number do
+not establish root-cause identity. The output distinguishes
+`owned_thread_found`, `no_owned_thread`,
+`missing_stable_lineage` and `historical_or_partial_evidence`,
+and reports older unmatched owned threads without deleting them.
+Reviewer-asserted resolutions remain labelled assertions with
+GitHub resolution state `unknown`; REST review comments do not attest
+whether a GitHub conversation was resolved. The separate diff preflight
+still determines whether an initial new-line anchor is safe.
+
+**Not yet enabled:** actual inline comment publication, existing-thread
+replies, automated verification of a fix, GitHub conversation resolution,
+durable one-shot per-thread claims or retroactive adoption of human-owned
+Code Reviewer skill comments. Those actions require an independently
+reviewed publisher identity/permissions and an opt-in workflow that
+prevents duplicate initial threads and ambiguous network retries.
+
+### Opt-in first inline GitHub review thread publisher (draft)
+
+`code_reviews_publish_initial_inline_root({repository,prNumber,findingId,apply?})`
+prepares one **new** GitHub inline root comment for a complete structured
+Code Reviews finding. The default `apply:false` is read-only. An explicit
+`apply:true` is permitted only when its canonical repository is in a new,
+independent, **disabled-by-default** allowlist:
+
+```text
+ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES=owner/repository
+```
+
+This does not inherit the legacy COMMENT-review allowlist or the managed
+summary publisher allowlist. The authenticated MCP OAuth caller must match
+the latest saved structured review's original submitting account; the
+review must have its native submission receipt and must not already have
+legacy GitHub review publication metadata. A missing stable structured
+lineage key, historical imported review, persisting/unverified observation,
+closed/outdated PR, multiple findings at one diff location, or missing
+complete verified added RIGHT-side patch anchor cannot create a thread.
+
+Each root has a deterministic opaque GitHub marker derived from the
+canonical repository, PR number, and explicit root-cause lineage key.
+The existing **read-only** Bot-owned inline inventory checks every
+bounded page for an existing root and refuses duplicate or unclaimed
+matches. Human or unrelated Bot comments that copy markers are not
+trusted as App-owned; older human Code Reviewer skill conversations are
+**not** automatically adopted.
+
+Before a GitHub POST, Atlas obtains a repo-scoped installation write
+token, independently checks the current open PR head, and creates a
+transactionally exclusive claim under
+`Review Findings.evidence.githubInlineThread`. The transaction fences
+all current PR run/finding records, prior claims for the same lineage
+across rounds, and the selected latest structured finding. Atlas then
+re-checks the PR head. A failure **before** any POST is attempted
+conditionally releases only the exact claim ID. If that cleanup cannot
+be confirmed, it fails closed.
+
+Once the POST may have started, Atlas **never automatically retransmits
+an ambiguous write**. The publisher distinguishes GitHub's explicit
+`POST /pulls/:pr/comments` HTTP **403 or 422 rejection** from ambiguous
+network failures, HTTP 5xx/other statuses, malformed responses and lost
+acknowledgements. Even an explicit rejection is **not** enough to release
+a claim alone: Atlas first performs a fresh, complete, independently
+Bot-authenticated GitHub inline-root inventory. Only if that inventory
+succeeds, finds **no owned root with the claim's exact marker** and no
+contradictory copied-marker evidence does a serialized transaction
+conditionally release the **same finding's exact claim ID and marker**.
+The response is `rejected_not_published` and a *new explicitly authorized
+apply* can retry after a corrected permission or diff anchor. If the
+read fails, a root exists, or the claim changed concurrently, the
+claim stays `claimed` and the outcome is `uncertain`: it must **not**
+automatically POST again. The allowlist for release is deliberately
+small and does not treat generic `GITHUB_REQUEST_FAILED` as proof of
+non-acceptance.
+
+Successful POSTs independently re-read the Bot-owned root and check
+its numeric comment ID, trailing marker, SHA-256 Markdown body,
+original reviewed commit, file path, and original line before committing
+a `published` receipt. Any ambiguous response or unsuccessful
+verification retains the claim; later calls only read/reconcile an
+exact remote match. A later review repeating the same lineage cannot
+create a duplicate root. This slice does **not** reply to existing
+threads, infer resolution, resolve GitHub conversations, or approve
+any PR.
+
+**Important rollout boundary:** Keep this environment allowlist empty
+until independent Code Reviewer review, green CI, real connected Atlas
+deployment acceptance and a deliberate decision about the existing
+Code Reviewer skill's publication path. Otherwise the two publishers
+could post the same finding in separate GitHub discussions, since
+unmarked human-authored threads cannot be reliably deduplicated by
+identity. The dedicated Code Reviews Bot remains an optional future
+identity/permission milestone. Native GitHub reply/resolution workflows
+require separate, independently reviewed durable claims and owner
+controls.
+
+### Opt-in persisting-finding GitHub inline replies
+
+`code_reviews_publish_inline_reply({repository,prNumber,findingId,apply?})`
+supports the second round of a managed inline GitHub conversation: **one
+reply to an existing verified App-owned root per saved persisting finding**.
+The default `apply:false` is a read-only preview; all real writes require
+`apply:true`, the original structured review's authenticated OAuth
+submitter and a **separate disabled-by-default allowlist**:
+
+```text
+ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES=owner/repository
+```
+
+Enabling initial inline-root publication or managed summaries does not
+enable replies. Before preparing any reply, Atlas requires the latest
+complete native structured review, a new reviewed commit, an explicitly
+trusted shared lineage, and a `persisting` observation carrying its
+reviewer-submitted assessment/evidence for that commit. A fresh submission
+ID on the same reviewed commit does **not** permit another reply for
+that lineage when a reply has already been claimed for the same SHA.
+The root must
+have a saved `published` first-thread claim in an *older* review and
+be independently verified in the fully paginated GitHub review-comment
+inventory: Bot account, root ID, marker, original SHA, path, line and exact
+body checksum. This does **not** adopt or reply to unverified human/legacy
+Code Reviewer comments, or infer persistence from unchanged text.
+
+The unique reply marker binds the canonical owner/repository, PR,
+verified root ID and immutable finding record ID; it never relies on
+title matching, moved line numbers or GitHub's resolved checkbox. A
+bounded Bot-authenticated inventory examines both root and reply comments,
+ignores copied human markers as ownership evidence, rejects duplicate
+Bot-owned reply markers, and confirms replies belong to the exact root.
+The operation never creates a new initial thread or a GitHub review
+event, approves a PR or changes a GitHub conversation's resolved state.
+
+For `apply:true`, Atlas performs a read-only current-head check, obtains
+a scoped GitHub write token, and saves a durable transactionally fenced
+claim into `Review Findings.evidence.githubInlineReply` **before** calling
+`POST /pulls/{pr}/comments/{rootId}/replies`. A failed second
+read-only head check releases only the exact unsent claim. A POST timeout,
+HTTP 5xx, malformed GitHub response or failed remote attestation retains
+the claim and will **never** be POSTed automatically again. After a
+successful reply, Atlas re-reads the independent Bot-owned inventory
+and requires the exact parent, marker, reply ID and body checksum before
+recording a `published` receipt. Prior claims can be reconciled using
+the original finding ID even after later review rounds.
+
+Only an explicitly rejected POST (HTTP 403/422), followed by a complete
+verified absence check and an exact transactional claim release, allows a
+later separately authorised retry after correction. Any conflicting
+remote evidence, incomplete page or failed release stays uncertain.
+
+**Rollout:** Keep this new allowlist empty until the Code Reviews Bot and
+single-authoritative-publisher design are accepted against a real PR. A
+review-only request remains nonmutating. Verified fix replies and actual
+GitHub conversation resolution are separate follow-up milestones; missing
+comments, outdated code anchors and reviewer assertions do not themselves
+prove that GitHub threads should be marked resolved.
+
+### Explicit reviewer-verified fix acknowledgement on an inline thread
+
+`code_reviews_publish_fix_evidence({repository,prNumber,runId,lineageKey,apply?})`
+is the **separate, opt-in** final *comment* in the managed inline discussion
+lifecycle. It does **not** automatically close, collapse or resolve the
+GitHub conversation. The default `apply:false` is a read-only preview,
+and live replies require authenticated original structured-review submitter,
+explicit `apply:true` and a fourth, independent default-empty flag:
+
+```text
+ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES=owner/repository
+```
+
+A "fix" requires the latest saved structured review on an advanced SHA to
+contain exactly one explicit **resolved** assertion for this lineage, with
+nontrivial evidence and metadata asserting it was assessed on that SHA.
+An omitted finding never implies resolution. The origin must be exactly
+one older **published, App-owned** root with a retained matching Store
+receipt and verifiable GitHub root ID, owner, trailing marker, original SHA,
+path/line and raw body hash. Historical imports and human-authored comments
+cannot be adopted. This is *reviewer evidence*, not an independently
+computed code proof: the GitHub comment intentionally states that the
+reviewer assessed the issue as addressed.
+
+Fix messages use a separate trailing
+`<!-- atlas-code-reviews-fix:v1:... -->` marker, based on canonical
+repository/PR, numeric root ID, immutable review-run UUID and lineage.
+The bounded GitHub inventory verifies this specific Bot-owned reply
+parent, body checksum and marker and detects conflicting copied human
+markers and duplicates independently of existing persisting-issue replies.
+
+The durable claim belongs to `Review Runs.coverage.githubFixReplies` keyed
+by explicit root-cause lineage, since a resolved lineage has **no finding
+observation** in that round. Both the entire PR history fingerprint and
+the per-run claim are checked under PostgreSQL Store transactions. The
+current head and original GitHub root are re-checked after the claim but
+before any reply POST. Timeout, HTTP 5xx and uncertain GitHub outcomes
+keep the claim and never trigger automatic retransmission. An explicit
+403/422 rejection only permits exact-claim release after a separate,
+complete verification that no Bot-owned matching fix reply exists.
+Subsequent invocations can reconcile pending claims through the original
+review-run ID even after newer reviews.
+
+The same root and commit cannot be acknowledged twice merely through a
+new review submission ID. No thread is closed by this operation; a future
+GraphQL resolution workflow needs explicit **GitHub review-thread node ID**
+mapping, permission validation, fresh open/resolved-state checks, immutable
+claims and independent read-back, plus a policy for reopened discussions.
+The REST review-comments endpoint alone does **not** provide proof of
+GitHub's thread-resolved state. <https://docs.github.com/en/graphql/reference/pulls>
+
+**Rollout:** Keep this new flag empty until independent review, a real
+multi-SHA integration test and a deliberate one-authoritative-publisher
+transition from the existing human Code Reviewer plugin. GitHub's
+`resolveReviewThread` mutation is *not implemented or invoked* by this PR.
+
+### GitHub GraphQL review-thread state (read-only prerequisite)
+
+`code_reviews_review_thread_state({repository,prNumber})` performs an
+**independent, read-only** GitHub GraphQL thread inventory and joins it with
+the existing Atlas Code Reviews inventory of App Bot-owned REST inline
+comments and the latest saved reviewer lifecycle.
+
+The REST reply/root comment ID is **not** the GraphQL review-thread node ID.
+The GraphQL reader gets the *first comment* of each GitHub review thread via
+its `fullDatabaseId` (not the deprecated `databaseId`), then maps that
+numeric ID to a separately verified App Bot-owned REST root. It checks the
+original path/line match too. A copied marker or unauthorised GitHub comment
+cannot become an Atlas-managed conversation. No thread is inferred from a
+similar title or position after code moves.
+
+GitHub GraphQL returns `thread.id`, `isResolved`, `isOutdated` and
+`viewerCanResolve`. These represent GitHub's **remote conversation state**,
+not proof of the code finding's correctness or source-code fix. A reviewer
+resolution assertion and GitHub's manually resolved state remain separate
+and are reported as such. The viewer permission field is specifically the
+**read-scoped** GitHub App installation token's view; a later write-capable
+operation must re-query permissions with its own write-scoped token.
+
+The implementation reads all available pages up to a strict **500-thread
+ceiling**, rejects GraphQL errors even with HTTP 200, missing root IDs,
+duplicate GraphQL thread/root IDs, unsafe 64-bit comment IDs, stalled
+pagination and disagreed original file path/line. No partial page or missing
+thread is reported as resolved. Missing mappings are explicitly `unknown`.
+
+This PR deliberately does **not** call `resolveReviewThread` or use an App
+write token. The next separately gated milestone may introduce an explicit
+resolution operation *only after* verified recent fix-publication receipts,
+the same thread-node mapping, current commit/head and permissions under the
+write token, durable one-shot claim/reconciliation and fresh remote read-back.
+Even then, a human choosing to reopen a GitHub thread must not be silently
+overridden by an old reviewer assertion.
+
+GitHub schema: <https://docs.github.com/en/graphql/reference/objects#pullrequestreviewthread>
+and <https://docs.github.com/en/graphql/reference/pulls#resolvereviewthread>.
+
+### Separately authorised GitHub GraphQL conversation resolution
+
+`code_reviews_resolve_verified_thread({repository,prNumber,runId,lineageKey,apply?})`
+is the final **explicit** Code Reviews inline discussion operation. No
+conversation mutation is implicit in a fix-evidence reply. `apply:false` is
+read-only. Live GraphQL mutation requires `apply:true`, the same authenticated
+structured reviewer, an explicit owner/repository allowlist which is
+**independent** of all previous publication flags:
+
+```text
+ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES=owner/repository
+```
+
+Atlas requires the latest, complete structured review to declare an
+evidence-backed resolution on its exact SHA, a **published** fix-evidence reply
+receipt tied to that run, and the independently verified App Bot-owned root
+and reply in the complete bounded REST comment inventory. Its GraphQL
+review thread must map to that exact original REST root ID, path and line.
+An arbitrary human-authored reply, copied marker, outdated anchor or a
+reviewer's unsupported assertion is insufficient.
+
+GitHub has reported that its GraphQL `resolveReviewThread` mutation may
+require Contents:write for App installation tokens, despite not changing
+repository files (<https://github.com/github/gh-aw/issues/35726>). The
+ordinary Code Reviews comment-publishing token remains restricted to
+`pull_requests:write`; only the new, independently gated resolution path
+requests the stronger scopes. An installation without either explicitly
+confirmed permission fails **before** creating a durable mutation claim.
+
+For `apply:true`, the operation checks that the pull request is **open** at
+the reviewed SHA, explicitly requests a **dedicated** GitHub App installation
+token with both `pull_requests:write` and `contents:write` permissions, verifies
+GitHub actually granted both scopes, and uses that token to re-query the full GraphQL
+thread inventory. The thread must remain open, current (not outdated) and
+report `viewerCanResolve:true` for that token. These checks are refreshed
+after committing a transaction-fenced, durable one-shot Atlas claim and
+before any `resolveReviewThread` mutation. Post-mutation a separate fresh
+full GraphQL read must show the exact thread resolved, with the REST Bot
+identity still matching, before recording a published receipt.
+
+A timeout, HTTP error, GraphQL error, unexpected response, missed read-back,
+or failure after a claim **never triggers an automatic resend**. Retrying a
+claimed mutation is strictly read-only, even if GitHub appears to remain
+open; resolved-remote state with no published Atlas receipt is reported as
+**attribution unknown**, not falsely credited to Atlas. Once an Atlas
+resolution has been recorded, a discussion reopened by a human is reported
+as `reopened_after_publication` and **not automatically closed again**. A
+second review run cannot silently re-resolve the same lineage. If already
+resolved on GitHub before any claim, Atlas makes no mutation or adoption.
+
+This operation does not approve/reject/merge the pull request. `isResolved`
+is a GitHub discussion state; it is **not proof** the code fix is correct.
+Historical Markdown reviews and untrusted Store data remain insufficient
+to independently prove reviewer identity. Keep production allowlist empty
+until deliberate rollout and a real authenticated GitHub integration test.
+Never enable both the legacy review publisher and this bot workflow without
+first selecting one authoritative publication path.
+
+### End-to-end rollout and Code Reviews UI verification
+
+The Code Reviews Application includes two **separate, read-only** evidence layers:
+
+1. **Saved Atlas receipts:** Expand *View findings* for one recorded review
+   to inspect existing managed-summary, inline root/reply, fix-evidence and
+   conversation-resolution claim states. A saved `published` receipt means
+   Atlas recorded publication; it is **not** a fresh GitHub ownership, content
+   or conversation-state check. `claimed` and unsupported receipts are
+   displayed explicitly rather than being treated as completed publication.
+2. **On-demand GitHub verification:** Expand *PR status* and select *Check
+   GitHub conversations*. The UI invokes
+   `code_reviews_review_thread_state` only on that action. It shows verified
+   Atlas Bot-owned root discussion links, separate GitHub open/resolved/outdated
+   status, unknown/unmapped cases, and the independent reviewer-assessed
+   resolutions. It **never** calls `resolveReviewThread` or any other
+   publication mutation. REST comment IDs are used in discussion URLs;
+   GraphQL node IDs are not confused with REST URLs.
+
+#### Acceptance and publisher authority
+
+For the current rollout, the existing independent Code Reviewer skill's
+GitHub review submission is the **authoritative live review publisher**.
+The Atlas-native COMMENT review publisher and the newer managed summary,
+inline root, persisting/fix reply and conversation resolution operations
+remain separate, **disabled-by-default** alternatives. A code merge or a
+plugin recording structured evidence **does not** authorise duplicate GitHub
+publication, enable a repository allowlist or update the deployed Server.
+Before activating Atlas-native publication, explicitly choose the migration
+point and disable the old publishing path for the same review. Do not use
+both publishers for one review round.
+
+Acceptance sequence (perform only expressly authorised writes):
+
+1. Confirm the connected Atlas MCP actually exposes
+   `code_reviews_overview`, `code_reviews_list_runs`,
+   `code_reviews_submit_structured`, `code_reviews_pr_summary`,
+   `code_reviews_pr_timeline` and
+   `code_reviews_review_thread_state`. The first three being exposed
+   does **not** prove the later operations are deployed or present in the
+   client's cached tool catalogue. Refresh/reconnect the connector and
+   verify the runtime before attributing the gap to missing source code.
+2. Check Code Reviews Project and Store provisioning and inspect a real
+   saved structured run in the Application. Compare its reviewed SHA
+   against GitHub's current head using the PR-status panel, and confirm
+   missing/partial history never displays a falsely clean result.
+3. Preview `code_reviews_review_thread_state` against a **known**
+   permitted PR with an existing Atlas-managed root. Verify the App Bot
+   identity, exact REST root to GraphQL thread mapping, read token
+   permissions, and status UI. An empty list or GitHub authentication
+   failure is **not** proof that a discussion is resolved.
+4. In a deliberately approved test PR, review two distinct commits.
+   Verify that Atlas retains both source rounds and explicit stable
+   finding keys, one managed summary (if native publication was
+   explicitly enabled), new findings on verified inline roots,
+   persisting findings as replies on existing roots, and reviewer-verified
+   fixes as distinct fix-evidence replies. Reopen a resolved GitHub
+   conversation and verify the read-only UI does not silently reclose it.
+5. For each selected `apply:true` publisher action, record the
+   allowlist, exact reviewer/caller identity, GitHub App permissions,
+   candidate SHA, claim/reconciliation status and independent readback.
+   Never infer publication from a mere test preview or retry an uncertain
+   GitHub POST/GraphQL mutation. Human-authored legacy reviews remain
+   separate and are not retroactively adopted as Atlas Bot roots.
+6. Verify ChatGPT's connected MCP independently after a server deploy;
+   its advertised tools can lag source and Server API availability.
+   Only when real app history, native GitHub presentation and ownership
+   controls work as expected should Code Reviews workflow affordances
+   be handed over to ChatFlow.
+
+**Operational limitation:** The Application can show stored receipts
+without checking GitHub, and the on-demand GraphQL panel may be unavailable
+because of deployment/catalogue staleness, GitHub App permissions or API
+errors. These are distinct conditions and must not be conflated.
+
+### MCP discovery for bounded tool catalogues
+
+The Server's Application registry includes the Code Reviews tools, but some
+ChatGPT connector clients surface only an initial portion of a large MCP tool
+list. Atlas registers Code Reviews' application operations near the beginning
+of that list, after the existing priority football generalist tools. This does
+**not** introduce an alternate API, relax authenticated MCP OAuth requirements,
+enable native GitHub publication, or imply that this ChatGPT connection already
+has a refreshed tool catalogue. The normal Application dispatch path remains
+authoritative.
+
+For integration acceptance after an independently reviewed deployment:
+
+1. Refresh/reconnect the Atlas MCP connection and inspect the **actual exposed**
+   `code_reviews_overview`, `code_reviews_list_runs`,
+   `code_reviews_list_findings` and `code_reviews_submit_structured` tools.
+   The three read operations are safe for baseline checks; a submit operation
+   must still require verified OAuth and an explicit request to persist a review.
+2. Verify that the Code Reviews Project and both Stores exist. An empty Store
+   is a legitimate baseline, not evidence the latest PR has been reviewed.
+3. Make one authorised structured submission for the **exact current open PR
+   SHA**, retain the receipt and repeat it idempotently; confirm linked run and
+   findings in the Application. Do not call `code_reviews_publish_github`
+   for a review that the existing Code Reviewer already published.
+4. Distinguish a missing tool after deployment from an operation returning
+   an application-level error. A code merge alone does not refresh the
+   connected connector or deploy/restart the Server.
+
+The change prioritises operations in the MCP registration order only.
+Connector-specific catalogue limits and refresh behaviour must be verified
+against a real connected client; successful local discovery tests alone do
+not prove production exposure.
+
+### Code Reviewer plugin integration
+
+The separate private `Code Reviewer` plugin (from version `1.0.6`) has an
+optional Atlas integration workflow. When an authenticated Atlas MCP session
+actually exposes `code_reviews_submit_structured`, the skill can store a
+structured observation after its ordinary independent GitHub review.
+It must not call `code_reviews_publish_github` for the **same** review, since
+that would publish it twice. A review-only request remains read-only unless
+the user explicitly asks to store a receipt.
+
+Installing the plugin update does **not** automatically deploy the Code
+Reviews Application or reconfigure the connected Atlas MCP tool list.
+The application must exist in the target Atlas environment, and the
+authenticated structured operation must be available to the client.
+Account-level OAuth attribution does not prove the AI review was independently
+performed.
+
 ## Planned follow-ups
 
 1. Repository-level source completeness summaries, optional GitHub webhook reconciliation and guided operator backfill UI.
@@ -330,3 +1196,38 @@ a head immediately after verification. Publication does not update the
 
 Review rounds, distinct reviewed commit SHAs, and unique finding identities are separate
 metrics. An empty Store does not imply any repository is free of issues.
+
+
+### Publisher cutover and concise re-review policy (operational acceptance)
+
+- **Before cutover:** the existing Code Reviewer skill remains the sole GitHub
+  publisher. Native Atlas managed summary, inline root/reply/fix, and resolution
+  allowlists remain empty until intentionally configured and verified.
+- **At cutover:** configure the repository-specific managed-summary, inline-root,
+  persisting-reply and fix-evidence allowlists together with the required GitHub
+  App Bot permissions. Update the reviewer skill's publication routing to
+  **submit to Atlas first**, then invoke the native publishing operations
+  sequentially. Never call the legacy GitHub review publisher and the new native
+  publishers for the same round. Use preview-first checks and ensure there is a
+  single authoritative publisher. Permission or uncertain-write failure must
+  fail closed, not trigger an automatic direct-GitHub fallback.
+- **One finding, one thread:** the first verified, anchored, lineage-keyed
+  observation gets a detailed initial inline root. Later verified observations
+  with the same root-cause identity post an incremental reply rather than
+  another root or a copy of the original explanation. Explicit verified fix
+  assessments get one short evidence-backed acknowledgement. Uncertain matches
+  stay unlinked; neither a clean round nor an "outdated" GitHub anchor resolves
+  a conversation automatically. Thread resolution remains a separately gated
+  action.
+- **Presentation:** the PR overview shows the *current saved review* rather
+  than cumulative historical prose. Technical descriptions can be verbose in
+  the initial inline root; persisting/fix replies show new SHA-bound evidence
+  (bounded to 1,500 characters in GitHub), while complete evidence remains
+  stored in Atlas. Managed PR summary always updates its existing Bot-owned
+  marker comment rather than stacking new summaries.
+- **Acceptance:** on an expressly approved open test PR, review SHA A with
+  one anchored finding, publish and independently read back summary/root;
+  review SHA B with explicit persisting or resolution lineage, verify one
+  summary PATCH (not POST) and one in-thread follow-up, verify stored receipts,
+  current GitHub thread state and uncertain-failure behavior. Never infer
+  successful publication from a preview or stored assertion.

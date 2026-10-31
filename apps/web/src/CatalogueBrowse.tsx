@@ -26,7 +26,7 @@ export function CatalogueToolbar({
     placeholder: string;
     query: string;
     onQueryChange: (query: string) => void;
-    count: number;
+    count: number | null;
     itemName: string;
     children?: ReactNode;
 }) {
@@ -37,6 +37,6 @@ export function CatalogueToolbar({
                 onChange={event => onQueryChange(event.currentTarget.value)} />
         </label>
         {children}
-        <span aria-live="polite">{count} {itemName}{count === 1 ? '' : 's'}</span>
+        <span aria-live="polite">{count === null ? 'Loading results' : `${count} ${itemName}${count === 1 ? '' : 's'}`}</span>
     </div>;
 }

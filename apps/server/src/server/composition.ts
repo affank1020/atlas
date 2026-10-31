@@ -20,6 +20,7 @@ import { WorkspaceService } from '../workspaces/application.js';
 import { createAskAtlas } from './ai.js';
 import { createDispatcher } from './dispatch.js';
 import { ServerDiagnostics } from './diagnostics.js';
+import { ServerDiagnosticHistory } from './diagnostic-history.js';
 import { MonitoringHealthService } from './monitoring-health.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
@@ -32,6 +33,17 @@ import { CodeReviewsService, codeReviewsApplication } from '../apps/code-reviews
 import { GitHubReviewHistoryReader } from '../apps/github-review-history.js';
 import { GitHubReviewPublisher } from '../apps/github-review-publisher.js';
 import { ReviewPublicationService } from '../apps/review-publication.js';
+import { GitHubManagedSummaryReader, ManagedSummaryPreviewService } from '../apps/managed-summary.js';
+import { GitHubManagedSummaryWriter } from '../apps/managed-summary-github.js';
+import { ManagedSummaryPublicationService } from '../apps/managed-summary-publication.js';
+import { GitHubInlineDiffReader, InlineThreadPreflightService } from '../apps/inline-thread-preflight.js';
+import { GitHubInlineThreadReader, InlineThreadInventoryService } from '../apps/inline-thread-inventory.js';
+import { GitHubInlineRootWriter } from '../apps/inline-thread-writer.js';
+import { InlineRootPublicationService } from '../apps/inline-root-publication.js';
+import { InlineReplyPublicationService } from '../apps/inline-reply-publication.js';
+import { InlineFixPublicationService } from '../apps/inline-fix-publication.js';
+import { GitHubReviewThreadStateReader, ReviewThreadStateService } from '../apps/review-thread-state.js';
+import { GitHubThreadResolutionGateway, ReviewThreadResolutionService } from '../apps/review-thread-resolution.js';
 import { GitHubBroker } from '../workspaces/github-broker.js';
 import { loadServerConfig, type ServerConfig } from './config.js';
 import { ServerLifecycle } from './lifecycle.js';
@@ -46,7 +58,15 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         connectionTimeoutMillis: 1_250, query_timeout: 1_500, statement_timeout: 1_500,
     });
     const catalog = new CoreService(repository);
-    const diagnostics = new ServerDiagnostics(config.serverDiagnosticsEnabled);
+    // A dedicated bounded connection avoids starving health checks or normal writes
+    // when diagnostic history is unavailable.
+    const diagnosticPool = new Pool({
+        connectionString: config.databaseUrl, max: 1,
+        connectionTimeoutMillis: 1_000, query_timeout: 1_500, statement_timeout: 1_500,
+    });
+    const diagnosticHistory = new ServerDiagnosticHistory(diagnosticPool, config.serverDiagnosticsEnabled);
+    const diagnostics = new ServerDiagnostics(config.serverDiagnosticsEnabled, undefined,
+        event => diagnosticHistory.record(event));
     const storageUsage = new StorageUsageService(repository.pool, config.storageAnalytics);
     const fabric = createFabric(config.databaseUrl, new OllamaEmbeddingProvider(config.retrieval.embeddingModel, config.ai.baseUrl));
     const retrieval = new RetrievalService(fabric.search, fabric.context, fabric.authority);
@@ -61,21 +81,51 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
     const shareApprovals = new NodeShareApprovals(repository.pool, config.deviceShares.approvedPairs);
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool, healthPool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
-    const health = new MonitoringHealthService(healthPool, { list: () => nodes.listForMonitoring() });
+    const health = new MonitoringHealthService(healthPool, { list: () => nodes.listForMonitoring() },
+        undefined, undefined, undefined, diagnosticHistory);
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
-    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await healthPool.end(); } finally { await repository.close(); } } } }, fabric.repository, portfolio, media, files],
+    const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
+                    try { await diagnosticPool.end(); } finally {
+                        try { await healthPool.end(); } finally { await repository.close(); }
+                    }
+                } } } }, fabric.repository, portfolio, media, files],
         message => { diagnostics.record('background_task_failed'); console.error(message); });
     const football = new FootballTrainingService(catalog, workspaces.repository, workspaces.runtime);
     const githubBroker = new GitHubBroker();
     const publisher = new ReviewPublicationService(catalog, new GitHubReviewPublisher(githubBroker),
         config.codeReviews.publishRepositories);
+    const managedSummary = new ManagedSummaryPreviewService(catalog, new GitHubManagedSummaryReader(githubBroker));
+    const managedPublisher = new ManagedSummaryPublicationService(catalog, managedSummary,
+        new GitHubManagedSummaryWriter(githubBroker), config.codeReviews.managedSummaryRepositories);
+    const inlinePreflight = new InlineThreadPreflightService(catalog, new GitHubInlineDiffReader(githubBroker));
+    const inlineInventory = new InlineThreadInventoryService(catalog, new GitHubInlineThreadReader(githubBroker));
+    const inlineRootPublisher = new InlineRootPublicationService(catalog, inlinePreflight,
+        inlineInventory, new GitHubInlineRootWriter(githubBroker),
+        config.codeReviews.inlineRootRepositories, new GitHubInlineThreadReader(githubBroker));
+    const inlineReplyPublisher = new InlineReplyPublicationService(catalog,
+        new GitHubInlineThreadReader(githubBroker), new GitHubInlineRootWriter(githubBroker),
+        config.codeReviews.inlineReplyRepositories);
+    const inlineFixPublisher = new InlineFixPublicationService(catalog,
+        new GitHubInlineThreadReader(githubBroker), new GitHubInlineRootWriter(githubBroker),
+        config.codeReviews.inlineFixRepositories);
+    const reviewThreadState = new ReviewThreadStateService(inlineInventory,
+        new GitHubInlineThreadReader(githubBroker),
+        new GitHubReviewThreadStateReader(githubBroker));
+    const threadResolution = new ReviewThreadResolutionService(catalog,
+        new GitHubInlineThreadReader(githubBroker),
+        new GitHubReviewThreadStateReader(githubBroker),
+        new GitHubThreadResolutionGateway(githubBroker),
+        new GitHubInlineRootWriter(githubBroker),
+        config.codeReviews.threadResolutionRepositories);
     const codeReviews = new CodeReviewsService(catalog, new GitHubReviewHistoryReader(githubBroker),
-        config.codeReviews.trustedPublishers, publisher);
+        config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher,
+        inlinePreflight, inlineInventory, inlineRootPublisher, inlineReplyPublisher,
+        inlineFixPublisher, reviewThreadState, threadResolution);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
-    const services = { config, catalog, diagnostics, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

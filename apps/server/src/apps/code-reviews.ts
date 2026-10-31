@@ -5,7 +5,17 @@ import type { ApplicationDefinition, ApplicationCaller } from './registry.js';
 import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
+import { readCanonicalPrPage, readPrTimeline } from './review-timeline.js';
 import type { ReviewPublicationService } from './review-publication.js';
+import type { ManagedSummaryPreviewService } from './managed-summary.js';
+import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
+import type { InlineThreadPreflightService } from './inline-thread-preflight.js';
+import type { InlineThreadInventoryService } from './inline-thread-inventory.js';
+import type { InlineRootPublicationService } from './inline-root-publication.js';
+import type { InlineReplyPublicationService } from './inline-reply-publication.js';
+import type { InlineFixPublicationService } from './inline-fix-publication.js';
+import type { ReviewThreadStateService } from './review-thread-state.js';
+import type { ReviewThreadResolutionService } from './review-thread-resolution.js';
 import { reconcileGitHubReviews, CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE, type ReviewSource } from './review-import.js';
 export { CODE_REVIEWS_PROJECT_ID, REVIEW_RUNS_STORE, REVIEW_FINDINGS_STORE } from './review-import.js';
 
@@ -16,7 +26,16 @@ export class CodeReviewsService {
     constructor(private readonly catalog: ReviewCatalogue,
         private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead'>>,
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
-        private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>) {}
+        private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>,
+        private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>,
+        private readonly managedPublisher?: Pick<ManagedSummaryPublicationService, 'publish'>,
+        private readonly inlinePreflight?: Pick<InlineThreadPreflightService, 'preview'>,
+        private readonly inlineInventory?: Pick<InlineThreadInventoryService, 'preview'>,
+        private readonly inlineRootPublisher?: Pick<InlineRootPublicationService, 'publish'>,
+        private readonly inlineReplyPublisher?: Pick<InlineReplyPublicationService, 'publish'>,
+        private readonly inlineFixPublisher?: Pick<InlineFixPublicationService, 'publish'>,
+        private readonly reviewThreadState?: Pick<ReviewThreadStateService, 'preview'>,
+        private readonly threadResolution?: Pick<ReviewThreadResolutionService, 'publish'>) {}
 
     private async storeIds() {
         const stores = await this.catalog.listStores(CODE_REVIEWS_PROJECT_ID);
@@ -76,6 +95,81 @@ export class CodeReviewsService {
         return this.publisher.publishRun(runId, includeInline, apply, caller);
     }
 
+    /** Preview a prospective one-comment-per-PR summary and verify App Bot ownership.
+     * This capability does not claim or write any GitHub comment.
+     */
+    async previewManagedSummary(repository: string, prNumber: number) {
+        if (!this.managedSummary)
+            throw new AtlasError('Managed PR summary preview is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.managedSummary.preview(repository, prNumber);
+    }
+
+    /** Durable, opt-in GitHub PR comment create/update. Never approves a PR. */
+    async publishManagedSummary(repository: string, prNumber: number, apply: boolean,
+        caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.managedPublisher)
+            throw new AtlasError('Managed summary publication is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.managedPublisher.publish(repository, prNumber, apply, caller);
+    }
+
+    /** Read-only verified new-side diff target analysis; no GitHub threads are written. */
+    async previewInlineThreads(repository: string, prNumber: number) {
+        if (!this.inlinePreflight)
+            throw new AtlasError('Inline thread preflight is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlinePreflight.preview(repository, prNumber);
+    }
+
+    /** Verify existing App-owned GitHub inline roots against stable stored lineages. */
+    async previewInlineThreadInventory(repository: string, prNumber: number) {
+        if (!this.inlineInventory)
+            throw new AtlasError('Inline thread inventory is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineInventory.preview(repository, prNumber);
+    }
+
+    /** Publish an initial, verified inline root once, never a follow-up reply. */
+    async publishInitialInlineRoot(repository: string, prNumber: number, findingId: string,
+        apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.inlineRootPublisher)
+            throw new AtlasError('Initial inline thread publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineRootPublisher.publish(repository, prNumber, findingId, apply, caller);
+    }
+
+    /** A new evidence-backed re-review can reply once to an existing Bot-owned root. */
+    async publishPersistingInlineReply(repository: string, prNumber: number, findingId: string,
+        apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.inlineReplyPublisher)
+            throw new AtlasError('Inline reply publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineReplyPublisher.publish(repository, prNumber, findingId, apply, caller);
+    }
+
+    /** Read-only REST/GitHub GraphQL mapping. Remote thread state is never review evidence. */
+    async previewReviewThreadState(repository: string, prNumber: number) {
+        if (!this.reviewThreadState)
+            throw new AtlasError('GitHub review-thread state reader is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.reviewThreadState.preview(repository,prNumber);
+    }
+
+    /** Separate opt-in GraphQL review-thread mutation; read-only by default. */
+    async resolveVerifiedReviewThread(repository:string,prNumber:number,runId:string,
+        lineageKey:string,apply:boolean,caller?:ApplicationCaller){
+        assertStructuredCaller(caller);
+        if(!this.threadResolution)
+            throw new AtlasError('GitHub conversation resolution is unavailable.','CAPABILITY_UNAVAILABLE');
+        return this.threadResolution.publish(repository,prNumber,runId,lineageKey,apply,caller);
+    }
+
+    /** One explicit evidence-backed fix acknowledgement on an owned inline root. */
+    async publishInlineFixEvidence(repository: string, prNumber: number, runId: string,
+        lineageKey: string, apply: boolean, caller?: ApplicationCaller) {
+        assertStructuredCaller(caller);
+        if (!this.inlineFixPublisher)
+            throw new AtlasError('Inline fix evidence publisher is unavailable.', 'CAPABILITY_UNAVAILABLE');
+        return this.inlineFixPublisher.publish(repository,prNumber,runId,lineageKey,apply,caller);
+    }
+
     /** GitHub PR discovery is read-only. Explicit numbers are required for batch apply. */
     async discoverPullRequests(repository: string, page: number) {
         if (!this.history?.discover)
@@ -124,6 +218,78 @@ export class CodeReviewsService {
         return this.catalog.store.transaction(state => reconcile(state, true));
     }
 
+    /** An on-demand PR read. Never infer a clean review from absent/partial history.
+     * The database query selects the latest *recorded* round; GitHub is read
+     * independently because the PR head can advance after that round.
+     */
+    async prSummary(repository: string, prNumber: number) {
+        const ids = await this.storeIds();
+        const canonicalRepository = repository.toLowerCase();
+        const saved = await readCanonicalPrPage(this.catalog, ids.runs,
+            canonicalRepository, prNumber, 1, 0);
+        const record = saved.items[0];
+        if (saved.total > 0 && !record)
+            throw new AtlasError('Latest Code Reviews record could not be loaded.', 'CAPABILITY_UNAVAILABLE');
+
+        let latest: null | {
+            runId: string; headSha: string; reviewedAt: string; verdict: string;
+            source: 'structured' | 'historical' | 'unknown';
+            severityCounts: { sev1: number; sev2: number; sev3: number; sev4: number } | null;
+        } = null;
+        if (record) {
+            const data = record.data;
+            if (typeof data.headSha !== 'string' || !/^[a-f0-9]{40}$/i.test(data.headSha) ||
+                typeof data.reviewedAt !== 'string' || Number.isNaN(Date.parse(data.reviewedAt)) ||
+                typeof data.verdict !== 'string' ||
+                !['changes_requested', 'concerns_to_verify', 'non_blocking', 'no_findings', 'inconclusive'].includes(data.verdict))
+                throw new AtlasError('Latest Code Reviews record has unsupported fields.', 'CAPABILITY_UNAVAILABLE');
+            const coverage = data.coverage && typeof data.coverage === 'object' && !Array.isArray(data.coverage)
+                ? data.coverage as Record<string, unknown> : undefined;
+            const counts = data.counts && typeof data.counts === 'object' && !Array.isArray(data.counts)
+                ? data.counts as Record<string, unknown> : undefined;
+            const validCount = (v: unknown): v is number => typeof v === 'number' &&
+                Number.isSafeInteger(v) && v >= 0;
+            const severityCounts = counts && validCount(counts.sev1) && validCount(counts.sev2) &&
+                validCount(counts.sev3) && validCount(counts.sev4)
+                ? { sev1: counts.sev1, sev2: counts.sev2, sev3: counts.sev3, sev4: counts.sev4 } : null;
+            latest = {
+                runId: record.id, headSha: data.headSha.toLowerCase(),
+                reviewedAt: data.reviewedAt, verdict: data.verdict,
+                source: coverage?.source === 'atlas_structured_submission' ? 'structured'
+                    : coverage?.source === 'github_pull_request_review' ? 'historical' : 'unknown',
+                severityCounts,
+            };
+        }
+
+        // An unavailable GitHub installation/endpoint is not evidence that
+        // a recorded review is current, stale, clean or absent.
+        let currentHead: { state: 'open' | 'closed' | 'unavailable'; sha?: string; checkedAt?: string } =
+            { state: 'unavailable' };
+        if (this.history?.currentHead) {
+            try {
+                const head = await this.history.currentHead(repository, prNumber);
+                currentHead = { state: head.open ? 'open' : 'closed',
+                    sha: head.headSha.toLowerCase(), checkedAt: new Date().toISOString() };
+            } catch (error) {
+                if (!(error instanceof AtlasError) ||
+                    !['GITHUB_UNAVAILABLE', 'GITHUB_REQUEST_FAILED', 'CAPABILITY_UNAVAILABLE'].includes(error.code))
+                    throw error;
+            }
+        }
+        return {
+            repository, prNumber, recordedRounds: saved.total, latest, currentHead,
+            latestReviewHead: !latest ? 'no_stored_review'
+                : currentHead.state === 'unavailable' ? 'unknown'
+                : latest.headSha === currentHead.sha ? 'current' : 'outdated',
+        };
+    }
+
+    /** Read-only, page-scoped lineage; does not infer fixes from missing evidence. */
+    async prTimeline(repository: string, prNumber: number, limit: number, offset: number) {
+        const ids = await this.storeIds();
+        return readPrTimeline(this.catalog, ids, repository.toLowerCase(), prNumber, limit, offset, true);
+    }
+
     async overview() {
         const ids = await this.storeIds();
         const [runs, findings] = await Promise.all([
@@ -163,6 +329,136 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                 name: 'code_reviews_overview',
                 description: 'Read project-scoped Code Reviews totals; no GitHub publication.',
                 inputSchema: {}, invoke: () => service.overview(),
+            },
+            {
+                name: 'code_reviews_pr_summary',
+                description: 'Read the latest saved review and compare its commit with the current GitHub PR head. Unknown state is not clean; no writes.',
+                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000) },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.prSummary(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_pr_timeline',
+                description: 'Read bounded saved PR rounds and explicit finding lineage; missing history and resolutions remain unknown.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    limit: z.number().int().min(1).max(10).default(5),
+                    offset,
+                },
+                invoke: ({ repository, prNumber, limit, offset }: {
+                    repository: string; prNumber: number; limit: number; offset: number;
+                }) => service.prTimeline(repository, prNumber, limit, offset),
+            },
+            {
+                name: 'code_reviews_managed_summary_preview',
+                description: 'Read-only managed PR summary draft and verified existing GitHub App Bot comment ownership. No posts, updates or claims.',
+                inputSchema: { repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000) },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.previewManagedSummary(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_managed_summary_publish',
+                description: 'Explicit, opt-in create/update of one bot-owned PR summary comment; dry-run by default, durable claims block uncertain retries. Never approves or replies.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, apply }: {
+                    repository: string; prNumber: number; apply: boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishManagedSummary(repository, prNumber, apply, caller),
+            },
+            {
+                name: 'code_reviews_inline_thread_preflight',
+                description: 'Read-only current PR diff checks for potential inline finding anchors; unverified, outdated, historical and lifecycle outcomes remain summary-only. Does not create or reply to comments.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.previewInlineThreads(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_inline_thread_inventory',
+                description: 'Read-only verification of App Bot-owned GitHub inline thread roots against saved reviewer lineage keys. Does not write replies or infer resolved threads.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.previewInlineThreadInventory(repository, prNumber),
+            },
+            {
+                name: 'code_reviews_review_thread_state',
+                description: 'Read-only bounded GitHub GraphQL review-thread node IDs, resolution and permissions matched against independently verified App Bot REST roots. No resolution inferred from code and no GitHub writes.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                },
+                invoke: ({ repository, prNumber }: { repository: string; prNumber: number }) =>
+                    service.previewReviewThreadState(repository,prNumber),
+            },
+            {
+                name: 'code_reviews_publish_initial_inline_root',
+                description: 'Opt-in, single new inline GitHub root on verified current diff anchor. Read-only by default; durable claim and no automatic repeat after uncertain POST. Never replies, approves or resolves.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    findingId: z.string().uuid(),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, findingId, apply }: {
+                    repository: string; prNumber: number; findingId: string; apply: boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishInitialInlineRoot(repository, prNumber, findingId, apply, caller),
+            },
+            {
+                name: 'code_reviews_publish_inline_reply',
+                description: 'Explicit, opt-in one-shot reply on a verified existing Bot-owned inline root for a persisting structured finding. Dry-run by default; never resolves GitHub threads.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    findingId: z.string().uuid(),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, findingId, apply }: {
+                    repository: string; prNumber: number; findingId: string; apply: boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishPersistingInlineReply(repository, prNumber, findingId, apply, caller),
+            },
+            {
+                name: 'code_reviews_resolve_verified_thread',
+                description: 'Separate opt-in GitHub GraphQL conversation resolution only after a verified published fix reply. Read-only preview by default; apply=true requires write-scoped GitHub permission, current PR head, durable claim and independent read-back. Never approves or merges.',
+                inputSchema:{
+                    repository:z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber:z.number().int().min(1).max(1_000_000),
+                    runId:z.string().uuid(),
+                    lineageKey:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/),
+                    apply:z.boolean().default(false),
+                },
+                invoke:({repository,prNumber,runId,lineageKey,apply}:{
+                    repository:string;prNumber:number;runId:string;lineageKey:string;apply:boolean;
+                },caller?:ApplicationCaller)=>
+                    service.resolveVerifiedReviewThread(repository,prNumber,runId,lineageKey,apply,caller),
+            },
+            {
+                name: 'code_reviews_publish_fix_evidence',
+                description: 'Opt-in evidence-backed resolution acknowledgement reply to a verified Bot-owned GitHub inline root. Dry-run by default, never resolves or closes the GitHub review thread.',
+                inputSchema: {
+                    repository: z.string().regex(/^[A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+$/),
+                    prNumber: z.number().int().min(1).max(1_000_000),
+                    runId: z.string().uuid(),
+                    lineageKey: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/),
+                    apply: z.boolean().default(false),
+                },
+                invoke: ({ repository, prNumber, runId, lineageKey, apply }: {
+                    repository:string; prNumber:number; runId:string; lineageKey:string; apply:boolean;
+                }, caller?: ApplicationCaller) =>
+                    service.publishInlineFixEvidence(repository,prNumber,runId,lineageKey,apply,caller),
             },
             {
                 name: 'code_reviews_list_runs',

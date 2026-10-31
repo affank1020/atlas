@@ -87,6 +87,88 @@ export function loadCodeReviewPublishRepositories(env: NodeJS.ProcessEnv = proce
     return new Set(values);
 }
 
+/** Separate opt-in from the legacy COMMENT-review publisher.
+ * A repository enabled for old review publication is NOT automatically
+ * enabled for managed, editable GitHub issue comments.
+ */
+export function loadManagedSummaryRepositories(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const raw = env.ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES?.trim() ?? '';
+    if (!raw) return new Set();
+    const values = raw.split(',').map(x => x.trim().toLowerCase());
+    if (values.length > 30 || values.some(v => !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(v) ||
+        v.split('/').some(segment => segment === '.' || segment === '..')) ||
+        new Set(values).size !== values.length)
+        throw new Error('ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES requires distinct valid owner/repo pairs.');
+    return new Set(values);
+}
+
+/** Separate opt-in for initial inline roots. Never inherit the legacy review
+ * or managed summary publishing allowlists.
+ */
+export function loadInlineRootRepositories(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const raw = env.ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES?.trim() ?? '';
+    if (!raw) return new Set();
+    const values = raw.split(',').map(value => value.trim().toLowerCase());
+    if (values.length > 30 || values.some(v => !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(v) ||
+        v.split('/').some(segment => segment === '.' || segment === '..')) ||
+        new Set(values).size !== values.length)
+        throw new Error('ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES requires distinct valid owner/repo pairs.');
+    return new Set(values);
+}
+
+/** Separate deny-by-default reply allowlist. Initial root opt-in alone
+ * must never authorize follow-up mutations.
+ */
+export function loadInlineReplyRepositories(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const raw = env.ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES?.trim() ?? '';
+    if (!raw) return new Set();
+    const values = raw.split(',').map(value => value.trim().toLowerCase());
+    if (values.length > 30 || values.some(value =>
+        !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(value) ||
+        value.split('/').some(segment => segment === '.' || segment === '..')) ||
+        new Set(values).size !== values.length)
+        throw new Error('ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES requires distinct owner/repo pairs.');
+    return new Set(values);
+}
+
+/** Separate disabled-by-default flag for fix-evidence replies.
+ * It does NOT inherit any other Code Reviews publication allowlist.
+ */
+export function loadInlineFixRepositories(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const raw=env.ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES?.trim()??'';
+    if (!raw) return new Set();
+    const values=raw.split(',').map(v=>v.trim().toLowerCase());
+    if (values.length>30 || values.some(v=>
+        !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(v) ||
+        v.split('/').some(x=>x==='.' || x==='..')) ||
+        new Set(values).size!==values.length)
+        throw new Error('ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES requires distinct owner/repo pairs.');
+    return new Set(values);
+}
+
+/** Independent opt-in: publishing fix evidence NEVER enables GraphQL thread mutation. */
+export function loadThreadResolutionRepositories(env:NodeJS.ProcessEnv=process.env):ReadonlySet<string>{
+    const raw=env.ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES?.trim()??'';
+    if(!raw)return new Set();
+    const entries=raw.split(',').map(x=>x.trim().toLowerCase());
+    if(entries.length>30||entries.some(x=>
+        !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(x)||
+        x.split('/').some(part=>part==='.'||part==='..'))||
+        new Set(entries).size!==entries.length)
+        throw new Error('ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES must list distinct owner/repo pairs.');
+    return new Set(entries);
+}
+
+/** One explicitly approved cutover for all GitHub-App-accessible repositories.
+ * Legacy COMMENT reviews and GraphQL thread resolution are not enabled by it.
+ */
+export function loadNativePublishAllRepositories(env: NodeJS.ProcessEnv = process.env): boolean {
+    const value = env.ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES?.trim() || 'false';
+    if (value !== 'true' && value !== 'false')
+        throw new Error('ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES must be true or false.');
+    return value === 'true';
+}
+
 /** Never log this object: integration settings contain secrets. */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides: { databaseUrl?: string } = {}) {
     const databaseUrl = requireDatabaseUrl(overrides.databaseUrl ?? env.DATABASE_URL ?? '');
@@ -100,6 +182,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const oauthSubject = env.ATLAS_MCP_OAUTH_ALLOWED_SUBJECT?.trim() || '';
     const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
     const scope = 'atlas:access';
+    const relayTokenHash = env.ATLAS_MCP_RELAY_TOKEN_SHA256?.trim() || '';
+    if (relayTokenHash && !/^[a-f0-9]{64}$/.test(relayTokenHash))
+        throw new Error('ATLAS_MCP_RELAY_TOKEN_SHA256 must be a lowercase SHA-256 hex digest.');
     if (oauthIssuer || oauthSubject || mcpResource) {
         if (!oauthIssuer || !oauthSubject || !mcpResource) throw new Error('Atlas MCP OAuth requires ATLAS_MCP_OAUTH_ISSUER, ATLAS_MCP_OAUTH_ALLOWED_SUBJECT and ATLAS_MCP_RESOURCE together.');
         const issuer = new URL(oauthIssuer);
@@ -113,19 +198,41 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         oauthIssuer = issuer.toString();
     }
     const portfolio = loadPortfolioConfig(env);
+    // Never make the legacy per-run GitHub review and any managed publisher
+    // available for the same repository. A bad cutover configuration must
+    // fail at startup rather than allow duplicate GitHub publication.
+    const publishRepositories = loadCodeReviewPublishRepositories(env);
+    const publishAllNative = loadNativePublishAllRepositories(env);
+    // Validate legacy repository-specific inputs even when the global opt-in is active.
+    const configuredSummary = loadManagedSummaryRepositories(env);
+    const configuredRoots = loadInlineRootRepositories(env);
+    const configuredReplies = loadInlineReplyRepositories(env);
+    const configuredFixes = loadInlineFixRepositories(env);
+    const managedSummaryRepositories = publishAllNative ? new Set<string>(['*']) : configuredSummary;
+    const inlineRootRepositories = publishAllNative ? new Set<string>(['*']) : configuredRoots;
+    const inlineReplyRepositories = publishAllNative ? new Set<string>(['*']) : configuredReplies;
+    const inlineFixRepositories = publishAllNative ? new Set<string>(['*']) : configuredFixes;
+    // Resolving conversations remains separately approved and never accepts global opt-in.
+    const threadResolutionRepositories = loadThreadResolutionRepositories(env);
+    const managedAllowLists = [managedSummaryRepositories, inlineRootRepositories,
+        inlineReplyRepositories, inlineFixRepositories, threadResolutionRepositories];
+    if ([...publishRepositories].some(repo => managedAllowLists.some(set => set.has(repo) || set.has('*'))))
+        throw new Error('Atlas Code Reviews legacy and managed GitHub publishing must not overlap for a repository.');
     return {
         databaseUrl, host, port,
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         serverDiagnosticsEnabled: env.ATLAS_SERVER_DIAGNOSTICS_ENABLED !== 'false',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
-            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope },
+            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope, relayTokenHash },
         nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
         // Fail closed until the separately reviewed host executor is installed.
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
         deviceShares: loadDeviceShareConfig(env),
         node: loadNodeConfig(env), workspace: loadWorkspaceConfig(env), unity: loadUnityConfig(env), ai: loadAiConfig(env),
         retrieval: loadRetrievalConfig(env), portfolio,
-        codeReviews: { trustedPublishers: loadReviewPublisherTrust(env), publishRepositories: loadCodeReviewPublishRepositories(env) },
+        codeReviews: { trustedPublishers: loadReviewPublisherTrust(env),
+            publishRepositories, managedSummaryRepositories, inlineRootRepositories,
+            inlineReplyRepositories, inlineFixRepositories, threadResolutionRepositories },
         storageAnalytics: { accountId: env.ATLAS_CF_ACCOUNT_ID?.trim(), analyticsToken: env.ATLAS_CF_ANALYTICS_TOKEN?.trim(), bucket: portfolio.r2?.bucket },
     };
 }

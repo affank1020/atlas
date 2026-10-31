@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
 import { monitoringHash } from './monitoringLinks';
 import { ActivityPreview } from './ActivityPreview';
+import { CatalogueToolbar } from './CatalogueBrowse';
 import type { AtlasNode } from './Nodes';
 import './workspaces-manager.css';
 
 type Workspace = { id: string; nodeId: string; projectId: string | null; name: string; rootPath: string; kind: string; status: string };
 type LogicalWorkspace = { id: string; name: string; repository: string | null; kind: 'git' | 'local'; projectIds?: string[]; checkouts: Workspace[] };
-type ProjectLink = { id: string; name: string; archivedAt?: string };
 type Repository = { repository: string; private: boolean; defaultBranch: string; archived: boolean };
 type GitStatus = { available: boolean; reason?: string; branch?: string; head?: string; originRepository?: string | null; dirty?: boolean; changes?: {path: string; status: string}[] };
 type Worktree = { rootPath: string; head: string; branch: string | null };
@@ -61,8 +61,6 @@ export function Workspaces() {
     const [all, setAll] = useState<Workspace[]>([]);
     const [logical, setLogical] = useState<LogicalWorkspace[]>([]);
     const [repositories, setRepositories] = useState<Repository[]>([]);
-    const [projects, setProjects] = useState<ProjectLink[]>([]);
-    const [projectToLink, setProjectToLink] = useState('');
     const [catalogError, setCatalogError] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
@@ -73,6 +71,9 @@ export function Workspaces() {
     const [revision, setRevision] = useState(0);
     const [search, setSearch] = useState('');
     const [nodeFilter, setNodeFilter] = useState('');
+    const [kindFilter, setKindFilter] = useState<'all' | 'git' | 'local'>('all');
+    const [focusedGroupId, setFocusedGroupId] = useState(() => new URLSearchParams(location.hash.split('?')[1] || '').get('group') || '');
+    const [showManagement, setShowManagement] = useState(false);
     const [selectedId, setSelectedId] = useState(() => new URLSearchParams(location.hash.split('?')[1] || '').get('workspace') || '');
     const [rawStatus, setStatus] = useState<GitStatus>();
     const [rawWorktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -93,6 +94,7 @@ export function Workspaces() {
     const [prBody, setPrBody] = useState('');
     const [draftPR, setDraftPR] = useState<Draft>();
     const [retirement, setRetirement] = useState<RetirementState>();
+    const [actionsOpenForCheckout, setActionsOpenForCheckout] = useState('');
 
     // Preserve existing ?workspace= deep links (logical or physical) while
     // public checkout operations explicitly select one Node-bound checkoutId.
@@ -112,20 +114,32 @@ export function Workspaces() {
         ...group,
         checkouts: group.checkouts.filter(checkout => !nodeFilter || checkout.nodeId === nodeFilter),
     })).filter(group => group.checkouts.length > 0 &&
+        (kindFilter === 'all' || group.kind === kindFilter) &&
         (group.name + ' ' + (group.repository || '') + ' ' + group.checkouts.map(checkout =>
             checkout.name + ' ' + checkout.rootPath + ' ' +
             (nodes.find(node => node.id === checkout.nodeId)?.name || '')).join(' '))
-            .toLowerCase().includes(search.toLowerCase())), [groups, nodes, search, nodeFilter]);
+            .toLowerCase().includes(search.trim().toLowerCase()))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)),
+    [groups, nodes, search, nodeFilter, kindFilter]);
     const selectedLogical = (logical.length ? logical : groups)
         .find(group => group.checkouts.some(checkout => checkout.id === selected?.id));
-    const linkedProjects = selectedLogical?.projectIds ?? (selected?.projectId ? [selected.projectId] : []);
-    const availableProjects = projects.filter(project => !project.archivedAt && !linkedProjects.includes(project.id));
+    // The explorer shows a Workspace without requiring a checkout selection.
+    // Deep-linked checkouts take priority; otherwise remember the user's
+    // Workspace focus while search and Node filters change.
+    const focusedGroup = entries.find(group => group.id === selectedLogical?.id)
+        ?? entries.find(group => group.id === focusedGroupId)
+        ?? entries[0];
+    const focusedLogical = (logical.length ? logical : groups).find(group => group.id === focusedGroup?.id);
     const validFeature = branchPattern.test(branch) && !branch.endsWith('/') && !branch.includes('//');
     const canPublish = !!(status?.available && status.originRepository && status.branch?.startsWith('atlas/') &&
         status.head && !status.dirty && selectedNode?.status === 'online');
 
     useEffect(() => {
-        const sync = () => setSelectedId(new URLSearchParams(location.hash.split('?')[1] || '').get('workspace') || '');
+        const sync = () => {
+            const query = new URLSearchParams(location.hash.split('?')[1] || '');
+            setSelectedId(query.get('workspace') || '');
+            setFocusedGroupId(query.get('group') || '');
+        };
         window.addEventListener('hashchange', sync);
         return () => window.removeEventListener('hashchange', sync);
     }, []);
@@ -168,15 +182,6 @@ export function Workspaces() {
         return () => { live = false; };
     }, [revision]);
     useEffect(() => {
-        let live = true;
-        // Include archived Projects for readable existing chips; only active
-        // Projects are eligible for new associations.
-        callTool<ProjectLink[]>('list_projects', { includeArchived: true }).then(result => {
-            if (live && Array.isArray(result)) setProjects(result);
-        }).catch(() => { /* Browsing works without the Project catalogue. */ });
-        return () => { live = false; };
-    }, [revision]);
-    useEffect(() => {
         if (!nodeId && online.length) setNodeId(online[0].id);
     }, [nodeId, nodes]);
     useEffect(() => {
@@ -205,11 +210,33 @@ export function Workspaces() {
         setBranch('atlas/'); setTargetPath(''); setFeatureName(''); setPrTitle(''); setPrBody(''); setDraftPR(undefined);
     }, [selected?.id]);
     useEffect(() => { setRetirement(undefined); }, [selected?.id, revision]);
-    useEffect(() => { setProjectToLink(''); }, [selectedLogical?.id]);
 
+    function replaceGroupUrl(id: string) {
+        const hash = id ? '#/workspaces?group=' + encodeURIComponent(id) : '#/workspaces';
+        history.replaceState(history.state, '', location.pathname + location.search + hash);
+    }
     function choose(id: string) {
+        // Checkout expansion is transient UI state: no route change or
+        // hashchange, which otherwise re-renders the shell and can scroll.
         setSelectedId(id);
-        location.hash = id ? '/workspaces?workspace=' + encodeURIComponent(id) : '/workspaces';
+        // A new disclosure must not inherit mounted forms from a previous
+        // expansion (including closing and reopening the same checkout).
+        setActionsOpenForCheckout('');
+        if (focusedGroup) setFocusedGroupId(focusedGroup.id);
+
+        // Existing ?workspace= deep links still open on load, but interacting
+        // clears the stale selection without causing a navigation.
+        if (new URLSearchParams(location.hash.split('?')[1] || '').has('workspace')) {
+            replaceGroupUrl(focusedGroup?.id || '');
+        }
+    }
+    function focusGroup(id: string) {
+        setFocusedGroupId(id);
+        setSelectedId('');
+        setActionsOpenForCheckout('');
+        // Keep the Workspace URL shareable without triggering shell navigation
+        // or a second asynchronous hashchange reconciliation.
+        replaceGroupUrl(id);
     }
     async function mutate<T>(action: () => Promise<T>, done: string | ((result: T) => string), after?: (value: T) => void) {
         if (IS_MOCK_MODE) return;
@@ -240,18 +267,6 @@ export function Workspaces() {
             setRevision(value => value + 1);
         } catch (cause) { setError(message(cause)); }
         finally { setWorking(false); }
-    }
-    async function linkProject() {
-        if (!selectedLogical || !projectToLink || !availableProjects.some(project => project.id === projectToLink)) return;
-        await mutate(() => callTool('link_logical_workspace_project', {
-            logicalWorkspaceId: selectedLogical.id, projectId: projectToLink,
-        }), 'Project associated with the entire logical Workspace.', () => setProjectToLink(''));
-    }
-    async function unlinkProject(projectId: string) {
-        if (!selectedLogical) return;
-        await mutate(() => callTool('unlink_logical_workspace_project', {
-            logicalWorkspaceId: selectedLogical.id, projectId,
-        }), 'Project detached from the logical Workspace; checkouts and files preserved.');
     }
     async function register(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -326,197 +341,46 @@ export function Workspaces() {
         }), 'Draft pull request opened.', setDraftPR);
     }
 
-    return <div className="workspaces-manager">
-        <header className="page-head">
-            <div><p className="eyebrow">Development / across Nodes</p><h1>Workspaces</h1><p>One workspace, multiple checkouts. Choose a Node to inspect and work on its files.</p></div>
-            <div className="actions"><button className="ghost" onClick={() => setRevision(r => r + 1)} disabled={loading || working}>{loading && hasLoaded ? 'Refreshing…' : 'Refresh'}</button>
-                <button className="ghost" onClick={reconcile} disabled={loading || working || IS_MOCK_MODE || !online.length} title="Group existing checkouts only after checking each Node's Git origin">Recognise repositories</button>
-                <button disabled={IS_MOCK_MODE || !online.length} onClick={() => setProvision(!provision)}>{provision ? 'Close' : '+ Add repository'}</button></div>
-        </header>
-        {IS_MOCK_MODE && <p className="wm-notice" role="status">Mock preview · write operations are disabled.</p>}
-        {error && <p className="wm-notice error" role="alert">{error}</p>}
-        {notice && <p className="wm-notice" role="status">{notice}</p>}
-        {loading && <p className="wm-sr-only" role="status">{initialLoading ? 'Loading Nodes and Workspaces…' : 'Refreshing Workspaces…'}</p>}
-        {provision && <section className="wm-panel" aria-label="Provision repository">
-            <div className="wm-title"><div><p className="eyebrow">GitHub → Node</p><h2>Provision repository</h2></div><span>Existing directories are never overwritten</span></div>
-            <div className="wm-fields">
-                <label>Node<select value={nodeId} onChange={e => { setNodeId(e.target.value); setManagerId(''); }} disabled={working}>
-                    {online.map(n => <option key={n.id} value={n.id}>{n.name} · {n.platform}</option>)}</select></label>
-                <label>Registered development directory<select value={managerId} onChange={e => setManagerId(e.target.value)} disabled={working}>
-                    <option value="">Select directory</option>{managers.map(w => <option key={w.id} value={w.id}>{w.name} · {w.rootPath}</option>)}</select></label>
-            </div>
-            <button className="wm-link" onClick={() => setShowRegister(!showRegister)} type="button" disabled={working}>
-                {showRegister ? 'Cancel registration' : '+ Register existing development directory'}</button>
-            {showRegister && <form className="wm-fields" onSubmit={register}>
-                <label>Absolute directory on Node<input value={root} onChange={e => setRoot(e.target.value)} required placeholder="/srv/atlas/workspaces" /></label>
-                <button disabled={working || !root.startsWith('/') || IS_MOCK_MODE}>Register</button>
-            </form>}
-            <form className="wm-fields" onSubmit={clone}>
-                <label>Authorised GitHub repository<select value={repository} onChange={e => { setRepository(e.target.value); setDirectoryName(e.target.value.split('/')[1] || ''); }}>
-                    <option value="">{catalogLoading ? 'Loading repositories…' : 'Select repository'}</option>
-                    {repositories.filter(r => !r.archived).map(r => <option key={r.repository} value={r.repository}>{r.repository}{r.private ? ' · Private' : ''}</option>)}</select></label>
-                <label>Directory name<input value={directoryName} onChange={e => setDirectoryName(e.target.value)} required maxLength={80} placeholder="repository-name" /></label>
-                <button disabled={working || IS_MOCK_MODE || !managerId || !repository || !directoryPattern.test(directoryName)}>Clone</button>
-            </form>
-            {catalogError && <p role="alert" className="wm-hint error">GitHub catalog unavailable: {catalogError}</p>}
-            <p className="wm-hint">Cloning adds a checkout on the selected Node. Checkouts of the same verified GitHub repository belong to one logical Workspace.</p>
-        </section>}
-        <div className="wm-layout">
-            <section className="wm-panel wm-browser" aria-label="Workspace browser" aria-busy={initialLoading}>
-                <div className="wm-fields"><label>Search<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Repository, workspace, checkout, Node…" /></label>
-                    <label>Node<select value={nodeFilter} onChange={e => setNodeFilter(e.target.value)}><option value="">All Nodes</option>
-                        {nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label></div>
-                <div className="wm-title"><h2>{initialLoading ? <span className="wm-skeleton wm-skeleton-count" aria-hidden="true" /> : `${entries.length} ${entries.length === 1 ? 'Workspace' : 'Workspaces'}`}</h2><small>{initialLoading ? <span className="wm-skeleton wm-skeleton-meta" aria-hidden="true" /> : `${nodes.filter(n => n.status === 'online').length} Nodes online`}</small></div>
-                <div className="wm-list" aria-busy={initialLoading}>{initialLoading ? Array.from({ length: 4 }, (_, index) =>
-                    <div className="wm-row wm-row-skeleton" key={index} aria-hidden="true">
-                        <span className="wm-skeleton wm-skeleton-glyph" />
-                        <span className="wm-row-main">
-                            <span className="wm-skeleton wm-skeleton-title" />
-                            <span className="wm-skeleton wm-skeleton-path" />
-                            <span className="wm-skeleton wm-skeleton-node" />
-                        </span>
-                        <span className="wm-skeleton wm-skeleton-dot" />
-                    </div>
-                ) : entries.map(group => {
-                    const checkoutsByNode = new Map<string, Workspace[]>();
-                    for (const checkout of group.checkouts) {
-                        const siblings = checkoutsByNode.get(checkout.nodeId) || [];
-                        siblings.push(checkout);
-                        checkoutsByNode.set(checkout.nodeId, siblings);
-                    }
-                    const nodeCount = checkoutsByNode.size;
-                    return <div className="wm-group" key={group.id}>
-                        <button className="wm-row wm-group-heading"
-                            aria-label={group.name}
-                            aria-pressed={group.checkouts.some(checkout => checkout.id === selected?.id)}
-                            onClick={() => choose(group.id)}>
-                            <span className="wm-glyph" aria-hidden="true">⌁</span>
-                            <span className="wm-row-main"><strong>{group.name}</strong>
-                                <small title={group.repository || undefined}>{group.repository || 'Local Workspace'}</small>
-                                <small>{group.checkouts.length} {group.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {nodeCount} {nodeCount === 1 ? 'Node' : 'Nodes'}</small>
-                            </span>
-                        </button>
-                        {Array.from(checkoutsByNode.entries()).map(([hostId, nodeCheckouts]) => {
-                            const host = nodes.find(node => node.id === hostId);
-                            return <div className="wm-node-group" key={hostId}>
-                                <div className="wm-node-heading">
-                                    <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true" />
-                                    <strong>{host?.name || 'Unknown Node'}</strong>
-                                    <small>{nodeCheckouts.length} {nodeCheckouts.length === 1 ? 'checkout' : 'checkouts'}</small>
-                                </div>
-                                <div className="wm-checkout-list">{nodeCheckouts.map(checkout => {
-                                    const isSelected = selected?.id === checkout.id;
-                                    return <button className={'wm-checkout-row' + (isSelected ? ' selected' : '')}
-                                        key={checkout.id} aria-pressed={isSelected}
-                                        aria-label={'Checkout on ' + (host?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
-                                        onClick={() => choose(checkout.id)}>
-                                        <span className="wm-checkout-glyph" aria-hidden="true">↳</span>
-                                        <span><strong>{checkout.name === group.name ? checkout.name + ' checkout' : checkout.name}{isSelected && status?.branch ? ' · ' + status.branch : ''}</strong>
-                                            <small title={checkout.rootPath}>{checkout.rootPath}</small></span>
-                                    </button>;
-                                })}</div>
-                            </div>;
-                        })}
-                    </div>;
-                })}</div>
-                {!loading && !entries.length && <p className="wm-hint">No Workspaces match the current filters.</p>}
-            </section>
-            <aside className="wm-panel wm-inspector" aria-label="Workspace details" aria-busy={!!(inspecting || inspectorPending || (initialLoading && selectedId))}>
-                {!selected && initialLoading && selectedId ? <div className="wm-inspector-skeleton" aria-hidden="true">
-                    <span className="wm-skeleton wm-skeleton-meta" />
-                    <span className="wm-skeleton wm-skeleton-heading" />
-                    <span className="wm-skeleton wm-skeleton-path-wide" />
-                    <span className="wm-skeleton wm-skeleton-path-wide" />
-                </div> : !selected ? <div className="wm-empty"><h2>Workspace details</h2><p>Choose a Node checkout to inspect its branch, files and Git operations.</p></div> : <>
-                    <div className="wm-title"><div><p className="eyebrow">Workspace</p><h2>{selectedLogical?.name || selected.name}</h2></div><button className="wm-link" onClick={() => choose('')}>Close</button></div>
-                    <p className="wm-workspace-origin">{selectedLogical?.repository || 'Local Workspace'} · {selectedLogical?.checkouts.length || 1} {(selectedLogical?.checkouts.length || 1) === 1 ? 'checkout' : 'checkouts'}</p>
-                    <div className="actions">
-                        {logical.length > 0 && selectedLogical &&
-                            <a className="wm-link" href={monitoringHash('activity', { logicalWorkspaceId: selectedLogical.id })}>All Workspace activity</a>}
-                        <a className="wm-link" href={monitoringHash('activity', { checkoutId: selected.id })}>Selected checkout activity</a>
-                    </div>
-                    {logical.length > 0 && selectedLogical && <section className="wm-project-links" aria-label="Workspace Projects">
-                        <h3>Projects <span>Shared by every checkout</span></h3>
-                        <div className="wm-project-chips">
-                            {linkedProjects.length ? linkedProjects.map(projectId => {
-                                const project = projects.find(item => item.id === projectId);
-                                const projectName = project?.name || projectId;
-                                return <span className="wm-project-chip" key={projectId}>
-                                    <span title={projectId}>{projectName}{project?.archivedAt ? ' (archived)' : ''}</span>
-                                    <button type="button" className="wm-project-remove" aria-label={'Detach ' + projectName}
-                                        disabled={working || IS_MOCK_MODE} onClick={() => unlinkProject(projectId)}>×</button>
-                                </span>;
-                            }) : <span className="wm-hint">No Projects associated</span>}
-                        </div>
-                        {!!availableProjects.length && <div className="wm-project-add">
-                            <select aria-label="Project to associate" value={projectToLink} disabled={working || IS_MOCK_MODE}
-                                onChange={event => setProjectToLink(event.target.value)}>
-                                <option value="">Choose a Project</option>
-                                {availableProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-                            </select>
-                            <button type="button" className="ghost" disabled={!projectToLink || working || IS_MOCK_MODE}
-                                onClick={linkProject}>Associate</button>
-                        </div>}
-                    </section>}
-                    {(selectedLogical?.checkouts.length || 0) > 1 && (selectedLogical!.checkouts.length > 3
-                        ? <label className="wm-checkout-select">Choose checkout
-                            <select value={selected.id} onChange={event => choose(event.target.value)} aria-label="Choose checkout">
-                                {selectedLogical!.checkouts.map(checkout => {
-                                    const host = nodes.find(node => node.id === checkout.nodeId);
-                                    return <option key={checkout.id} value={checkout.id}>{checkout.name} · {host?.name || 'Unknown Node'} · {checkout.rootPath}</option>;
-                                })}
-                            </select>
-                        </label>
-                        : <div className="wm-checkout-switch" role="group" aria-label="Choose Node checkout">
-                            {selectedLogical!.checkouts.map(checkout => {
-                                const host = nodes.find(node => node.id === checkout.nodeId);
-                                return <button key={checkout.id}
-                                    className={selected.id === checkout.id ? 'active' : ''}
-                                    aria-pressed={selected.id === checkout.id}
-                                    title={checkout.rootPath}
-                                    onClick={() => choose(checkout.id)}>
-                                    <span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true"/>
-                                    <span className="wm-switch-label"><strong>{checkout.name}</strong><small>{host?.name || 'Unknown Node'}</small><small className="wm-switch-path">{checkout.rootPath}</small></span>
-                                </button>;
-                            })}
-                        </div>)}
-                    <WorkspaceActivityPreview
-                        key={logical.length > 0 && selectedLogical ? selectedLogical.id : selected.id}
-                        logicalWorkspaceId={logical.length > 0 ? selectedLogical?.id : undefined}
-                        checkoutId={selected.id} refreshVersion={revision} />
-                    <div className="wm-selected-checkout">
-                        <p className="eyebrow">Selected checkout</p>
-                        <div className="wm-status"><span className={'wm-dot' + (selectedNode?.status === 'online' ? ' online' : '')} />
-                            {selectedNode?.name || 'Unknown Node'} · {selectedNode?.status || 'Unknown'}</div>
-                        <p className="wm-checkout-name">{selected.name}</p>
-                        <p className="wm-path">{selected.rootPath}</p>
-                        <p className="wm-hint">{selected.kind} checkout · {linkedProjects.length ? 'Workspace Projects linked' : 'Project-independent'}</p>
+    const checkoutDetails = selected ? <section id={'wm-checkout-details-' + selected.id}
+        className="wm-inline-details" role="region" aria-label="Checkout details"
+        aria-busy={!!(inspecting || inspectorPending)}>
+                    <div className="wm-inline-head">
+                        <strong>Checkout status</strong>
+                        <a className="wm-link" href={monitoringHash('activity', { checkoutId: selected.id })}>Checkout activity</a>
                     </div>
                     {inspecting && <p role="status" className="wm-sr-only">{inspectedId === selected.id ? 'Refreshing checkout…' : 'Inspecting checkout…'}</p>}
                     {inspectionError && <p role="alert" className="wm-hint error">{inspectionError}</p>}
                     {selectedNode?.status !== 'online' && <p className="wm-hint">Reconnect this Node to inspect or modify its checkout.</p>}
-                    {inspectorPending ? <>
-                        <div className="wm-git wm-git-skeleton" aria-hidden="true">
-                            {['Branch', 'HEAD', 'Working tree', 'Origin'].map((label, index) =>
-                                <div key={label}><span>{label}</span><span className={'wm-skeleton wm-skeleton-git wm-skeleton-git-' + index} /></div>)}
+                    {(inspectorPending || status?.available) && selectedNode?.status === 'online' ? <>
+                        {/* Keep the exact same rows and closed disclosures mounted while
+                            the Node inspection resolves, so selecting a checkout has
+                            only one layout change instead of a skeleton-to-details jump. */}
+                        <div className="wm-git" aria-label="Git summary">
+                            <div><span>Branch</span>{inspectorPending
+                                ? <span className="wm-skeleton wm-skeleton-git" aria-hidden="true" />
+                                : <strong title={status?.branch || 'Detached'}>{status?.branch || 'Detached'}</strong>}</div>
+                            <div><span>Working tree</span>{inspectorPending
+                                ? <span className="wm-skeleton wm-skeleton-git" aria-hidden="true" />
+                                : <strong>{status?.dirty ? 'Uncommitted changes' : 'Clean'}</strong>}</div>
                         </div>
-                        <section className="wm-subsection wm-trees-skeleton" aria-hidden="true">
-                            <h3>Worktrees</h3>
-                            {Array.from({ length: 2 }, (_, index) =>
-                                <div className="wm-tree" key={index}><div>
-                                    <span className="wm-skeleton wm-skeleton-title" />
-                                    <span className="wm-skeleton wm-skeleton-path" />
-                                </div></div>)}
-                        </section>
-                    </> : status?.available ? <div className="wm-git">
-                        <div><span>Branch</span><strong>{status.branch || 'Detached'}</strong></div>
-                        <div><span>HEAD</span><code>{shortSha(status.head)}</code></div>
-                        <div><span>Working tree</span><strong>{status.dirty ? 'Uncommitted changes' : 'Clean'}</strong></div>
-                        <div><span>Origin</span><strong>{status.originRepository || 'None'}</strong></div>
-                    </div> : status?.reason && <p className="wm-hint">{status.reason}</p>}
-                    {!!status?.changes?.length && <details><summary>{status.changes.length} changed files</summary>
-                        <ul className="wm-changes">{status.changes.slice(0,40).map(x => <li key={x.path}>{x.status} {x.path}</li>)}</ul></details>}
-                    {status?.available && <section className="wm-subsection">
+                        <details className="wm-git-more"><summary>Git details</summary>
+                            <div className="wm-git">
+                                <div><span>HEAD</span>{inspectorPending
+                                    ? <span className="wm-skeleton wm-skeleton-git" aria-hidden="true" />
+                                    : <code>{shortSha(status?.head)}</code>}</div>
+                                <div><span>Origin</span>{inspectorPending
+                                    ? <span className="wm-skeleton wm-skeleton-git" aria-hidden="true" />
+                                    : <strong>{status?.originRepository || 'None'}</strong>}</div>
+                            </div>
+                            {!!status?.changes?.length && <details><summary>{status.changes.length} changed files</summary>
+                                <ul className="wm-changes">{status.changes.slice(0,40).map(x => <li key={x.path}>{x.status} {x.path}</li>)}</ul>
+                            </details>}
+                        </details>
+                        <details key={selected.id} className="wm-tool-disclosure"
+                            onToggle={event => setActionsOpenForCheckout(event.currentTarget.open ? selected.id : '')}>
+                            <summary>Git actions</summary>
+                            {actionsOpenForCheckout === selected.id && (status?.available ? <>
+                        <section className="wm-subsection">
                         <h3>Worktrees</h3>
                         <div className="wm-trees">{worktrees.map(t => {
                             const record = all.find(w => w.nodeId === selected.nodeId && w.rootPath === t.rootPath);
@@ -553,17 +417,191 @@ export function Workspaces() {
                             <label>Display name (optional)<input value={featureName} onChange={e => setFeatureName(e.target.value)} /></label>
                             <button disabled={working || inspecting || IS_MOCK_MODE || !validFeature || !targetPath.startsWith('/') || selectedNode?.status !== 'online'}>Create worktree</button>
                         </form>
-                    </section>}
-                    {canPublish && <section className="wm-subsection wm-stack"><h3>Publish</h3>
+                        </section>
+                                {canPublish && <>
+                        <section className="wm-subsection wm-stack"><h3>Publish</h3>
                         <button className="ghost" onClick={push} disabled={working || inspecting || IS_MOCK_MODE}>Push feature branch to GitHub</button>
                         <form className="wm-stack" onSubmit={openPR}><label>Pull request title<input value={prTitle} onChange={e => setPrTitle(e.target.value)} required minLength={5} maxLength={120} /></label>
                             <label>Description<textarea value={prBody} onChange={e => setPrBody(e.target.value)} rows={3} maxLength={8000} /></label>
                             <button disabled={working || inspecting || IS_MOCK_MODE || prTitle.trim().length < 5}>Open draft PR</button></form>
                         {draftPR && <a href={draftPR.url} target="_blank" rel="noreferrer">Draft PR #{draftPR.number} ↗</a>}
-                    </section>}
+                        </section>
+                                </>}
+                            </> : inspectorPending ? <div className="wm-git" role="status" aria-label="Loading Git actions" aria-busy="true">
+                                <div><span>Worktrees</span><span className="wm-skeleton wm-skeleton-git" aria-hidden="true" /></div>
+                                <div><span>New worktree</span><span className="wm-skeleton wm-skeleton-git" aria-hidden="true" /></div>
+                            </div> : null)}
+                        </details>
+                    </> : status?.reason && <p className="wm-hint">{status.reason}</p>}
                     {working && <p role="status" className="wm-hint">Working on the Node…</p>}
-                </>}
-            </aside>
+    </section> : null;
+
+    return <div className="workspaces-manager">
+        <header className="page-head">
+            <h1>Workspaces</h1>
+            <div className="actions"><button className="ghost" onClick={() => setRevision(r => r + 1)} disabled={loading || working}>{loading && hasLoaded ? 'Refreshing…' : 'Refresh'}</button>
+                <div className="wm-management">
+                    <button className="ghost" type="button" aria-expanded={showManagement}
+                        aria-controls="wm-management-actions" onClick={() => setShowManagement(open => !open)}>Manage</button>
+                    {showManagement && <div className="wm-management-popover" id="wm-management-actions">
+                        <button className="ghost" type="button" onClick={() => { setShowManagement(false); void reconcile(); }}
+                            disabled={loading || working || IS_MOCK_MODE || !online.length}>Recognise repositories</button>
+                        <p>Verify Git origins and group existing checkouts. Unlike Refresh, this updates Workspace associations.</p>
+                    </div>}
+                </div>
+                <button disabled={IS_MOCK_MODE || !online.length} onClick={() => setProvision(!provision)}>{provision ? 'Close' : '+ Add repository'}</button></div>
+        </header>
+        {error && <p className="wm-notice error" role="alert">{error}</p>}
+        {notice && <p className="wm-notice" role="status">{notice}</p>}
+        {loading && <p className="wm-sr-only" role="status">{initialLoading ? 'Loading Nodes and Workspaces…' : 'Refreshing Workspaces…'}</p>}
+        {provision && <section className="wm-panel" aria-label="Provision repository">
+            <div className="wm-title"><div><p className="eyebrow">GitHub → Node</p><h2>Provision repository</h2></div><span>Existing directories are never overwritten</span></div>
+            <div className="wm-fields">
+                <label>Node<select value={nodeId} onChange={e => { setNodeId(e.target.value); setManagerId(''); }} disabled={working}>
+                    {online.map(n => <option key={n.id} value={n.id}>{n.name} · {n.platform}</option>)}</select></label>
+                <label>Registered development directory<select value={managerId} onChange={e => setManagerId(e.target.value)} disabled={working}>
+                    <option value="">Select directory</option>{managers.map(w => <option key={w.id} value={w.id}>{w.name} · {w.rootPath}</option>)}</select></label>
+            </div>
+            <button className="wm-link" onClick={() => setShowRegister(!showRegister)} type="button" disabled={working}>
+                {showRegister ? 'Cancel registration' : '+ Register existing development directory'}</button>
+            {showRegister && <form className="wm-fields" onSubmit={register}>
+                <label>Absolute directory on Node<input value={root} onChange={e => setRoot(e.target.value)} required placeholder="/srv/atlas/workspaces" /></label>
+                <button disabled={working || !root.startsWith('/') || IS_MOCK_MODE}>Register</button>
+            </form>}
+            <form className="wm-fields" onSubmit={clone}>
+                <label>Authorised GitHub repository<select value={repository} onChange={e => { setRepository(e.target.value); setDirectoryName(e.target.value.split('/')[1] || ''); }}>
+                    <option value="">{catalogLoading ? 'Loading repositories…' : 'Select repository'}</option>
+                    {repositories.filter(r => !r.archived).map(r => <option key={r.repository} value={r.repository}>{r.repository}{r.private ? ' · Private' : ''}</option>)}</select></label>
+                <label>Directory name<input value={directoryName} onChange={e => setDirectoryName(e.target.value)} required maxLength={80} placeholder="repository-name" /></label>
+                <button disabled={working || IS_MOCK_MODE || !managerId || !repository || !directoryPattern.test(directoryName)}>Clone</button>
+            </form>
+            {catalogError && <p role="alert" className="wm-hint error">GitHub catalog unavailable: {catalogError}</p>}
+            <p className="wm-hint">Cloning adds a checkout on the selected Node. Checkouts of the same verified GitHub repository belong to one logical Workspace.</p>
+        </section>}
+        <CatalogueToolbar label="Search workspaces" placeholder="Find a workspace or checkout…"
+            query={search} onQueryChange={setSearch} count={entries.length} itemName="workspace">
+            <label>Node
+                <select value={nodeFilter} onChange={e => setNodeFilter(e.target.value)}>
+                    <option value="">All Nodes</option>
+                    {nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                </select>
+            </label>
+            <label>Type
+                <select value={kindFilter} onChange={e => setKindFilter(e.target.value as 'all' | 'git' | 'local')}>
+                    <option value="all">All types</option>
+                    <option value="git">Repositories</option>
+                    <option value="local">Local directories</option>
+                </select>
+            </label>
+        </CatalogueToolbar>
+        <div className="wm-layout">
+            <section className="wm-panel wm-browser" aria-label="Workspace browser" aria-busy={initialLoading}>
+                <div className="wm-explorer">
+                    <nav className="wm-explorer-nav" aria-label="Workspace list">
+                        <div className="wm-explorer-nav-head">
+                            <strong>Workspaces</strong>
+                            <span>Checkouts</span>
+                        </div>
+                        <div className="wm-explorer-workspaces">
+                            {initialLoading ? Array.from({ length: 5 }, (_, index) =>
+                                <div className="wm-explorer-nav-skeleton" key={index} aria-hidden="true">
+                                    <span className="wm-skeleton wm-skeleton-title" />
+                                    <span className="wm-skeleton wm-skeleton-meta" />
+                                </div>
+                            ) : entries.map(group => {
+                                const isFocused = focusedGroup?.id === group.id;
+                                return <button type="button" key={group.id}
+                                    className={'wm-explorer-workspace' + (isFocused ? ' active' : '')}
+                                    aria-current={isFocused ? 'page' : undefined}
+                                    aria-label={'Browse ' + group.name}
+                                    onClick={() => focusGroup(group.id)}>
+                                    <span className="wm-explorer-workspace-name">
+                                        <strong>{group.name}</strong>
+                                        <small>{group.kind === 'git' ? group.repository : 'Local directory'}</small>
+                                    </span>
+                                    <span className="wm-explorer-count" title={group.checkouts.length + ' checkouts'}>
+                                        {group.checkouts.length}
+                                    </span>
+                                </button>;
+                            })}
+                            {!loading && !entries.length && <p className="wm-hint wm-explorer-no-results">No Workspaces match these filters.</p>}
+                        </div>
+                    </nav>
+                    <section className="wm-explorer-content" aria-label="Workspace checkouts">
+                        {initialLoading ? <div className="wm-explorer-placeholder" aria-hidden="true">
+                            <span className="wm-skeleton wm-skeleton-heading" />
+                            <span className="wm-skeleton wm-skeleton-path-wide" />
+                            <span className="wm-skeleton wm-skeleton-path-wide" />
+                            {selectedId && <div className="wm-inspector-skeleton" role="region" aria-label="Checkout details">
+                                <span className="wm-skeleton wm-skeleton-heading" />
+                                <span className="wm-skeleton wm-skeleton-path-wide" />
+                            </div>}
+                        </div> : !focusedGroup ? <div className="wm-explorer-placeholder">
+                            <p>No matching Workspaces.</p>
+                        </div> : <>
+                            <div className="wm-explorer-content-head">
+                                <div>
+                                    <h2>{focusedGroup.name}</h2>
+                                    <p>{focusedGroup.repository || 'Local Workspace'}</p>
+                                </div>
+                                <span>{focusedGroup.checkouts.length} {focusedGroup.checkouts.length === 1 ? 'checkout' : 'checkouts'} across {new Set(focusedGroup.checkouts.map(w => w.nodeId)).size} {new Set(focusedGroup.checkouts.map(w => w.nodeId)).size === 1 ? 'Node' : 'Nodes'}</span>
+                            </div>
+                            <div className="wm-explorer-checkouts">
+                                {Array.from(new Set(focusedGroup.checkouts.map(w => w.nodeId))).map(hostId => {
+                                    const host = nodes.find(node => node.id === hostId);
+                                    const query = search.trim().toLowerCase();
+                                    const groupMatch = !query || (focusedGroup.name + ' ' + (focusedGroup.repository || '')).toLowerCase().includes(query);
+                                    const visible = focusedGroup.checkouts.filter(w => w.nodeId === hostId &&
+                                        (groupMatch || (w.name + ' ' + w.rootPath + ' ' + (host?.name || '')).toLowerCase().includes(query)));
+                                    if (!visible.length) return null;
+                                    return <section className="wm-explorer-node" key={hostId} aria-label={'Checkouts on ' + (host?.name || 'Unknown Node')}>
+                                        <div className="wm-explorer-node-head">
+                                            <div><span className={'wm-dot' + (host?.status === 'online' ? ' online' : '')} aria-hidden="true" />
+                                                <strong>{host?.name || 'Unknown Node'}</strong>
+                                                <small>{host?.status === 'online' ? 'Online' : 'Offline'}</small>
+                                            </div>
+                                            <span>{visible.length} {visible.length === 1 ? 'checkout' : 'checkouts'}</span>
+                                        </div>
+                                        <div className="wm-explorer-node-list">{visible.map(checkout =>
+                                            <div className="wm-explorer-checkout-entry" key={checkout.id}>
+                                                <button type="button"
+                                                    className={'wm-explorer-checkout' + (selected?.id === checkout.id ? ' active' : '')}
+                                                    aria-expanded={selected?.id === checkout.id}
+                                                    aria-controls={'wm-checkout-details-' + checkout.id}
+                                                    aria-label={'Checkout on ' + (host?.name || 'Unknown Node') + ' at ' + checkout.rootPath}
+                                                    onClick={() => choose(selected?.id === checkout.id ? '' : checkout.id)}>
+                                                <span className="wm-explorer-checkout-icon" aria-hidden="true">↳</span>
+                                                <span className="wm-explorer-checkout-main">
+                                                    <strong>{checkout.name}</strong>
+                                                    <small title={checkout.rootPath}>{checkout.rootPath}</small>
+                                                </span>
+                                                    <span className="wm-explorer-checkout-open" aria-hidden="true">{selected?.id === checkout.id ? '⌄' : '›'}</span>
+                                                </button>
+                                                {selected?.id === checkout.id && checkoutDetails}
+                                            </div>
+                                        )}</div>
+                                    </section>;
+                                })}
+                            </div>
+                            <div className="wm-explorer-shared">
+                                <section className="wm-shared-activity" aria-label="Workspace activity">
+                                    <div className="wm-shared-heading">
+                                        <h3>Activity</h3>
+                                        {logical.length > 0 && focusedLogical && <a className="wm-link" href={monitoringHash('activity', { logicalWorkspaceId: focusedLogical.id })}>All Workspace activity</a>}
+                                    </div>
+                                    <WorkspaceActivityPreview
+                                        key={focusedGroup.id}
+                                        logicalWorkspaceId={logical.length > 0 ? focusedLogical?.id : undefined}
+                                        checkoutId={selected && focusedGroup.checkouts.some(checkout => checkout.id === selected.id)
+                                            ? selected.id : focusedGroup.checkouts[0].id}
+                                        refreshVersion={revision} />
+                                </section>
+                            </div>
+                        </>}
+                    </section>
+                </div>
+            </section>
+
         </div>
     </div>;
 }

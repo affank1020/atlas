@@ -1,6 +1,7 @@
 import { rememberWork } from './recentWork';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityPreview } from './ActivityPreview';
+import { SkeletonRows } from './Skeletons';
 import { useRenderViewQuery } from './atlasApi';
 import { ViewFrame } from './ViewPage';
 import { editViewHash, standaloneViewUrl } from './viewLinks';
@@ -44,7 +45,7 @@ export function ViewContainer({ view, refreshVersion = 0 }: { view: View; refres
             ? <div className="view-card-placeholder">This View is archived.</div>
             : <a className="view-card-launch-surface" href={launchUrl} onClick={remember} target="_blank" rel="noopener noreferrer" aria-label={`Open ${view.name} in new tab`}>
                 <div className="view-card-preview" inert aria-hidden="true">
-                    {rendered ? <ViewFrame rendered={rendered} preview embedded /> : <div className="view-card-placeholder">{isLoading ? 'Loading preview…' : 'Preview unavailable'}</div>}
+                    {rendered ? <ViewFrame rendered={rendered} preview embedded /> : error ? <div className="view-card-placeholder">Preview unavailable</div> : isLoading || !visible ? <SkeletonRows label="Loading View preview" variant="panel" rows={1} /> : <div className="view-card-placeholder">Preview unavailable</div>}
                 </div>
                 <span className="view-card-preview-label">Preview only · Open to interact</span>
             </a>}
@@ -61,7 +62,7 @@ export function ProjectOverview({ project, views, viewsBusy, refreshVersion = 0 
     const active = views?.filter(v => !v.archivedAt) ?? [];
     return <div className="project-overview">
         <div className="project-context"><span className={`badge ${project.archivedAt ? 'muted' : 'neutral'}`}>{project.archivedAt ? 'Archived' : 'Project'}</span><span>Updated {new Date(project.updatedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span><a href={`#/projects/${project.id}/data`}>Browse data →</a></div>
-        {viewsBusy && <p role="status">Loading project Views…</p>}
+        {viewsBusy && !views && <SkeletonRows label="Loading project Views" variant="view" rows={2} />}
         {!viewsBusy && views && active.length === 0 && <section className="overview-empty"><h2>A place for your project</h2><p>Bring your data into focus with a View, or explore this project's stores and workspaces.</p>{!project.archivedAt && <a href={`#/projects/${project.id}/views/new`}>Create a View →</a>}</section>}
         {!project.archivedAt && active.length > 0 && <section className="project-views">
             <header className="project-views-head"><div><p className="eyebrow">Project Views</p><h2>At a glance</h2></div><a href={`#/projects/${project.id}/views`}>All Views →</a></header>

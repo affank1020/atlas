@@ -46,3 +46,44 @@ test('Code Reviews GitHub publication opt-in reaches only the Server and default
     assert.match(readFileSync('infra/production.env.example','utf8'),
         /^ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=$/m);
 });
+
+
+test('all native Code Reviews allowlists stay default-off and Server-only in production', () => {
+    const compose = readFileSync('infra/docker-compose.production.yml', 'utf8');
+    const server = compose.split('  server:\n')[1]?.split('  ingress:\n')[0];
+    const outside = compose.split('  server:\n')[0] + (compose.split('  ingress:\n')[1] ?? '');
+    assert.ok(server);
+    const example = readFileSync('infra/production.env.example', 'utf8');
+    const native = [
+        'ATLAS_CODE_REVIEW_MANAGED_SUMMARY_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_INLINE_ROOT_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_INLINE_REPLY_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_INLINE_FIX_REPOSITORIES',
+        'ATLAS_CODE_REVIEW_RESOLVE_THREAD_REPOSITORIES',
+    ];
+    for (const flag of native) {
+        const declared = new RegExp('^      ' + flag + ': \\$\\{' + flag + ':-\\}$', 'gm');
+        assert.equal((server!.match(declared) ?? []).length, 1,
+            'native publish flag must have one Server-only empty-default Compose mapping: ' + flag);
+        assert.doesNotMatch(outside, new RegExp('^      ' + flag + ':', 'm'),
+            'native publish flag must not leak to Postgres, Web, or Node: ' + flag);
+        assert.equal((example.match(new RegExp('^' + flag + '=$', 'gm')) ?? []).length, 1,
+            'production env template must explicitly default publisher off: ' + flag);
+    }
+    // The legacy publisher is a separate authority, never automatically enabled
+    // by switching on native managed publishing.
+    assert.match(server!, /^      ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: \$\{ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES:-\}$/m);
+    assert.match(example, /^ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=$/m);
+});
+
+
+test('global native publishing is explicit, disabled by default and Server-only', () => {
+    const compose = readFileSync('infra/docker-compose.production.yml', 'utf8');
+    const server = compose.split('  server:\n')[1]?.split('  ingress:\n')[0];
+    const outside = compose.split('  server:\n')[0] + (compose.split('  ingress:\n')[1] ?? '');
+    assert.ok(server);
+    assert.match(server!, /^      ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: \$\{ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES:-false\}$/m);
+    assert.doesNotMatch(outside, /^      ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES:/m);
+    assert.match(readFileSync('infra/production.env.example', 'utf8'),
+        /^ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES=false$/m);
+});

@@ -1,5 +1,6 @@
 import type { AtlasRecord, AtlasStatus, AuditEvent, Page, Project, Store } from './types';
 import type { AtlasNode } from './Nodes';
+import { mockCodeReviewTool } from './mockCodeReviews';
 
 /**
  * Deterministic read-only fixture backend. No network, credentials, or database.
@@ -44,18 +45,68 @@ const nodeMac = uuid(20, 1);
 const nodeLinux = uuid(20, 2);
 const nodeAndroidTablet = uuid(20, 3);
 const nodeAndroidPhone = uuid(20, 4);
+// All checkout paths and repository names are synthetic. Model many physical
+// checkouts per repository so the local Workspaces UI exercises its real layout.
+const demoCheckout = (index: number, nodeId: string, name: string, rootPath: string,
+    projectId: string | null, kind: 'generic' | 'unity' = 'generic') => ({
+    id: uuid(21, index), nodeId, projectId, name, rootPath, kind,
+    adapter: kind === 'unity' ? 'unity' : null, status: 'active' as const,
+});
 const workspaces = [
-    { id: uuid(21, 1), projectId: mockProjects[0].id, nodeId: nodeMac, name: 'Atlas Demo Repo', rootPath: '/demo/atlas', kind: 'generic', adapter: null },
-    { id: uuid(21, 2), projectId: mockProjects[2].id, nodeId: nodeMac, name: 'Football Demo', rootPath: '/demo/football', kind: 'unity', adapter: 'unity' },
-    { id: uuid(21, 3), projectId: mockProjects[0].id, nodeId: nodeLinux, name: 'Server Demo', rootPath: '/srv/demo', kind: 'generic', adapter: null },
+    demoCheckout(1, nodeMac, 'Atlas main', '/demo/mac/atlas', mockProjects[0].id),
+    demoCheckout(2, nodeMac, 'Football Research', '/demo/mac/football', mockProjects[2].id, 'unity'),
+    demoCheckout(3, nodeLinux, 'Linux Development Root', '/srv/demo/workspaces', null),
+    demoCheckout(4, nodeMac, 'Workspace UI redesign', '/demo/mac/worktrees/workspace-ui', mockProjects[0].id),
+    demoCheckout(5, nodeMac, 'Code Review integration', '/demo/mac/worktrees/code-reviews', mockProjects[0].id),
+    demoCheckout(6, nodeMac, 'Monitoring cleanup', '/demo/mac/worktrees/monitoring', mockProjects[0].id),
+    demoCheckout(7, nodeLinux, 'Node release tooling', '/srv/demo/workspaces/node-releases', mockProjects[0].id),
+    demoCheckout(8, nodeLinux, 'Server observability', '/srv/demo/workspaces/observability', mockProjects[0].id),
+    demoCheckout(9, nodeMac, 'Search improvements', '/demo/mac/worktrees/search', mockProjects[0].id),
+    demoCheckout(10, nodeMac, 'Portfolio main', '/demo/mac/portfolio', mockProjects[1].id),
+    demoCheckout(11, nodeLinux, 'Portfolio VPS checkout', '/srv/demo/workspaces/portfolio', mockProjects[1].id),
+    demoCheckout(12, nodeLinux, 'Benchmark main', '/srv/demo/workspaces/benchmark', mockProjects[0].id),
+    demoCheckout(13, nodeMac, 'Benchmark dashboard', '/demo/mac/benchmark-dashboard', mockProjects[0].id),
+    demoCheckout(14, nodeMac, 'Relay gateway', '/demo/mac/relay', mockProjects[0].id),
+    demoCheckout(15, nodeMac, 'ChatFlow extension', '/demo/mac/chatflow', mockProjects[0].id),
+    demoCheckout(16, nodeMac, 'EcoPrompt', '/demo/mac/ecoprompt', mockProjects[0].id),
+    demoCheckout(17, nodeMac, 'Mac Development Root', '/demo/mac/projects', null),
+    demoCheckout(18, nodeMac, 'Node package updates', '/demo/mac/worktrees/node-updates', mockProjects[0].id),
+    demoCheckout(19, nodeMac, 'Research notes', '/demo/mac/notes', null),
+];
+// Keep the logical/physical relationship consistent with the hosted API.
+// Local directories use their physical checkout ID as their logical ID.
+const demoGroup = (index: number, name: string, repository: string | null, indices: number[]) => {
+    const checkouts = indices.map(n => {
+        const checkout = workspaces.find(workspace => workspace.id === uuid(21, n));
+        if (!checkout) throw new Error('Missing demo checkout ' + n);
+        return checkout;
+    });
+    return {
+        id: repository ? uuid(22, index) : checkouts[0].id, name, repository,
+        kind: repository ? 'git' as const : 'local' as const,
+        projectIds: [...new Set(checkouts.map(checkout => checkout.projectId).filter((id): id is string => !!id))],
+        checkouts,
+    };
+};
+const logicalWorkspaces = [
+    demoGroup(1, 'Atlas', 'example/atlas-demo', [1, 4, 5, 6, 7, 8, 9, 18]),
+    demoGroup(2, 'Portfolio Site', 'example/portfolio-demo', [10, 11]),
+    demoGroup(3, 'Benchmark', 'example/benchmark-demo', [12, 13]),
+    demoGroup(4, 'Relay', 'example/relay-demo', [14]),
+    demoGroup(5, 'ChatFlow', 'example/chatflow-demo', [15]),
+    demoGroup(6, 'EcoPrompt', 'example/ecoprompt-demo', [16]),
+    demoGroup(7, 'Football Research', null, [2]),
+    demoGroup(8, 'Linux Development Root', null, [3]),
+    demoGroup(9, 'Mac Development Root', null, [17]),
+    demoGroup(10, 'Research notes', null, [19]),
 ];
 const nodes: AtlasNode[] = [
-    { id: nodeMac, name: 'Demo MacBook', status: 'online', platform: 'darwin', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], lastSeen: stamp, hostedWorkspaceCount: 2 },
-    // Deliberately disconnected in local mock mode to preview the Home health warning.
-    { id: nodeLinux, name: 'Demo Linux VPS', status: 'offline', platform: 'linux', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git'], lastSeen: stamp, hostedWorkspaceCount: 1 },
+    { id: nodeMac, name: 'Demo MacBook', status: 'online', platform: 'darwin', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git', 'workspace.dev', 'unity'], lastSeen: stamp, hostedWorkspaceCount: workspaces.filter(w => w.nodeId === nodeMac).length },
+    // Deliberately disconnected in local mock mode to preview offline Node states.
+    { id: nodeLinux, name: 'Demo Linux VPS', status: 'offline', platform: 'linux', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files', 'workspace.git'], lastSeen: stamp, hostedWorkspaceCount: workspaces.filter(w => w.nodeId === nodeLinux).length },
     // Android fixtures preview future mobile nodes; they are not enrolled runtimes.
     { id: nodeAndroidTablet, name: 'Demo Android Tablet', status: 'online', platform: 'android', deviceType: 'tablet', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
-    { id: nodeAndroidPhone, name: 'Demo Android Phone', status: 'online', platform: 'android', deviceType: 'phone', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
+    { id: nodeAndroidPhone, name: 'Demo Android Phone', status: 'offline', platform: 'android', deviceType: 'phone', version: '2.0.0-demo', credentialState: 'active', capabilities: ['workspace.files'], lastSeen: stamp, hostedWorkspaceCount: 0 },
 ];
 const activity: AuditEvent[] = [
     { id: uuid(30, 1), occurredAt: stamp, client: 'demo', operation: 'workspace.git_status', projectId: mockProjects[0].id, workspaceId: workspaces[0].id, resulting: { branch: 'demo/main' } },
@@ -79,6 +130,7 @@ const portfolioEntries = [
 const applications = [
     { type: 'portfolio', slug: 'portfolio', name: 'Portfolio', description: 'Browse sample portfolio records in read-only preview.', projectId: mockProjects[1].id },
     { type: 'football-training', slug: 'football-training', name: 'Football Training', description: 'Explore sample training runs and policies.', projectId: mockProjects[2].id },
+    { type: 'code-reviews', slug: 'code-reviews', name: 'Code Reviews', description: 'Explore simulated review rounds, findings and PR timelines. Local demo data only.', projectId: mockProjects[0].id },
 ];
 const status: AtlasStatus = { product: 'Atlas Demo', version: '2.0.0-demo', storage: 'In-memory mock', schemaVersion: 1, projects: mockProjects.length, stores: stores.length, records: records.length };
 const str = (value: unknown) => typeof value === 'string' ? value : '';
@@ -142,14 +194,33 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
             result = { ...nodes.find(node => node.id === nodeId), workspaces: workspaces.filter(w => w.nodeId === nodeId),
                 activity: activity.filter(a => workspaces.some(w => w.nodeId === nodeId && w.id === a.workspaceId)).map(a => ({ operation: a.operation, createdAt: a.occurredAt })) }; break;
         case 'list_workspaces': result = workspaces.filter(w => !nodeId || w.nodeId === nodeId); break;
-        case 'list_github_repositories': result = { repositories: [
-            { repository: 'example/atlas-demo', private: true, defaultBranch: 'main', archived: false },
-            { repository: 'example/portfolio-demo', private: false, defaultBranch: 'main', archived: false },
-        ] }; break;
+        case 'list_logical_workspaces':
+            result = logicalWorkspaces.filter(group =>
+                !input.includeArchived ? group.checkouts.some(w => w.status === 'active') : true);
+            break;
+        case 'list_github_repositories':
+            result = { repositories: logicalWorkspaces.filter(group => group.repository).map(group => ({
+                repository: group.repository, private: true, defaultBranch: 'main', archived: false,
+            })) };
+            break;
         case 'workspace_git_list_worktrees': result = { worktrees: [] }; break;
         case 'list_project_workspaces': result = workspaces.filter(w => w.projectId === projectId); break;
-        case 'get_workspace': result = workspaces.find(w => w.projectId === projectId && w.id === checkoutId); break;
-        case 'workspace_git_status': result = { available: true, branch: 'demo/main', dirty: false, changes: [], truncated: false }; break;
+        case 'get_workspace': result = workspaces.find(w => w.id === checkoutId && (!projectId || w.projectId === projectId)); break;
+        case 'workspace_git_status': {
+            const checkout = workspaces.find(w => w.id === checkoutId);
+            const group = logicalWorkspaces.find(group => group.checkouts.some(w => w.id === checkoutId));
+            if (!checkout || !group?.repository) {
+                result = { available: false, reason: 'No Git repository in this demo directory.' };
+                break;
+            }
+            const branch = checkout.name === 'Atlas main' || checkout.name.endsWith('main')
+                ? 'main' : 'atlas/' + checkout.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            result = {
+                available: true, branch, head: 'a'.repeat(40), originRepository: group.repository,
+                dirty: branch !== 'main', changes: [], truncated: false,
+            };
+            break;
+        }
         case 'workspace_list_dev_tasks': result = []; break;
         case 'workspace_list_files': result = { entries: [{ path: 'README.md', type: 'file' }, { path: 'src', type: 'directory' }], truncated: false }; break;
         case 'workspace_read_file': result = { path: input.path, text: '# Demo workspace\nThis is an illustrative local fixture, not a real repository.' }; break;
@@ -188,7 +259,10 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
                 .slice(0, Number(input.limit) || 200); break;
         case 'list_all_applications': result = applications; break;
         case 'list_applications': result = applications.filter(a => a.projectId === projectId); break;
-        case 'get_application': result = applications.find(a => a.projectId === projectId && a.slug === input.slug); break;
+        case 'get_application': result = applications.find(a => (!projectId || a.projectId === projectId) && a.slug === input.slug); break;
+        case 'code_reviews_overview': case 'code_reviews_list_runs': case 'code_reviews_list_findings':
+        case 'code_reviews_pr_summary': case 'code_reviews_pr_timeline': case 'code_reviews_review_thread_state':
+            result = mockCodeReviewTool(name, input); break;
         case 'get_portfolio_schemas': result = portfolioTypes.map(contentType => ({
             contentType, storeId: uuid(41, portfolioTypes.indexOf(contentType) + 1), name: contentType, fields: portfolioFields[contentType],
         })); break;

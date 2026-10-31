@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { callTool } from './api';
 import './football-control-room.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 export type RoomJob = {
     phase?: string; queue_reason?: string; build_fingerprint?: string; live_telemetry?: boolean; health?: { average_steps_per_second?: number; tree_cpu_percent?: number; tree_rss_mib?: number; failure_diagnostics?: string; model_sha256?: string };
@@ -133,7 +134,7 @@ export function FootballRunControlRoom({ runId, onBack, onWatch, onStop, onIndex
                 <button className="football-room-back" onClick={onBack}>← All runs</button>
                 <span className="football-kicker">EXPERIMENT CONTROL ROOM</span>
                 <h2>{job ? job.drill.replaceAll('_', ' ') : 'Training run'}</h2>
-                <p>{job?.curriculum_stage_id ? 'Stage ' + job.curriculum_stage + ' · ' + job.curriculum_stage_id.replaceAll('_', ' ') : job?.preset ?? 'Loading'} · {runId}</p>
+                <p>{job?.curriculum_stage_id ? 'Stage ' + job.curriculum_stage + ' · ' + job.curriculum_stage_id.replaceAll('_', ' ') : job?.preset ?? <Skeleton width={80} height={12} />} · {runId}</p>
             </div>
             <div className="football-room-actions">
                 {job && <Completion job={job} log={parsed} />}
@@ -269,7 +270,7 @@ export function FootballEvaluationControlRoom({ evaluation, onBack }: { evaluati
             <div><small>Mean contact time</small><strong>{metricValue(summary?.mean_time_to_contact_s, 's')}</strong></div>
         </div>
         {error && <div className="football-alert error" role="alert">Could not load detailed diagnostics: {error}. This requires the updated Atlas Server and Mac Node.</div>}
-        {loadingDetail && <p className="football-muted" role="status">Loading measured episode diagnostics…</p>}
+        {loadingDetail && !detail && !error && <SkeletonRows label="Loading measured episode diagnostics" variant="metrics" rows={3} />}
         <div className="football-room-grid">
             <section className="football-room-panel">
                 <header><h3>Contact & approach</h3><span>{(detail?.diagnostics_version ?? 0) >= 2 ? 'Physics diagnostics v' + detail?.diagnostics_version : 'Legacy measurements'}</span></header>

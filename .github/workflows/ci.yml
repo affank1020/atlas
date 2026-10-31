@@ -46,6 +46,74 @@ jobs:
             echo "::error::Local Atlas data snapshots must never be committed."
             exit 1
           fi
+      - name: Validate both Atlas ingress Caddy modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext ci-test-password)"
+          for site in atlas.affankhan.dev :8080; do
+            docker run --rm \
+              -e ATLAS_SITE_ADDRESS="$site" \
+              -e VPS_ADMIN_USER=ci-user \
+              -e VPS_ADMIN_PASSWORD_HASH="$hash" \
+              -v "$PWD/infra/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
+              caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+          done
+      - name: Validate credential source compatibility
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+          DATABASE_URL: postgresql://atlas:ci-postgres@postgres:5432/atlas
+          ATLAS_SITE_ADDRESS: atlas.affankhan.dev
+          ATLAS_WORKSPACE_ORIGINS: https://atlas.affankhan.dev
+        run: |
+          set -euo pipefail
+          # New standalone vps-infra identity without legacy Atlas credentials.
+          VPS_ADMIN_USER=ci-vps VPS_ADMIN_PASSWORD_HASH=ci-vps-hash \
+            docker compose -f infra/docker-compose.production.yml config --format json \
+            | node -e '
+              let s="";process.stdin.on("data",c=>s+=c);
+              process.stdin.on("end",()=>{
+                const env=JSON.parse(s).services.ingress.environment;
+                if(env.VPS_ADMIN_USER!=="ci-vps" || env.VPS_ADMIN_PASSWORD_HASH!=="ci-vps-hash")process.exit(1);
+              });'
+          # Existing production remains compatible until migration is applied.
+          ATLAS_ADMIN_USER=ci-legacy ATLAS_ADMIN_PASSWORD_HASH=ci-legacy-hash \
+            docker compose -f infra/docker-compose.production.yml config --format json \
+            | node -e '
+              let s="";process.stdin.on("data",c=>s+=c);
+              process.stdin.on("end",()=>{
+                const env=JSON.parse(s).services.ingress.environment;
+                if(env.VPS_ADMIN_USER!=="ci-legacy" || env.VPS_ADMIN_PASSWORD_HASH!=="ci-legacy-hash")process.exit(1);
+              });'
+      - name: Validate production Compose structure
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+          DATABASE_URL: postgresql://atlas:ci-postgres@postgres:5432/atlas
+          ATLAS_SITE_ADDRESS: atlas.affankhan.dev
+          ATLAS_ADMIN_USER: ci-user
+          ATLAS_ADMIN_PASSWORD_HASH: ci-password-hash
+          ATLAS_WORKSPACE_ORIGINS: https://atlas.affankhan.dev
+        run: |
+          docker compose -f infra/docker-compose.production.yml config --quiet
+          # Simulate the *combined* private-mode configuration, not just
+          # standalone Compose and Caddyfile syntax validation.
+          ATLAS_SITE_ADDRESS=:8080 \
+          ATLAS_INGRESS_HTTP_BIND=127.0.0.1:18080 \
+          ATLAS_INGRESS_HTTP_TARGET_PORT=8080 \
+          ATLAS_INGRESS_HTTPS_BIND=127.0.0.1:18443 \
+          docker compose -f infra/docker-compose.production.yml config --format json \
+            | node -e '
+              let s="";process.stdin.on("data",c=>s+=c);
+              process.stdin.on("end",()=>{
+                const ports=JSON.parse(s).services.ingress.ports;
+                const http=ports.find(p=>Number(p.target)===8080 && p.protocol==="tcp");
+                if(!http||http.host_ip!=="127.0.0.1"||String(http.published)!=="18080") {
+                  console.error("Private Atlas ingress port mapping must route 127.0.0.1:18080 to container :8080");
+                  process.exit(1);
+                }
+              });'
       - name: Install dependencies
         run: npm ci
       - name: Test server, node, and web

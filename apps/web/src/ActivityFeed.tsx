@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AuditEvent } from './types';
-import { clientName, filterActivity, presentActivity, readable } from './activity';
+import { activityEvidence, clientName, filterActivity, presentActivity, readable } from './activity';
 import { monitoringHash } from './monitoringLinks';
 import './activity.css';
+import { SkeletonRows } from './Skeleton';
 
 type WorkspaceName = { id: string; name: string };
 export function ActivityRows({ events, names = {}, scopeLinks = false }: { events: AuditEvent[]; names?: Record<string, string>; scopeLinks?: boolean }) {
@@ -14,17 +15,26 @@ function ActivityRow({ item, scopeLinks = false }: { item: ReturnType<typeof pre
         && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
         ? value.toLowerCase() : undefined;
     const nodeId = safeNodeId(item.details.nodeId);
+    const previousNodeId = safeNodeId(item.details.previousNodeId);
     const sourceNodeId = safeNodeId(item.details.sourceNodeId);
     const targetNodeId = safeNodeId(item.details.targetNodeId);
+    const distinctPrevious = previousNodeId && previousNodeId !== nodeId ? previousNodeId : undefined;
     const distinctSource = sourceNodeId && sourceNodeId !== nodeId ? sourceNodeId : undefined;
     const distinctTarget = targetNodeId && targetNodeId !== nodeId && targetNodeId !== sourceNodeId ? targetNodeId : undefined;
     const storeId = typeof item.details.storeId === 'string' ? item.details.storeId : undefined;
+    const evidence = scopeLinks ? activityEvidence(item) : [];
     return <details className={`activity-item activity-${item.status}`} data-activity-id={item.id}>
         <summary><div className="activity-action"><small>{clientName(item.client)} · {readable(item.category)}{item.workspaceName && ` · ${item.workspaceName}`}</small><strong>{item.title}</strong>{item.description && <span className="activity-error">{item.description}</span>}</div><div className="activity-state"><span>{readable(item.status)}</span><small>{readable(item.kind)}</small><time dateTime={item.timestamp} title={item.timestamp}>{new Date(item.timestamp).toLocaleString()}</time></div></summary>
-        <div className="activity-details"><dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl>{scopeLinks && (item.projectId || item.workspaceId || nodeId || distinctSource || distinctTarget || storeId) && <nav aria-label="Related monitoring scopes" className="actions">
+        <div className="activity-details">{scopeLinks && <div className="activity-evidence" role="group" aria-label="Recorded operation provenance">
+            <div className="activity-evidence-header"><strong>Operation provenance</strong>
+                <small>Recorded metadata only. Client, transport and credential class do not establish a human operator.</small>
+            </div>
+            <ul className="activity-evidence-list">{evidence.map(({ label, value }) => <li key={label}>{label}: {value}</li>)}</ul>
+        </div>}<dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl>{scopeLinks && (item.projectId || item.workspaceId || nodeId || distinctPrevious || distinctSource || distinctTarget || storeId) && <nav aria-label="Related monitoring scopes" className="actions">
             {item.projectId && <a href={monitoringHash('activity', { projectId: item.projectId })}>Project activity</a>}
             {item.workspaceId && <a href={monitoringHash('activity', { workspaceId: item.workspaceId })}>Workspace activity</a>}
             {nodeId && <a href={monitoringHash('activity', { nodeId })}>Node activity</a>}
+            {distinctPrevious && <a href={monitoringHash('activity', { nodeId: distinctPrevious })}>Previous Node activity</a>}
             {distinctSource && <a href={monitoringHash('activity', { nodeId: distinctSource })}>Source Node activity</a>}
             {distinctTarget && <a href={monitoringHash('activity', { nodeId: distinctTarget })}>Target Node activity</a>}
             {storeId && <a href={monitoringHash('activity', { storeId })}>Store activity</a>}
@@ -85,14 +95,14 @@ function ActivityReader({ projectId, title, refreshVersion }: { projectId?: stri
     const visible = filterActivity(items, category, client, workspaceId);
     const workspaceOptions = { ...names, ...Object.fromEntries(items.filter(i => i.workspaceId).map(i => [i.workspaceId!, i.workspaceName!])) };
     return <section className="panel activity-panel" aria-label={title}>
-        <div className="panel-head"><div><p className="eyebrow">Workspace Activity · Core · Views</p><h2>{title}</h2></div><div className="actions"><small role="status">{updated ? `Auto-refresh · Updated ${updated}` : 'Loading activity…'}</small><button className="ghost" onClick={() => setManualRefresh(value => value + 1)}>Refresh</button></div></div>
+        <div className="panel-head"><div><p className="eyebrow">Workspace Activity · Core · Views</p><h2>{title}</h2></div><div className="actions"><small role="status">{updated ? `Auto-refresh · Updated ${updated}` : (error ? 'Activity unavailable' : 'Waiting for activity')}</small><button className="ghost" onClick={() => setManualRefresh(value => value + 1)}>Refresh</button></div></div>
         <div className="activity-filters">
-            <label>Category<select value={category} onChange={e => setCategory(e.target.value)}>{[['', 'All'], ['workspace', 'Workspace'], ['files', 'Files'], ['unity', 'Unity'], ['git', 'Git'], ['dev', 'Development'], ['error', 'Errors'], ['core', 'Core'], ['view', 'Views']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>Category<select value={category} onChange={e => setCategory(e.target.value)}>{[['', 'All'], ['workspace', 'Workspace'], ['files', 'Files'], ['unity', 'Unity'], ['git', 'Git'], ['dev', 'Development'], ['error', 'Errors'], ['node', 'Nodes'], ['backup', 'Backups'], ['core', 'Core'], ['view', 'Views']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Client<select value={client} onChange={e => setClient(e.target.value)}><option value="">All clients</option>{[...new Set([...items.map(i => clientName(i.client)), ...(client ? [client] : [])])].sort().map(c => <option key={c} value={c}>{clientName(c)}</option>)}</select></label>
             <label>Workspace<select value={workspaceId} onChange={e => { setWorkspaceId(e.target.value); setClient(''); }}><option value="">All workspaces</option>{Object.entries(workspaceOptions).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
         </div>
         {error && <p className="activity-error" role="alert">Activity could not refresh: {error}. Retrying automatically.</p>}
-        <div className="activity-scroll" ref={viewport}>{visible.map(item => <ActivityRow key={item.id} item={item} />)}{loaded && visible.length === 0 && <p className="empty">No activity matches these filters.</p>}</div>
+        <div className="activity-scroll" ref={viewport}>{!loaded && !error && <SkeletonRows count={5} variant="activity" label="Loading activity" />}{visible.map(item => <ActivityRow key={item.id} item={item} />)}{loaded && visible.length === 0 && <p className="empty">No activity matches these filters.</p>}</div>
         <p className="activity-footnote">Latest 200 audit events in this scope · Paired requests and results are grouped · Expand an action for details</p>
     </section>;
 }

@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
+import { NodeSoftwareFleet } from './NodeSoftwareFleet';
+import { releaseForPlatform, releaseUpdateState } from './node-software-model';
+export { releaseForPlatform, releaseUpdateState } from './node-software-model';
 import type { AtlasNode } from './Nodes';
 import './node-software.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 export type NodeRelease = {
     component: 'desktop-node';
@@ -59,30 +63,6 @@ function useSoftwareCatalogue() {
         return () => { live = false; };
     }, [revision]);
     return { catalogue, error, loading, refresh: () => setRevision(value => value + 1) };
-}
-
-export function releaseForPlatform(releases: NodeRelease[], platform?: string) {
-    return releases.find(item => item.platform === platform);
-}
-
-/** Unknown same-version builds must not be declared older merely by SHA mismatch. */
-export function releaseUpdateState(installed: string | null | undefined, releases: NodeRelease[], platform?: string):
-    'available' | 'current' | 'unknown' | 'newer' {
-    const latest = releaseForPlatform(releases, platform);
-    if (!installed || !latest) return 'unknown';
-    const parsed = /^(\d+)\.(\d+)\.(\d+)(?:\+([a-f0-9]{12}))?$/.exec(installed);
-    const target = /^(\d+)\.(\d+)\.(\d+)$/.exec(latest.version);
-    if (!parsed || !target) return 'unknown';
-    const currentNumbers = parsed.slice(1, 4).map(Number);
-    const targetNumbers = target.slice(1, 4).map(Number);
-    for (let i = 0; i < 3; i++) {
-        if (currentNumbers[i]! < targetNumbers[i]!) return 'available';
-        if (currentNumbers[i]! > targetNumbers[i]!) return 'newer';
-    }
-    if (parsed[4] === latest.commit) return 'current';
-    if (parsed[4] && releases.some(release => release.platform === platform && release.version === latest.version && release.commit === parsed[4]))
-        return 'available';
-    return 'unknown';
 }
 
 export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
@@ -264,7 +244,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
         <h3>Software</h3>
         <dl className="node-software-summary">
             <div><dt>Installed</dt><dd>{node.version || 'Not reported'}</dd></div>
-            <div><dt>Latest compatible</dt><dd>{loading ? 'Checking…' : latest ? latest.version + '+' + latest.commit : 'Not available'}</dd></div>
+            <div><dt>Latest compatible</dt><dd>{loading && !catalogue ? <Skeleton width={96} height={14} /> : latest ? latest.version + '+' + latest.commit : 'Not available'}</dd></div>
             <div><dt>Update</dt><dd>{status === 'available' ? 'Newer release available' : status === 'current' ? 'Current release' : status === 'newer' ? 'Newer than catalogue' : 'Cannot confirm'}</dd></div>
             <div><dt>Last successful update</dt><dd>Not recorded</dd></div>
             <div><dt>Update control</dt><dd>Not enabled for this Node</dd></div>
@@ -276,7 +256,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             </button>
             {currentPreflight?.result && <p role="status"><strong>{currentPreflight.result.status === 'candidate' ? 'Candidate identified' : 'No update approved'}:</strong> {currentPreflight.result.reason} <span>Update execution is not enabled.</span></p>}
             {currentPreflight?.error && <p role="alert">Unable to check update eligibility: {currentPreflight.error}</p>}
-            {currentIntent?.loading && <p role="status">Loading saved update requests…</p>}
+            {currentIntent?.loading && !currentIntent.result && <SkeletonRows label="Loading saved update requests" variant="list" rows={2} />}
             {currentPreflight?.result?.status === 'candidate' && currentPreflight.result.candidate &&
                 !hasPendingIntent && !currentIntent?.loading &&
                 <button className="ghost" type="button" onClick={prepareIntent} disabled={currentIntent?.busy === true || Boolean(currentIntent?.error)}>
@@ -304,7 +284,7 @@ export function NodeSoftwareSummary({ node }: { node: AtlasNode }) {
             </div>}
             {currentIntent?.error && <p role="alert">Update request error: {currentIntent.error} <button type="button" className="ghost" onClick={() => refreshIntents(node.id)}>Reload requests</button></p>}
         </div>}
-        <a href="#/nodes/software">View downloads and release notes →</a>
+        <a href={'#/nodes/software?node='+encodeURIComponent(node.id)}>Open software management and downloads →</a>
     </section>;
 }
 
@@ -335,19 +315,26 @@ function PlatformRelease({ title, platform, catalogue }: { title: string; platfo
 
 export function NodeSoftware() {
     const { catalogue, error, loading, refresh } = useSoftwareCatalogue();
+    const [fleetRefresh, setFleetRefresh] = useState(0);
+    const refreshAll = () => { refresh(); setFleetRefresh(value => value + 1); };
     return <div className="nodes-page node-software-page">
-        <header className="page-head"><div><p className="eyebrow">Nodes / software</p><h1>Node Software</h1><p>Published runtime archives. Verify checksums and build provenance before installation.</p></div>
-            <div className="actions"><a className="ghost" href="#/nodes">← Nodes</a><button className="ghost" disabled={loading} onClick={refresh}>Refresh</button></div></header>
-        {loading && <p role="status">Checking published GitHub releases…</p>}
+        <header className="page-head"><div><p className="eyebrow">Nodes / software</p><h1>Node Software</h1><p>Manage runtime visibility, update requests and published releases across platforms.</p></div>
+            <div className="actions"><a className="ghost" href="#/nodes">← Nodes</a><button className="ghost" disabled={loading} onClick={refreshAll}>Refresh</button></div></header>
+        <NodeSoftwareFleet catalogue={catalogue} catalogueLoading={loading} refreshGeneration={fleetRefresh} />
+        <section className="node-software-downloads" id="node-software-downloads" aria-label="Published Node software">
+            <div className="node-software-section-heading"><div><p className="eyebrow">Distribution</p><h2>Published releases and installation guides</h2>
+                <p className="node-software-muted">Archives do not perform upgrades. Validate both the checksum and the build provenance before installation.</p></div></div>
+        {loading && !catalogue && !error && <SkeletonRows label="Loading published GitHub releases" variant="cards" rows={2} />}
         {(error || catalogue?.state === 'unavailable') && <p className="node-page-notice" role="alert">{error || catalogue?.error || 'Release catalogue unavailable.'}</p>}
         <div className="node-software-grid">
-            <PlatformRelease title="macOS Node" platform="darwin" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />
-            <PlatformRelease title="Linux Node" platform="linux" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />
+            {!(loading && !catalogue && !error) && <PlatformRelease title="macOS Node" platform="darwin" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />}
+            {!(loading && !catalogue && !error) && <PlatformRelease title="Linux Node" platform="linux" catalogue={catalogue?.state === 'ready' ? catalogue : undefined} />}
             <section className="node-software-card" aria-label="Android Node">
                 <div className="node-software-card-title"><div><p className="eyebrow">Coming later</p><h2>Android Node</h2></div><span className="badge muted">Unavailable</span></div>
                 <p className="node-software-muted">Android development APKs are not production-signed. Atlas will offer a direct APK and QR download only after a stable signing identity, verified release and install testing exist.</p>
             </section>
         </div>
-        <p className="node-software-muted">Downloads do not install or restart anything. Updates from Atlas are not enabled yet. Atlas Server, desktop Nodes, Android and wire protocol are versioned independently.</p>
+        <p className="node-software-muted">Downloads do not install or restart anything. Privileged update execution is not enabled in Atlas Web. Atlas Server, desktop Nodes, Android and wire protocol are versioned independently.</p>
+        </section>
     </div>;
 }

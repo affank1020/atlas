@@ -17,12 +17,14 @@ import { globalSearchInput, searchEverywhere } from './global-search.js';
 import type { ApplicationRegistry, ApplicationCaller } from '../apps/registry.js';
 import type { StorageUsageService } from './storage-usage.js';
 import type { ServerDiagnostics } from './diagnostics.js';
+import type { ServerDiagnosticHistory } from './diagnostic-history.js';
 import type { MonitoringHealthService } from './monitoring-health.js';
 export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
     storageUsage?: Pick<StorageUsageService, 'get'>;
     diagnostics?: Pick<ServerDiagnostics, 'read' | 'record'>;
+    diagnosticHistory?: Pick<ServerDiagnosticHistory, 'read'>;
     health?: Pick<MonitoringHealthService, 'read'>;
     views: ViewService;
     workspaces: Pick<WorkspaceService, "call">;
@@ -49,6 +51,10 @@ export function createDispatcher(services: ApplicationServices) {
             case 'get_monitoring_health': {
                 if (!services.health) throw new AtlasError('Health snapshot unavailable.', 'CAPABILITY_UNAVAILABLE');
                 return services.health.read(input);
+            }
+            case 'read_server_diagnostic_history': {
+                if (!services.diagnosticHistory) throw new AtlasError('Diagnostic history unavailable.', 'CAPABILITY_UNAVAILABLE');
+                return services.diagnosticHistory.read(input);
             }
             case 'read_server_diagnostics': {
                 if (!services.diagnostics) throw new AtlasError('Server diagnostics unavailable.', 'CAPABILITY_UNAVAILABLE');
@@ -93,7 +99,7 @@ export function createDispatcher(services: ApplicationServices) {
             });
         } catch (error) {
             // Persist only a fixed code; request input and error payloads may be secret.
-            if (name !== 'read_server_diagnostics') services.diagnostics?.record('tool_request_failed');
+            if (name !== 'read_server_diagnostics' && name !== 'read_server_diagnostic_history') services.diagnostics?.record('tool_request_failed');
             throw error;
         }
     };

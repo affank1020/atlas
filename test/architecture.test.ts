@@ -112,7 +112,7 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
         // the checkout layer has its own explicit compatibility assertions.
         const checkoutMigrated = (name: string) => ['get_workspace', 'update_workspace', 'archive_workspace'].includes(name) ||
             name.startsWith('workspace_') || name.startsWith('unity_');
-        const stable = tools.filter(tool => !checkoutMigrated(tool.name) && !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'list_all_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites, 'search_everything', 'read_node_logs', 'read_server_diagnostics', 'get_monitoring_health', 'query_monitoring_activity', 'list_node_releases', 'plan_node_update', 'prepare_node_update', 'list_node_update_intents', 'cancel_node_update_intent', 'get_storage_usage', 'workspace_git_list_worktrees', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'workspace_git_retirement_preflight', 'list_github_repositories', 'list_workspaces', 'list_logical_workspaces', 'attach_checkout_repository', 'link_workspace_project', 'unlink_workspace_project', 'link_logical_workspace_project', 'unlink_logical_workspace_project'].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
+        const stable = tools.filter(tool => !checkoutMigrated(tool.name) && !['list_nodes', 'get_node', 'workspace_list_dev_tasks', 'workspace_run_dev_task', 'list_applications', 'list_all_applications', 'get_application', ...v2, ...additivePortfolio, ...gitWrites, 'search_everything', 'read_node_logs', 'read_server_diagnostics', 'read_server_diagnostic_history', 'get_monitoring_health', 'query_monitoring_activity', 'list_node_releases', 'plan_node_update', 'prepare_node_update', 'list_node_update_intents', 'cancel_node_update_intent', 'get_storage_usage', 'workspace_git_list_worktrees', 'workspace_git_clone_repository', 'workspace_git_create_worktree', 'workspace_git_remove_worktree', 'workspace_git_retirement_preflight', 'list_github_repositories', 'list_workspaces', 'list_logical_workspaces', 'attach_checkout_repository', 'link_workspace_project', 'unlink_workspace_project', 'link_logical_workspace_project', 'unlink_logical_workspace_project'].includes(tool.name) && !tool.name.startsWith('football_')).map(({ name, inputSchema }) => ({ name, inputSchema }));
         const create = stable.find(item => item.name === 'create_workspace');
         if (create) delete (create.inputSchema as any).properties.nodeId;
         const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
@@ -153,6 +153,22 @@ test('MCP names and argument schemas match the complete pre-refactor contract', 
             'Legacy targetWorkspaceId must remain available');
         assert.ok(!tools.some(tool => tool.name.startsWith('sessions_')));
         assert.ok(tools.some(tool => tool.name === 'search_everything'), 'Command search must be exposed by the shared MCP transport');
+        // New operational history is additive: don't rewrite the frozen legacy
+        // contract, but explicitly guard the new tool's input schema.
+        const diagnosticHistory = tools.find(tool => tool.name === 'read_server_diagnostic_history');
+        assert.ok(diagnosticHistory, 'Retained Server diagnostics must be advertised by MCP');
+        assert.deepEqual(Object.keys(diagnosticHistory.inputSchema.properties ?? {}), ['limit', 'cursor'],
+            'Retained history must expose only the bounded limit and continuation cursor');
+        assert.deepEqual(diagnosticHistory.inputSchema.properties?.limit, {
+            type: 'integer', minimum: 1, maximum: 100, default: 30,
+        }, 'Retained diagnostic history limit must remain bounded and have a safe default');
+        assert.ok(!diagnosticHistory.inputSchema.required?.includes('limit'),
+            'The default history page size must remain optional for MCP callers');
+        assert.deepEqual(diagnosticHistory.inputSchema.properties?.cursor, {
+            type: 'string', minLength: 1, maxLength: 160,
+        }, 'Only a bounded opaque continuation coordinate may be accepted');
+        assert.ok(!diagnosticHistory.inputSchema.required?.includes('cursor'),
+            'The new cursor must be optional for existing MCP callers');
         const storageUsage = tools.find(tool => tool.name === 'get_storage_usage');
         assert.ok(storageUsage, 'Read-only storage metrics must be exposed by the MCP transport');
         assert.deepEqual(storageUsage.inputSchema.properties?.refresh, { type: 'boolean' });

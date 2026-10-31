@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, createSign } from 'node:crypto';
+import { createHash, generateKeyPairSync, createSign } from 'node:crypto';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { createMcpTokenVerifier, mcpResourceMetadata, type McpAuthOptions } from '../apps/server/src/api/mcp/oauth.js';
+import { createMcpTokenVerifier, mcpResourceMetadata, verifyRelayServiceToken, type McpAuthOptions } from '../apps/server/src/api/mcp/oauth.js';
 import { createHttpTransport } from '../apps/server/src/api/http/index.js';
 import type { ServerServices } from '../apps/server/src/server/composition.js';
 import { loadServerConfig } from '../apps/server/src/server/config.js';
@@ -127,5 +127,71 @@ test('Hosted MCP refuses unauthenticated HTTP requests; metadata stays public', 
         const mcp = await fetch(base + '/mcp', { method: 'POST' });
         assert.equal(mcp.status, 503);
         assert.equal((await mcp.json()).error, 'MCP_OAUTH_NOT_CONFIGURED');
+    });
+});
+
+// Service token never shares the human OAuth verifier's identity or claim set.
+test('Relay service bearer matches its configured digest and rejects wrong or malformed tokens', () => {
+    const token = 'a'.repeat(64);
+    const digest = createHash('sha256').update(token).digest('hex');
+    assert.equal(verifyRelayServiceToken('Bearer ' + token, digest), true);
+    assert.equal(verifyRelayServiceToken('Bearer ' + 'b'.repeat(64), digest), false);
+    assert.equal(verifyRelayServiceToken('Basic ' + token, digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer short', digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer ' + token + ' extra', digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer ' + token, ''), false);
+    assert.equal(verifyRelayServiceToken(undefined, digest), false);
+    assert.equal(verifyRelayServiceToken('Bearer ' + jwt(), digest), false);
+});
+test('Malformed Relay service digest fails startup without breaking owner OAuth', () => {
+    const env = { DATABASE_URL: 'postgresql://localhost/db', ATLAS_TRUSTED_INGRESS: 'true' };
+    assert.throws(() => loadServerConfig({ ...env, ATLAS_MCP_RELAY_TOKEN_SHA256: '123' }), /SHA-256/);
+    const hash = createHash('sha256').update('a'.repeat(64)).digest('hex');
+    const options = loadServerConfig({ ...env, ATLAS_MCP_RELAY_TOKEN_SHA256: hash });
+    assert.equal(options.mcpAuth.relayTokenHash, hash);
+    assert.equal(options.mcpAuth.enabled, false);
+});
+
+
+test('Relay-only hosted MCP rejects missing/invalid bearer with 401 without terminating HTTP server', async () => {
+    const token = 'a'.repeat(64);
+    const relayTokenHash = createHash('sha256').update(token).digest('hex');
+    const relayOnly: McpAuthOptions = {
+        enabled: false,
+        trustedIngress: true,
+        issuer: '',
+        resource: '',
+        subject: '',
+        scope: 'atlas:access',
+        relayTokenHash,
+    };
+    await withHttp(relayOnly, async base => {
+        for (const authorization of [undefined, 'Bearer ' + 'b'.repeat(64), 'Bearer malformed', 'Basic abc']) {
+            const response = await fetch(base + '/mcp', {
+                method: 'POST',
+                ...(authorization ? { headers: { Authorization: authorization } } : {}),
+            });
+            assert.equal(response.status, 401);
+            assert.equal(response.headers.get('www-authenticate'), 'Bearer realm="Atlas Relay MCP"');
+            assert.deepEqual(await response.json(), { error: 'MCP_UNAUTHORIZED' });
+        }
+        // A second request proves an earlier invalid token has not broken the listener.
+        const again = await fetch(base + '/mcp', { method: 'POST' });
+        assert.equal(again.status, 401);
+    });
+});
+
+test('Relay and owner OAuth coexist without changing the owner Bearer challenge', async () => {
+    const token = 'a'.repeat(64);
+    await withHttp({
+        ...config,
+        relayTokenHash: createHash('sha256').update(token).digest('hex'),
+    }, async base => {
+        const response = await fetch(base + '/mcp', {
+            method: 'POST', headers: { Authorization: 'Bearer invalid' },
+        });
+        assert.equal(response.status, 401);
+        assert.match(response.headers.get('www-authenticate') || '', /Bearer resource_metadata=/);
+        assert.deepEqual(await response.json(), { error: 'MCP_UNAUTHORIZED' });
     });
 });

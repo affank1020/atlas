@@ -117,7 +117,7 @@ catalog unification phase.
 
 ## PR 3 — Portfolio Project storage catalogue (read-only, reversible)
 
-Migration `034_project_portfolio_catalog.sql` adds the
+Migration `036_project_portfolio_catalog.sql` adds the
 `atlas_project_storage_objects` **read-only SQL view**. This is a single
 Project-scoped metadata catalogue for native Project Files, Portfolio media
 originals and every existing Portfolio derivative. Identity is the tuple
