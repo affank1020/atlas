@@ -91,7 +91,7 @@ type ManifestRow = {
     checksum: string | null; byte_size: string; mime_type: string; status: string;
 };
 
-async function loadProjectKeyRun(database: Pick<Pool,"query">, id: string): Promise<ProjectKeyRun> {
+export async function loadProjectKeyRun(database: Pick<Pool,"query">, id: string): Promise<ProjectKeyRun> {
     runId(id);
     const result = await database.query<RunRow>(
         "SELECT id,project_id,manifest_sha256,object_count,captured_at " +
