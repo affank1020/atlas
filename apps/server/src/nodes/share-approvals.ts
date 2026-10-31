@@ -56,6 +56,48 @@ export class NodeShareApprovals {
         return (grant.rowCount ?? 0) > 0;
     }
 
+    /**
+     * Retire stale, no-longer-retrievable queued shares in the existing enqueue
+     * transaction, before checking quotas. This uses the same approval overlay
+     * as allowedForInbox (including immutable environment grants).
+     *
+     * Only rows touching the admission's sender or recipient are considered:
+     * both source and target quotas must be free of hidden stale entries.
+     * Keep non-content tombstones to prevent idempotent retries from
+     * resurrecting invalidated delivery IDs.
+     */
+    async retireInaccessibleInboxRows(client: PoolClient, source: string, target: string): Promise<number> {
+        const pairs = [...this.environmentPairs];
+        const result = await client.query(`
+            UPDATE device_inbox inbox
+            SET state='expired', decided_at=now(),
+                payload_ciphertext=NULL, payload_nonce=NULL, payload_tag=NULL
+            WHERE inbox.state='queued'
+              AND (inbox.source_node_id=$1::uuid OR inbox.target_node_id=$2::uuid)
+              AND (
+                NOT EXISTS (
+                    SELECT 1 FROM nodes sender JOIN nodes receiver
+                      ON receiver.id=inbox.target_node_id
+                    WHERE sender.id=inbox.source_node_id
+                      AND sender.credential_state='active'
+                      AND receiver.credential_state='active'
+                      AND sender.credential_updated_at=inbox.source_credential_updated_at
+                      AND receiver.credential_updated_at=inbox.target_credential_updated_at
+                )
+                OR (
+                    NOT ((inbox.source_node_id::text || ':' || inbox.target_node_id::text)
+                        = ANY($3::text[]))
+                    AND NOT EXISTS (
+                        SELECT 1 FROM node_share_approvals grant_row
+                        WHERE grant_row.source_node_id=inbox.source_node_id
+                          AND grant_row.target_node_id=inbox.target_node_id
+                    )
+                )
+              )
+        `, [source.toLowerCase(), target.toLowerCase(), pairs]);
+        return result.rowCount ?? 0;
+    }
+
     /** Used only after Node socket auth. Never enumerate all configured pairs to a device. */
     async targetsFor(sourceId: string): Promise<Set<string>> {
         const source = sourceId.toLowerCase();
