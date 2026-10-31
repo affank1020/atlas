@@ -128,6 +128,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
     private var inboxPendingRequestId: String? = null
     private var inboxPendingAction: String? = null
+    private var inboxPendingDeliveryId: String? = null
     private var inboxTimeoutTask: Runnable? = null
     private var lastInboxCommandAt = 0L
     private var pendingShareRequestId: String? = null
@@ -360,7 +361,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                     inboxTimeoutTask=null
                     inboxPendingRequestId=null
                     val action=inboxPendingAction
+                    val expectedDelivery=inboxPendingDeliveryId
                     inboxPendingAction=null
+                    inboxPendingDeliveryId=null
                     queuedInboxBusy=false
                     when(reply) {
                         is InboxReply.Items -> if(action=="list") {
@@ -370,13 +373,16 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                                 "Queued text available for review."
                         }
                         is InboxReply.Content -> if(action=="read" &&
+                            reply.deliveryId==expectedDelivery &&
+                            session.section==Section.INBOX &&
                             queuedInboxItems.any { it.deliveryId==reply.deliveryId &&
                                 it.sourceNodeId==reply.sourceNodeId } &&
                             owners.activityVisible) {
                             queuedInboxPreview=reply
                             inboxStatus="Review and choose Copy or Decline."
                         }
-                        is InboxReply.Decision -> if(action=="decide") {
+                        is InboxReply.Decision -> if(action=="decide" &&
+                            reply.deliveryId==expectedDelivery) {
                             queuedInboxPreview=null
                             queuedInboxItems=queuedInboxItems.filterNot { it.deliveryId==reply.deliveryId }
                             inboxStatus=if(reply.status=="user_copied")
@@ -511,6 +517,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         inboxTimeoutTask=null
         inboxPendingRequestId=null
         inboxPendingAction=null
+        inboxPendingDeliveryId=null
         queuedInboxBusy=false
         queuedInboxItems=emptyList()
         queuedInboxPreview=null
@@ -519,7 +526,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     /** One bounded authenticated inbox operation at a time, rate-limited to the
      * Server's 500ms floor. No unattended polling or background clipboard writes.
      */
-    private fun requestInbox(action:String, payload:(String)->String):Boolean {
+    private fun requestInbox(action:String, payload:(String)->String,
+        deliveryId:String?=null):Boolean {
         val ws=socket ?: return false
         if (!owners.activityVisible || pairedNode==null || connectionStatus!="Online" ||
             queuedInboxBusy || SystemClock.elapsedRealtime()-lastInboxCommandAt<650L) {
@@ -531,10 +539,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         queuedInboxBusy=true
         inboxPendingRequestId=id
         inboxPendingAction=action
+        inboxPendingDeliveryId=deliveryId
         val timeout=Runnable {
             if(generation==connectionGeneration && inboxPendingRequestId==id) {
                 inboxPendingRequestId=null
                 inboxPendingAction=null
+                inboxPendingDeliveryId=null
                 inboxTimeoutTask=null
                 queuedInboxBusy=false
                 queuedInboxPreview=null
@@ -548,6 +558,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             inboxTimeoutTask=null
             inboxPendingRequestId=null
             inboxPendingAction=null
+            inboxPendingDeliveryId=null
             queuedInboxBusy=false
             inboxStatus="Could not reach Atlas inbox."
             return false
@@ -566,7 +577,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     fun openQueuedInboxItem(deliveryId:String) {
         if(queuedInboxItems.none {it.deliveryId==deliveryId} || queuedInboxBusy) return
-        if (requestInbox("read",{id->inboxReadRequest(id,deliveryId)})) {
+        if (requestInbox("read",{id->inboxReadRequest(id,deliveryId)},deliveryId)) {
             queuedInboxPreview=null
             inboxStatus="Loading queued text for review…"
         }
@@ -602,7 +613,8 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             }
         }
         queuedInboxPreview=null
-        if(requestInbox("decide",{id->inboxDecideRequest(id,preview.deliveryId,copied)})) {
+        if(requestInbox("decide",{id->inboxDecideRequest(id,preview.deliveryId,copied)},
+            preview.deliveryId)) {
             inboxStatus=if(copied) "Copied locally; awaiting Atlas receipt…" else
                 "Decline requested; awaiting Atlas receipt…"
         } else {
@@ -751,7 +763,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     var session by mutableStateOf(CompanionSession())
         private set
 
-    fun navigate(destination: Section) { session = session.navigate(destination) }
+    fun navigate(destination: Section) {
+        if(destination!=Section.INBOX) queuedInboxPreview=null
+        session = session.navigate(destination)
+    }
     fun editDraft(value: String) {
         // The reducer cancels a loading *active* image. A separate deferred
         // screenshot keeps loading while the user edits the sent text draft.
