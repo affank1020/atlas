@@ -23,9 +23,10 @@ class AtlasWireTest {
         val json = org.json.JSONObject(registrationMessage(stored, "0.1.0"))
         assertEquals("register", json.getString("type"))
         assertEquals(2, json.getInt("protocol"))
-        assertEquals(2, json.getJSONArray("capabilities").length())
+        assertEquals(3, json.getJSONArray("capabilities").length())
         assertEquals("device.share.send", json.getJSONArray("capabilities").getString(0))
         assertEquals("device.share.receive", json.getJSONArray("capabilities").getString(1))
+        assertEquals("device.inbox.receive", json.getJSONArray("capabilities").getString(2))
         assertEquals("android", json.getString("platform"))
     }
 
