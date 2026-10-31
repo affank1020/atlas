@@ -119,13 +119,15 @@
 .activity-evidence-header { display: grid; gap: 5px; }
 .activity-evidence-header strong { font-size: 13px; }
 .activity-evidence-header small { font-size: 12px; opacity: .75; }
-.activity-details .activity-evidence dl {
+.activity-evidence-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
 }
-.activity-details .activity-evidence dl > div { display: grid; grid-template-columns: 1fr; gap: 4px; min-width: 0; }
-.activity-evidence dd { overflow-wrap: anywhere; }
+.activity-evidence-list li { font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
-    .activity-details .activity-evidence dl { grid-template-columns: 1fr; }
+    .activity-evidence-list { grid-template-columns: 1fr; }
 }
