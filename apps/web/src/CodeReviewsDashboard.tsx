@@ -5,7 +5,7 @@ import { CodeReviewThreads } from './CodeReviewThreads';
 import type { AtlasRecord, Page } from './types';
 import './code-reviews-dashboard.css';
 import { Skeleton } from './Skeletons';
-import { CodeReviewsListLoading, CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
+import { CodeReviewsDetailLoading, CodeReviewsOpenCardsLoading } from './CodeReviewsDashboardLoading';
 
 type Counts = Partial<Record<'sev1' | 'sev2' | 'sev3' | 'sev4', number>>;
 const severities = ['sev1', 'sev2', 'sev3', 'sev4'] as const;
@@ -15,13 +15,16 @@ const verdicts: Record<string, string> = {
 };
 type Run = {
     id: string; repository: string; prNumber: number; headSha: string;
-    reviewedAt: string; verdict: string; counts: Counts | null;
-    source: 'structured' | 'historical' | 'unknown';
+    reviewedAt: string; verdict: string;
 };
 type Group = {
-    key: string; repository: string; prNumber: number;
-    latest: Run; rounds: Run[]; findings: number; countsComplete: boolean; severities: Counts;
+    key: string; repository: string; prNumber: number; latest: Run;
+    rounds: number; findings: number; countsComplete: boolean; roundsComplete: boolean; severities: Counts;
+    status: 'open' | 'closed' | 'unavailable';
+    reviewFreshness: 'current' | 'outdated' | 'unknown'; checkedAt?: string;
 };
+type Dashboard = { totalRuns: number; scannedRuns: number; windowComplete: boolean;
+    truncatedPrs: boolean; runOffset: number; hasMore: boolean; groups: Group[] };
 type Overview = { reviewRuns: number; findingObservations: number };
 type Finding = { id: string; severity: string; title: string; description: string; state: string;
     filePath?: string; line?: number };
@@ -34,59 +37,23 @@ type Timeline = { recordedRounds: number; rounds: Round[]; hasMore: boolean; off
 type PrStatus = { recordedRounds: number; latestReviewHead: string;
     currentHead: { state: string; sha?: string } };
 
-const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const shaPattern = /^[a-f0-9]{40}$/i;
-const validCount = (n: unknown): n is number => typeof n === 'number' &&
-    Number.isSafeInteger(n) && n >= 0;
-const number = (n: unknown) => validCount(n) ? n : 0;
-const validDate = (s: unknown): s is string => typeof s === 'string' && !Number.isNaN(Date.parse(s));
+const number = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : 0;
 const dateLabel = (s: string) => new Date(s).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-
-function parseRun(record: AtlasRecord): Run | null {
-    const d = record.data;
-    if (typeof d.repository !== 'string' || !repoPattern.test(d.repository) ||
-        d.repository.split('/').some(part => part === '.' || part === '..') ||
-        !Number.isSafeInteger(d.prNumber) || Number(d.prNumber) < 1 ||
-        typeof d.headSha !== 'string' || !shaPattern.test(d.headSha) ||
-        !validDate(d.reviewedAt) || typeof d.verdict !== 'string' ||
-        !Object.hasOwn(verdicts, d.verdict)) return null;
-    const c = d.counts && typeof d.counts === 'object' && !Array.isArray(d.counts)
-        ? d.counts as Record<string, unknown> : null;
-    const counts = c && severities.every(s => c[s] === undefined || validCount(c[s]))
-        ? c as Counts : null;
-    const coverage = d.coverage && typeof d.coverage === 'object' && !Array.isArray(d.coverage)
-        ? d.coverage as Record<string, unknown> : {};
-    const source = coverage.source === 'atlas_structured_submission' ? 'structured' :
-        coverage.source === 'github_pull_request_review' ? 'historical' : 'unknown';
-    return { id: record.id, repository: d.repository, prNumber: Number(d.prNumber),
-        headSha: d.headSha, reviewedAt: d.reviewedAt, verdict: d.verdict, counts, source };
-}
-
-export function groupReviewRuns(entries: Run[]): Group[] {
-    const grouped = new Map<string, Group>();
-    for (const run of entries) {
-        const key = run.repository.toLowerCase() + '#' + run.prNumber;
-        let group = grouped.get(key);
-        if (!group) {
-            group = { key, repository: run.repository, prNumber: run.prNumber, latest: run,
-                rounds: [], findings: 0, countsComplete: true, severities: {} };
-            grouped.set(key, group);
-        }
-        group.rounds.push(run);
-        if (run.reviewedAt > group.latest.reviewedAt) group.latest = run;
-        if (!run.counts) group.countsComplete = false;
-        for (const severity of severities) {
-            const value = number(run.counts?.[severity]);
-            group.findings += value;
-            group.severities[severity] = number(group.severities[severity]) + value;
-        }
-    }
-    return [...grouped.values()].sort((a, b) =>
-        b.latest.reviewedAt.localeCompare(a.latest.reviewedAt) || a.key.localeCompare(b.key));
-}
+const roundCount = (group: Group) => group.roundsComplete ? String(group.rounds) : group.rounds + '+';
 const findingCount = (group: Group) => group.countsComplete ? String(group.findings)
     : group.findings > 0 ? String(group.findings) + '+' : '—';
+const hrefFor = (group: Group) => 'https://github.com/' + group.repository + '/pull/' + group.prNumber;
 
+function PrLink({ group }: { group: Group }) {
+    return IS_MOCK_MODE ? <span className="cr-demo-pr">{group.repository} #{group.prNumber}</span> :
+        <a href={hrefFor(group)} target="_blank" rel="noopener noreferrer">{group.repository} #{group.prNumber} ↗</a>;
+}
+function SeverityBreakdown({ group }: { group: Group }) {
+    return <div className="cr-severity-summary">
+        {severities.filter(s => number(group.severities[s]) > 0).map(s =>
+            <span key={s} className={'cr-severity ' + s}>{s.toUpperCase()} {group.severities[s]}</span>)}
+    </div>;
+}
 function FindingList({ run, olderPage }: { run: Run; olderPage: boolean }) {
     const query = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_findings',
         { reviewRunId: run.id, limit: 50, offset: 0 }, true);
@@ -179,7 +146,7 @@ function PrDetails({ group, refreshVersion, olderPage }: { group: Group; refresh
             {(['findings', 'rounds', 'github'] as const).map(name =>
                 <button type="button" role="tab" key={name} className={tab === name ? 'active' : ''}
                     aria-selected={tab === name} onClick={() => setTab(name)}>
-                    {name === 'findings' ? (olderPage ? 'Findings on page' : 'Latest findings') : name === 'rounds' ? 'Review rounds' : 'GitHub'}</button>)}
+                    {name === 'findings' ? (olderPage ? 'Findings in window' : 'Latest findings') : name === 'rounds' ? 'Review rounds' : 'GitHub'}</button>)}
         </div>
         <div role="tabpanel">
             {tab === 'findings' && <FindingList run={group.latest} olderPage={olderPage}/>} 
@@ -189,103 +156,164 @@ function PrDetails({ group, refreshVersion, olderPage }: { group: Group; refresh
     </div>;
 }
 
+function PrRow({ group, expanded, toggle, refreshVersion, olderPage }: {
+    group: Group; expanded: boolean; toggle: () => void; refreshVersion: number; olderPage: boolean;
+}) {
+    return <article className="cr-pr" key={group.key}>
+        <div className="cr-pr-main">
+            <div className="cr-pr-identity">
+                <PrLink group={group}/>
+                <SeverityBreakdown group={group}/>
+            </div>
+            <div className="cr-number"><strong>{roundCount(group)}</strong></div>
+            <div className="cr-number" title={group.countsComplete
+                ? 'Finding observations across saved review rounds' : 'Some rounds have unknown finding counts'}>
+                <strong>{findingCount(group)}</strong>
+                <span>{group.countsComplete && group.rounds
+                    ? (group.findings / group.rounds).toFixed(1) + ' / round' : 'Incomplete'}</span>
+            </div>
+            <span className={'cr-verdict ' + group.latest.verdict}>{verdicts[group.latest.verdict]}</span>
+            <time className="cr-date" dateTime={group.latest.reviewedAt}>{dateLabel(group.latest.reviewedAt)}</time>
+            <button type="button" className="cr-expand"
+                aria-label={'Details for ' + group.repository + ' #' + group.prNumber}
+                aria-expanded={expanded} aria-controls={'cr-detail-' + group.key} onClick={toggle}>
+                {expanded ? '−' : '+'}
+            </button>
+        </div>
+        {expanded && <PrDetails key={group.key + ':' + refreshVersion} group={group}
+            refreshVersion={refreshVersion} olderPage={olderPage}/>}
+    </article>;
+}
+
+function OpenPrCard({ group, expanded, toggle, refreshVersion, olderPage }: {
+    group: Group; expanded: boolean; toggle: () => void; refreshVersion: number; olderPage: boolean;
+}) {
+    return <article className="cr-open-card">
+        <div className="cr-card-top">
+            <PrLink group={group}/>
+            <span className={'cr-verdict ' + group.latest.verdict}>{verdicts[group.latest.verdict]}</span>
+        </div>
+        <div className="cr-card-stats">
+            <div><strong>{roundCount(group)}</strong><span>Rounds</span></div>
+            <div><strong>{findingCount(group)}</strong><span>Findings</span></div>
+            <div><strong>{group.countsComplete && group.rounds
+                ? (group.findings / group.rounds).toFixed(1) : '—'}</strong><span>Per review</span></div>
+        </div>
+        <SeverityBreakdown group={group}/>
+        <div className="cr-card-bottom">
+            <time dateTime={group.latest.reviewedAt}>{dateLabel(group.latest.reviewedAt)}</time>
+            {group.reviewFreshness === 'outdated' && <span className="cr-stale">Review outdated</span>}
+            <button type="button" className="ghost cr-card-expand"
+                aria-label={'Details for ' + group.repository + ' #' + group.prNumber}
+                aria-expanded={expanded} aria-controls={'cr-detail-' + group.key}
+                onClick={toggle}>{expanded ? 'Hide' : 'Details'}</button>
+        </div>
+        {expanded && <PrDetails key={group.key + ':' + refreshVersion} group={group}
+            refreshVersion={refreshVersion} olderPage={olderPage}/>}
+    </article>;
+}
+
 export function CodeReviewsDashboard() {
-    const [offset, setOffset] = useState(0);
+    const [runOffset, setRunOffset] = useState(0);
     const [filter, setFilter] = useState<'all' | 'findings' | 'revisited'>('all');
     const [search, setSearch] = useState('');
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
     const [refreshVersion, setRefreshVersion] = useState(0);
     const summary = useApplicationRead<Overview>('code_reviews_overview', {}, true);
-    const runs = useApplicationRead<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 100, offset }, true);
-    const entries = (runs.data?.items ?? []).map(parseRun).filter((r): r is Run => !!r);
-    const groups = groupReviewRuns(entries);
+    const dashboard = useApplicationRead<Dashboard>('code_reviews_dashboard', { runOffset }, true);
+    const groups = dashboard.data?.groups ?? [];
     const needle = search.trim().toLowerCase();
-    const shown = groups.filter(group =>
+    const visible = groups.filter(group =>
         (filter === 'all' || filter === 'findings' && (group.findings > 0 || !group.countsComplete) ||
-            filter === 'revisited' && group.rounds.length > 1) &&
+            filter === 'revisited' && group.rounds > 1) &&
         (!needle || (group.repository + ' #' + group.prNumber).toLowerCase().includes(needle)));
+    const open = visible.filter(group => group.status === 'open');
+    const closed = visible.filter(group => group.status === 'closed');
+    const unknown = visible.filter(group => group.status === 'unavailable');
     const overview = summary.data;
     const loadingOverview = summary.isLoading && !overview && !summary.error;
-    const loadingRuns = runs.isLoading && !runs.data && !runs.error;
+    const loadingDashboard = dashboard.isLoading && !dashboard.data && !dashboard.error;
     const average = overview && overview.reviewRuns > 0
         ? (overview.findingObservations / overview.reviewRuns).toFixed(2) : '—';
-    const incomplete = !!(runs.data && (offset > 0 || offset + runs.data.items.length < runs.data.total));
-    const olderPage = offset > 0;
-    const error = summary.error?.message || runs.error?.message;
+    const error = summary.error?.message || dashboard.error?.message;
+    const paged = runOffset > 0 || !!dashboard.data && !dashboard.data.windowComplete;
+    const movePage = (offset: number) => {
+        setRunOffset(offset);
+        setExpandedKey(null);
+        setSearch('');
+        setFilter('all');
+    };
+    const toggle = (key: string) => setExpandedKey(previous => previous === key ? null : key);
+    const row = (group: Group) => <PrRow key={group.key} group={group}
+        expanded={expandedKey === group.key} toggle={() => toggle(group.key)}
+        refreshVersion={refreshVersion} olderPage={runOffset > 0}/>;
     return <section className="code-reviews cr-dashboard" aria-label="Code Reviews">
         <header className="cr-header"><h1>Code Reviews</h1>
-            <button type="button" className="ghost" disabled={summary.isFetching || runs.isFetching}
-                onClick={() => { void summary.refetch(); void runs.refetch(); setRefreshVersion(v => v + 1); }}>
-                Refresh</button></header>
+            <button type="button" className="ghost" disabled={summary.isFetching || dashboard.isFetching}
+                onClick={() => { void summary.refetch(); void dashboard.refetch(); setRefreshVersion(v => v + 1); }}>
+                Refresh</button>
+        </header>
         {IS_MOCK_MODE && <span className="cr-demo">Demo data</span>}
         <div className="cr-metrics" aria-label="Review metrics">
             <article><span>Review rounds</span><strong>{overview ? overview.reviewRuns.toLocaleString() : loadingOverview ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
             <article><span>Findings recorded</span><strong>{overview ? overview.findingObservations.toLocaleString() : loadingOverview ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
-            <article title="Finding observations divided by saved review rounds; repeated issues count in every round where observed.">
+            <article title="Finding observations divided by saved rounds; repeated issues count again in each reviewed round.">
                 <span>Findings / review</span><strong>{loadingOverview ? <Skeleton width={65} height={29} /> : average}</strong></article>
-            <article title="Distinct PRs in the displayed review rounds; may exclude older PRs if history spans multiple pages.">
-                <span>{runs.data && offset === 0 && runs.data.total <= 100 ? 'PRs reviewed' : 'PRs on page'}</span>
-                <strong>{runs.data ? groups.length : loadingRuns ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
+            <article><span>{dashboard.data && (dashboard.data.truncatedPrs || !dashboard.data.windowComplete)
+                ? 'PRs shown' : 'PRs reviewed'}</span><strong>{dashboard.data ? groups.length : loadingDashboard ? <Skeleton width={65} height={29} /> : '—'}</strong></article>
         </div>
         {error && <div className="notice error" role="alert">{error}</div>}
-        <section className="cr-list" aria-label="Pull request reviews">
-            <div className="cr-list-head"><h2>Pull requests</h2>
-                <div className="cr-filters">
-                    <input type="search" aria-label="Find pull request" placeholder={incomplete ? 'Find on page…' : 'Find PR…'} value={search}
-                        onChange={e => setSearch(e.target.value)}/>
-                    <span className="cr-filter-select">
-                        <select aria-label="Filter pull requests" value={filter}
-                            onChange={e => setFilter(e.target.value as typeof filter)}>
-                            <option value="all">All PRs</option><option value="findings">With findings</option>
-                            <option value="revisited">{incomplete ? 'Repeated on page' : 'Re-reviewed'}</option>
-                        </select>
-                    </span>
-                </div></div>
-            {incomplete && runs.data && <p className="cr-quiet cr-page-note" role="status">
-                Rounds {offset + 1}–{Math.min(offset + runs.data.items.length, runs.data.total)} of {runs.data.total}.
-                PR counts, search and filters cover this page only{olderPage ? '; verdicts may be older than the PR’s latest review.' : '.'}
+        {dashboard.data && (!dashboard.data.windowComplete || dashboard.data.truncatedPrs) &&
+            <p className="cr-quiet cr-window-notice" role="status">
+                {dashboard.data.windowComplete ? 'Complete saved review history.' :
+                    `Rounds ${dashboard.data.runOffset + 1}–${dashboard.data.runOffset + dashboard.data.scannedRuns} of ${dashboard.data.totalRuns}.`}
+                {!dashboard.data.windowComplete && ' PR counts, verdicts and search are scoped to this window.'}
+                {dashboard.data.hasMore && ' Use Older reviews to reach earlier PRs.'}
             </p>}
-            {loadingRuns && <CodeReviewsListLoading />}
-            {!runs.isLoading && runs.data?.total === 0 && <p className="cr-empty">No reviews recorded.</p>}
-            {runs.data && entries.length !== runs.data.items.length && <p role="status" className="cr-page-note">
-                Some review records could not be displayed.</p>}
-            {runs.data && groups.length > 0 && <>
-                <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>{incomplete ? 'Rounds (page)' : 'Rounds'}</span>
-                    <span>{incomplete ? 'Findings (page)' : 'Findings'}</span><span>{olderPage ? 'Result on page' : 'Latest result'}</span><span>{olderPage ? 'Reviewed (page)' : 'Reviewed'}</span><span/></div>
-                {shown.map(group => <article className="cr-pr" key={group.key}>
-                    <div className="cr-pr-main">
-                        <div className="cr-pr-identity">
-                            {IS_MOCK_MODE ? <span className="cr-demo-pr">{group.repository} #{group.prNumber}</span> :
-                                <a href={'https://github.com/' + group.repository + '/pull/' + group.prNumber}
-                                    target="_blank" rel="noopener noreferrer">
-                                    {group.repository} #{group.prNumber} ↗</a>}
-                            <div className="cr-severity-summary">
-                                {severities.filter(s => number(group.severities[s]) > 0).map(s =>
-                                    <span key={s} className={'cr-severity ' + s}>{s.toUpperCase()} {group.severities[s]}</span>)}
-                            </div>
-                        </div>
-                        <div className="cr-number"><strong>{group.rounds.length}</strong></div>
-                        <div className="cr-number" title={group.countsComplete ? 'Finding observations across these saved rounds' : 'Some rounds have unknown finding counts'}>
-                            <strong>{findingCount(group)}</strong>
-                            <span>{group.countsComplete && group.rounds.length ? (group.findings / group.rounds.length).toFixed(1) + ' / round' : 'Incomplete'}</span></div>
-                        <span className={'cr-verdict ' + group.latest.verdict}>{verdicts[group.latest.verdict]}</span>
-                        <time className="cr-date" dateTime={group.latest.reviewedAt}>{dateLabel(group.latest.reviewedAt)}</time>
-                        <button type="button" className="cr-expand" aria-label={'Details for ' + group.repository + ' #' + group.prNumber}
-                            aria-expanded={expandedKey === group.key} aria-controls={'cr-detail-' + group.key}
-                            onClick={() => setExpandedKey(expandedKey === group.key ? null : group.key)}>
-                            {expandedKey === group.key ? '−' : '+'}</button>
-                    </div>
-                    {expandedKey === group.key && <PrDetails key={group.key + ':' + refreshVersion} group={group} refreshVersion={refreshVersion} olderPage={olderPage}/>} 
-                </article>)}
-                {shown.length === 0 && <p className="cr-empty">{incomplete ? 'No matching PRs on this page.' : 'No matching PRs.'}</p>}
-            </>}
-            {runs.data && runs.data.total > 100 && <div className="cr-pagination">
-                <button type="button" className="ghost" disabled={offset === 0 || runs.isFetching}
-                    onClick={() => { setOffset(Math.max(0, offset - 100)); setExpandedKey(null); }}>Newer</button>
-                <span>Rounds {offset + 1}–{Math.min(offset + 100, runs.data.total)} of {runs.data.total}</span>
-                <button type="button" className="ghost" disabled={offset + 100 >= runs.data.total || runs.isFetching}
-                    onClick={() => { setOffset(offset + 100); setExpandedKey(null); }}>Older</button>
-            </div>}
-        </section>
+        <div className="cr-overview-tools">
+            <input type="search" aria-label="Find pull request" placeholder={paged ? 'Find in window…' : 'Find PR…'} value={search}
+                onChange={e => setSearch(e.target.value)}/>
+            <span className="cr-filter-select">
+                <select aria-label="Filter pull requests" value={filter}
+                    onChange={e => setFilter(e.target.value as typeof filter)}>
+                    <option value="all">All PRs</option><option value="findings">With findings</option>
+                    <option value="revisited">Re-reviewed</option>
+                </select>
+            </span>
+        </div>
+        {loadingDashboard && <CodeReviewsOpenCardsLoading />}
+        {dashboard.data && <>
+            <section className="cr-open-section" aria-label="Open pull requests">
+                <div className="cr-section-title"><h2>Open PRs</h2><span>{open.length}</span></div>
+                {open.length ? <div className="cr-open-grid">
+                    {open.map(group => <OpenPrCard key={group.key} group={group}
+                        expanded={expandedKey === group.key} toggle={() => toggle(group.key)}
+                        refreshVersion={refreshVersion} olderPage={runOffset > 0}/>)}
+                </div> : <p className="cr-empty">No open reviewed PRs{search || filter !== 'all' ? ' match.' : '.'}</p>}
+            </section>
+            <section className="cr-list" aria-label="Closed pull requests">
+                <div className="cr-list-head"><h2>Closed PRs</h2><span className="cr-list-count">{closed.length}</span></div>
+                {closed.length > 0 && <>
+                    <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>Rounds</span>
+                        <span>Findings</span><span>{runOffset > 0 ? 'Result in window' : 'Latest result'}</span><span>Reviewed</span><span/></div>
+                    {closed.map(row)}
+                </>}
+                {closed.length === 0 && <p className="cr-empty">No closed reviewed PRs{search || filter !== 'all' ? ' match.' : '.'}</p>}
+            </section>
+            {unknown.length > 0 && <section className="cr-list" aria-label="Unverified pull requests">
+                <div className="cr-list-head"><h2>Status unavailable</h2><span className="cr-list-count">{unknown.length}</span></div>
+                <div className="cr-table-head" aria-hidden="true"><span>PR</span><span>Rounds</span>
+                    <span>Findings</span><span>{runOffset > 0 ? 'Result in window' : 'Latest result'}</span><span>Reviewed</span><span/></div>
+                {unknown.map(row)}
+            </section>}
+            {(runOffset > 0 || dashboard.data.hasMore) && <nav className="cr-pagination" aria-label="Review history pages">
+                <button type="button" className="ghost" disabled={runOffset === 0 || dashboard.isFetching}
+                    onClick={() => movePage(Math.max(0, runOffset - 500))}>Newer reviews</button>
+                <span>Rounds {dashboard.data.scannedRuns ? dashboard.data.runOffset + 1 : 0}–
+                    {dashboard.data.runOffset + dashboard.data.scannedRuns} of {dashboard.data.totalRuns}</span>
+                <button type="button" className="ghost" disabled={!dashboard.data.hasMore || dashboard.isFetching}
+                    onClick={() => movePage(runOffset + 500)}>Older reviews</button>
+            </nav>}
+        </>}
     </section>;
 }

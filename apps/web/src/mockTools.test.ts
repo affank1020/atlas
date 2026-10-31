@@ -112,6 +112,10 @@ test('local demo exposes Code Reviews with paginated, internally consistent synt
     expect(mockTool<{ slug: string }>('get_application', { projectId: atlasProject, slug: 'code-reviews' }).slug)
         .toBe('code-reviews');
 
+    const dashboard = mockTool<{ groups: Array<{ prNumber: number; status: string; rounds: number }> }>('code_reviews_dashboard');
+    expect(dashboard.groups.some(group => group.prNumber === 59 && group.status === 'open')).toBe(true);
+    expect(dashboard.groups.some(group => group.prNumber === 42 && group.status === 'closed' && group.rounds === 2)).toBe(true);
+    expect(dashboard.groups.some(group => group.prNumber === 54 && group.status === 'unavailable')).toBe(true);
     const overview = mockTool<{ reviewRuns: number; findingObservations: number }>('code_reviews_overview');
     const firstPage = mockTool<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 2, offset: 0 });
     const secondPage = mockTool<Page<AtlasRecord>>('code_reviews_list_runs', { limit: 2, offset: 2 });

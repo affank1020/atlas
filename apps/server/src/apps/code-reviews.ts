@@ -6,6 +6,7 @@ import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
 import { readCanonicalPrPage, readPrTimeline } from './review-timeline.js';
+import { readReviewDashboard } from './review-dashboard.js';
 import type { ReviewPublicationService } from './review-publication.js';
 import type { ManagedSummaryPreviewService } from './managed-summary.js';
 import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
@@ -24,7 +25,7 @@ type ReviewCatalogue = Pick<CoreService, 'listStores' | 'queryRecords' | 'store'
 /** Project-scoped review history. Import is manually confirmed; publishing is a later capability. */
 export class CodeReviewsService {
     constructor(private readonly catalog: ReviewCatalogue,
-        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead'>>,
+        private readonly history?: Pick<GitHubReviewHistoryReader, 'read'> & Partial<Pick<GitHubReviewHistoryReader, 'discover' | 'currentHead' | 'dashboardHeads'>>, 
         private readonly trustedPublishers: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
         private readonly publisher?: Pick<ReviewPublicationService, 'publishRun'>,
         private readonly managedSummary?: Pick<ManagedSummaryPreviewService, 'preview'>,
@@ -290,6 +291,14 @@ export class CodeReviewsService {
         return readPrTimeline(this.catalog, ids, repository.toLowerCase(), prNumber, limit, offset, true);
     }
 
+    async dashboard(runOffset = 0) {
+        const ids = await this.storeIds();
+        const verify = this.history?.dashboardHeads
+            ? (repository: string, prNumbers: number[], signal: AbortSignal) => this.history!.dashboardHeads!(repository, prNumbers, signal)
+            : undefined;
+        return readReviewDashboard(this.catalog, ids.runs, verify, undefined, runOffset);
+    }
+
     async overview() {
         const ids = await this.storeIds();
         const [runs, findings] = await Promise.all([
@@ -505,6 +514,12 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     apply: z.boolean().default(false) },
                 invoke: ({ runId, includeInline, apply }: { runId: string; includeInline: boolean; apply: boolean },
                     caller?: ApplicationCaller) => service.publishReview(runId, includeInline, apply, caller),
+            },
+            {
+                name: 'code_reviews_dashboard',
+                description: 'Read a navigable bounded window of saved PR reviews with independently checked GitHub open/closed status. Counts and verdicts are window-scoped; no writes.',
+                inputSchema: { runOffset: z.number().int().min(0).max(1_000_000_000).multipleOf(500).default(0) },
+                invoke: ({ runOffset }: { runOffset: number }) => service.dashboard(runOffset),
             },
             {
                 name: 'code_reviews_list_findings',

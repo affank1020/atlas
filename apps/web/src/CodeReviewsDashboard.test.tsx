@@ -5,17 +5,20 @@ import { useApplicationRead } from './atlasApi';
 
 vi.mock('./atlasApi', () => ({ useApplicationRead: vi.fn() }));
 const refetch = vi.fn();
-const run = (id: string, repository: string, prNumber: number, at: string,
-    verdict: string, counts?: Record<string, number>) => ({
-    id, data: { repository, prNumber, headSha: 'a'.repeat(40), reviewedAt: at,
-        reviewer: 'Demo', verdict,
-        ...(counts === undefined ? {} : { counts }),
-        coverage: { source: 'atlas_structured_submission' } },
+const group = (number: number, status: 'open' | 'closed' | 'unavailable',
+    rounds: number, findings: number, verdict: string) => ({
+    key: 'example/atlas-demo#' + number, repository: 'example/atlas-demo', prNumber: number,
+    latest: { id: 'run-' + number, repository: 'example/atlas-demo', prNumber: number,
+        headSha: 'a'.repeat(40), reviewedAt: '2026-10-30T12:00:00Z', verdict },
+    rounds, findings, countsComplete: true, roundsComplete: true,
+    severities: { sev1: 0, sev2: number === 42 ? 1 : 0,
+        sev3: number === 42 ? 1 : 0, sev4: number === 59 ? 1 : 0 },
+    status, reviewFreshness: status === 'unavailable' ? 'unknown' : 'current',
 });
-const rows = [
-    run('run-3', 'affank1020/atlas', 59, '2026-10-30T12:00:00Z', 'non_blocking', { sev4: 2 }),
-    run('run-2', 'Affank1020/Atlas', 42, '2026-10-29T12:00:00Z', 'concerns_to_verify', { sev3: 1 }),
-    run('run-1', 'affank1020/atlas', 42, '2026-10-28T12:00:00Z', 'changes_requested', { sev2: 1 }),
+const groups = [
+    group(59, 'open', 1, 1, 'non_blocking'),
+    group(42, 'closed', 2, 2, 'concerns_to_verify'),
+    group(54, 'unavailable', 1, 0, 'no_findings'),
 ];
 let calls: string[];
 beforeEach(() => {
@@ -24,153 +27,165 @@ beforeEach(() => {
     vi.mocked(useApplicationRead).mockImplementation((name: string) => {
         calls.push(name);
         if (name === 'code_reviews_overview') return {
-            data: { reviewRuns: 3, findingObservations: 4 }, isLoading: false, isFetching: false, refetch,
+            data: { reviewRuns: 4, findingObservations: 3 },
+            isLoading: false, isFetching: false, refetch,
         } as never;
-        if (name === 'code_reviews_list_runs') return {
-            data: { total: 3, offset: 0, limit: 100, items: rows },
+        if (name === 'code_reviews_dashboard') return {
+            data: { totalRuns: 4, scannedRuns: 4, windowComplete: true, truncatedPrs: false,
+                runOffset: 0, hasMore: false, groups },
             isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_list_findings') return {
-            data: { total: 2, items: [{ id: 'finding-1',
+            data: { total: 1, items: [{ id: 'finding-1',
                 data: { title: 'Avoid layout shifts', severity: 'sev4', state: 'new',
-                    description: 'Render a stable placeholder while loading.' } }] },
+                    description: 'Reserve space while loading.' } }] },
             isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_pr_timeline') return {
-            data: { recordedRounds: 2, hasMore: false, offset: 0, rounds: [
-                { runId: 'run-2', headSha: 'a'.repeat(40), reviewedAt: '2026-10-29T12:00:00Z',
-                    verdict: 'concerns_to_verify', findingCoverage: 'structured',
-                    totalFindingObservations: 1, findingsTruncated: false, findings: [] },
-                { runId: 'run-1', headSha: 'a'.repeat(40), reviewedAt: '2026-10-28T12:00:00Z',
-                    verdict: 'changes_requested', findingCoverage: 'structured',
+            data: { recordedRounds: 1, hasMore: false, offset: 0, rounds: [
+                { runId: 'run-59', headSha: 'a'.repeat(40), reviewedAt: '2026-10-30T12:00:00Z',
+                    verdict: 'non_blocking', findingCoverage: 'structured',
                     totalFindingObservations: 1, findingsTruncated: false, findings: [] },
             ] }, isLoading: false, isFetching: false, refetch,
         } as never;
         if (name === 'code_reviews_pr_summary') return {
-            data: { recordedRounds: 2, latestReviewHead: 'outdated',
-                currentHead: { state: 'open', sha: 'b'.repeat(40) } },
+            data: { recordedRounds: 1, latestReviewHead: 'current',
+                currentHead: { state: 'open', sha: 'a'.repeat(40) } },
             isLoading: false, isFetching: false, refetch,
         } as never;
-        throw Error('Unexpected tool ' + name);
+        throw Error('Unexpected Code Reviews request ' + name);
     });
 });
 afterEach(cleanup);
 
-test('dashboard aggregates review productivity without confusing review rounds with PRs', () => {
+test('open reviewed PRs are cards above compact closed PRs; unknown status is separate', () => {
     render(<CodeReviewsDashboard />);
-    expect(screen.getByRole('heading', { name: 'Code Reviews' })).toBeInTheDocument();
-    expect(screen.getByText('Review rounds').parentElement).toHaveTextContent('3');
-    expect(screen.getByText('Findings recorded').parentElement).toHaveTextContent('4');
-    expect(screen.getByText('Findings / review').parentElement).toHaveTextContent('1.33');
-    expect(screen.getByText('PRs reviewed').parentElement).toHaveTextContent('2');
-    expect(screen.queryByText(/^1st review$|^\d+ re-reviews?$/i)).not.toBeInTheDocument();
-    expect(screen.getAllByRole('combobox', { name: 'Filter pull requests' })).toHaveLength(1);
-    expect(screen.getByText('2.0 / round')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(2);
-    expect(screen.queryByText(/PR review history and structured/)).not.toBeInTheDocument();
-    expect(screen.queryByText('Development quality')).not.toBeInTheDocument();
-    expect(calls).not.toContain('code_reviews_list_findings');
+    expect(screen.getByRole('heading', { name: 'Open PRs' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Closed PRs' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Status unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('Review rounds').parentElement).toHaveTextContent('4');
+    expect(screen.getByText('Findings recorded').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('Findings / review').parentElement).toHaveTextContent('0.75');
+    expect(screen.getByText('PRs reviewed').parentElement).toHaveTextContent('3');
+    const openSection = screen.getByRole('region', { name: 'Open pull requests' });
+    const closedSection = screen.getByRole('region', { name: 'Closed pull requests' });
+    const unknownSection = screen.getByRole('region', { name: 'Unverified pull requests' });
+    expect(openSection).toHaveTextContent('#59');
+    expect(openSection).not.toHaveTextContent('#42');
+    expect(closedSection).toHaveTextContent('#42');
+    expect(closedSection).not.toHaveTextContent('#54');
+    expect(unknownSection).toHaveTextContent('#54');
+    expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(3);
     expect(calls).not.toContain('code_reviews_pr_summary');
     expect(calls).not.toContain('code_reviews_pr_timeline');
 });
-test('review details and remote GitHub checks are lazy and only load when requested', () => {
+
+test('expand PR cards to inspect findings, review history and GitHub state only on demand', () => {
     render(<CodeReviewsDashboard />);
-    fireEvent.click(screen.getByRole('button', { name: 'Details for affank1020/atlas #59' }));
-    expect(calls).toContain('code_reviews_list_findings');
-    expect(calls).not.toContain('code_reviews_pr_timeline');
+    fireEvent.click(screen.getByRole('button', { name: 'Details for example/atlas-demo #59' }));
     expect(screen.getByText('Avoid layout shifts')).toBeInTheDocument();
+    expect(calls).toContain('code_reviews_list_findings');
+    expect(calls).not.toContain('code_reviews_pr_summary');
     fireEvent.click(screen.getByRole('tab', { name: 'Review rounds' }));
     expect(calls).toContain('code_reviews_pr_timeline');
     fireEvent.click(screen.getByRole('tab', { name: 'GitHub' }));
     expect(calls).toContain('code_reviews_pr_summary');
     expect(calls).not.toContain('code_reviews_review_thread_state');
-    expect(screen.getByText('outdated')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Details for affank1020/atlas #59' }));
-    expect(screen.queryByRole('tab', { name: 'GitHub' })).not.toBeInTheDocument();
 });
-test('filtering and searching operate on PRs, not individual review rounds', () => {
+
+test('search and review filters operate over both lifecycle sections', () => {
     render(<CodeReviewsDashboard />);
     fireEvent.change(screen.getByRole('combobox', { name: 'Filter pull requests' }),
         { target: { value: 'revisited' } });
     expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /#42/ })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Closed pull requests' })).toHaveTextContent('#42');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Find pull request' }),
         { target: { value: '#59' } });
-    expect(screen.getByText('No matching PRs.')).toBeInTheDocument();
+    expect(screen.getByText('No open reviewed PRs match.')).toBeInTheDocument();
+    expect(screen.getByText('No closed reviewed PRs match.')).toBeInTheDocument();
 });
-test('missing per-round severity totals remain unknown rather than becoming zero', () => {
-    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
-        if (name === 'code_reviews_overview') return {
-            data: { reviewRuns: 2, findingObservations: 2 }, refetch,
-        } as never;
-        return { data: { total: 2, items: [
-            rows[0], run('old', 'affank1020/atlas', 59, '2026-10-25T12:00:00Z', 'inconclusive'),
-        ] }, refetch } as never;
-    });
+
+test('failed lifecycle checks remain unavailable and are not counted as closed', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) =>
+        name === 'code_reviews_overview'
+            ? { data: { reviewRuns: 1, findingObservations: 0 }, refetch } as never
+            : { data: { totalRuns: 1, scannedRuns: 1, windowComplete: true,
+                truncatedPrs: false, runOffset: 0, hasMore: false, groups: [groups[2]] }, refetch } as never);
     render(<CodeReviewsDashboard />);
-    expect(screen.getByText('2+')).toBeInTheDocument();
-    expect(screen.getByText('Incomplete')).toBeInTheDocument();
-    expect(screen.getByText('Findings / review').parentElement).toHaveTextContent('1.00');
+    expect(screen.getByText('No open reviewed PRs.')).toBeInTheDocument();
+    expect(screen.getByText('No closed reviewed PRs.')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Unverified pull requests' })).toHaveTextContent('#54');
 });
-test('older saved-run pages never claim to show a PR’s latest result or complete counts', () => {
-    const firstHundred = Array.from({ length: 100 }, (_, i) =>
-        run('recent-' + i, 'affank1020/atlas', 59, '2026-10-30T12:00:00Z',
-            'no_findings', {}));
-    const older = run('older-round', 'affank1020/atlas', 59,
-        '2026-10-01T12:00:00Z', 'changes_requested', { sev3: 1 });
+
+test('large histories remain visible with explicit recent-window and minimum-count indicators', () => {
+    vi.mocked(useApplicationRead).mockImplementation((name: string) =>
+        name === 'code_reviews_overview'
+            ? { data: { reviewRuns: 2001, findingObservations: 2001 }, refetch } as never
+            : { data: { totalRuns: 2001, scannedRuns: 500, windowComplete: false,
+                truncatedPrs: false, runOffset: 0, hasMore: true, groups: [{
+                    ...groups[0], rounds: 500, roundsComplete: false, findings: 500, countsComplete: false,
+                }] }, refetch } as never);
+    render(<CodeReviewsDashboard />);
+    expect(screen.getByText('PRs shown').parentElement).toHaveTextContent('1');
+    expect(screen.getAllByText(/Rounds 1–500 of 2001/)).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Older reviews' })).toBeEnabled();
+    const open = screen.getByRole('region', { name: 'Open pull requests' });
+    expect(open).toHaveTextContent('500+');
+    expect(open).toHaveTextContent('#59');
+});
+
+test('older reviewed PRs remain accessible via dashboard pagination and can be expanded', () => {
+    const oldOpen = group(501, 'open', 1, 1, 'changes_requested');
+    const oldClosed = group(502, 'closed', 1, 0, 'no_findings');
+    const offsets: number[] = [];
     vi.mocked(useApplicationRead).mockImplementation((name: string, input: Record<string, unknown> = {}) => {
         if (name === 'code_reviews_overview') return {
-            data: { reviewRuns: 101, findingObservations: 1 }, isLoading: false, isFetching: false, refetch,
+            data: { reviewRuns: 502, findingObservations: 2 }, isLoading: false, isFetching: false, refetch,
         } as never;
-        if (name === 'code_reviews_list_runs') return {
-            data: { total: 101, limit: 100, offset: input.offset,
-                items: input.offset === 100 ? [older] : firstHundred },
-            isLoading: false, isFetching: false, refetch,
-        } as never;
+        if (name === 'code_reviews_dashboard') {
+            const offset = Number(input.runOffset ?? 0);
+            offsets.push(offset);
+            return { data: {
+                totalRuns: 502, scannedRuns: offset ? 2 : 500,
+                windowComplete: false, runOffset: offset, hasMore: offset === 0, truncatedPrs: false,
+                groups: offset ? [oldOpen, oldClosed] : [groups[0]],
+            }, isLoading: false, isFetching: false, refetch } as never;
+        }
         if (name === 'code_reviews_list_findings') return {
             data: { total: 0, items: [] }, isLoading: false, isFetching: false, refetch,
         } as never;
-        throw Error('Unexpected tool ' + name);
+        throw new Error('Unexpected tool ' + name);
     });
     render(<CodeReviewsDashboard />);
-    expect(screen.getByText('Rounds (page)')).toBeInTheDocument();
-    expect(screen.getByText('Latest result')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Older' }));
-    expect(screen.getByText('Result on page')).toBeInTheDocument();
-    expect(screen.queryByText('Latest result')).not.toBeInTheDocument();
-    expect(screen.getByText('Rounds (page)')).toBeInTheDocument();
-    expect(screen.getByText('Findings (page)')).toBeInTheDocument();
-    expect(screen.getByText('PRs on page')).toBeInTheDocument();
-    expect(screen.getByText(/verdicts may be older/)).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Repeated on page' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Details for affank1020/atlas #59' }));
-    expect(screen.getByRole('tab', { name: 'Findings on page' })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Find pull request' }),
-        { target: { value: '#999999' } });
-    expect(screen.getByText('No matching PRs on this page.')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).not.toHaveTextContent('#501');
+    fireEvent.click(screen.getByRole('button', { name: 'Older reviews' }));
+    expect(offsets).toContain(500);
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).toHaveTextContent('#501');
+    expect(screen.getByRole('region', { name: 'Closed pull requests' })).toHaveTextContent('#502');
+    expect(screen.getByText('Result in window')).toBeInTheDocument();
+    expect(screen.getAllByText(/Rounds 501–502 of 502/)).toHaveLength(2);
+    expect(screen.getByRole('searchbox', { name: 'Find pull request' })).toHaveAttribute('placeholder', 'Find in window…');
+    fireEvent.click(screen.getByRole('button', { name: 'Details for example/atlas-demo #501' }));
+    expect(screen.getByRole('tab', { name: 'Findings in window' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Newer reviews' }));
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).toHaveTextContent('#59');
+    expect(screen.getByRole('region', { name: 'Open pull requests' })).not.toHaveTextContent('#501');
 });
 
-test('refreshes the dashboard without changing GitHub state', () => {
-    render(<CodeReviewsDashboard />);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(refetch).toHaveBeenCalledTimes(2);
-    expect(calls).not.toContain('code_reviews_pr_summary');
-});
-
-test('Code Reviews initial queries use KPI and PR-list geometry, not zero counts or loading prose', () => {
+test('Code Reviews initial loads render KPI and open-PR card skeletons', () => {
     vi.mocked(useApplicationRead).mockImplementation(() => ({
         data: undefined, isLoading: true, isFetching: true, error: null, refetch,
     } as never));
     const view = render(<CodeReviewsDashboard />);
-    expect(screen.getByRole('status', { name: 'Loading Code Reviews pull requests' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: 'Loading Code Reviews pull requests' }))
+        .toHaveAttribute('aria-busy', 'true');
     expect(view.container.querySelectorAll('.cr-metrics .atlas-load-skeleton')).toHaveLength(4);
-    expect(view.container.querySelectorAll('.cr-pr')).toHaveLength(5);
-    expect(screen.queryByText('No reviews recorded.')).not.toBeInTheDocument();
-    expect(screen.queryByText('Loading reviews…')).not.toBeInTheDocument();
-    expect(view.container.querySelector('.cr-list button[aria-label^="Details for"]')).not.toBeInTheDocument();
+    expect(view.container.querySelectorAll('.cr-open-card')).toHaveLength(3);
+    expect(screen.queryByText('Loading reviewed PRs…')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Details for / })).not.toBeInTheDocument();
 });
 
-test('Code Reviews refresh keeps cached rows and does not overlay an initial skeleton', () => {
+test('refresh preserves cached PR cards without overlaying initial skeletons', () => {
     const original = vi.mocked(useApplicationRead).getMockImplementation()!;
     vi.mocked(useApplicationRead).mockImplementation((name, args) => {
         const result = original(name, args);
@@ -178,5 +193,12 @@ test('Code Reviews refresh keeps cached rows and does not overlay an initial ske
     });
     render(<CodeReviewsDashboard />);
     expect(screen.queryByRole('status', { name: 'Loading Code Reviews pull requests' })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^Details for / })).toHaveLength(3);
+});
+
+test('refresh rechecks both saved aggregates and GitHub lifecycle without publishing', () => {
+    render(<CodeReviewsDashboard />);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(refetch).toHaveBeenCalledTimes(2);
+    expect(calls).not.toContain('code_reviews_pr_summary');
 });

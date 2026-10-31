@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import { PortfolioApplicationLoading, PortfolioWorkspaceLoading, PortfolioMediaLoading } from './PortfolioLoading';
-import { CodeReviewsApplicationLoading, CodeReviewsListLoading, CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
+import { CodeReviewsApplicationLoading, CodeReviewsListLoading, CodeReviewsOpenCardsLoading, CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
 import { FootballGeneralistApplicationLoading, FootballGeneralistContentLoading } from './FootballGeneralistLoading';
 
 afterEach(cleanup);
@@ -25,26 +25,30 @@ test('mounted Portfolio data placeholder retains split workspace only', () => {
     expect(container.querySelector('.portfolio-editor-content')).toBeInTheDocument();
 });
 
-test('Code Reviews placeholder matches four KPI tiles and the PR table row anatomy', () => {
+test('Code Reviews lazy fallback matches the shared open-PR card skeleton', () => {
     const { container } = render(<CodeReviewsApplicationLoading />);
-    expect(screen.getByRole('status', { name: 'Loading Code Reviews' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading Code Reviews' }))
+        .toHaveAttribute('aria-busy', 'true');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(container.querySelectorAll('.cr-metrics article')).toHaveLength(4);
-    expect(container.querySelectorAll('.cr-table-head')).toHaveLength(1);
-    expect(container.querySelectorAll('.cr-pr .cr-pr-main')).toHaveLength(5);
-    expect(container.querySelectorAll('.cr-pr .cr-number')).toHaveLength(10);
+    expect(container.querySelectorAll('.cr-overview-tools .atlas-load-skeleton')).toHaveLength(2);
+    expect(container.querySelector('.cr-section-title')).toHaveTextContent('Open PRs');
+    expect(container.querySelectorAll('.cr-open-grid .cr-open-card')).toHaveLength(3);
+    expect(container.querySelectorAll('.cr-open-card .cr-card-stats > div')).toHaveLength(9);
+    expect(container.querySelectorAll('.cr-open-card .cr-card-top')).toHaveLength(3);
+    expect(container.querySelectorAll('.cr-open-card .cr-severity-summary')).toHaveLength(3);
+    expect(container.querySelectorAll('.cr-open-card .cr-card-bottom')).toHaveLength(3);
+    expect(container.querySelector('.cr-table-head, .cr-pr, .cr-list-head')).toBeNull();
     expect(container.querySelectorAll('button, a, input, textarea, select')).toHaveLength(0);
-    const rows = Array.from(container.querySelectorAll('.cr-pr-main'));
-    for (const row of rows) {
-        // These exact six children are placed/hidden by Code Reviews' real
-        // @media <=1050px and <=720px grid rules, not generic grid defaults.
-        expect(Array.from(row.children).map(cell => cell.classList[0])).toEqual([
-            'cr-pr-identity', 'cr-number', 'cr-number', 'cr-verdict', 'cr-date', 'cr-expand',
-        ]);
-        expect(row.querySelector('.cr-expand')).toHaveClass('cr-loading-expand');
-        expect(row.querySelector('.cr-expand')).not.toHaveAttribute('tabindex');
-    }
-    expect(container.querySelectorAll('.cr-pr-main > .cr-date')).toHaveLength(5);
-    expect(container.querySelectorAll('.cr-pr-main > .cr-verdict')).toHaveLength(5);
+});
+
+test('shared open-PR skeleton has the same card anatomy when mounted for data loading', () => {
+    const { container } = render(<CodeReviewsOpenCardsLoading />);
+    expect(screen.getByRole('status', { name: 'Loading Code Reviews pull requests' }))
+        .toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelectorAll('.cr-open-grid .cr-open-card')).toHaveLength(3);
+    expect(container.querySelectorAll('.cr-open-card .cr-card-stats > div')).toHaveLength(9);
+    expect(container.querySelector('.cr-pr, .cr-table-head')).toBeNull();
 });
 
 test('mounted Code Reviews list and its detail tabs use their own data skeletons', () => {

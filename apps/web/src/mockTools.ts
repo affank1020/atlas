@@ -260,7 +260,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'list_all_applications': result = applications; break;
         case 'list_applications': result = applications.filter(a => a.projectId === projectId); break;
         case 'get_application': result = applications.find(a => (!projectId || a.projectId === projectId) && a.slug === input.slug); break;
-        case 'code_reviews_overview': case 'code_reviews_list_runs': case 'code_reviews_list_findings':
+        case 'code_reviews_overview': case 'code_reviews_dashboard': case 'code_reviews_list_runs': case 'code_reviews_list_findings':
         case 'code_reviews_pr_summary': case 'code_reviews_pr_timeline': case 'code_reviews_review_thread_state':
             result = mockCodeReviewTool(name, input); break;
         case 'get_portfolio_schemas': result = portfolioTypes.map(contentType => ({

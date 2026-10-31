@@ -2,7 +2,7 @@ import { Skeleton } from './Skeletons';
 import './code-reviews-dashboard.css';
 import './CodeReviewsDashboardLoading.css';
 
-/** The PR grid is shared by bundle fallback and the real dashboard's initial query. */
+/** Retained compact PR table-row skeleton for list-style consumers. */
 export function CodeReviewsListLoading({ decorative = false }: { decorative?: boolean }) {
     return <div role={decorative ? undefined : 'status'}
         aria-label={decorative ? undefined : 'Loading Code Reviews pull requests'}
@@ -30,6 +30,29 @@ export function CodeReviewsListLoading({ decorative = false }: { decorative?: bo
     </div>;
 }
 
+/** Shared open-PR cards for both the bundle fallback and initial data loading. */
+export function CodeReviewsOpenCardsLoading({ decorative = false }: { decorative?: boolean }) {
+    return <div className="cr-open-section" role={decorative ? undefined : 'status'}
+        aria-label={decorative ? undefined : 'Loading Code Reviews pull requests'}
+        aria-busy={decorative ? undefined : true} aria-hidden={decorative || undefined}>
+        <div className="cr-section-title"><h2>Open PRs</h2></div>
+        <div className="cr-open-grid" aria-hidden="true">
+            {Array.from({ length: 3 }, (_, i) => <article className="cr-open-card" key={i}>
+                <div className="cr-card-top"><Skeleton width="70%" height={14} />
+                    <Skeleton width={85} height={13} /></div>
+                <div className="cr-card-stats">
+                    {Array.from({ length: 3 }, (_, j) =>
+                        <div key={j}><Skeleton width={32} height={22} />
+                            <Skeleton width={48} height={11} /></div>)}
+                </div>
+                <div className="cr-severity-summary"><Skeleton width={50} height={16} /></div>
+                <div className="cr-card-bottom"><Skeleton width={75} height={12} />
+                    <Skeleton width={55} height={30} /></div>
+            </article>)}
+        </div>
+    </div>;
+}
+
 /** No app bundle import: this component is available while Code Reviews JS loads. */
 export function CodeReviewsApplicationLoading() {
     return <section className="code-reviews cr-dashboard" role="status"
@@ -40,12 +63,11 @@ export function CodeReviewsApplicationLoading() {
             {['Review rounds', 'Findings recorded', 'Findings / review', 'PRs reviewed'].map(label =>
                 <article key={label}><span>{label}</span><strong><Skeleton width={67} height={29} /></strong></article>)}
         </div>
-        <section className="cr-list" aria-hidden="true">
-            <div className="cr-list-head"><h2>Pull requests</h2>
-                <div className="cr-filters"><Skeleton width={170} height={34} />
-                    <Skeleton width={138} height={34} /></div></div>
-            <CodeReviewsListLoading decorative />
-        </section>
+        <div className="cr-overview-tools" aria-hidden="true">
+            <Skeleton width={190} height={34} />
+            <Skeleton width={138} height={34} />
+        </div>
+        <CodeReviewsOpenCardsLoading decorative />
     </section>;
 }
 
