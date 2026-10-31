@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Files } from './Files';
 import {
@@ -223,10 +223,12 @@ test('Late Portfolio response from previous Project is ignored after switching P
     await waitFor(() => expect(resolveOld).toBeDefined());
     fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: otherProject } });
     await waitFor(() => expect(listPortfolioProjectMedia).toHaveBeenCalledWith(otherProject));
-    resolveOld?.([{ id: '00000000-0000-4000-8000-000000000099', projectId,
-        fileName: 'stale.png', mimeType: 'image/png', byteSize: 1, checksum: 'a'.repeat(64),
-        status: 'active', createdAt: firstFolder.createdAt, updatedAt: firstFolder.updatedAt,
-        url: null, variants: [] }]);
+    await act(async () => {
+        resolveOld?.([{ id: '00000000-0000-4000-8000-000000000099', projectId,
+            fileName: 'stale.png', mimeType: 'image/png', byteSize: 1, checksum: 'a'.repeat(64),
+            status: 'active', createdAt: firstFolder.createdAt, updatedAt: firstFolder.updatedAt,
+            url: null, variants: [] }]);
+    });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled());
     expect(screen.queryByText('stale.png')).not.toBeInTheDocument();
 });
