@@ -859,7 +859,8 @@ Usage:
   ./atlasctl up                Start only the MacBook Node for the hosted Server
   ./atlasctl down              Stop only the managed MacBook Node
   ./atlasctl restart           Restart only the managed MacBook Node
-  ./atlasctl share             Send clipboard text to an approved device (macOS opt-in)
+  ./atlasctl share             Send clipboard text to an approved online device (macOS opt-in)
+  ./atlasctl share --queue     Queue clipboard text for an approved device, even offline
   ./atlasctl dev up [--ask]    Start the legacy local development stack + MCP tunnel
   ./atlasctl dev down [--all]  Stop local dev services without stopping a hosted Node
   ./atlasctl dev restart       Restart the local development stack
@@ -1036,12 +1037,13 @@ switch (command) {
     if (!failDevFlag() && !await restartHostedNode()) process.exitCode = 1;
     break;
   case "share":
-    if (argument) {
-      console.error("Usage: ./atlasctl share (no text or tokens in command arguments)");
+    if ((argument && argument !== "--queue") ||
+        process.argv.slice(2).length !== (argument ? 2 : 1)) {
+      console.error("Usage: ./atlasctl share [--queue] (no text or tokens in command arguments)");
       process.exitCode = 2;
       break;
     }
-    try { await shareFromMacClipboard(); }
+    try { await shareFromMacClipboard(argument === "--queue" ? "queue" : "live"); }
     catch (error) {
       console.error("Atlas share: " + (error instanceof Error ? error.message : "Operation failed."));
       process.exitCode = 1;

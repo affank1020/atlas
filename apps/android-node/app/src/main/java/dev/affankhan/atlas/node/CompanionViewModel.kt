@@ -120,6 +120,17 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
     var inboxStatus by mutableStateOf("No incoming shares yet.")
         private set
+    var queuedInboxItems by mutableStateOf<List<PendingInboxItem>>(emptyList())
+        private set
+    var queuedInboxPreview by mutableStateOf<InboxReply.Content?>(null)
+        private set
+    var queuedInboxBusy by mutableStateOf(false)
+        private set
+    private var inboxPendingRequestId: String? = null
+    private var inboxPendingAction: String? = null
+    private var inboxPendingDeliveryId: String? = null
+    private var inboxTimeoutTask: Runnable? = null
+    private var lastInboxCommandAt = 0L
     private var pendingShareRequestId: String? = null
     private val directoryLookup = RecipientLookupGate(RECIPIENT_REFRESH_COOLDOWN_MS)
     private val pendingRecipientsRequestId: String? get() = directoryLookup.pendingRequestId
@@ -212,6 +223,9 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
 
     fun stopConnection() {
         owners = owners.activityStopped()
+        // Never retain decrypted preview text when the last visible Activity
+        // is backgrounded. The server remains the durable encrypted source.
+        if (!owners.activityVisible) queuedInboxPreview = null
         if (owners.connected) {
             // A different Activity may still be visible. Only issue a
             // background notification once the final visible Activity stops.
@@ -259,6 +273,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         cancelBackgroundSocket(socket)
         socket = null
         clearRecipientLookup()
+        clearQueuedInbox()
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -286,6 +301,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             connectionStatus = event.detail
                             clearRecipientLookup()
                             clearIncomingShare()
+                            clearQueuedInbox()
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -335,6 +351,48 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         recipientsError = if (reply.errorCode == "SHARE_RATE_LIMIT")
                             "Device refresh is too frequent. Try again shortly."
                         else "Approved devices could not be loaded."
+                    }
+                }
+            }, { reply ->
+                handler.post {
+                    if (!owners.connected || generation != connectionGeneration ||
+                        reply.requestId != inboxPendingRequestId) return@post
+                    inboxTimeoutTask?.let(handler::removeCallbacks)
+                    inboxTimeoutTask=null
+                    inboxPendingRequestId=null
+                    val action=inboxPendingAction
+                    val expectedDelivery=inboxPendingDeliveryId
+                    inboxPendingAction=null
+                    inboxPendingDeliveryId=null
+                    queuedInboxBusy=false
+                    when(reply) {
+                        is InboxReply.Items -> if(action=="list") {
+                            queuedInboxItems=reply.items
+                            queuedInboxPreview=null
+                            inboxStatus=if(reply.items.isEmpty()) "No queued text." else
+                                "Queued text available for review."
+                        }
+                        is InboxReply.Content -> if(action=="read" &&
+                            reply.deliveryId==expectedDelivery &&
+                            session.section==Section.INBOX &&
+                            queuedInboxItems.any { it.deliveryId==reply.deliveryId &&
+                                it.sourceNodeId==reply.sourceNodeId } &&
+                            owners.activityVisible) {
+                            queuedInboxPreview=reply
+                            inboxStatus="Review and choose Copy or Decline."
+                        }
+                        is InboxReply.Decision -> if(action=="decide" &&
+                            reply.deliveryId==expectedDelivery) {
+                            queuedInboxPreview=null
+                            queuedInboxItems=queuedInboxItems.filterNot { it.deliveryId==reply.deliveryId }
+                            inboxStatus=if(reply.status=="user_copied")
+                                "Copied on this device; Atlas receipt recorded."
+                            else "Queued text declined."
+                        }
+                        is InboxReply.Failure -> {
+                            if(action=="read") queuedInboxPreview=null
+                            inboxStatus="Atlas inbox request rejected ("+reply.code+"). Refresh to retry."
+                        }
                     }
                 }
             }, { incoming, respond ->
@@ -451,6 +509,118 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         if (sharePending || session.deferredShare == null) return
         session = session.loadDeferredShare()
         shareStatus = "New draft loaded. It has not been sent."
+    }
+
+    /** All decrypted inbox content stays volatile; never persist in SavedState. */
+    private fun clearQueuedInbox() {
+        inboxTimeoutTask?.let(handler::removeCallbacks)
+        inboxTimeoutTask=null
+        inboxPendingRequestId=null
+        inboxPendingAction=null
+        inboxPendingDeliveryId=null
+        queuedInboxBusy=false
+        queuedInboxItems=emptyList()
+        queuedInboxPreview=null
+    }
+
+    /** One bounded authenticated inbox operation at a time, rate-limited to the
+     * Server's 500ms floor. No unattended polling or background clipboard writes.
+     */
+    private fun requestInbox(action:String, payload:(String)->String,
+        deliveryId:String?=null):Boolean {
+        val ws=socket ?: return false
+        if (!owners.activityVisible || pairedNode==null || connectionStatus!="Online" ||
+            queuedInboxBusy || SystemClock.elapsedRealtime()-lastInboxCommandAt<650L) {
+            return false
+        }
+        val id=UUID.randomUUID().toString()
+        val generation=connectionGeneration
+        lastInboxCommandAt=SystemClock.elapsedRealtime()
+        queuedInboxBusy=true
+        inboxPendingRequestId=id
+        inboxPendingAction=action
+        inboxPendingDeliveryId=deliveryId
+        val timeout=Runnable {
+            if(generation==connectionGeneration && inboxPendingRequestId==id) {
+                inboxPendingRequestId=null
+                inboxPendingAction=null
+                inboxPendingDeliveryId=null
+                inboxTimeoutTask=null
+                queuedInboxBusy=false
+                queuedInboxPreview=null
+                inboxStatus="Inbox request unconfirmed. Refresh before another action."
+            }
+        }
+        inboxTimeoutTask=timeout
+        handler.postDelayed(timeout,12_000L)
+        if (!ws.send(payload(id))) {
+            handler.removeCallbacks(timeout)
+            inboxTimeoutTask=null
+            inboxPendingRequestId=null
+            inboxPendingAction=null
+            inboxPendingDeliveryId=null
+            queuedInboxBusy=false
+            inboxStatus="Could not reach Atlas inbox."
+            return false
+        }
+        return true
+    }
+
+    fun refreshQueuedInbox() {
+        if (!requestInbox("list",::inboxListRequest)) {
+            if (!queuedInboxBusy) inboxStatus="Reconnect or retry inbox refresh."
+        } else {
+            queuedInboxPreview=null
+            inboxStatus="Checking queued text…"
+        }
+    }
+
+    fun openQueuedInboxItem(deliveryId:String) {
+        if(queuedInboxItems.none {it.deliveryId==deliveryId} || queuedInboxBusy) return
+        if (requestInbox("read",{id->inboxReadRequest(id,deliveryId)},deliveryId)) {
+            queuedInboxPreview=null
+            inboxStatus="Loading queued text for review…"
+        }
+    }
+
+    /** Clipboard changes only after a visible user's Copy tap. A network
+     * failure after the write is reported as an unconfirmed server receipt;
+     * never claim that the server committed the decision before replying.
+     */
+    fun decideQueuedInboxItem(copied:Boolean, copy:(String)->Unit) {
+        val preview=queuedInboxPreview ?: return
+        if(!owners.activityVisible || queuedInboxBusy || connectionStatus!="Online") return
+        // The Server limits inbox operations to one per 500ms. If a user
+        // presses Copy immediately after the read response, do not write to
+        // clipboard before the corresponding decision can be dispatched.
+        val elapsed=SystemClock.elapsedRealtime()-lastInboxCommandAt
+        if(elapsed<650L) {
+            queuedInboxBusy=true
+            val generation=connectionGeneration
+            val selectedId=preview.deliveryId
+            handler.postDelayed({
+                queuedInboxBusy=false
+                if(generation==connectionGeneration && owners.activityVisible &&
+                    queuedInboxPreview?.deliveryId==selectedId)
+                    decideQueuedInboxItem(copied,copy)
+            },650L-elapsed)
+            return
+        }
+        if(copied) {
+            try { copy(preview.text) } catch (_:Exception) {
+                inboxStatus="Clipboard write failed. Nothing confirmed."
+                return
+            }
+        }
+        queuedInboxPreview=null
+        if(requestInbox("decide",{id->inboxDecideRequest(id,preview.deliveryId,copied)},
+            preview.deliveryId)) {
+            inboxStatus=if(copied) "Copied locally; awaiting Atlas receipt…" else
+                "Decline requested; awaiting Atlas receipt…"
+        } else {
+            inboxStatus=if(copied) "Copied locally; server receipt unconfirmed. Refresh inbox." else
+                "Decline not confirmed. Refresh inbox."
+        }
     }
 
     private fun clearRecipientLookup() {
@@ -593,7 +763,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     var session by mutableStateOf(CompanionSession())
         private set
 
-    fun navigate(destination: Section) { session = session.navigate(destination) }
+    fun navigate(destination: Section) {
+        if(destination!=Section.INBOX) queuedInboxPreview=null
+        session = session.navigate(destination)
+    }
     fun editDraft(value: String) {
         // The reducer cancels a loading *active* image. A separate deferred
         // screenshot keeps loading while the user edits the sent text draft.

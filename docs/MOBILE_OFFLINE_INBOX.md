@@ -27,11 +27,21 @@ The gateway now accepts four distinct Node v2 operations when `ATLAS_DEVICE_INBO
 
 Each operation independently authenticates the current socket credential and checks the relevant registered Node capability. The gateway bounds requests to one inflight operation and one per 500ms per session. Existing `device.share.submit` remains synchronous and unchanged.
 
-## Still required for the daily workflow
+## Mac/Android queued text clients (PR #180)
 
-No Mac `atlasctl share` queue option, Android inbox UI/polling or FCM wake-up is included yet. The server's standalone encrypted mailbox is **not by itself a functional asleep-tablet user experience**. A follow-up implementation must add the Mac explicit queue UX, Android inbox and notifications, cleanup worker, and push transport with opaque delivery IDs / private Firebase credentials. Physical phone sleep reliability additionally requires Android acceptance under Doze and force-stop.
+This follow-up adds an explicit end-to-end **pull-based** workflow, separate from synchronous live sharing:
 
-Do not deploy and advertise a complete persistent mobile inbox from this PR alone.
+1. On Atlas Server, apply migration `039_device_inbox.sql` and configure a durable server-only `ATLAS_DEVICE_INBOX_KEY` (canonical base64 encoding of 32 random bytes). Do not distribute this secret to the Mac or Android; do not rotate it without first retiring queued messages. This key is **absent by default**.
+2. On the Mac, enable the existing `ATLAS_NODE_SHARE_SEND_ENABLED=true` Node policy and maintain an approved **Mac → Samsung** directional pair. Upgrade/restart the Mac Node so the existing private local share IPC supports queueing.
+3. Run **`./atlasctl share --queue`** interactively with selected text in the macOS clipboard. Select a currently approved **queue-capable receiver**, even if offline, then explicitly approve **Queue** in the native dialog. The **new versioned `device.inbox.recipients` request** reports `queueCapable` only when the receiver last registered the dedicated `device.inbox.receive` consumer capability (Android 0.7+), separately from live `device.share.receive` and `available`. Older Android 0.6 and live-only Mac receiving Nodes remain in the legacy live-share directory but are explicitly ineligible for queued storage, even if offline. The existing `device.share.recipients` response intentionally remains **exactly five fields** for deployed Android 0.6.0 and older Mac Nodes with strict parsers; unsupported queue recipients are excluded. A server without the new request returns an unconfirmed queue-directory error rather than displaying an unverified target. The CLI reports the server's `queued` status and opaque delivery UUID, **not** clipboard delivery.
+4. Upgrade the already-enrolled Android Node from 0.6.0 to **0.7.0** using the **same local APK signing key** and `adb install -r`; do not uninstall or use a mismatched CI-signed APK. Once its Node socket is online, open **Inbox → Refresh**. Each queued item and its **Review** dialog show the **full delivery UUID**, allowing comparison to the ID printed by the Mac CLI if its enqueue acknowledgement was lost. Then explicitly **Copy** or **Decline**. Only a successful foreground clipboard write may submit `user_copied`.
+5. Verify that notifications and FCM are **not** promised by this workflow. A pending item remains encrypted on the server and becomes visible once Android reconnects and the user refreshes; it expires after 24 hours. No Android plaintext is written to persistent storage.
+
+A failed or ambiguous queue request must **never be automatically retried** under a new delivery UUID. The server may already have accepted the first. A clipboard Copy with an unconfirmed decision receipt remains a local copy, not a confirmed server acknowledgement.
+
+## Still required
+
+FCM wake-up and neutral opaque notifications remain the next reliability slice for sleeping/disconnected Android devices. Also outstanding: maintenance purge during idle periods, production metrics and physical Samsung acceptance with battery/Doze restrictions, and image/file transport. Do not advertise guaranteed screen-off delivery or instant pushes from this PR.
 
 ## Operations
 

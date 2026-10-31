@@ -31,6 +31,22 @@ export const deviceShareRecipientsResultSchema = z.object({
     recipients: z.array(deviceShareRecipientSchema).max(64),
 }).strict();
 
+/**
+ * Explicit opt-in queue directory. Never add fields to the legacy
+ * device.share.recipients response: Android 0.6 and earlier Mac Nodes use
+ * exact five-field parsing and may disconnect on unknown properties.
+ */
+export const deviceInboxRecipientsRequestSchema = z.object({
+    type: z.literal('device.inbox.recipients'),
+    requestId: z.string().uuid(),
+}).strict();
+export const deviceInboxRecipientSchema = deviceShareRecipientSchema.extend({
+    queueCapable: z.boolean(),
+}).strict();
+export const deviceInboxRecipientsResultSchema = z.object({
+    recipients: z.array(deviceInboxRecipientSchema).max(64),
+}).strict();
+
 /** Server -> Target Node: the server sets source and expiry only after authorisation. */
 export const deviceShareDeliverySchema = z.object({
     type: z.literal('request'),

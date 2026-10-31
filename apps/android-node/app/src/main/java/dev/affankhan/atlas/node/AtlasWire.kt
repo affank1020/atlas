@@ -28,7 +28,8 @@ internal fun registrationMessage(node: StoredNode, version: String): String = JS
     .put("type", "register").put("protocol", 2)
     .put("nodeId", node.nodeId).put("name", node.name)
     .put("platform", "android").put("version", version)
-    .put("capabilities", JSONArray().put("device.share.send").put("device.share.receive")).toString()
+    .put("capabilities", JSONArray().put("device.share.send")
+        .put("device.share.receive").put("device.inbox.receive")).toString()
 
 internal fun isRegistrationAcknowledgement(raw: String, nodeId: String): Boolean =
     runCatching {
@@ -169,6 +170,7 @@ internal fun shareMessage(
 internal data class ShareRecipient(
     val nodeId: String, val name: String, val platform: String,
     val status: String, val available: Boolean,
+    val queueCapable: Boolean = false,
 )
 
 internal data class RecipientsReply(
@@ -196,17 +198,21 @@ internal fun parseRecipientsReply(raw: String): RecipientsReply? = runCatching {
             val seen = mutableSetOf<String>()
             val recipients = (0 until items.length()).map { i ->
                 val target = items.getJSONObject(i)
-                if (target.length() != 5) return@runCatching null
+                if (target.length() !in 5..6 ||
+                    (target.length() == 6 && !target.has("queueCapable"))) return@runCatching null
                 val id = target.getString("nodeId")
                 val name = target.getString("name")
                 val platform = target.getString("platform")
                 val status = target.getString("status")
                 val available = target.get("available") as? Boolean ?: return@runCatching null
+                val queueCapable = if (target.has("queueCapable"))
+                    target.get("queueCapable") as? Boolean ?: return@runCatching null
+                else false
                 if (!validNodeId(id) || !seen.add(id.lowercase()) || name.isBlank() ||
                     name.length > 200 || platform.isBlank() || platform.length > 80 ||
                     status !in setOf("online", "offline", "unavailable") ||
                     (available && status != "online")) return@runCatching null
-                ShareRecipient(id, name, platform, status, available)
+                ShareRecipient(id, name, platform, status, available, queueCapable)
             }
             RecipientsReply(requestId, recipients = recipients)
         }

@@ -11,22 +11,22 @@ export function macShareSocketPath(): string {
 }
 
 const MAX_LOCAL_REQUEST = 80 * 1024; // UTF-8 JSON up to 16,384 UTF-16 characters.
-type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare'>;
-type Approve = (targetId: string, text: string) => Promise<boolean>;
+type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'inboxRecipients' | 'sendDeviceShare' | 'queueDeviceShare'>;
+type Approve = (targetId: string, text: string, mode?: 'live' | 'queue') => Promise<boolean>;
 
 /** A local socket caller is not proof that the user consented. Require a
  * separate macOS GUI decision before forwarding any clipboard content.
  * Only a short preview enters osascript stdin, never argv or Node logs.
  */
-export async function promptMacOutgoingShare(targetId: string, text: string): Promise<boolean> {
+export async function promptMacOutgoingShare(targetId: string, text: string, mode: 'live' | 'queue' = 'live'): Promise<boolean> {
     if (process.platform !== 'darwin') return false;
     const shortId = targetId.slice(0, 8);
     const preview = text.slice(0, 150)
         .replace(/[\u0000-\u001f\u007f]/g, ' ')
         .replace(/[\\"]/g, char => '\\' + char);
-    const script = 'set response to display dialog "Send Atlas clipboard to Node ' +
+    const script = 'set response to display dialog "' + (mode === 'queue' ? 'Queue Atlas text on Server for Node ' : 'Send Atlas clipboard to Node ') +
         shortId + '?" & return & return & "' + preview +
-        '" with title "Atlas" buttons {"Cancel", "Send"} default button "Cancel" giving up after 15\n' +
+        '" with title "Atlas" buttons {"Cancel", "' + (mode === 'queue' ? 'Queue' : 'Send') + '"} default button "Cancel" giving up after 15\n' +
         'return button returned of response\n';
     return new Promise(resolve => {
         const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -40,7 +40,7 @@ export async function promptMacOutgoingShare(targetId: string, text: string): Pr
         const timeout = setTimeout(() => { proc.kill('SIGKILL'); finish(false); }, 18_000);
         proc.stdout.on('data', bytes => { output = (output + String(bytes)).slice(0, 16); });
         proc.on('error', () => finish(false));
-        proc.on('close', code => finish(code === 0 && output.trim() === 'Send'));
+        proc.on('close', code => finish(code === 0 && output.trim() === (mode === 'queue' ? 'Queue' : 'Send')));
         proc.stdin.on('error', () => undefined);
         proc.stdin.end(script);
     });
@@ -115,6 +115,8 @@ export async function startMacShareControlServer(
                     let result: unknown;
                     if (data.action === 'recipients' && Object.keys(data).length === 1) {
                         result = { recipients: await node.shareRecipients() };
+                    } else if (data.action === 'queueRecipients' && Object.keys(data).length === 1) {
+                        result = { recipients: await node.inboxRecipients() };
                     } else if (data.action === 'send' && Object.keys(data).length === 3 &&
                         typeof data.targetNodeId === 'string' && typeof data.text === 'string') {
                         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -125,6 +127,23 @@ export async function startMacShareControlServer(
                             result = { cancelled: true };
                         } else {
                             result = await node.sendDeviceShare(data.targetNodeId, data.text);
+                        }
+                    } else if (data.action === 'queue' && Object.keys(data).length === 4 &&
+                        typeof data.targetNodeId === 'string' && typeof data.text === 'string' &&
+                        typeof data.deliveryId === 'string') {
+                        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+                            .test(data.targetNodeId) ||
+                            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+                            .test(data.deliveryId) ||
+                            !data.text.trim() || data.text.length > 16_384)
+                            throw Error('Invalid request');
+                        // Same explicit native approval as live Send, including
+                        // the destination. Never enqueue from an IPC call alone.
+                        if (!await approve(data.targetNodeId,data.text,'queue') || socket.destroyed) {
+                            result = { cancelled: true };
+                        } else {
+                            result = await node.queueDeviceShare(
+                                data.targetNodeId,data.text,data.deliveryId);
                         }
                     } else throw Error('Invalid request');
                     socket.end(JSON.stringify({ ok: true, result }) + '\n');

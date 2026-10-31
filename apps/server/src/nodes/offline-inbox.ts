@@ -52,7 +52,7 @@ export class DeviceOfflineInbox {
                 [source,target]);
             if (peers.rowCount !== 2 || peers.rows.some(p => p.credential_state !== 'active') ||
                 !peers.rows.some(p => String(p.id).toLowerCase() === target &&
-                    Array.isArray(p.capabilities) && p.capabilities.includes('device.share.receive')) ||
+                    Array.isArray(p.capabilities) && p.capabilities.includes('device.inbox.receive')) ||
                 !(await this.approvals.allowedForInbox(source,target,client)))
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
             if (peers.rows.some(p => !p.credential_updated_at))
