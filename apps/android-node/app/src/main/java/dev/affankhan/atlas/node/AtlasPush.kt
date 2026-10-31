@@ -61,9 +61,23 @@ internal object AtlasPush {
         JSONObject().put("type", "device.push.unregister")
             .put("requestId", requestId).toString()
 
-    fun isOpaqueWake(data: Map<String, String>): Boolean =
-        data.size == 2 && data["kind"] == "atlas_inbox" &&
-            runCatching { UUID.fromString(data["deliveryId"]) }.isSuccess
+    fun isOpaqueWake(data: Map<String, String>): Boolean {
+        if (data.size != 2 || data["kind"] != "atlas_inbox") return false
+        val id = data["deliveryId"] ?: return false
+        return runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false)
+    }
+
+    /** Do not relax the strict Node message parser for arbitrary responses. */
+    fun parseRegistrationAck(raw: String): String? = runCatching {
+        val envelope = JSONObject(raw)
+        if (envelope.length() != 4 || envelope.optString("type") != "response" ||
+            envelope.opt("ok") != true) return@runCatching null
+        val result = envelope.optJSONObject("result") ?: return@runCatching null
+        if (result.length() != 1 || result.opt("registered") !is Boolean)
+            return@runCatching null
+        val id = envelope.getString("requestId")
+        id.takeIf { UUID.fromString(it).toString() == it }
+    }.getOrNull()
 }
 
 class AtlasFirebaseMessagingService : FirebaseMessagingService() {
