@@ -67,11 +67,12 @@ export function PortfolioMediaLoading({ decorative = false }: { decorative?: boo
         aria-label={decorative ? undefined : 'Loading Portfolio media library'}
         aria-busy={decorative ? undefined : true} aria-hidden={decorative || undefined}>
         <header className="portfolio-media-header">
-            <div><h2>Media library</h2><Skeleton width={275} height={13} /></div>
+            <div><p className="eyebrow"><Skeleton width={95} height={11} /></p>
+                <h2>Media library</h2><Skeleton width={275} height={13} /></div>
             <Skeleton width={135} height={36} />
         </header>
         <div className="portfolio-media-toolbar">
-            <div className="portfolio-media-search"><Skeleton width="70%" height={13} /></div>
+            <div className="portfolio-media-search portfolio-media-search-loading"><Skeleton width="70%" height={13} /></div>
             <div className="portfolio-media-archived-loading"><Skeleton width={105} height={15} /></div>
             <span className="portfolio-media-count"><Skeleton width={52} height={13} /></span>
         </div>
@@ -85,6 +86,7 @@ export function PortfolioMediaLoading({ decorative = false }: { decorative?: boo
                         <div className="portfolio-media-card-actions">
                             <Skeleton width={92} height={13} /><Skeleton width={58} height={13} />
                         </div>
+                        <div className="portfolio-media-details"><Skeleton width={82} height={12} /></div>
                     </div>
                 </article>)}
         </div>

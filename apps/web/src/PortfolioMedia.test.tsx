@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { MediaLibrary } from "./Portfolio";
+import { MediaLibrary, Portfolio } from "./Portfolio";
+import { useApplicationRead } from "./atlasApi";
 import { callTool } from "./api";
 
 vi.mock("./api", () => ({ API_BASE: "", callTool: vi.fn() }));
@@ -61,4 +62,51 @@ test("rejects unsupported selected files without sending them", async () => {
  await waitFor(()=>expect(screen.getByText("Uploaded")).toBeInTheDocument());
  expect(callTool).toHaveBeenCalledTimes(1);
  expect(vi.mocked(callTool).mock.calls[0]?.[1]?.fileName).toBe("image.png");
+});
+
+
+test("Portfolio media deep link keeps its full-width asset skeleton until data resolves", () => {
+  const oldHash=window.location.hash;
+  window.location.hash="#/applications/portfolio?tab=media";
+  let pending=true;
+  const refresh=vi.fn(async()=>undefined);
+  vi.mocked(useApplicationRead).mockImplementation((name:string)=>({
+    data:pending?undefined:name==="get_portfolio_dashboard"
+      ? {contentTypes:[],media:{active:0,bytes:0}}:[],
+    isLoading:pending,isFetching:pending,error:null,refetch:refresh,
+  } as never));
+  try {
+    const view=render(<Portfolio/>);
+    expect(screen.getByRole("status",{name:"Loading Portfolio media library"})).toBeInTheDocument();
+    expect(view.container.querySelectorAll(".portfolio-media-grid article")).toHaveLength(6);
+    expect(view.container.querySelector(".portfolio-workspace, .portfolio-editor")).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Media library"})).toHaveClass("active");
+    pending=false;
+    view.rerender(<Portfolio/>);
+    expect(screen.queryByRole("status",{name:"Loading Portfolio media library"})).not.toBeInTheDocument();
+    expect(screen.getByRole("heading",{name:"Media library"})).toBeInTheDocument();
+    expect(screen.getByRole("textbox",{name:"Search media"})).toBeInTheDocument();
+    expect(screen.getByText("No assets to show.")).toBeInTheDocument();
+    expect(view.container.querySelector(".portfolio-workspace")).toBeNull();
+  } finally { window.location.hash=oldHash; }
+});
+
+test("Portfolio switching to Media while initial reads are pending switches skeleton geometry", () => {
+  const oldHash=window.location.hash;
+  window.location.hash="#/applications/portfolio";
+  vi.mocked(useApplicationRead).mockImplementation(()=>({
+    data:undefined,isLoading:true,isFetching:true,error:null,refetch:vi.fn(),
+  } as never));
+  try {
+    const view=render(<Portfolio/>);
+    expect(screen.getByRole("status",{name:"Loading Portfolio workspace"})).toBeInTheDocument();
+    expect(view.container.querySelector(".portfolio-sidebar")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Media library"}));
+    expect(screen.getByRole("status",{name:"Loading Portfolio media library"})).toBeInTheDocument();
+    expect(view.container.querySelector(".portfolio-sidebar, .portfolio-editor")).toBeNull();
+    expect(view.container.querySelectorAll(".portfolio-media-grid article")).toHaveLength(6);
+    fireEvent.click(screen.getByRole("button",{name:"Content"}));
+    expect(screen.getByRole("status",{name:"Loading Portfolio workspace"})).toBeInTheDocument();
+    expect(view.container.querySelector(".portfolio-media-grid")).toBeNull();
+  } finally { window.location.hash=oldHash; }
 });

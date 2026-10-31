@@ -12,3 +12,4 @@
 .portfolio-media-preview .atlas-load-skeleton { border-radius:0; }
 .portfolio-media-card-content > .atlas-load-skeleton + .atlas-load-skeleton { margin-top:8px; }
 .portfolio-media-card-actions .atlas-load-skeleton { max-width:45%; }
+.portfolio-media-search-loading { min-height:41px; }
