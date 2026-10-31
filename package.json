@@ -33,6 +33,7 @@
     "files:r2:project-checkpoint": "node apps/server/dist/server/project-key-ledger-cli.js",
     "files:r2:project-recovery": "node apps/server/dist/server/project-recovery-cli.js",
     "files:r2:isolated-legacy-files": "node apps/server/dist/server/isolated-legacy-files-cli.js",
+    "files:r2:isolated-recovery-coverage": "node apps/server/dist/server/isolated-recovery-coverage-cli.js",
     "files:r2:project-cutover-check": "node apps/server/dist/server/project-cutover-cli.js",
     "files:r2:project-cutover-rehearsal": "node apps/server/dist/server/project-cutover-rehearsal-cli.js",
     "files:staging:maintenance": "node apps/server/dist/server/node-transfer-maintenance-cli.js",
