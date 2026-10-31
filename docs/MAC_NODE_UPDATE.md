@@ -121,7 +121,11 @@ observation. A last-check record may be stale; consult its timestamp.
 
 The schedule can be disabled without stopping the Atlas Node or changing its
 credentials. Unknown or modified LaunchAgent plists and symlinked status files
-are rejected. If the LaunchAgent plist is installed but `launchctl` cannot
+are rejected. If a Python upgrade removes the interpreter recorded in the
+checker's existing LaunchAgent, `monitor status` reports `needs-attention`.
+Use `monitor disable` followed by `monitor enable` to intentionally
+re-provision it with the current Python; the old missing interpreter does
+not prevent disabling the job. If the LaunchAgent plist is installed but `launchctl` cannot
 find a loaded checker job, `monitor status` reports `needs-attention`
 rather than `enabled`. Scheduled checks are **not automatic installation**;
 `"$operator" update` still requires its original exact-release confirmation.
