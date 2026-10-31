@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { SkeletonApplicationWindow, SkeletonCards, SkeletonRows } from './Skeleton';
+import { SkeletonApplicationWindow, SkeletonCards, SkeletonProjectApplications, SkeletonRows } from './Skeleton';
 
 afterEach(cleanup);
 
@@ -23,4 +23,15 @@ test('application fallback has an accessible loading announcement', () => {
     render(<SkeletonApplicationWindow />);
     expect(screen.getByRole('status', { name: 'Loading application interface' })).toBeInTheDocument();
     expect(screen.getAllByRole('status')).toHaveLength(1);
+});
+
+test('project applications placeholder uses the same inset single-column grid and row anatomy as loaded cards', () => {
+    const { container } = render(<SkeletonProjectApplications count={2} />);
+    const region = screen.getByRole('status', { name: 'Loading project applications' });
+    expect(region).toHaveClass('application-grid');
+    expect(region).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelectorAll('.application-card.application-card-skeleton')).toHaveLength(2);
+    expect(container.querySelectorAll('.application-card-details')).toHaveLength(2);
+    expect(container.querySelectorAll('.application-card-skeleton-launch')).toHaveLength(2);
+    expect(container.querySelectorAll('button, a')).toHaveLength(0);
 });
