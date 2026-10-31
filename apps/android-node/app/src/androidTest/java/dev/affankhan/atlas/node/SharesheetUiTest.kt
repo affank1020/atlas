@@ -191,12 +191,18 @@ class SharesheetUiTest {
             org.junit.Assert.assertTrue(inboxRefreshed)
             inboxItems=listOf(PendingInboxItem(id,source,"2026-11-02T00:00:00Z","2026-10-31T00:00:00Z"))
         }
+        // The full UUID must be readable to reconcile a Mac queue receipt
+        // whose acknowledgement was lost; an eight-character prefix is not enough.
+        compose.onNodeWithTag("queued-inbox-id-"+id)
+            .performScrollTo().assertTextContains("Delivery ID: "+id)
         compose.onNodeWithTag("queued-inbox-open-"+id).performScrollTo().performClick()
         compose.runOnIdle {
             org.junit.Assert.assertTrue(inboxReviewed)
             org.junit.Assert.assertFalse(inboxCopied)
             inboxPreview=InboxReply.Content(id,id,source,"Unicode 🎉 notes")
         }
+        compose.onNodeWithTag("queued-inbox-preview")
+            .assertTextContains("Delivery ID: "+id)
         compose.onNodeWithTag("queued-inbox-decline").assertIsEnabled().performClick()
         compose.runOnIdle {
             org.junit.Assert.assertTrue(inboxDeclined)
