@@ -26,6 +26,9 @@ export const deviceShareRecipientSchema = z.object({
     platform: z.string().min(1).max(80),
     status: z.enum(['online', 'offline', 'unavailable']),
     available: z.boolean(),
+    // Optional for backwards compatibility with earlier recipient directories.
+    // Unlike available (live), this records the last registered receive capability.
+    queueCapable: z.boolean().optional(),
 }).strict();
 export const deviceShareRecipientsResultSchema = z.object({
     recipients: z.array(deviceShareRecipientSchema).max(64),
