@@ -3,6 +3,7 @@ import { useApplicationRead } from './atlasApi';
 import type { AtlasRecord, Page } from './types';
 import { CodeReviewThreads } from './CodeReviewThreads';
 import './code-reviews.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 type Overview = { projectId: string; reviewRuns: number; findingObservations: number };
 type Counts = { sev1?: number; sev2?: number; sev3?: number; sev4?: number };
@@ -174,7 +175,7 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
             <h3>PR status for {entry.repository} #{entry.prNumber}</h3>
             <span>On-demand GitHub head check</span>
         </div>
-        {(status.isLoading || status.isFetching && !data) && <p role="status">Checking saved reviews and GitHub head…</p>}
+        {(status.isLoading || status.isFetching && !data) && !status.error && <SkeletonRows label="Checking saved reviews and GitHub head" variant="metrics" rows={2} />}
         {status.error && <p className="notice error" role="alert">Unable to check PR status: {status.error.message}</p>}
         {data && !status.error && <>
             <p>{data.recordedRounds} saved review round{data.recordedRounds === 1 ? '' : 's'}.
@@ -215,7 +216,7 @@ function PrStatusDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshV
         <div className="code-reviews-timeline" aria-label="Saved PR review timeline">
             <h4>Saved review timeline</h4>
             {(timeline.isLoading || timeline.isFetching && !timeline.data) &&
-                <p role="status">Loading saved PR rounds…</p>}
+                <SkeletonRows label="Loading saved PR rounds" variant="activity" rows={3} />}
             {timeline.error && <p className="notice error" role="alert">Unable to load PR timeline: {timeline.error.message}</p>}
             {timeline.data && !timeline.error && <>
                 <p className="code-reviews-subtitle">
@@ -349,7 +350,7 @@ function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVe
         {entry.publication === 'published' && <p>Published on GitHub{entry.githubReviewId
             ? <> · <a href={`https://github.com/${entry.repository}/pull/${entry.prNumber}#pullrequestreview-${entry.githubReviewId}`}
                 target="_blank" rel="noopener noreferrer">View review ↗</a></> : null}</p>}
-        {(findings.isLoading || findings.isFetching && !findings.data) && <p role="status">Loading findings…</p>}
+        {(findings.isLoading || findings.isFetching && !findings.data) && !findings.error && <SkeletonRows label="Loading review findings" variant="list" rows={3} />}
         {findings.error && <p className="notice error" role="alert">Unable to load findings: {findings.error.message}</p>}
         {!findings.isLoading && !findings.error && findings.data?.total === 0 &&
             <p>No structured findings recorded for this review. This does not establish that the PR has no issues.</p>}
@@ -402,15 +403,15 @@ export function CodeReviews() {
                 onClick={() => { void summary.refetch(); void runs.refetch(); setRefreshVersion(v => v + 1); }}>Refresh</button>
         </header>
         <div className="code-reviews-metrics">
-            <article><span>Review rounds recorded</span><strong>{summary.data?.reviewRuns ?? '—'}</strong></article>
-            <article><span>Finding observations</span><strong>{summary.data?.findingObservations ?? '—'}</strong></article>
-            <article><span>Storage</span><strong>{summary.data ? 'Atlas PostgreSQL' : '—'}</strong></article>
+            <article><span>Review rounds recorded</span><strong>{summary.data?.reviewRuns ?? (summary.isLoading ? <Skeleton width={64} height={27} /> : '—')}</strong></article>
+            <article><span>Finding observations</span><strong>{summary.data?.findingObservations ?? (summary.isLoading ? <Skeleton width={64} height={27} /> : '—')}</strong></article>
+            <article><span>Storage</span><strong>{summary.data ? 'Atlas PostgreSQL' : summary.isLoading ? <Skeleton width="75%" height={17} /> : '—'}</strong></article>
         </div>
         {loadError && <div className="notice error" role="alert">Code Reviews data is unavailable: {loadError}</div>}
         <div className="code-reviews-history">
             <div className="code-reviews-history-head"><h2>Review history</h2>
-                <span>{runs.data ? `${runs.data.total} total runs` : 'Not loaded'}</span></div>
-            {(summary.isLoading || runs.isLoading) && <p role="status">Loading saved reviews…</p>}
+                <span>{runs.data ? `${runs.data.total} total runs` : runs.isLoading ? <Skeleton width={70} height={12} /> : 'Unavailable'}</span></div>
+            {runs.isLoading && !runs.data && !runs.error && <SkeletonRows label="Loading saved reviews" variant="activity" rows={5} />}
             {!runs.isLoading && !runs.error && runs.data?.total === 0 &&
                 <div className="code-reviews-empty">
                     <h3>No reviews recorded yet</h3>
