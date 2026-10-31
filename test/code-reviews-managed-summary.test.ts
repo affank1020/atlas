@@ -35,7 +35,8 @@ test('managed summary renders bounded latest saved structured evidence, without 
     assert.equal(output.marker, managedSummaryMarker(repository, prNumber));
     assert.ok(output.body.endsWith(output.marker));
     assert.match(output.body, /1 Sev3/);
-    assert.match(output.body, /Reviewer-asserted fixes:\*\* 0/);
+    assert.doesNotMatch(output.body, /Reviewer-asserted fixes/,
+        'omit zero-value lifecycle noise from the status summary');
     assert.match(output.body, /Saved rounds:\*\* 4/);
     assert.match(output.body, /\[!CAUTION\]/);
     assert.ok(output.body.split('\n').length <= 15, 'summary stays scannable');
@@ -60,7 +61,7 @@ test('managed summary renders bounded latest saved structured evidence, without 
     assert.equal(imported.fullEvidence, false);
     assert.match(imported.body, /Finding counts:\*\* unavailable/);
     assert.match(imported.body, /Partial evidence/);
-    assert.doesNotMatch(imported.body, /Latest round:/);
+    assert.doesNotMatch(imported.body, /Reviewer-asserted fixes/);
     for (const invalid of ['../repo', './repo', 'owner/..', 'owner/.', 'owner/repo/path',
         'owner//repo', 'owner/repo?x=1']) {
         assert.throws(() => managedSummaryMarker(invalid, 118), /Invalid managed summary/);
