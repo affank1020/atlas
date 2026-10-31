@@ -8,6 +8,7 @@ on:
       - "scripts/macos-node-update.py"
       - "scripts/macos-node-operator.py"
       - "test/test_macos_node_operator.py"
+      - "test/test_macos_node_launchd_real.py"
       - "scripts/macos-node-stage.py"
       - "scripts/linux-node-host-updater.py"
       - "test/test_macos_node_update.py"
@@ -20,6 +21,7 @@ on:
       - "scripts/macos-node-update.py"
       - "scripts/macos-node-operator.py"
       - "test/test_macos_node_operator.py"
+      - "test/test_macos_node_launchd_real.py"
       - "scripts/macos-node-stage.py"
       - "scripts/linux-node-host-updater.py"
       - "test/test_macos_node_update.py"
@@ -45,3 +47,8 @@ jobs:
           python3 -m unittest discover -s test -p 'test_macos_node_update.py' -v
           python3 -m unittest discover -s test -p 'test_macos_node_operator.py' -v
           python3 -m py_compile scripts/macos-node-lifecycle.py scripts/macos-node-update.py scripts/macos-node-operator.py
+      - name: Exercise an isolated real per-user launchd update checker
+        env:
+          ATLAS_MACOS_LAUNCHD_SMOKE: "1"
+        run: |
+          python3 -m unittest discover -s test -p 'test_macos_node_launchd_real.py' -v
