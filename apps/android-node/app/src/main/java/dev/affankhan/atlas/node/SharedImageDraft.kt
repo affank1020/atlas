@@ -26,10 +26,16 @@ internal fun readSharedImage(
     val output = ByteArrayOutputStream()
     val buffer = ByteArray(64 * 1024)
     var total = 0
+    var emptyReads = 0
     while (true) {
         val count = input.read(buffer)
         if (count == -1) break
-        if (count == 0) continue
+        if (count == 0) {
+            if (++emptyReads >= 8)
+                throw IllegalArgumentException("The image provider did not return any data.")
+            continue
+        }
+        emptyReads = 0
         if (count > maxBytes - total)
             throw IllegalArgumentException("Image is larger than the 8 MB import limit.")
         output.write(buffer, 0, count)
