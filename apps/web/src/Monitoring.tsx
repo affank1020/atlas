@@ -284,7 +284,7 @@ type ServerDiagnosticResponse = {
     source: 'atlas-server-process' | 'atlas-server-history'; available: boolean;
     startedAt?: string; retention: 'current-process' | 'best-effort';
     retentionDays?: number; coverage?: 'incomplete-possible'; droppedSinceStart?: number;
-    events: ServerDiagnosticEvent[]; truncated: boolean;
+    events: ServerDiagnosticEvent[]; truncated: boolean; nextCursor?: string;
 };
 function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     const history = filters.history === '1';
@@ -295,15 +295,24 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     const [busy, setBusy] = useState(false);
     const [search, setSearch] = useState('');
     const [refresh, setRefresh] = useState(0);
+    // Cursor stacks belong to one source and page size. Changing either resets
+    // pagination immediately (without fetching a stale prior-source cursor).
+    const pageScope = `${history ? 'history' : 'process'}:${limit}`;
+    const [pages, setPages] = useState<{ scope: string; cursors: Array<string | undefined>; index: number }>(
+        { scope: '', cursors: [undefined], index: 0 });
+    const currentPage = pages.scope === pageScope ? pages
+        : { scope: pageScope, cursors: [undefined], index: 0 };
+    const cursor = history ? currentPage.cursors[currentPage.index] : undefined;
     useEffect(() => {
         const controller = new AbortController();
         setResult(undefined); setError(''); setBusy(true);
-        void callTool<ServerDiagnosticResponse>(history ? 'read_server_diagnostic_history' : 'read_server_diagnostics', { limit }, controller.signal)
+        void callTool<ServerDiagnosticResponse>(history ? 'read_server_diagnostic_history' : 'read_server_diagnostics',
+            history && cursor ? { limit, cursor } : { limit }, controller.signal)
             .then(value => { if (!controller.signal.aborted) setResult(value); })
             .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); })
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
         return () => controller.abort();
-    }, [limit, refresh, history]);
+    }, [limit, refresh, history, cursor]);
     // A bookmark/source switch must never briefly render rows from the other source.
     const visible = result?.source === (history ? 'atlas-server-history' : 'atlas-server-process') ? result : undefined;
     const events = visible?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];
@@ -333,6 +342,20 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
             <p>{history ? 'Available events from the last 14 days · coverage may be incomplete' : 'Since ' + (visible.startedAt ? new Date(visible.startedAt).toLocaleString() : 'this restart')}{visible.truncated ? ' · More events exist than the current limit' : ''}{history && visible.droppedSinceStart ? ' · ' + visible.droppedSinceStart + ' writes lost in this process' : ''}</p>
             <div className="actions"><button className="ghost" onClick={() => void navigator.clipboard.writeText(output)}>Copy visible diagnostics</button></div>
             <pre>{output || (search ? '(no matching events in loaded diagnostics)' : '(no diagnostic events)')}</pre>
+        </div>}
+        {history && <div className="actions" aria-label="Diagnostic history pagination">
+            <button type="button" className="ghost" disabled={busy || currentPage.index === 0}
+                onClick={() => setPages({ ...currentPage, index: currentPage.index - 1 })}>Newer events</button>
+            <span role="status">History page {currentPage.index + 1}</span>
+            <button type="button" className="ghost" disabled={busy || !visible?.available || !visible.nextCursor}
+                onClick={() => {
+                    if (!visible?.nextCursor) return;
+                    setPages({ scope: pageScope,
+                        cursors: [...currentPage.cursors.slice(0, currentPage.index + 1), visible.nextCursor],
+                        index: currentPage.index + 1 });
+                }}>Older events</button>
+            {visible?.available && visible.truncated && !visible.nextCursor &&
+                <span>Older pages require an updated Atlas Server.</span>}
         </div>}
     </section>;
 }

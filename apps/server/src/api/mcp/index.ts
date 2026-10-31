@@ -111,8 +111,9 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     tool("read_server_diagnostics", "Read bounded, non-sensitive Atlas Server process diagnostics since the current restart, not Docker stdout/stderr or retained container logs.", {
         limit: z.number().int().min(1).max(100).default(30),
     });
-    tool("read_server_diagnostic_history", "Read up to 100 recent fixed-code Server diagnostic events retained in PostgreSQL for up to 14 days. Best-effort, incomplete possible, not container stdout/stderr.", {
+    tool("read_server_diagnostic_history", "Read up to 100 fixed-code Server diagnostic events per page from the last 14 days, using an optional opaque keyset cursor returned by a previous page. History is best-effort, not raw container logs.", {
         limit: z.number().int().min(1).max(100).default(30),
+        cursor: z.string().min(1).max(160).optional(),
     });
     tool("get_atlas_status", "Report Atlas availability and structured-data counts.", {});
     tool("get_storage_usage", "Read PostgreSQL storage sizes and Cloudflare R2 analytics without credentials.", { refresh: z.boolean().optional() });
