@@ -41,7 +41,7 @@ def ensure_operator() -> None:
         raise Refused("Run as the logged-in, non-root macOS user.")
 
 
-def current_node(layout) -> tuple[str, str]:
+def current_node(layout) -> tuple[str, str, str]:
     """Read the existing plist; never read or print secrets from its env file."""
     data = lifecycle.decode_plist(
         lifecycle.exact_plist_bytes(layout.plist, layout.uid), layout
