@@ -25,6 +25,14 @@ export function formatShareRecipientOption(recipient, index) {
         ' (' + safeTerminalLabel(recipient.platform) + ')';
 }
 
+/** Directory 'available' reports a live receiver, not offline queue support.
+ * Fail closed for old servers lacking the separate capability field.
+ */
+export function queueEligibleRecipients(recipients) {
+    return recipients.filter(item => item && item.queueCapable === true &&
+        typeof item.nodeId === 'string' && typeof item.name === 'string');
+}
+
 function checkSocket(path) {
     const parent = lstatSync(dirname(path));
     const entry = lstatSync(path);
@@ -84,11 +92,12 @@ export async function shareFromMacClipboard(mode = 'live') {
     }
     const recipients = directory.result?.recipients;
     if (!Array.isArray(recipients)) throw Error('Unexpected recipient list.');
-    const ready = recipients.filter(recipient => recipient &&
-        (mode === 'queue' || recipient.available === true) &&
-        typeof recipient.nodeId === 'string' && typeof recipient.name === 'string');
+    const ready = mode === 'queue'
+        ? queueEligibleRecipients(recipients)
+        : recipients.filter(recipient => recipient && recipient.available === true &&
+            typeof recipient.nodeId === 'string' && typeof recipient.name === 'string');
     if (!ready.length) {
-        console.log(mode === 'queue' ? 'No approved recipients. Check sharing approvals in Atlas Web → Nodes.'
+        console.log(mode === 'queue' ? 'No approved queued-text receivers. Update Node software or check sharing approvals.'
             : 'No approved receiving devices are online. Check Mac → Android approval in Atlas Web → Nodes.');
         return;
     }
