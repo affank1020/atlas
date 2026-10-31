@@ -191,13 +191,15 @@ export class DurableDeviceShareInbox {
         if (!(await this.authorized(String(row.source_node_id), target)))
             throw new AtlasError('Sharing grant revoked.', 'SHARE_DENIED');
         if (row.status !== 'queued') return { state: row.status as QueuedStatus };
-        const status: QueuedStatus = new Date(row.expires_at).getTime() <= Date.now()
-            ? 'expired' : input.accepted ? 'copied' : 'declined';
-        const updated = await this.pool.query(`UPDATE node_share_inbox SET status=$3,
+        const requested: QueuedStatus = input.accepted ? 'copied' : 'declined';
+        // The expiry check belongs in the UPDATE itself. A decision arriving
+        // between a preceding SELECT and expiry cannot be recorded as copied.
+        const updated = await this.pool.query(`UPDATE node_share_inbox
+            SET status=CASE WHEN expires_at > now() THEN $3 ELSE 'expired' END,
             nonce=NULL,ciphertext=NULL,auth_tag=NULL,resolved_at=now()
             WHERE target_node_id=$1 AND delivery_id=$2 AND source_node_id=$4 AND status='queued'
-            RETURNING status`, [target, id, status, source]);
-        if (updated.rowCount) return { state: status };
+            RETURNING status`, [target, id, requested, source]);
+        if (updated.rowCount) return { state: updated.rows[0].status as QueuedStatus };
         const latest = await this.pool.query(
             'SELECT status FROM node_share_inbox WHERE target_node_id=$1 AND delivery_id=$2 AND source_node_id=$3', [target,id,source]);
         return { state: (latest.rows[0]?.status ?? 'expired') as QueuedStatus };
