@@ -120,6 +120,16 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
     var inboxStatus by mutableStateOf("No incoming shares yet.")
         private set
+    var queuedInboxItems by mutableStateOf<List<PendingInboxItem>>(emptyList())
+        private set
+    var queuedInboxPreview by mutableStateOf<InboxReply.Content?>(null)
+        private set
+    var queuedInboxBusy by mutableStateOf(false)
+        private set
+    private var inboxPendingRequestId: String? = null
+    private var inboxPendingAction: String? = null
+    private var inboxTimeoutTask: Runnable? = null
+    private var lastInboxCommandAt = 0L
     private var pendingShareRequestId: String? = null
     private val directoryLookup = RecipientLookupGate(RECIPIENT_REFRESH_COOLDOWN_MS)
     private val pendingRecipientsRequestId: String? get() = directoryLookup.pendingRequestId
@@ -259,6 +269,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         cancelBackgroundSocket(socket)
         socket = null
         clearRecipientLookup()
+        clearQueuedInbox()
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -286,6 +297,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             connectionStatus = event.detail
                             clearRecipientLookup()
                             clearIncomingShare()
+                            clearQueuedInbox()
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -335,6 +347,43 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         recipientsError = if (reply.errorCode == "SHARE_RATE_LIMIT")
                             "Device refresh is too frequent. Try again shortly."
                         else "Approved devices could not be loaded."
+                    }
+                }
+            }, { reply ->
+                handler.post {
+                    if (!owners.connected || generation != connectionGeneration ||
+                        reply.requestId != inboxPendingRequestId) return@post
+                    inboxTimeoutTask?.let(handler::removeCallbacks)
+                    inboxTimeoutTask=null
+                    inboxPendingRequestId=null
+                    val action=inboxPendingAction
+                    inboxPendingAction=null
+                    queuedInboxBusy=false
+                    when(reply) {
+                        is InboxReply.Items -> if(action=="list") {
+                            queuedInboxItems=reply.items
+                            queuedInboxPreview=null
+                            inboxStatus=if(reply.items.isEmpty()) "No queued text." else
+                                "Queued text available for review."
+                        }
+                        is InboxReply.Content -> if(action=="read" &&
+                            queuedInboxItems.any { it.deliveryId==reply.deliveryId &&
+                                it.sourceNodeId==reply.sourceNodeId } &&
+                            owners.activityVisible) {
+                            queuedInboxPreview=reply
+                            inboxStatus="Review and choose Copy or Decline."
+                        }
+                        is InboxReply.Decision -> if(action=="decide") {
+                            queuedInboxPreview=null
+                            queuedInboxItems=queuedInboxItems.filterNot { it.deliveryId==reply.deliveryId }
+                            inboxStatus=if(reply.status=="user_copied")
+                                "Copied on this device; Atlas receipt recorded."
+                            else "Queued text declined."
+                        }
+                        is InboxReply.Failure -> {
+                            if(action=="read") queuedInboxPreview=null
+                            inboxStatus="Atlas inbox request rejected ("+reply.code+"). Refresh to retry."
+                        }
                     }
                 }
             }, { incoming, respond ->
