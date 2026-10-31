@@ -1,0 +1,15 @@
+# Install as /etc/logrotate.d/atlas-node only AFTER provisioning the fixed
+# root-controlled directory and Node-owned service.log (docs/LINUX_NODE.md).
+# Never rotate arbitrary paths provided by a caller.
+# copytruncate retains the inode held by systemd's append-only output FD.
+# Rotation is best effort, not a strict cap between logrotate runs.
+/var/log/atlas-node/service.log {
+    size 2M
+    rotate 4
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+}
