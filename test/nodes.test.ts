@@ -194,7 +194,7 @@ test('LocalNodeRuntime advertises implemented capabilities without claiming a co
     assert.deepEqual(new LocalNodeRuntime([], undefined, 'darwin').getCapabilities(), all);
 });
 
-test('Linux runtime exposes fixed journal logs without development execution', async () => {
+test('Linux runtime exposes fixed service and legacy journal logs without development execution', async () => {
     const linux = new LocalNodeRuntime([], undefined, 'linux');
     if (process.platform === 'linux') {
         assert.deepEqual(new LocalNodeRuntime([]).getCapabilities(), ['workspace.files', 'workspace.git', 'node.logs']);
@@ -203,7 +203,7 @@ test('Linux runtime exposes fixed journal logs without development execution', a
     assert.deepEqual(new LocalNodeRuntime([], new Map(), 'darwin').getCapabilities(),
         ['workspace.files', 'workspace.git', 'workspace.dev', 'football.training', 'node.logs']);
     await assert.rejects(linux.readLogs('stderr', 10), (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
-    await assert.rejects(new LocalNodeRuntime([], undefined, 'darwin').readLogs('journal', 10),
+    await assert.rejects(new LocalNodeRuntime([], undefined, 'darwin').readLogs('service', 10),
         (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
     const folder = '/invalid-test-linux-workspace';
     await assert.rejects(
@@ -237,7 +237,7 @@ test('NodeService resolves omitted log source after looking up Node platform', a
     for (const [id, platform] of [[linuxId, 'linux'], [macId, 'darwin']]) {
         const remoteRuntime = {
             getCapabilities: () => ['node.logs'] as NodeCapability[],
-            readLogs: async (source: 'stdout' | 'stderr' | 'journal', lines: number) => {
+            readLogs: async (source: 'stdout' | 'stderr' | 'journal' | 'service', lines: number) => {
                 observed.push({ platform, source, lines });
                 return { source, lines: ['safe log'], available: true, truncated: false };
             },
@@ -245,13 +245,13 @@ test('NodeService resolves omitted log source after looking up Node platform', a
         service.attachRemote(id, remoteRuntime);
     }
     const linuxDefault = await service.call('read_node_logs', { nodeId: linuxId }) as { source: string };
-    assert.equal(linuxDefault.source, 'journal');
+    assert.equal(linuxDefault.source, 'service');
     const macDefault = await service.call('read_node_logs', { nodeId: macId }) as { source: string };
     assert.equal(macDefault.source, 'stderr');
     assert.equal((await service.call('read_node_logs', { nodeId: linuxId, source: 'journal', lines: 37 }) as { source: string }).source, 'journal');
     assert.equal((await service.call('read_node_logs', { nodeId: macId, source: 'stdout', lines: 9 }) as { source: string }).source, 'stdout');
     assert.deepEqual(observed, [
-        { platform: 'linux', source: 'journal', lines: 100 },
+        { platform: 'linux', source: 'service', lines: 100 },
         { platform: 'darwin', source: 'stderr', lines: 100 },
         { platform: 'linux', source: 'journal', lines: 37 },
         { platform: 'darwin', source: 'stdout', lines: 9 },
@@ -260,6 +260,8 @@ test('NodeService resolves omitted log source after looking up Node platform', a
         await assert.rejects(service.call('read_node_logs', { nodeId: linuxId, source }),
             (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
     await assert.rejects(service.call('read_node_logs', { nodeId: macId, source: 'journal' }),
+        (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
+    await assert.rejects(service.call('read_node_logs', { nodeId: macId, source: 'service' }),
         (error: any) => error.code === 'CAPABILITY_UNAVAILABLE');
     assert.equal(observed.length, 4, 'Rejected explicit sources must not dispatch');
 });

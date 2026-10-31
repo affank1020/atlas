@@ -16,7 +16,7 @@ export const nodeSchemas = {
     list_node_update_intents: z.object({ nodeId: z.string().uuid(), limit: z.number().int().min(1).max(50).optional() }).strict(),
     cancel_node_update_intent: z.object({ nodeId: z.string().uuid(), intentId: z.string().uuid() }).strict(),
     get_node: z.object({ nodeId: z.string().uuid() }).strict(),
-    read_node_logs: z.object({ nodeId: z.string().uuid(), source: z.enum(['stdout', 'stderr', 'journal']).optional(), lines: z.number().int().min(1).max(200).default(100) }).strict(),
+    read_node_logs: z.object({ nodeId: z.string().uuid(), source: z.enum(['stdout', 'stderr', 'journal', 'service']).optional(), lines: z.number().int().min(1).max(200).default(100) }).strict(),
     create_node_enrolment: z.object({}).strict(),
     update_node: z.object({ nodeId: z.string().uuid(), name: z.string().trim().min(1).max(200) }).strict(),
     rotate_node_credential: z.object({ nodeId: z.string().uuid() }).strict(),
