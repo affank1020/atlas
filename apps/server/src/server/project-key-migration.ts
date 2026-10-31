@@ -53,7 +53,7 @@ export function decodeKeyCopyCursor(token: string): MigrationIdentity {
     catch { throw new Error("Invalid Project key migration cursor."); }
     if (!Array.isArray(parsed) || parsed.length !== 4 || !parsed.every(x => typeof x === "string"))
         throw new Error("Invalid Project key migration cursor.");
-    const result: MigrationIdentity = { projectId: parsed[0], source: parsed[1], fileId: parsed[2], variant: parsed[3] };
+    const result: MigrationIdentity = { projectId: parsed[0], source: parsed[1] as Source, fileId: parsed[2], variant: parsed[3] };
     if (!validIdentity(result) || encodeKeyCopyCursor(result) !== token)
         throw new Error("Invalid Project key migration cursor.");
     return result;
