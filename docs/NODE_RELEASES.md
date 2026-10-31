@@ -22,6 +22,17 @@ Prerelease SemVer builds may be packaged and tested but are
 repository setting before treating the channel as production-grade. The
 published release has no Server/Web files, credentials or environment config.
 
+The same signed, immutable Node archive now also contains the minimal
+**macOS operator source bundle** (`scripts/macos-node-update.py`, staging,
+lifecycle, catalogue helper and `macos-node-operator.py`). The release
+manifest records SHA-256 for every bundled script; the operator installer
+checks these hashes and the signed-staging receipt before provisioning a
+checkout-independent per-user CLI. On an existing Mac, one operator-confirmed
+bootstrap is still required (see [macOS update guide](MAC_NODE_UPDATE.md));
+a release publication **does not remotely execute**, activate or upgrade
+anything on the Mac. Older Node release archives without this operator
+manifest cannot bootstrap the independent updater.
+
 Atlas discovers only published **immutable** stable Node bundles from GitHub Releases metadata,
 validating archive naming, matching checksum assets, canonical download URLs,
 GitHub-provided SHA-256 digests, full source commit IDs and unique source commits.
