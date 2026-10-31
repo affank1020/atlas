@@ -63,6 +63,46 @@ it('treats a rejected permissions read as unknown, never as a missing approval',
     expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'update_node_share_approval')).toHaveLength(0);
 });
 
+it('invalidates cached sharing grants after a failed refresh and recovers only after a successful read', async () => {
+    let attempts = 0;
+    let rejectRefresh!: (reason: Error) => void;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name !== 'list_node_share_approvals') throw new Error('Writes must be disabled during an unverified state');
+        attempts++;
+        if (attempts === 1) return [
+            { sourceNodeId: sender.id, targetNodeId: mac.id, origin: 'managed' },
+            { sourceNodeId: sender.id, targetNodeId: mac.id, origin: 'environment' },
+        ] as ShareApproval[] as never;
+        if (attempts === 2) return await new Promise<ShareApproval[]>((_resolve, reject) => {
+            rejectRefresh = reject;
+        }) as never;
+        return [] as never;
+    });
+
+    render(<NodeSharePermissions source={sender} nodes={[sender, mac]} />);
+    expect(await screen.findByText('Approved in Atlas')).toBeInTheDocument();
+    expect(screen.getByText('Managed by server environment')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh approvals' }));
+    await waitFor(() => expect(attempts).toBe(2));
+    // Keep the previous snapshot visible during revalidation, but no writes.
+    expect(screen.getByText('Approved in Atlas')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke Atlas approval' })).toBeDisabled();
+
+    rejectRefresh(new Error('Registry temporarily unavailable'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Registry temporarily unavailable');
+    expect(screen.getByText(/Sharing approval state is unknown/)).toBeInTheDocument();
+    expect(screen.queryByText('Approved in Atlas')).not.toBeInTheDocument();
+    expect(screen.queryByText('Managed by server environment')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke Atlas approval' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve sharing' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh approvals' }));
+    expect(await screen.findByRole('button', { name: 'Approve sharing' })).toBeEnabled();
+    expect(screen.queryByText(/Sharing approval state is unknown/)).not.toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'update_node_share_approval')).toHaveLength(0);
+});
+
 it('shows overlapping permissions and revokes the managed grant without claiming access is gone', async () => {
     let rows: ShareApproval[] = [
         {sourceNodeId:sender.id,targetNodeId:mac.id,origin:'environment'},
