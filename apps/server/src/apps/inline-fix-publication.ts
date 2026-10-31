@@ -260,7 +260,7 @@ export class InlineFixPublicationService {
         apply: boolean, caller?: ApplicationCaller) {
         assertStructuredCaller(caller);
         repository = canonicalRepository(repository);
-        if (!this.enabled.has(repository))
+        if (!this.enabled.has(repository) && !this.enabled.has('*'))
             throw new AtlasError('Fix acknowledgements are disabled for this repository.', 'CAPABILITY_UNAVAILABLE');
         if (!uuidPattern.test(runId) || !keyPattern.test(lineageKey))
             throw new AtlasError('Invalid fix reply run or lineage identity.', 'INVALID_REQUEST');
