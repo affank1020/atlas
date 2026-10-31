@@ -215,3 +215,30 @@ test("Portfolio originals and derivatives map to correct authoritative tables wi
         assert.equal(plan.cutoverAuthorized,false);
     }finally{await media.close();await ctx.close();}
 });
+
+
+test("Concurrent upload during R2 preflight invalidates metadata assessment, not just byte page",async()=>{
+    const ctx=await setup();
+    try{
+        const obj=await seededState(ctx,1);
+        let injected=false;
+        const source:BoundedCopyStore={
+            async getBounded(key,maxBytes){
+                if(!injected){
+                    injected=true;
+                    await add(ctx.files,ctx.projectId,"concurrent-new");
+                }
+                return obj.liveOld.getBounded(key,maxBytes);
+            },
+        };
+        const result=await assessProjectCutover({database:ctx.files.pool,
+            projectId:ctx.projectId,keyRunId:obj.keyRun.id,recoveryRunId:obj.recovery.id,
+            mode:"verify",oldSource:source,versionedPrimary:obj.liveNew,
+            independentBackup:obj.backup});
+        assert.equal(injected,true);
+        assert.equal(result.metadataMatched,false);
+        assert.equal(result.byteVerification,"failed-page");
+        assert.ok(result.blockers.includes("catalogue-changed-during-assessment"));
+        assert.equal(result.cutoverAuthorized,false);
+    }finally{await ctx.close();}
+});
