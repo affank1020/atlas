@@ -267,3 +267,58 @@ A simulated transaction is *not* a substitute for a verified offsite
 PostgreSQL snapshot, matching recovery R2 bytes, offline Atlas startup, a
 quiesced production write boundary or explicit operator approval. It does
 not offer a production apply/commit mode or retention/deletion commands.
+
+
+## 9. Isolated Workspace/Application Files recovery-only verification
+
+**Coverage gap:** Stage 5/6 Project recovery manifests cover Project-owned
+Files and Portfolio originals/variants, including archived assets. Historical
+Workspace- and Application-owned Atlas Files are outside those per-Project
+manifests and require a separate recovery-only verification.
+
+On an approved *physically isolated* host, using an independently restored
+PostgreSQL database and only recovery credentials, supply the same environment
+required by the existing Project isolated verifier: a localhost
+ATLAS_RESTORED_DATABASE_URL pointing to an atlas_recovery database,
+ATLAS_RECOVERY_HOST_APPROVED=1, ATLAS_R2_PRIMARY_ACCOUNT_ID (account ID only)
+and independent ATLAS_R2_RECOVERY_* variables. Never load production .env,
+DATABASE_URL, primary R2 credentials or the local Files fallback volume.
+
+~~~sh
+npm run build:server
+npm run files:r2:isolated-legacy-files -- \
+  --verify-legacy --max-records=2000
+~~~
+
+This command performs PostgreSQL SELECT and independent recovery R2 GET
+only. It selects **all active and archived** Workspace/Application Files,
+validates their legacy keys, SHA-256 and byte sizes, verifies the independent
+R2 bytes and checks the catalogue again. Network, access-denied, timeout
+and oversized response errors abort rather than masquerading as absent keys.
+
+Result interpretation: **passed** = a nonempty complete legacy catalogue
+(at most 2,000 records) independently verified; **empty** = no legacy
+Workspace/Application records in the restored DB, not positive byte
+evidence; **partial** = the catalogue exceeds the chosen bound and full
+coverage cannot be claimed; **failed** = missing/corrupt objects, invalid
+metadata, or detected catalogue drift. **Only passed exits 0.** Empty,
+partial and failed each exit 2 while retaining their distinct JSON statuses,
+so scripts checking exit codes cannot treat a zero-object restored snapshot
+as successful recovery. Environment/configuration errors exit 1. An empty
+result can only be accepted as an explicit, independently documented
+zero-legacy-file inventory; it never proves recovered object bytes.
+The summary reports counts and an
+inventory SHA-256 only, not individual file names, object keys or owner IDs.
+If more than 2,000 records exist, do not claim full verification without a
+separately reviewed expanded coverage mechanism.
+
+Record privately the outcome, checked/archived/active counts, inventory
+fingerprint, snapshot ID, code revision, operator and time. Run this alongside
+complete Project/Portfolio isolated verification for **every** Project with
+files, offsite encrypted PostgreSQL snapshot custody and decryption evidence,
+a matching writer-quiescence boundary and real Atlas application/read smoke
+tests. Neither this verifier nor a collection of green CI checks proves
+that a full isolated disaster-recovery drill was completed.
+
+No live backup, R2 seed, production database restore, key migration,
+retention or cutover happens by running or merging this code.

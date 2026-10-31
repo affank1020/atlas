@@ -453,3 +453,24 @@ requirements. The next approved cutover design must address new uploads,
 post-cutover recovery manifest semantics, live application reads, old/new
 URL behavior, source retention and independently observed rollback.
 No retention, owner reassignment or source-key retirement is implemented.
+
+
+## Stage 9 — isolated legacy-owner recovery coverage
+
+The earlier Project/Portfolio immutable recovery manifest deliberately excludes
+legacy Workspace/Application-owned rows in atlas_files. The new operator-only
+recovery-only verifier reads those remaining active **and archived** Files
+from an isolated restored PostgreSQL database and verifies every referenced
+object against the *independent* recovery R2 account using bounded reads,
+exact checksum/size comparison, and a before/after metadata fingerprint.
+It never reads primary R2, never falls back to local Files and has no write
+method. Zero legacy rows produces an explicit empty result, not a positive
+verification claim; more than 2,000 records is incomplete and must not be
+presented as comprehensive.
+
+Use the environment-isolated command and acceptance interpretation in
+RECOVERY_ACCEPTANCE.md. This complements, but does not replace, each
+Project's independent Project/Portfolio verification, the encrypted DB
+snapshot drill, Atlas boot/read testing, and a coherent DB/R2 recovery point.
+No cutover, existing owner conversion, Node privilege change, source
+retention or cleanup is included.
