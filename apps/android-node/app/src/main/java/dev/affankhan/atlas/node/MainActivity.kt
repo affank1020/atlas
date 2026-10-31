@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity() {
 
     private fun setBackgroundReceiving(enabled: Boolean) {
         if (!enabled) {
+            model.setPushEnabled(false)
             stopService(Intent(this, BackgroundReceiverService::class.java))
             model.stopBackgroundReceiving()
             return
@@ -108,6 +109,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Recreated Activities must not replay their old Sharesheet Intent onto edited drafts.
         if (savedInstanceState == null) model.receive(intent)
+        openInboxFromNotification(intent)
         setContent {
             AtlasCompanion(
                 session = model.session,
@@ -177,6 +179,15 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         // A distinct ACTION_SEND Intent is always a distinct event, even for identical text.
         model.receive(intent)
+        openInboxFromNotification(intent)
+    }
+
+    private fun openInboxFromNotification(intent: Intent?) {
+        if (intent?.getBooleanExtra(BackgroundReceiverService.EXTRA_OPEN_INBOX,false)==true) {
+            model.navigate(Section.INBOX)
+            model.refreshQueuedInbox()
+            intent.removeExtra(BackgroundReceiverService.EXTRA_OPEN_INBOX)
+        }
     }
 }
 
