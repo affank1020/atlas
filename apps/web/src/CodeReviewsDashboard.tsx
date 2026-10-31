@@ -5,7 +5,7 @@ import { CodeReviewThreads } from './CodeReviewThreads';
 import type { AtlasRecord, Page } from './types';
 import './code-reviews-dashboard.css';
 import { Skeleton } from './Skeletons';
-import { CodeReviewsDetailLoading } from './CodeReviewsDashboardLoading';
+import { CodeReviewsDetailLoading, CodeReviewsOpenCardsLoading } from './CodeReviewsDashboardLoading';
 
 type Counts = Partial<Record<'sev1' | 'sev2' | 'sev3' | 'sev4', number>>;
 const severities = ['sev1', 'sev2', 'sev3', 'sev4'] as const;
@@ -281,23 +281,7 @@ export function CodeReviewsDashboard() {
                 </select>
             </span>
         </div>
-        {loadingDashboard && <div role="status" aria-label="Loading Code Reviews pull requests"
-            aria-busy="true" className="cr-open-section">
-            <div className="cr-section-title"><h2>Open PRs</h2></div>
-            <div className="cr-open-grid" aria-hidden="true">
-                {Array.from({ length: 3 }, (_, i) => <article className="cr-open-card" key={i}>
-                    <div className="cr-card-top"><Skeleton width="70%" height={14} />
-                        <Skeleton width={85} height={13} /></div>
-                    <div className="cr-card-stats">
-                        {Array.from({ length: 3 }, (_, j) =>
-                            <div key={j}><Skeleton width={32} height={22} /><Skeleton width={48} height={11} /></div>)}
-                    </div>
-                    <div className="cr-severity-summary"><Skeleton width={50} height={16}/></div>
-                    <div className="cr-card-bottom"><Skeleton width={75} height={12}/>
-                        <Skeleton width={55} height={30}/></div>
-                </article>)}
-            </div>
-        </div>}
+        {loadingDashboard && <CodeReviewsOpenCardsLoading />}
         {dashboard.data && <>
             <section className="cr-open-section" aria-label="Open pull requests">
                 <div className="cr-section-title"><h2>Open PRs</h2><span>{open.length}</span></div>
