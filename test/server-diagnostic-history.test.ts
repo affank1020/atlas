@@ -133,3 +133,68 @@ test('retained fixed-code history ignores far-future entries rather than treatin
     assert.equal((await history.status()).state, 'available');
     await history.close();
 });
+
+
+test('archive status samples loss and backoff after an in-flight INSERT fails while the SELECT waits', async () => {
+    let rejectInsert!: (cause: Error) => void;
+    let beganSelect!: () => void;
+    const insert = new Promise<never>((_resolve, reject) => { rejectInsert = reject; });
+    const selectCalled = new Promise<void>(resolve => { beganSelect = resolve; });
+    let archive!: ServerDiagnosticHistory;
+    const sql: string[] = [];
+    archive = new ServerDiagnosticHistory({
+        query: async (statement: string) => {
+            sql.push(statement);
+            if (statement.startsWith('INSERT')) return insert;
+            if (statement.startsWith('SELECT 1')) {
+                beganSelect();
+                // Model a single-connection pool: this SELECT cannot finish until
+                // the preceding INSERT has failed and its loss is accounted for.
+                await archive.flush();
+                return { rows: [] };
+            }
+            throw new Error('Unexpected diagnostic query');
+        },
+    }, true, () => 1000);
+
+    archive.record({ code: 'tool_request_failed', level: 'warning',
+        at: '2026-10-31T10:40:00Z' });
+    const probe = archive.status();
+    await selectCalled;
+    rejectInsert(new Error('postgres://secret-after-insert-failure'));
+    const state = await probe;
+    assert.equal(state.state, 'available');
+    assert.equal(state.droppedSinceStart, 1, 'loss during the probe must be visible');
+    assert.equal(state.pending, 0);
+    assert.equal(state.writePaused, true);
+    assert.deepEqual(sql.map(statement => statement.startsWith('INSERT') ? 'INSERT' : 'SELECT'), ['INSERT','SELECT']);
+    assert.ok(!JSON.stringify(state).includes('secret'));
+    await archive.close();
+});
+
+test('archive status samples loss after a SELECT failure and retained reads do not return stale counters', async () => {
+    let rejectInsert!: (reason: Error) => void;
+    const pendingInsert = new Promise<never>((_resolve, reject) => { rejectInsert = reject; });
+    let archive!: ServerDiagnosticHistory;
+    archive = new ServerDiagnosticHistory({
+        query: async (statement: string) => {
+            if (statement.startsWith('INSERT')) return pendingInsert;
+            await archive.flush();
+            throw new Error('postgres://private diagnostic read failure');
+        },
+    }, true, () => 1000);
+    archive.record({ code: 'background_task_failed', level: 'warning',
+        at: '2026-10-31T10:40:00Z' });
+    const pendingStatus = archive.status();
+    const pendingRead = archive.read();
+    rejectInsert(new Error('private diagnostic insert failure'));
+    const [state, history] = await Promise.all([pendingStatus, pendingRead]);
+    assert.equal(state.state, 'unavailable');
+    assert.equal(state.droppedSinceStart, 1);
+    assert.equal(state.writePaused, true);
+    assert.equal(history.available, false);
+    assert.equal(history.droppedSinceStart, 1);
+    assert.equal(history.writePaused, true);
+    assert.ok(!JSON.stringify({ state, history }).includes('private'));
+    await archive.close();
+});

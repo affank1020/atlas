@@ -124,37 +124,41 @@ export class ServerDiagnosticHistory {
         coverage: 'incomplete-possible'; retentionDays: 14;
         droppedSinceStart: number; pending: number; writePaused: boolean;
     }> {
-        const baseline = {
+        // A read can be queued behind a failing INSERT on the one-connection
+        // diagnostic pool. Sample counters *after* the probe settles so a
+        // dropped write completed during the probe cannot look healthy.
+        const snapshot = () => ({
             source: 'atlas-server-history' as const,
             coverage: 'incomplete-possible' as const,
             retentionDays: RETENTION_DAYS as 14,
             droppedSinceStart: this.dropped,
             pending: this.pending.length,
             writePaused: this.clock() < this.pausedUntil,
-        };
-        if (!this.enabled) return { ...baseline, state: 'disabled' };
+        });
+        if (!this.enabled) return { ...snapshot(), state: 'disabled' as const };
         try {
             await this.database.query('SELECT 1 FROM atlas_server_diagnostic_events LIMIT 1');
-            return { ...baseline, state: 'available' };
+            return { ...snapshot(), state: 'available' as const };
         } catch {
-            return { ...baseline, state: 'unavailable' };
+            return { ...snapshot(), state: 'unavailable' as const };
         }
     }
 
     async read(raw: unknown = {}) {
         const { limit } = inputSchema.parse(raw);
-        const baseline = {
+        // Archive reads share the writer pool. Sample current loss/backoff
+        // telemetry after the read settles, including when the read fails.
+        const snapshot = () => ({
             source: 'atlas-server-history' as const,
             retention: 'best-effort' as const,
             retentionDays: RETENTION_DAYS,
-            // A prior process could have lost inserts. Only current-process
-            // missed writes can be counted; never imply complete historical coverage.
+            // Prior process losses remain unknowable.
             droppedSinceStart: this.dropped,
             queuedForWrite: this.pending.length,
             writePaused: this.clock() < this.pausedUntil,
             coverage: 'incomplete-possible' as const,
-        };
-        if (!this.enabled) return { ...baseline, available: false, truncated: false, events: [] };
+        });
+        if (!this.enabled) return { ...snapshot(), available: false, truncated: false, events: [] };
         try {
             const result = await this.database.query(
                 'SELECT occurred_at, code FROM atlas_server_diagnostic_events ' +
@@ -170,10 +174,10 @@ export class ServerDiagnosticHistory {
                 if (!Number.isFinite(at.getTime())) return [];
                 return [{ at: at.toISOString(), code: row.code, ...description }];
             });
-            return { ...baseline, available: true, truncated: result.rows.length > limit, events };
+            return { ...snapshot(), available: true, truncated: result.rows.length > limit, events };
         } catch {
             // Never reveal connection strings, SQL or exception details.
-            return { ...baseline, available: false, truncated: false, events: [] };
+            return { ...snapshot(), available: false, truncated: false, events: [] };
         }
     }
 }

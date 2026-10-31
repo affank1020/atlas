@@ -58,3 +58,30 @@ test('explicit disabled state and unreadable archive have different explanations
         view.unmount();
     }
 });
+
+
+test('unavailable archive still shows known dropped writes after backoff expires', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockResolvedValue({ ...base(), overall: 'unknown',
+        diagnostics: { ...diagnostics, status: 'unavailable',
+            droppedSinceStart: 7, queuedForWrite: 2, writePaused: false },
+    } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Archive read not verified/)).toBeInTheDocument();
+    expect(screen.getByText(/7 dropped since restart/)).toBeInTheDocument();
+    expect(screen.getByText(/2 waiting to write/)).toBeInTheDocument();
+    expect(screen.queryByText(/Archive writes are backing off/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Database query succeeded/)).toBeInTheDocument();
+});
+
+test('unknown diagnostic telemetry never invents zero lost or queued writes', async () => {
+    location.hash = '#/monitoring?tab=overview';
+    vi.mocked(callTool).mockResolvedValue({ ...base(), overall: 'unknown',
+        diagnostics: { ...diagnostics, status: 'unknown',
+            droppedSinceStart: null, queuedForWrite: null, writePaused: null },
+    } as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Archive read not verified/)).toBeInTheDocument();
+    expect(screen.queryByText(/0 dropped since restart/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 waiting to write/)).not.toBeInTheDocument();
+});

@@ -400,7 +400,17 @@ function MonitoringHealthPanel() {
                         ? 'Fixed-code archive disabled by configuration; no history is being written'
                     : snapshot.diagnostics.status === 'unavailable' || snapshot.diagnostics.status === 'unknown'
                         ? 'Archive read not verified; history may be missing'
-                    : `Read probe succeeded · ${snapshot.diagnostics.retentionDays}-day best-effort history · ${snapshot.diagnostics.droppedSinceStart ?? 0} dropped since restart · ${snapshot.diagnostics.queuedForWrite ?? 0} waiting to write`}</small>
+                    : `Read probe succeeded · ${snapshot.diagnostics.retentionDays}-day best-effort history`}</small>
+                {snapshot.diagnostics && (snapshot.diagnostics.droppedSinceStart != null || snapshot.diagnostics.queuedForWrite != null) &&
+                    <small role="status">
+                        {snapshot.diagnostics.droppedSinceStart != null
+                            ? `${snapshot.diagnostics.droppedSinceStart} dropped since restart`
+                            : 'Dropped-write count unknown'}
+                        {' · '}
+                        {snapshot.diagnostics.queuedForWrite != null
+                            ? `${snapshot.diagnostics.queuedForWrite} waiting to write`
+                            : 'Pending-write count unknown'}
+                    </small>}
                 {snapshot.diagnostics?.writePaused && <small role="status">Archive writes are backing off after a failure; recent events may be missing.</small>}
                 <small>Historical coverage is never guaranteed. <a href={monitoringHash('logs', { target: 'server', history: '1' })}>View retained diagnostics</a></small></span>
                 <span className={`badge ${badge(snapshot.diagnostics?.status ?? 'unknown')}`}>{snapshot.diagnostics?.status ?? 'unknown'}</span>
