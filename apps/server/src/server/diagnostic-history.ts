@@ -54,6 +54,10 @@ const MAX_PENDING = 128;
 const BATCH_SIZE = 32;
 const BACKOFF_MS = 30_000;
 const RETENTION_DAYS = 14;
+const RETENTION_SWEEP_MS = 15 * 60_000;
+const RETENTION_BATCH_LIMIT = 10;
+const RETENTION_ROWS_PER_BATCH = 1000;
+type RetentionSweepState = 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable';
 
 type DiagnosticRow = { occurred_at: Date | string; code: string; id?: string | number; cursor_at?: string };
 type DiagnosticDatabase = {
@@ -65,24 +69,28 @@ export class ServerDiagnosticHistory {
     private readonly pending: ServerDiagnosticEvent[] = [];
     private writing: Promise<void> | undefined;
     private pausedUntil = 0;
-    private writesSincePrune = 0;
     private dropped = 0;
+    private retentionState: RetentionSweepState = 'not-checked';
     private stopped = false;
     private sweepTimer?: ReturnType<typeof setInterval>;
+    private startupSweepTimer?: ReturnType<typeof setTimeout>;
     private sweeping?: Promise<void>;
 
     constructor(private readonly database: DiagnosticDatabase, private readonly enabled = true,
-        private readonly clock: () => number = () => Date.now()) {
+        private readonly clock: () => number = () => Date.now(),
+        private readonly retentionIntervalMs = RETENTION_SWEEP_MS) {
         if (enabled) {
-            // Read filtering is immediate; physical expiry also runs on quiet
-            // installations even when no diagnostic events arrive for weeks.
-            this.sweepTimer = setInterval(() => {
-                if (this.stopped || this.sweeping) return;
-                const job = this.pruneExpired(10);
-                this.sweeping = job;
-                void job.finally(() => { if (this.sweeping === job) this.sweeping = undefined; });
-            }, 86_400_000);
+            // Each sweep is bounded to 10k rows; 15-minute recurrence catches
+            // up with old backlogs even on quiet installations. Start shortly
+            // after boot instead of waiting until the first daily timer tick.
+            const interval = Number.isFinite(retentionIntervalMs) && retentionIntervalMs > 0
+                ? retentionIntervalMs : RETENTION_SWEEP_MS;
+            this.sweepTimer = setInterval(() => { void this.sweepRetention(RETENTION_BATCH_LIMIT); }, interval);
             this.sweepTimer.unref();
+            this.startupSweepTimer = setTimeout(
+                () => { void this.sweepRetention(RETENTION_BATCH_LIMIT); },
+                Math.min(interval, 1_000));
+            this.startupSweepTimer.unref();
         }
     }
 
@@ -115,13 +123,8 @@ export class ServerDiagnosticHistory {
                     'SELECT * FROM UNNEST($1::timestamptz[], $2::uuid[], $3::text[])',
                     [batch.map(e => e.at), batch.map(() => this.instanceId), batch.map(e => e.code)],
                 );
-                this.writesSincePrune += batch.length;
-                if (this.writesSincePrune >= 128) {
-                    this.writesSincePrune = 0;
-                    // Small opportunistic batch; a separate daily sweep handles
-                    // quiet processes where this threshold is never reached.
-                    await this.pruneExpired(1);
-                }
+                // Retention is handled by a separately bounded timer, not
+                // on the diagnostic writer's critical path.
             } catch {
                 this.dropped += batch.length + this.pending.length;
                 this.pending.length = 0;
@@ -131,20 +134,44 @@ export class ServerDiagnosticHistory {
         }
     }
 
+    private sweepRetention(maxBatches: number): Promise<void> {
+        if (this.stopped) return Promise.resolve();
+        if (this.sweeping) return this.sweeping;
+        const job = this.pruneExpired(maxBatches);
+        this.sweeping = job;
+        // pruneExpired absorbs database exceptions; never produce an unhandled
+        // rejection or block tool dispatch on a maintenance operation.
+        void job.finally(() => { if (this.sweeping === job) this.sweeping = undefined; });
+        return job;
+    }
+
     private async pruneExpired(maxBatches: number): Promise<void> {
         try {
-            for (let attempt = 0; attempt < maxBatches; attempt++) {
+            let caughtUp = false;
+            for (let attempt = 0; attempt < maxBatches && !this.stopped; attempt++) {
                 const removed = await this.database.query(
                     'DELETE FROM atlas_server_diagnostic_events WHERE id IN ' +
                     '(SELECT id FROM atlas_server_diagnostic_events ' +
                     "WHERE occurred_at < NOW() - INTERVAL '14 days' ORDER BY occurred_at LIMIT 1000) " +
                     'RETURNING id',
                 );
-                if (removed.rows.length < 1000) break;
+                if (removed.rows.length < RETENTION_ROWS_PER_BATCH) {
+                    caughtUp = true;
+                    break;
+                }
+                // The dedicated archive pool has one connection: yield between
+                // full cleanup batches so queued diagnostic INSERTs / probes
+                // can acquire it rather than being starved by maintenance.
+                if (attempt + 1 < maxBatches)
+                    await new Promise<void>(resolve => setTimeout(resolve, 10));
             }
+            // A full final batch means more old rows may remain, NOT that
+            // retention has been fully enforced on disk.
+            this.retentionState = caughtUp ? 'caught-up' : 'more-possible';
         } catch {
-            // A failed cleanup must not affect tool dispatch; readers still
-            // enforce the 14-day window even when physical expiry is delayed.
+            // Physical retention may be behind even if reads still work.
+            // Keep error details private; readers retain the 14-day filter.
+            this.retentionState = 'unavailable';
         }
     }
 
@@ -155,6 +182,7 @@ export class ServerDiagnosticHistory {
     async close(): Promise<void> {
         this.stopped = true;
         if (this.sweepTimer) clearInterval(this.sweepTimer);
+        if (this.startupSweepTimer) clearTimeout(this.startupSweepTimer);
         await this.flush();
         await this.sweeping;
     }
@@ -167,6 +195,7 @@ export class ServerDiagnosticHistory {
         source: 'atlas-server-history'; state: 'available' | 'unavailable' | 'disabled';
         coverage: 'incomplete-possible'; retentionDays: 14;
         droppedSinceStart: number; pending: number; writePaused: boolean;
+        retentionCleanup: RetentionSweepState | 'disabled';
     }> {
         // A read can be queued behind a failing INSERT on the one-connection
         // diagnostic pool. Sample counters *after* the probe settles so a
@@ -178,6 +207,7 @@ export class ServerDiagnosticHistory {
             droppedSinceStart: this.dropped,
             pending: this.pending.length,
             writePaused: this.clock() < this.pausedUntil,
+            retentionCleanup: this.enabled ? this.retentionState : 'disabled' as const,
         });
         if (!this.enabled) return { ...snapshot(), state: 'disabled' as const };
         try {

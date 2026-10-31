@@ -1,25 +1,25 @@
 /* Aligns with Workspaces/Files' restrained shimmer and existing Atlas design tokens. */
-.atlas-skeleton { display:block; flex-shrink:0; max-width:100%; border-radius:5px; background:var(--surface-elevated);
+.atlas-load-skeleton { display:block; flex-shrink:0; max-width:100%; border-radius:5px; background:var(--surface-elevated);
   background-image:linear-gradient(90deg,transparent 0%,var(--bg-secondary) 45%,transparent 90%);
-  background-size:220% 100%; animation:atlas-skeleton-shimmer 1.6s ease-in-out infinite; }
-.atlas-skeleton-round { border-radius:50%; }
-@keyframes atlas-skeleton-shimmer { 0% {background-position:200% 0} 100% {background-position:-200% 0} }
-.atlas-skeleton-group { min-width:0; width:100%; }
-.atlas-skeleton-nav { display:grid; gap:3px; padding:5px 0; }
-.atlas-skeleton-nav-item { display:flex; align-items:center; gap:12px; min-height:36px; padding:6px 12px; }
-.atlas-skeleton-list, .atlas-skeleton-activity, .atlas-skeleton-table, .atlas-skeleton-run { border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; }
-.atlas-skeleton-row { display:flex; align-items:center; gap:14px; padding:16px; min-height:72px; border-bottom:1px solid var(--border); }
-.atlas-skeleton-row:last-child { border-bottom:0; }
-.atlas-skeleton-row-copy { min-width:0; flex:1; display:grid; gap:10px; }
-.atlas-skeleton-cards, .atlas-skeleton-applications, .atlas-skeleton-view, .atlas-skeleton-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:14px; }
-.atlas-skeleton-card, .atlas-skeleton-metric, .atlas-skeleton-panel { display:grid; align-content:start; gap:12px; min-width:0; padding:20px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
-.atlas-skeleton-applications .atlas-skeleton-card { min-height:176px; }
-.atlas-skeleton-view .atlas-skeleton-card { min-height:220px; }
-.atlas-skeleton-metric { min-height:112px; }
-.atlas-skeleton-panel { margin-bottom:12px; }
+  background-size:220% 100%; animation:atlas-load-skeleton-shimmer 1.6s ease-in-out infinite; }
+.atlas-load-skeleton-round { border-radius:50%; }
+@keyframes atlas-load-skeleton-shimmer { 0% {background-position:200% 0} 100% {background-position:-200% 0} }
+.atlas-load-skeleton-group { min-width:0; width:100%; }
+.atlas-load-skeleton-nav { display:grid; gap:3px; padding:5px 0; }
+.atlas-load-skeleton-nav-item { display:flex; align-items:center; gap:12px; min-height:36px; padding:6px 12px; }
+.atlas-load-skeleton-list, .atlas-load-skeleton-activity, .atlas-load-skeleton-table, .atlas-load-skeleton-run { border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; }
+.atlas-load-skeleton-row { display:flex; align-items:center; gap:14px; padding:16px; min-height:72px; border-bottom:1px solid var(--border); }
+.atlas-load-skeleton-row:last-child { border-bottom:0; }
+.atlas-load-skeleton-row-copy { min-width:0; flex:1; display:grid; gap:10px; }
+.atlas-load-skeleton-cards, .atlas-load-skeleton-applications, .atlas-load-skeleton-view, .atlas-load-skeleton-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:14px; }
+.atlas-load-skeleton-card, .atlas-load-skeleton-metric, .atlas-load-skeleton-panel { display:grid; align-content:start; gap:12px; min-width:0; padding:20px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
+.atlas-load-skeleton-applications .atlas-load-skeleton-card { min-height:176px; }
+.atlas-load-skeleton-view .atlas-load-skeleton-card { min-height:220px; }
+.atlas-load-skeleton-metric { min-height:112px; }
+.atlas-load-skeleton-panel { margin-bottom:12px; }
 @media (max-width:650px) {
-  .atlas-skeleton-cards,.atlas-skeleton-applications,.atlas-skeleton-view,.atlas-skeleton-metrics { grid-template-columns:1fr; }
-  .atlas-skeleton-row { padding:13px 10px; gap:8px; }
+  .atlas-load-skeleton-cards,.atlas-load-skeleton-applications,.atlas-load-skeleton-view,.atlas-load-skeleton-metrics { grid-template-columns:1fr; }
+  .atlas-load-skeleton-row { padding:13px 10px; gap:8px; }
 }
-@media (prefers-reduced-motion:reduce) { .atlas-skeleton { animation:none; background-image:none; } }
-@media (forced-colors:active) { .atlas-skeleton { background:CanvasText; opacity:.3; } }
+@media (prefers-reduced-motion:reduce) { .atlas-load-skeleton { animation:none; background-image:none; } }
+@media (forced-colors:active) { .atlas-load-skeleton { background:CanvasText; opacity:.3; } }

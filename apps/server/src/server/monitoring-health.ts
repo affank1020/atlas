@@ -12,6 +12,7 @@ export type DiagnosticArchiveHealth = {
     droppedSinceStart: number | null;
     queuedForWrite: number | null;
     writePaused: boolean | null;
+    retentionCleanup: 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable' | 'disabled' | 'unknown';
 };
 export type MonitoringHealth = {
     checkedAt: string;
@@ -63,6 +64,7 @@ export class MonitoringHealthService {
             state: 'available' | 'unavailable' | 'disabled';
             coverage: 'incomplete-possible'; retentionDays: 14;
             droppedSinceStart: number; pending: number; writePaused: boolean;
+            retentionCleanup?: 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable' | 'disabled';
         }> },
     ) { this.startedAt = now().toISOString(); }
 
@@ -85,6 +87,7 @@ export class MonitoringHealthService {
             : Promise.resolve({
                 state: 'disabled' as const, coverage: 'incomplete-possible' as const,
                 retentionDays: 14 as const, droppedSinceStart: 0, pending: 0, writePaused: false,
+                retentionCleanup: 'disabled' as const,
             });
         const [db, directory, archive] = await Promise.allSettled([probe, directoryRead, archiveRead]);
         const database = db.status === 'fulfilled'
@@ -104,16 +107,19 @@ export class MonitoringHealthService {
                 droppedSinceStart: archive.value.droppedSinceStart,
                 queuedForWrite: archive.value.pending,
                 writePaused: archive.value.writePaused,
+                retentionCleanup: archive.value.retentionCleanup ?? 'unknown',
             }
             : {
                 status: 'unknown', coverage: 'incomplete-possible', retentionDays: 14,
                 droppedSinceStart: null, queuedForWrite: null, writePaused: null,
+                retentionCleanup: 'unknown',
             };
         const nodeIssue = summary.stale + summary.offline + summary.unavailable + summary.revoked > 0;
         const overall: MonitoringHealthState = database.status === 'unavailable' || nodeIssue
             ? 'degraded' : directory.status === 'rejected' || summary.unknown > 0
                 || diagnostics.status === 'unavailable' || diagnostics.status === 'unknown'
                 || diagnostics.writePaused === true || (diagnostics.droppedSinceStart ?? 0) > 0
+                || (diagnostics.status === 'available' && diagnostics.retentionCleanup !== 'caught-up')
                 ? 'unknown' : 'healthy';
         return {
             checkedAt: checkedAt.toISOString(), overall,

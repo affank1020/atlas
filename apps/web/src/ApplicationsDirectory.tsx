@@ -3,8 +3,8 @@ import { useApplicationRead } from './atlasApi';
 import { rememberWork } from './recentWork';
 import { CatalogueHeading, CatalogueToolbar, filterCatalogue } from './CatalogueBrowse';
 import type { ApplicationManifest } from './Applications';
-import { SkeletonRows } from './Skeletons';
 import './applications-directory.css';
+import { SkeletonCards } from './Skeleton';
 
 const launchHref = (app: ApplicationManifest) => app.projectId
     ? `#/projects/${app.projectId}/applications/${app.slug}`
@@ -33,8 +33,8 @@ export function ApplicationsDirectory() {
                 aria-label="Refresh applications">↻ Refresh</button>
         } />
         <CatalogueToolbar label="Search applications" placeholder="Find an application…" query={search}
-            onQueryChange={setSearch} count={isLoading || error ? null : visible.length} itemName="application" />
-        {isLoading && !error && <SkeletonRows label="Loading applications" variant="applications" rows={6} />}
+            onQueryChange={setSearch} count={isLoading ? null : visible.length} itemName="application" />
+        {isLoading && <SkeletonCards count={4} label="Loading applications" />}
         {error && <div className="notice error" role="alert">Couldn't load applications. <button type="button" className="ghost" onClick={() => void refetch()}>Try again</button></div>}
         {isFetching && !isLoading && !error && <small role="status" className="applications-refresh-status">Refreshing applications…</small>}
         {!isLoading && !error && visible.length === 0 && <p className="application-directory-state">{applications.length === 0 ? 'No applications are registered yet.' : 'No applications match your search.'}</p>}

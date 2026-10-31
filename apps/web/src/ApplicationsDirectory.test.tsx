@@ -79,22 +79,21 @@ test('an unavailable catalogue is an error, not an empty app list', async () => 
     expect(screen.queryByText('No applications are registered yet.')).not.toBeInTheDocument();
 });
 
-
-test('shows inert application cards during initial request, then reveals actual links', async () => {
-    let resolve!: (value: typeof apps) => void;
-    vi.mocked(callTool).mockImplementation(name => {
-        if (name === 'list_all_applications') return new Promise<typeof apps>(r => { resolve = r; }) as never;
+test('cold-load directory reserves four desktop cards, then replaces them with real applications', async () => {
+    let resolve!: (items: typeof apps) => void;
+    const pending = new Promise<typeof apps>(complete => { resolve = complete; });
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'list_all_applications') return pending as never;
         throw new Error('Unexpected tool ' + name);
     });
-    render(<ApplicationsDirectory />);
-    const loading = screen.getByRole('status', { name: 'Loading applications' });
-    expect(loading.querySelectorAll('.atlas-skeleton-card')).toHaveLength(6);
-    expect(screen.queryByRole('link', { name: 'Launch Portfolio' })).not.toBeInTheDocument();
+    const { container } = render(<ApplicationsDirectory />);
+    expect(screen.getByRole('status', { name: 'Loading applications' })).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelectorAll('.applications-directory > .atlas-skeleton-grid .atlas-skeleton-card')).toHaveLength(4);
+    expect(screen.queryByText('0 applications')).not.toBeInTheDocument();
     resolve(apps);
     expect(await screen.findByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Loading applications' })).not.toBeInTheDocument();
 });
-
 
 test('retains existing application cards during an explicit refresh', async () => {
     let calls = 0;

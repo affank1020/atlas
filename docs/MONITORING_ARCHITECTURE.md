@@ -103,3 +103,18 @@ Retention is re-evaluated on each page: only events from the last 14 days and no
 In Monitoring Logs → Atlas Server → retained events, **Newer events** and **Older events** browse through bounded pages. Browser-held cursors are scoped to `source + page size`; changing source or size resets navigation. Reads abort on scope change, and a late response cannot repaint a new scope or page. The UI's `Search loaded events` filter searches **only the current returned page**. It does not claim a server-wide historical search. Browser-only pagination history is intentionally not a durable archive bookmark.
 
 Performance remains dependent on PostgreSQL table size and live hosting conditions; the existing index removes unbounded OFFSET scans, but real-world latency/lock contention and retention sweeps still require the runbook's deployed acceptance checks.
+
+
+## Diagnostic archive physical expiry recovery
+
+The retained fixed-code archive still exposes only a **rolling 14-day read window**, independently of physical deletion. The old single daily maintenance pass removed no more than 10,000 expired rows. A quiet instance or a previously unavailable database could accumulate a backlog faster than that schedule reclaimed it, even while reads correctly hid stale events.
+
+Expiry maintenance now starts shortly after Server startup and runs every 15 minutes, independent of incoming diagnostic writes. Each pass executes at most **10 batches × 1,000 rows**, using the existing timestamp/ID index and fixed delete statement. This bounds impact on the single-connection diagnostic pool and avoids waiting for a fresh diagnostic to trigger a prune. Sweeps never overlap, and a brief bounded yield between full batches gives queued diagnostic inserts/probes an opportunity to acquire the dedicated connection; write operations no longer wait for opportunistic deletes on their own critical path. Shutdown cancels startup and periodic timers and waits for any active sweep. The operational health snapshot exposes **current-process maintenance evidence**:
+
+- `not-checked`: maintenance has not yet completed since this process started.
+- `caught-up`: the latest pass deleted fewer than 1,000 rows in its final batch, so it found no additional expired rows at that check.
+- `more-possible`: every batch of the latest bounded sweep was full; more expired rows may remain until a later pass.
+- `unavailable`: an expiry delete failed; even if the fixed-table read probe succeeds, physical retention may be behind.
+- `disabled`: diagnostic history is explicitly disabled. `unknown` covers older/unavailable maintenance telemetry.
+
+This is neither proof of a continuously empty archive backlog nor a complete historical capture guarantee. The primary database and effective Nodes may remain healthy even when physical expiry is unverified; the overall Monitoring snapshot reports `unknown` for a readable archive with incomplete maintenance evidence. Confirmed database/Node failures remain `degraded`. No raw diagnostic rows, SQL errors, host files or container logs are exposed by these status fields. Multiple server replicas maintain independently and share the same database; the scheduling is best effort, not a distributed leader lease.

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
 import { ActivityRows } from './ActivityFeed';
-import { SkeletonRows } from './Skeletons';
 import { monitoringHash, type MonitoringFilters } from './monitoringLinks';
 import type { AuditEvent } from './types';
 import './activity.css';
+import { SkeletonRows } from './Skeleton';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
 type ActivityScope = Pick<MonitoringFilters, 'projectId' | 'nodeId' | 'logicalWorkspaceId' | 'checkoutId' | 'storeId'>;
@@ -72,7 +72,7 @@ function ScopedActivityPreview({
                 <a href={fullActivity}>View all activity →</a>
             </div>
         </div>
-        {loading && !page && !error && <SkeletonRows label="Loading recent activity" variant="activity" rows={4} />}
+        {loading && !page && !error && <SkeletonRows count={5} variant="activity" label="Loading recent activity" />}
         {loading && page && <p className="activity-preview-note" role="status">Refreshing recent activity…</p>}
         {error && <p className="activity-preview-note activity-error" role="alert">Recent activity unavailable: {error}</p>}
         {page && <div className="activity-preview-rows">

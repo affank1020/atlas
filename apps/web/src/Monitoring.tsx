@@ -1,3 +1,4 @@
+import { SkeletonRows } from './Skeletons';
 import { useEffect, useRef, useState } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
 import type { AuditEvent } from './types';
@@ -5,7 +6,6 @@ import { ActivityRows } from './ActivityFeed';
 import { MonitoringOverview } from './Workspace';
 import { monitoringHash, parseMonitoringHash, type MonitoringFilters, type MonitoringRoute, type MonitoringTab } from './monitoringLinks';
 import './activity.css';
-import { SkeletonRows } from './Skeletons';
 
 type ActivityPage = { items: AuditEvent[]; total: number; offset: number; limit: number };
 type ProjectWorkspace = { id: string; name: string };
@@ -348,7 +348,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
         <p className="activity-footnote">{history
             ? 'PostgreSQL retains up to 14 days of fixed-code Server signals across restarts. Writes are best-effort, so missing events do not prove healthy operation. This is not Docker stdout/stderr, complete historical logs or an audit ledger.'
             : 'Only non-sensitive operational event codes from this Atlas Server process are shown. This is not Docker stdout/stderr or a multi-instance archive.'}</p>
-        {busy && <SkeletonRows label="Loading server diagnostics" variant="metrics" rows={3} />}
+        {busy && !visible && !error && <SkeletonRows label="Loading server diagnostics" variant="metrics" rows={3} />}
         {error && <p role="alert" className="activity-error">Server diagnostics unavailable: {error}</p>}
         {visible && !visible.available && <p className="empty">{history ? 'Retained Server diagnostics unavailable or disabled. Check database migration and connectivity.' : 'Server diagnostics are disabled on this deployment.'}</p>}
         {visible?.available && <div className="monitoring-log-result">
@@ -394,7 +394,8 @@ type HealthSnapshot = {
         database: { status: 'reachable' | 'unavailable'; latencyMs?: number } };
     diagnostics?: { status: 'available' | 'unavailable' | 'disabled' | 'unknown';
         coverage: 'incomplete-possible'; retentionDays: number;
-        droppedSinceStart: number | null; queuedForWrite: number | null; writePaused: boolean | null };
+        droppedSinceStart: number | null; queuedForWrite: number | null; writePaused: boolean | null;
+        retentionCleanup?: 'not-checked' | 'caught-up' | 'more-possible' | 'unavailable' | 'disabled' | 'unknown' };
     nodes: { available: boolean; summary: { total: number; healthy: number; stale: number;
         offline: number; unavailable: number; revoked: number; unknown: number }; items: HealthNode[] };
 };
@@ -406,7 +407,8 @@ function displayedHealthOverall(snapshot: HealthSnapshot): HealthSnapshot['overa
     if (snapshot.overall !== 'healthy') return snapshot.overall;
     const archive = snapshot.diagnostics;
     if (!archive || (archive.status !== 'available' && archive.status !== 'disabled')
-        || archive.writePaused === true || (archive.droppedSinceStart ?? 0) > 0) return 'unknown';
+        || archive.writePaused === true || (archive.droppedSinceStart ?? 0) > 0
+        || (archive.status === 'available' && archive.retentionCleanup !== 'caught-up')) return 'unknown';
     return 'healthy';
 }
 function MonitoringHealthPanel() {
@@ -432,7 +434,7 @@ function MonitoringHealthPanel() {
         <div className="section-heading"><h2>Live operational health</h2>
             <button className="ghost" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Checking…' : 'Refresh health'}</button>
         </div>
-        {busy && !snapshot && <SkeletonRows label="Checking Server and Node health" variant="metrics" rows={3} />}
+        {busy && !snapshot && !error && <SkeletonRows label="Checking Server and Node health" variant="metrics" rows={3} />}
         {error && <p role="alert">Health snapshot unavailable: {error}</p>}
         {snapshot && <>
             <p><span aria-label="Overall health" className={`badge ${badge(displayedOverall)}`}>{displayedOverall}</span> · Checked {new Date(snapshot.checkedAt).toLocaleString()} · {IS_MOCK_MODE ? 'Simulated preview — no live health probes' : 'On-demand snapshot, not continuous monitoring'}</p>
@@ -461,6 +463,15 @@ function MonitoringHealthPanel() {
                             : 'Pending-write count unknown'}
                     </small>}
                 {snapshot.diagnostics?.writePaused && <small role="status">Archive writes are backing off after a failure; recent events may be missing.</small>}
+                {snapshot.diagnostics?.status === 'available' && <small role="status">
+                    {snapshot.diagnostics.retentionCleanup === 'caught-up'
+                        ? 'Physical expiry sweep caught up at its last check (not a guarantee of ongoing retention).'
+                        : snapshot.diagnostics.retentionCleanup === 'more-possible'
+                            ? 'Expiry cleanup reached its bounded work budget; older rows may remain until a later sweep.'
+                        : snapshot.diagnostics.retentionCleanup === 'unavailable'
+                            ? 'Expiry cleanup failed; disk retention may be behind even though reads remain limited to 14 days.'
+                        : 'Physical expiry has not been verified in this Server process.'}
+                </small>}
                 <small>Historical coverage is never guaranteed. <a href={monitoringHash('logs', { target: 'server', history: '1' })}>View retained diagnostics</a></small></span>
                 <span className={`badge ${badge(snapshot.diagnostics?.status ?? 'unknown')}`}>{snapshot.diagnostics?.status ?? 'unknown'}</span>
             </div>
