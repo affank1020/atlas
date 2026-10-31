@@ -1,6 +1,7 @@
 import { timed } from '../../shared/performance.js';
 import { serveFilesRequest } from './files.js';
 import { serveNodeFileUpload } from './node-files.js';
+import { serveNodeImages } from './node-images.js';
 import { serveNodeResumableRequest } from './node-resumable.js';
 import { serveNodeUpdateClaim } from './node-update-claim.js';
 import { serveNodeUpdateReport } from './node-update-report.js';
@@ -36,6 +37,7 @@ export function createHttpTransport(services: ServerServices) {
         if (await serveNodeUpdateClaim(request, response, services)) return;
         if (await serveNodeResumableRequest(request, response, services)) return;
         if (await serveNodeFileUpload(request, response, services)) return;
+        if (await serveNodeImages(request, response, services)) return;
         if (request.method === "POST" && request.url === "/node/enrol") {
             try {
                 const chunks: Buffer[] = []; let bytes = 0;

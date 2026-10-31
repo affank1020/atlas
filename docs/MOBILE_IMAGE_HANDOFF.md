@@ -1,42 +1,29 @@
-# Mobile image handoff — screenshot-first transport contract
+# Mobile image handoff — Android ↔ Mac
 
-**Status (31 October 2026):** Android Sharesheet PNG/JPEG import and local preview are implemented on a feature branch. **No image upload, cross-device delivery, recipient clipboard write, persistent inbox, or R2 storage is implemented by this change.** The Send button is intentionally disabled for image drafts. Text/link sharing is unchanged. Tracked by [Mobile Nodes #112](https://github.com/affank1020/atlas/issues/112).
+**Implementation:** Android PNG/JPEG image Share → Atlas Node → approved Mac Node → explicit Copy image → macOS image pasteboard. This includes **cropped screen clippings/snips**, full screenshots and ordinary photos. No required image aspect ratio. Supports up to 8 MiB per transfer. Tracked by [#112](https://github.com/affank1020/atlas/issues/112).
 
-## North-star physical acceptance
+## First bounded transport slice
 
-1. On Samsung Notes, capture a screenshot and choose **Share → Atlas Node**.
-2. Atlas shows a recognizable preview; the user chooses their previously approved Mac.
-3. Send explicitly and get a truthful **copied to Mac clipboard** receipt.
-4. On the Mac, `Cmd+V` into ChatGPT pastes the image, not an image filename, URL, base64 text, or copied OCR.
-5. Repeat with JPEG, network interruptions, declined/expired receipt, malformed MIME, oversized image and revoked permissions. Never report success from a mere upload or transport acknowledgement.
+- Android 0.9.0 imports image/png or image/jpeg from a user-initiated Android Sharesheet content URI. It performs capped reads, MIME-signature checks, dimension limits and sampled preview, retaining the full image in volatile memory only.
+- The sender selects a *currently online, directionally approved Mac* and taps **Send image to Mac**. No automatic forwarding, clipboard reading or file permissions.
+- Android issues an authenticated binary `POST /node/images/upload` with immutable target/delivery UUID, MIME, length and SHA-256 headers. Images never go into the 2 MiB Node WebSocket JSON frames or the general-purpose Workspace API.
+- Atlas Server authenticates the sending Node, validates active sender `device.image.send`, online Mac `device.image.receive`, the existing directional share grant and credentials both before and after the bounded upload. The relay is in-memory only, max four concurrent uploads at 8 MiB each, max 45-second transfer lifetime. It does not store a file in PostgreSQL, R2 or Project Files, and holds a short non-content replay tombstone.
+- The Mac receives **metadata only** through its authenticated Node socket, fetches the bytes once using its own Node credential over `GET /node/images/:deliveryId`, verifies MIME, exact length, SHA-256 and expiry, then displays **Copy image / Decline**. After user approval it writes native `public.png` or `public.jpeg` data to `NSPasteboard`. The sender sees `accepted: true` **only** after the Mac clipboard write succeeds. Decline and all unknown/timeouts are not success; do not automatically resend when the result is unknown.
+- Receive opt-in on Mac requires `ATLAS_NODE_IMAGE_RECEIVE_ENABLED=true`. The Mac must also have normal sharing receiver enabled (`ATLAS_NODE_SHARE_RECEIVE_ENABLED=true`) so it appears in the existing approved-target directory. **Separately authorise images** on Atlas Server with `ATLAS_DEVICE_IMAGE_PAIRS=androidUUID:macUUID` (up to 64 exact directional pairs), *in addition to* the existing Atlas Web directional text-sharing grant. Both are checked again immediately before image dispatch and one-time fetch; a text-only grant does not automatically allow images. No public unauthenticated endpoint.
+- The Android background/inbox/FCM work from issue #163 is **text-only**. Images require the sender online and Mac actively connected. This first slice does **not** implement offline image queue, Mac→Android images, PDFs/HEIC/WEBP, permanent University Notes storage or ChatGPT MCP file retrieval.
 
-A later Mac→tablet path should display received images in a transient inbox with Save/Share rather than trying to silently write another app's Android clipboard. Samsung Notes PDF exports belong in durable Project Files after the separate storage integration.
+## Physical acceptance
 
-## Source capture and memory safety (this PR)
+1. Upgrade the **server first** with the explicit `ATLAS_DEVICE_IMAGE_PAIRS=androidUUID:macUUID`, enable the Mac image receiver and restart the Mac Node, preserving the existing Node UUID and credentials. Approve Android→Mac direction in Atlas Web as a second check.
+2. On Samsung, **build Android 0.9.0 with the same persistent local signer**, verify fingerprint, then `adb install -r` without uninstall/re-enrolment. Never install an ephemerally CI-signed APK over the enrolled app.
+3. In Samsung Notes, a browser or Gallery, Share a *cropped screen snip* or PNG/JPEG image → Atlas → choose the Mac → Send image.
+4. Confirm the Mac displays a deliberate approval; press **Copy image**, then paste into ChatGPT with Cmd+V. Verify that **actual pixels** paste, not a filename, OCR/text or base64. Repeat for full images and JPEG.
+5. Test Decline; revoked grants before admission and while image bytes are in flight; offline Mac; forged source or wrong recipient; expired/stale/replayed UUID; mismatched MIME/length/hash; ≥8 MiB; disconnect; close during transfer; unknown receipt. Never claim success from an HTTP upload by itself.
 
-- Accept Android `ACTION_SEND` only for `text/plain`, `image/png`, `image/jpeg`. Image sources must be `content://` URIs from a user-initiated Sharesheet. No `file://`, remote URLs, whole-library scan or broad storage permissions.
-- Read through the granted `ContentResolver` stream on an IO dispatcher, with an 8 MiB hard cap even if size is missing or falsely reported. Check declared MIME against a minimal PNG/JPEG signature. Decoder makes an at-most-1024-pixel sampled thumbnail and rejects unreasonable dimensions. Full bytes remain **volatile memory only** and never enter SavedState, clipboard, preferences, logs or Atlas Server.
-- New intents are ordered; stale asynchronous import completion cannot replace a later user draft or a pending text share. Editing a text draft discards its image; only the latest held share is retained while an earlier delivery is pending.
-- A valid preview does not authorize transfer. Image recipients/sends remain unavailable until the separately reviewed binary data plane; no false successful receipt.
+This PR's unit tests and CI cannot substitute for the physical Samsung→Mac clipboard acceptance above.
 
-## Proposed binary data plane (next PR; not implemented)
+## Later
 
-Separate **control** from **bytes**; the existing `device.share.submit` schema is intentionally text-only and the Node WebSocket frame is limited to 2 MiB.
-
-1. Introduce versioned capabilities such as `device.image.send` and `device.image.receive`, not a silent widening of text-share grants. Metadata submission: source Node authenticated, target Node ID, delivery ID, declared MIME, exact length, SHA-256, expiry. The Server checks *current* directional consent and both capability claims at admission and again before dispatch.
-2. For initial cross-network reliability, use a **dedicated bounded, authenticated, single-use HTTP binary staging endpoint** with streaming or fixed memory limits; short retention and cleanup; encrypted transport. An R2 temporary object is an option only if private credentials stay server-side and it is isolated from permanent Project Files and the Cloudflare migration. No binary base64 on Workspace or Node JSON control frames. Do not rely on Tailscale-only connectivity.
-3. Receiving Mac obtains the bytes only for the authorized one-time delivery, validates SHA-256, content type and actual image decode, then shows approval. On Copy, write image bytes as a real image flavor to `NSPasteboard` (e.g. PNG), not as a text data URI. Receipt distinguishes uploaded, dispatched, declined, copied and unknown. Existing text permissions must not implicitly authorize all file traffic.
-4. Hold at most a bounded number of active transfers, rate-limit, cancel, expire unclaimed payloads, avoid path traversal/redirects and clean up after disconnect/rejection. Do not log content, signed URLs, Node bearer tokens or any customer-private notes. Unknown result must not be blindly auto-retried.
-5. Treat offline/background Android as unavailable until a reviewed foreground-service or push/inbox path exists. Report truth rather than silently claiming delivery.
-
-## Storage and study context (later)
-
-Ephemeral screenshot transport is **not** permanent archival. Samsung Notes export to the University Project should use authenticated Project Files metadata in PostgreSQL and private Cloudflare R2 object storage, respecting current Storage V2 cutover and recovery gates. MCP retrieval should return original PDFs/images with page provenance, so mathematical handwriting can be inspected in context. Neither Project file storage nor MCP exposure is part of this image-import change.
-
-## Test/rollout gates
-
-- JVM: PNG/JPEG signature, spoofed MIME, exact-byte retention, oversized/malformed streams, session replace/deferred/race handling.
-- Android CI: `testDebugUnitTest`, `assembleDebug` and optional device/emulator Sharesheet intent + screenshot preview.
-- Physical test only after image delivery exists: Samsung screenshot → Mac clipboard → ChatGPT paste and deliberate decline/timeout/permission revocation.
-- On enrolled Samsung, build with the *same local persistent APK signer* and verify the SHA-256 certificate before `adb install -r`. Do not use CI APK or uninstall/re-enrol as an upgrade workaround.
-- Meanwhile Mac→Android **text** physical acceptance of merged Android 0.5.0/PR #82 remains a separate unpassed gate. Do not infer image support from text transport.
+- Mac→Android image/file handoff with recipient Save/Open/Share.
+- Samsung Notes exports (PDF/image/native where supported) into private University Project Files, with R2 bytes and Atlas-backed metadata.
+- Scoped MCP original-page/image retrieval for handwritten equations, including file/page provenance; never assume OCR captures maths correctly.

@@ -13,6 +13,7 @@
     "./runtime": "./dist/runtime.js",
     "./node-protocol": "./dist/node-protocol.js",
     "./device-protocol": "./dist/device-protocol.js",
+    "./image-format": "./dist/image-format.js",
     "./errors": "./dist/errors.js",
     "./node-model": "./dist/node-model.js"
   },

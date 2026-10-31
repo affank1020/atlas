@@ -8,6 +8,12 @@ export interface NodeRuntime {
     receiveDeviceShare?(input: {
         deliveryId: string; sourceNodeId: string; text: string; expiresAt: string;
     }): Promise<{ accepted: boolean }>;
+    /** The transport fetches approved binary bytes over authenticated HTTPS
+     * before invoking this method. Clipboard writes require explicit approval. */
+    receiveDeviceImage?(input: {
+        deliveryId: string; sourceNodeId: string; mimeType: 'image/png' | 'image/jpeg';
+        byteLength: number; sha256: string; expiresAt: string; bytes: Buffer;
+    }): Promise<{ accepted: boolean }>;
     getCapabilities(): NodeCapability[];
     bind(rootPath: string): Promise<string>;
     readLogs?(source: 'stdout' | 'stderr' | 'journal' | 'service', lines: number): Promise<{ source: string; lines: string[]; available: boolean; truncated: boolean }>;

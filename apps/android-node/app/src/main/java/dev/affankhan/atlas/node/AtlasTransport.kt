@@ -1,6 +1,8 @@
 package dev.affankhan.atlas.node
 
 import okhttp3.MediaType.Companion.toMediaType
+import java.security.MessageDigest
+import java.util.UUID
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -22,6 +24,42 @@ internal class AtlasTransport {
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
+
+    private val imageClient = client.newBuilder().readTimeout(55, TimeUnit.SECONDS)
+        .callTimeout(80, TimeUnit.SECONDS).build()
+
+    /** Upload real PNG/JPEG bytes over native-Node HTTPS, not Node JSON.
+     * The returned accepted bit represents the Mac user's actual clipboard
+     * choice. Any network timeout is ambiguous and must not auto-retry.
+     */
+    fun sendImage(node: StoredNode, targetNodeId: String, image: SharedImageDraft): Boolean {
+        require(validNodeId(node.nodeId) && validNodeId(targetNodeId) &&
+            node.nodeId.lowercase() != targetNodeId.lowercase())
+        require(image.bytes.size in 24..MAX_SHARED_IMAGE_BYTES &&
+            hasImageSignature(image.bytes, image.mimeType))
+        val sha256 = MessageDigest.getInstance("SHA-256").digest(image.bytes)
+            .joinToString("") { "%02x".format(it) }
+        val endpoint = parseAtlasEndpoint(node.origin)
+        val request = Request.Builder()
+            .url(endpoint.httpsBase + "/node/images/upload")
+            .header("Authorization", "Bearer " + node.credential)
+            .header("x-atlas-node-id", node.nodeId)
+            .header("x-atlas-target-id", targetNodeId)
+            .header("x-atlas-delivery-id", UUID.randomUUID().toString())
+            .header("x-atlas-image-mime", image.mimeType)
+            .header("x-atlas-image-sha256", sha256)
+            .post(image.bytes.toRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        imageClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IllegalStateException("Atlas did not confirm image delivery.")
+            val body = response.body?.string()?.take(512) ?: throw IllegalStateException(
+                "Image delivery confirmation missing.")
+            val json = JSONObject(body)
+            if (json.length() != 1 || json.opt("accepted") !is Boolean)
+                throw IllegalStateException("Invalid image delivery response.")
+            return json.getBoolean("accepted")
+        }
+    }
 
     /** Call from Dispatchers.IO; the ticket is sent only over validated HTTPS. */
     fun enrol(origin: AtlasEndpoint, token: String, name: String, version: String): StoredNode {
@@ -121,6 +159,8 @@ internal class AtlasTransport {
     }
 
     fun close() {
+        imageClient.dispatcher.executorService.shutdown()
+        imageClient.connectionPool.evictAll()
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
     }

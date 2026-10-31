@@ -87,3 +87,25 @@ export const deviceInboxDecideSchema = z.object({
     deliveryId: z.string().uuid(), decision: z.enum(['user_copied','declined']),
 }).strict();
 
+
+
+/**
+ * Screenshot handoff uses authenticated HTTP for bytes. Only bounded metadata
+ * travels through the Node WebSocket; text-sharing frames remain unchanged.
+ */
+export const MAX_DEVICE_IMAGE_BYTES = 8 * 1024 * 1024;
+export const deviceImageMimeSchema = z.enum(['image/png', 'image/jpeg']);
+export const deviceImageSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+export const deviceImageDeliverySchema = z.object({
+    type: z.literal('request'),
+    kind: z.literal('device_image'),
+    requestId: z.string().uuid(),
+    deliveryId: z.string().uuid(),
+    sourceNodeId: z.string().uuid(),
+    mimeType: deviceImageMimeSchema,
+    byteLength: z.number().int().min(24).max(MAX_DEVICE_IMAGE_BYTES),
+    sha256: deviceImageSha256Schema,
+    expiresAt: z.iso.datetime({ offset: true }),
+}).strict();
+export const deviceImageReceiptSchema = z.object({ accepted: z.boolean() }).strict();
+export type DeviceImageDelivery = z.infer<typeof deviceImageDeliverySchema>;

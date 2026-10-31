@@ -29,7 +29,8 @@ internal fun registrationMessage(node: StoredNode, version: String): String = JS
     .put("nodeId", node.nodeId).put("name", node.name)
     .put("platform", "android").put("version", version)
     .put("capabilities", JSONArray().put("device.share.send")
-        .put("device.share.receive").put("device.inbox.receive")).toString()
+        .put("device.share.receive").put("device.inbox.receive")
+        .put("device.image.send")).toString()
 
 internal fun isRegistrationAcknowledgement(raw: String, nodeId: String): Boolean =
     runCatching {

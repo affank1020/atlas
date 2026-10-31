@@ -1,1 +1,1 @@
-export type NodeCapability = 'workspace.files' | 'workspace.git' | 'workspace.dev' | 'unity' | 'football.training' | 'node.logs' | 'device.share.send' | 'device.share.receive' | 'device.inbox.receive';
+export type NodeCapability = 'workspace.files' | 'workspace.git' | 'workspace.dev' | 'unity' | 'football.training' | 'node.logs' | 'device.share.send' | 'device.share.receive' | 'device.inbox.receive' | 'device.image.send' | 'device.image.receive';
