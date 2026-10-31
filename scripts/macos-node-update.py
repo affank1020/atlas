@@ -173,9 +173,18 @@ def apply_update(layout, *, migrate: bool) -> int:
     try:
         lifecycle.require_watchdog(layout)
     except (lifecycle.Refused, OSError):
+        if layout.pending.exists() or layout.pending.is_symlink():
+            raise Refused("Node recovery is pending; refusing watchdog changes.")
+        if layout.watchdog_refresh.exists() or layout.watchdog_refresh.is_symlink():
+            raise Refused("Watchdog upgrade was interrupted; run restore-watchdog --confirm.")
         if lifecycle.launch_loaded(layout, layout.recovery_target):
-            raise Refused("Loaded recovery watchdog needs manual inspection; refusing update.")
-        lifecycle.manage(layout, ["install-watchdog"])
+            # The user already confirmed the exact update above. The
+            # lifecycle validates the old per-user watchdog's shape, journals
+            # its bytes, and performs a locked stop/replace/restart with
+            # rollback rather than silently overwriting a loaded process.
+            lifecycle.manage(layout, ["refresh-watchdog", "--confirm"])
+        else:
+            lifecycle.manage(layout, ["install-watchdog"])
     lifecycle.manage(layout, ["activate", tag.removeprefix("node-"), "--confirm",
                               "--expect-entrypoint", selected_state["currentEntrypoint"]])
     print("Local launchd reconnect verified; confirm authenticated Server registration separately.")
