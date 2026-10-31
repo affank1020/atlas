@@ -106,6 +106,19 @@ class MacUpdateTests(unittest.TestCase):
         )
         activation.assert_not_called()
 
+    def test_monitor_refusal_preserves_cli_error_boundary(self):
+        from unittest.mock import Mock
+        class MonitorRefused(Exception):
+            pass
+        helper = Mock()
+        helper.Refused = MonitorRefused
+        helper.monitor_manage.side_effect = MonitorRefused("unsafe checker job")
+        with patch.object(update, "ensure_operator"), patch.object(
+            update, "load_helper", return_value=helper
+        ), patch.object(update.lifecycle, "Layout", return_value=self.layout):
+            with self.assertRaisesRegex(update.Refused, "unsafe checker job"):
+                update.main(["monitor", "enable"])
+
     def test_malformed_monitor_command_rejected_before_host_access(self):
         with patch.object(update, "ensure_operator") as guard, patch.object(
             update, "load_helper"
