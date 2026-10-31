@@ -123,7 +123,8 @@ jobs:
           python3 -m py_compile scripts/macos-node-stage.py
           python3 -m unittest discover -s test -p 'test_macos_node_lifecycle.py' -v
           python3 -m unittest discover -s test -p 'test_macos_node_update.py' -v
-          python3 -m py_compile scripts/macos-node-lifecycle.py scripts/macos-node-update.py
+          python3 -m unittest discover -s test -p 'test_macos_node_operator.py' -v
+          python3 -m py_compile scripts/macos-node-lifecycle.py scripts/macos-node-update.py scripts/macos-node-operator.py
 
       - name: Install dependencies
         run: npm ci
