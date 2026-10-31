@@ -6,6 +6,7 @@ import { AuditService } from '../apps/server/src/core/audit.js';
 import { recordR2SeedObservation } from '../apps/server/src/server/operational-audit.js';
 import { projectMonitoringEvent } from '../apps/server/src/core/monitoring-projection.js';
 import type { SeedReport } from '../apps/server/src/server/r2-backup-seeding.js';
+import type { AuditEvent } from '../apps/server/src/types.js';
 
 after(cleanupDatabases);
 const bytesHash = 'a'.repeat(64);
@@ -126,7 +127,7 @@ test('Forged monitoring details on unrelated operations cannot appear as Files o
         runId:randomUUID(),mode:'apply',status:'completed',checked:10,createdVerified:10,
         filename:'SECRET',token:'TOKEN',verifiedRestore:true,
     };
-    const base={id:randomUUID(),occurredAt:new Date().toISOString(),client:'untrusted',
+    const base: AuditEvent ={id:randomUUID(),occurredAt:new Date().toISOString(),client:'untrusted',
         operation:'record.updated' as const,projectId:randomUUID(),resulting:suspicious};
     const safe=projectMonitoringEvent(base);
     assert.equal(safe.resulting,undefined);
