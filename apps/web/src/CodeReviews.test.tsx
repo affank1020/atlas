@@ -344,6 +344,44 @@ test('GitHub thread inventory is a separate opt-in PR status request, never a hi
     expect(screen.queryByText(/1 Atlas-owned root:/)).not.toBeInTheDocument();
 });
 
+test('Legacy mixed-case imported review opens canonical GitHub thread status', () => {
+    const imported = { ...makeRun(runId, 137), data: {
+        ...makeRun(runId, 137).data, repository: 'Affank1020/Atlas',
+        coverage: { source: 'github_pull_request_review' },
+    } };
+    vi.mocked(useApplicationRead).mockImplementation((name: string) => {
+        if (name === 'code_reviews_overview') return { data: { reviewRuns: 1, findingObservations: 0 },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_list_runs') return { data: { total: 1, items: [imported] },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_summary') return { data: {
+            recordedRounds: 1, latestReviewHead: 'current', latest: null,
+            currentHead: { state: 'open', sha: 'a'.repeat(40) },
+        }, isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_pr_timeline') return {
+            data: { ...emptyTimeline, repository: 'affank1020/atlas' },
+            isLoading: false, isFetching: false, refetch } as never;
+        if (name === 'code_reviews_review_thread_state') return { data: {
+            repository: 'affank1020/atlas', prNumber: 137, readOnly: true,
+            resolutionSupported: false, totalGitHubThreads: 1, ownedRootCount: 1,
+            mappedOwnedRoots: 1, mappingComplete: true,
+            ownedThreads: [{ rootCommentId: 73, mappingState: 'verified',
+                threadId: 'PRRT_123456789', resolutionState: 'open_on_github' }],
+            resolutions: [],
+        }, isLoading: false, isFetching: false, refetch } as never;
+        throw Error('Unexpected tool: ' + name);
+    });
+    render(<CodeReviews />);
+    fireEvent.click(screen.getByRole('button', { name: 'PR status' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check GitHub conversations' }));
+    expect(vi.mocked(useApplicationRead)).toHaveBeenCalledWith(
+        'code_reviews_review_thread_state', { repository: 'affank1020/atlas', prNumber: 137 }, true);
+    expect(screen.getByText(/1 Atlas-owned root:/)).toHaveTextContent('1 open');
+    expect(screen.queryByText(/unsupported or inconsistent thread state/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open discussion ↗' }))
+        .toHaveAttribute('href', 'https://github.com/affank1020/atlas/pull/137#discussion_r73');
+});
+
 test('Displays saved publication receipts separately from live GitHub thread state', () => {
     const withClaims = {
         ...makeRun(runId, 137),
