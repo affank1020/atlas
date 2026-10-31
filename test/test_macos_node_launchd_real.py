@@ -161,15 +161,18 @@ class RealMacLaunchdCheckOnly(unittest.TestCase):
         self.assertFalse(self.layout.plist.exists())
         self.assertFalse(self.layout.pending.exists())
 
-        wrapper = operator.paths(self.layout)[2]
-        status = subprocess.run(
-            [str(wrapper), "monitor", "status", "--json"],
+        # Exercise a separate Python process from the installed pointer.
+        # The test-only label is patched only in this harness; the child
+        # script deliberately retains the production label, so don't ask
+        # that subprocess to inspect the test label.
+        installed_script = operator.paths(self.layout)[1] / "macos-node-operator.py"
+        independent = subprocess.run(
+            [sys.executable, str(installed_script), "status"],
             check=True, capture_output=True, text=True, timeout=15
         )
-        self.assertEqual(json.loads(status.stdout)["schedule"], "needs-attention"
-                         if not Path(launchd["ProgramArguments"][0]).is_file()
-                         else "enabled")
-        self.assertEqual(json.loads(status.stdout)["lastCheck"]["state"], "unavailable")
+        self.assertEqual(json.loads(independent.stdout)["installedOperator"], VERSION)
+        self.assertEqual(operator.installed_check_status(self.layout)["lastCheck"]["state"],
+                         "unavailable")
 
         operator.disable_check(self.layout)
         self.assertEqual(operator.installed_check_status(self.layout)["schedule"], "disabled")
