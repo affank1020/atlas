@@ -40,6 +40,6 @@ test('missing diagnostic archive is not rendered as an empty, healthy history', 
         retentionDays: 14, coverage: 'incomplete-possible', events: [], truncated: false,
     } as never);
     render(<MonitoringPage />);
-    await waitFor(() => expect(screen.getByText(/source unavailable or disabled/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/diagnostics unavailable or disabled/)).toBeInTheDocument());
     expect(screen.queryByText('(no diagnostic events)')).not.toBeInTheDocument();
 });
