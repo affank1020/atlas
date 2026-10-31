@@ -164,6 +164,25 @@ export class NodeShareApprovals {
                     [sourceNodeId, targetNodeId]);
                 if (environmentGranted && !removed.rowCount)
                     throw new AtlasError('Only the server environment grants this pair; remove that setting and restart the Server.', 'SHARE_ENV_MANAGED');
+                if (removed.rowCount) {
+                    // Revocation is permanent for already-queued content, even
+                    // if this pair is immediately reapproved without another
+                    // enqueue. Preserve delivery-ID tombstones for replay safety.
+                    //
+                    // When an environment overlay also grants the pair, its
+                    // future sends remain allowed; explicitly revoking the
+                    // managed grant still erases old pending content. This
+                    // deliberately favours the operator's privacy intent.
+                    await db.query(`
+                        UPDATE device_inbox SET
+                            state='expired', decided_at=now(),
+                            payload_ciphertext=NULL,
+                            payload_nonce=NULL,
+                            payload_tag=NULL
+                        WHERE source_node_id=$1 AND target_node_id=$2
+                          AND state='queued'
+                    `, [sourceNodeId, targetNodeId]);
+                }
             }
             // Only UUIDs and trusted transport provenance, never shared
             // content or an unverified human operator identity.
