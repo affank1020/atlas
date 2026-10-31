@@ -52,9 +52,7 @@ export class DeviceOfflineInbox {
                     Array.isArray(p.capabilities) && p.capabilities.includes('device.share.receive')) ||
                 !(await this.allowed(source,target,client)))
                 throw new AtlasError('Offline share no longer authorised.', 'SHARE_DENIED');
-            const sender = peers.rows.find(p => String(p.id).toLowerCase() === source);
-            const receiver = peers.rows.find(p => String(p.id).toLowerCase() === target);
-            if (!sender?.credential_updated_at || !receiver?.credential_updated_at)
+            if (peers.rows.some(p => !p.credential_updated_at))
                 throw new AtlasError('Node credential generation unavailable.', 'SHARE_DENIED');
             const previous = await client.query(
                 'SELECT submission_hash,state,expires_at FROM device_inbox WHERE source_node_id=$1 AND id=$2',
@@ -75,13 +73,22 @@ export class DeviceOfflineInbox {
             if (Number(limits.rows[0].target_count)>=MAX_PENDING_PER_TARGET ||
                 Number(limits.rows[0].source_count)>=MAX_PENDING_PER_SOURCE)
                 throw new AtlasError('Offline inbox is full.', 'SHARE_BUSY');
-            await client.query(`
+            // Copy credential generations inside PostgreSQL: pg timestamps have
+            // microsecond precision, which a round-trip through JS Date would
+            // truncate and incorrectly hide every item on list/read.
+            const inserted = await client.query(`
                 INSERT INTO device_inbox
                   (id,source_node_id,target_node_id,source_credential_updated_at,target_credential_updated_at,
                    submission_hash,payload_ciphertext,payload_nonce,payload_tag,expires_at)
-                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+($10::bigint*interval '1 millisecond'))
-            `,[id,source,target,sender.credential_updated_at,receiver.credential_updated_at,
-                digest,envelope.ciphertext,envelope.nonce,envelope.tag,DEVICE_INBOX_TTL_MS]);
+                SELECT $1::uuid,$2::uuid,$3::uuid,sender.credential_updated_at,receiver.credential_updated_at,
+                       $4::text,$5::bytea,$6::bytea,$7::bytea,now()+($8::bigint*interval '1 millisecond')
+                FROM nodes sender CROSS JOIN nodes receiver
+                WHERE sender.id=$2 AND receiver.id=$3
+                  AND sender.credential_state='active' AND receiver.credential_state='active'
+                RETURNING id
+            `,[id,source,target,digest,envelope.ciphertext,envelope.nonce,envelope.tag,DEVICE_INBOX_TTL_MS]);
+            if (!inserted.rowCount)
+                throw new AtlasError('Node credential no longer active.', 'SHARE_DENIED');
             await client.query('COMMIT');
             return { deliveryId:id, status:'queued' as const, queued:true };
         } catch (error) {
