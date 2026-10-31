@@ -225,6 +225,26 @@ class MacUpdateTests(unittest.TestCase):
                 update.apply_update(self.layout, migrate=False)
             lifecycle_manage.assert_not_called()
 
+    def test_uninstalled_operator_is_not_implicitly_bootstrapped(self):
+        with patch.object(update, "load_helper", side_effect=AssertionError("No CLI install expected")):
+            update.sync_installed_operator(self.layout, self.tag2.removeprefix("node-"))
+        self.assertFalse((self.layout.app / "operator").exists())
+
+    def test_post_activation_operator_promotes_only_installed_cli(self):
+        link = self.layout.app / "operator" / "current"
+        link.parent.mkdir()
+        link.symlink_to(self.layout.releases / self.tag1.removeprefix("node-") / "scripts")
+        from contextlib import nullcontext
+        from unittest.mock import Mock
+        helper = Mock()
+        with patch.object(update, "load_helper", return_value=helper), patch.object(
+            update.lifecycle, "lock_state", return_value=nullcontext()
+        ):
+            update.sync_installed_operator(self.layout, self.tag2.removeprefix("node-"))
+        helper.promote.assert_called_once_with(
+            self.layout, self.tag2.removeprefix("node-"), require_existing=True
+        )
+
     def test_successful_flow_verifies_staging_then_reuses_lifecycle(self):
         old = self.tag1.removeprefix("node-")
         candidate = {
