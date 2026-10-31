@@ -31,7 +31,7 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
     useEffect(() => { if (previousRefresh.current !== refreshVersion) void refetch(); previousRefresh.current = refreshVersion; }, [refreshVersion, refetch]);
     return <section className="panel project-applications" aria-label="Project Applications">
         <div className="panel-head"><div><p className="eyebrow">Applications</p><h2>Launch an application</h2></div><span>{applications.length} available <button onClick={() => void refetch()}>Refresh</button></span></div>
-        <p className="application-section-copy">Applications open in their own tab. Unlike Views, they provide dedicated tools and workflows.</p>
+        <p className="application-section-copy">Applications open within Atlas. Unlike Views, they provide dedicated tools and workflows.</p>
         {busy && <p role="status" className="application-status">Loading Applications…</p>}
         {error && <div role="alert" className="notice error">{error}</div>}
         {!busy && !error && applications.length === 0 && <p className="application-status">No Applications are registered in this Project yet.</p>}
@@ -39,7 +39,7 @@ export function ProjectApplications({ projectId, refreshVersion = 0 }: { project
             {applications.map(app => <article className="application-card" key={app.slug}>
                 <div className="application-card-icon" aria-hidden="true">{app.name.slice(0, 2).toUpperCase()}</div>
                 <div className="application-card-details"><h3>{app.name}</h3><p>{app.description}</p><small>{app.type} Application</small></div>
-                <a className="button application-launch" href={`#/projects/${projectId}/applications/${app.slug}`} target="_blank" rel="noopener noreferrer" onClick={() => rememberWork({ href: `#/projects/${projectId}/applications/${app.slug}`, name: app.name, projectId, kind: 'Application' })} aria-label={`Launch ${app.name} in a new tab`}>Launch ↗</a>
+                <a className="button application-launch" href={`#/projects/${projectId}/applications/${app.slug}`} onClick={() => rememberWork({ href: `#/projects/${projectId}/applications/${app.slug}`, name: app.name, projectId, kind: 'Application' })} aria-label={`Launch ${app.name}`}>Launch →</a>
             </article>)}
         </div>
     </section>;

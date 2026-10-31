@@ -94,9 +94,9 @@ function HomeRecent({ items, projects }: {
         {filtered.length ? <div className="overview-compact-list">{filtered.map(item =>
             <a key={item.href} className="overview-compact-row" href={item.kind === 'View'
                 ? standaloneViewUrl({ projectId: item.projectId, id: item.href.split('/').pop()!, slug: item.viewSlug })
-                : item.href} target="_blank" rel="noopener noreferrer">
+                : item.href} target={item.kind === 'View' ? '_blank' : undefined} rel={item.kind === 'View' ? 'noopener noreferrer' : undefined}>
                 <span className="overview-item-main"><strong>{item.name}</strong><small>{item.kind} · {projectNames.get(item.projectId)}</small></span>
-                <span aria-hidden="true">↗</span>
+                <span aria-hidden="true">{item.kind === 'View' ? '↗' : '→'}</span>
             </a>)}</div> : <p className="overview-muted">No applications or views opened in this browser session.</p>}
     </section>;
 }

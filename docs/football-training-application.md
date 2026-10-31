@@ -2,7 +2,7 @@
 
 The **Football Training** Application is attached to the existing AI Football FYP
 Project (`ce09dbe0-0755-4bd8-9376-e4a3152d59f7`). It launches from
-`Projects → AI Football → Applications` in a separate browser tab.
+`Projects → AI Football → Applications` in the current browser tab.
 
 ## Architecture
 
