@@ -25,7 +25,8 @@ test('Relay service sees only Atlas read tools and cannot dispatch mutations', a
     const r=await client.callTool({name:'get_atlas_status',arguments:{}});
     assert.equal(r.isError,undefined);
     assert.deepEqual(dispatched,['get_atlas_status']);
-    await assert.rejects(client.callTool({name:'create_project',arguments:{name:'forbidden'}}));
+    const denied=await client.callTool({name:'create_project',arguments:{name:'forbidden'}});
+    assert.equal(denied.isError,true,'Unregistered mutation must fail at MCP dispatch');
     assert.deepEqual(dispatched,['get_atlas_status']);
   } finally {await client.close();await server.close();}
 });
