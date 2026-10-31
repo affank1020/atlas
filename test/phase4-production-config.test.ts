@@ -75,3 +75,15 @@ test('all native Code Reviews allowlists stay default-off and Server-only in pro
     assert.match(server!, /^      ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES: \$\{ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES:-\}$/m);
     assert.match(example, /^ATLAS_CODE_REVIEW_PUBLISH_REPOSITORIES=$/m);
 });
+
+
+test('global native publishing is explicit, disabled by default and Server-only', () => {
+    const compose = readFileSync('infra/docker-compose.production.yml', 'utf8');
+    const server = compose.split('  server:\n')[1]?.split('  ingress:\n')[0];
+    const outside = compose.split('  server:\n')[0] + (compose.split('  ingress:\n')[1] ?? '');
+    assert.ok(server);
+    assert.match(server!, /^      ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES: \$\{ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES:-false\}$/m);
+    assert.doesNotMatch(outside, /^      ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES:/m);
+    assert.match(readFileSync('infra/production.env.example', 'utf8'),
+        /^ATLAS_CODE_REVIEW_PUBLISH_ALL_REPOSITORIES=false$/m);
+});
