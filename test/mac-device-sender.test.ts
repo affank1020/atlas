@@ -55,7 +55,7 @@ test('Mac Node lists recipients and sends only via existing authenticated WebSoc
     const server = createServer();
     const sockets = new WebSocketServer({ server });
     const nodeId = randomUUID(), receiverId = randomUUID();
-    let registrations = 0, shares = 0;
+    let registrations = 0, shares = 0, queued = 0;
     sockets.on('connection', socket => {
         socket.on('message', bytes => {
             const msg = JSON.parse(String(bytes));
@@ -69,6 +69,15 @@ test('Mac Node lists recipients and sends only via existing authenticated WebSoc
                         nodeId: receiverId, name: 'Samsung', platform: 'android',
                         status: 'online', available: true,
                     }] } }));
+            } else if (msg.type === 'device.inbox.enqueue') {
+                queued++;
+                assert.equal(msg.targetNodeId,receiverId);
+                assert.equal(msg.text,'Queued from Mac 🚀');
+                assert.equal(msg.sourceNodeId,undefined);
+                socket.send(JSON.stringify({
+                    type:'response',requestId:msg.requestId,ok:true,
+                    result:{deliveryId:msg.deliveryId,status:'queued',queued:true},
+                }));
             } else if (msg.type === 'device.share.submit') {
                 shares++;
                 assert.equal(msg.targetNodeId, receiverId);
@@ -93,6 +102,13 @@ test('Mac Node lists recipients and sends only via existing authenticated WebSoc
         assert.deepEqual(await node.sendDeviceShare(receiverId, 'Hello from Mac 🚀'), { accepted: true });
         assert.equal(registrations, 1, 'sharing must not create a second Node session');
         assert.equal(shares, 1);
+        const queuedId=randomUUID();
+        assert.deepEqual(await node.queueDeviceShare(receiverId,'Queued from Mac 🚀',queuedId),
+            {deliveryId:queuedId,status:'queued',queued:true});
+        assert.equal(queued,1);
+        assert.equal(registrations,1,'offline queue reuses existing session');
+        await assert.rejects(node.queueDeviceShare('not-id','test',queuedId));
+        await assert.rejects(node.queueDeviceShare(receiverId,' ',queuedId));
         await assert.rejects(node.sendDeviceShare(receiverId, ' '));
         await assert.rejects(node.sendDeviceShare('not-an-id', 'test'));
     } finally {
@@ -120,7 +136,7 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
     const dir = await mkdtemp(join(tmpdir(), 'atlas-mac-share-'));
     const path = join(dir, 'node-share.sock');
     const target = randomUUID();
-    let delivered = 0;
+    let delivered = 0, queued = 0;
     let approvalGranted = true;
     const listener = await startMacShareControlServer({
         shareRecipients: async () => [{
@@ -131,6 +147,13 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
             delivered++;
             assert.equal(id, target); assert.equal(text, 'secret message');
             return { accepted: true };
+        },
+        queueDeviceShare: async (id, text, deliveryId) => {
+            queued++;
+            assert.equal(id,target);
+            assert.equal(text,'secret message');
+            assert.ok(typeof deliveryId==='string');
+            return {deliveryId,status:'queued' as const,queued:true};
         },
     } as any, path, async () => approvalGranted);
     try {
@@ -143,6 +166,17 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
         assert.deepEqual(await ipc(path, { action: 'send', targetNodeId: target, text: 'secret message' }),
             { ok: true, result: { cancelled: true } });
         assert.equal(delivered, 1, 'a local client must not bypass the native approval');
+        const deliveryId=randomUUID();
+        assert.deepEqual(await ipc(path,{action:'queue',targetNodeId:target,
+            text:'secret message',deliveryId}),{ok:true,result:{deliveryId,status:'queued',queued:true}});
+        assert.equal(queued,0,'a denied queue must not enqueue');
+        approvalGranted=true;
+        assert.deepEqual(await ipc(path,{action:'queue',targetNodeId:target,
+            text:'secret message',deliveryId}),{ok:true,result:{deliveryId,status:'queued',queued:true}});
+        assert.equal(queued,1);
+        assert.equal((await ipc(path,{action:'queue',targetNodeId:target,
+            text:'secret message',deliveryId:'invalid'})).ok,false);
+        assert.equal(queued,1);
         assert.equal((await ipc(path, { action: 'send', targetNodeId: target, text: 'secret', extra: 'x' })).ok, false);
         assert.equal(delivered, 1);
         assert.ok(!(await ipc(path, { action: 'send', targetNodeId: target, text: 123 })).ok);
