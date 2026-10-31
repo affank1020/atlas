@@ -202,3 +202,70 @@ test("A run snapshot remains consistent when the source catalogue is empty or un
         assert.equal(count.rows[0]!.n,0,"empty capture must not leave a partial header");
     } finally { await ctx.close(); }
 });
+
+test("Catalogue insertion between initial fingerprint and copy preflight cannot create unmanifested R2 keys",async()=>{
+    const ctx=await setup();
+    try {
+        await upload(ctx.files,ctx.id,"captured-original");
+        const run=await captureProjectKeyRun(ctx.files.pool,ctx.id);
+        const local=new LocalObjectStore(ctx.root);
+        const keys=new Map<string,Buffer>(),writes:string[]=[];
+        let injected=false;
+        const source:BoundedCopyStore={
+            async getBounded(key,maxBytes) {
+                if (!injected) {
+                    injected=true;
+                    // This upload occurs after the ledger has accepted the
+                    // catalogue fingerprint but before a copy's first PUT.
+                    await upload(ctx.files,ctx.id,"unmanifested-later-upload");
+                }
+                return local.getBounded(key,maxBytes);
+            },
+        };
+        await assert.rejects(advanceProjectKeyRun({database:ctx.files.pool,
+            source,destination:destination(keys,writes),
+            runId:run.id,projectId:ctx.id,apply:true,maxFiles:2}),/catalogue changed/);
+        assert.equal(injected,true);
+        assert.deepEqual(writes,[],"not even the manifest's first target may be copied after drift");
+        assert.equal(keys.size,0);
+        assert.equal((await projectKeyLedgerStatus(ctx.files.pool,run.id)).receipts,0);
+        // The saved manifest stays immutable; a retry must reject the drift,
+        // rather than copying the newly inserted live-catalogue row.
+        await assert.rejects(advanceProjectKeyRun({database:ctx.files.pool,
+            source:local,destination:destination(keys,writes),
+            runId:run.id,projectId:ctx.id,apply:true}),/catalogue changed/);
+        assert.deepEqual(writes,[]);
+    } finally { await ctx.close(); }
+});
+
+test("Earlier manifest row changed mid-copy cannot slip through a matching last-row cursor",async()=>{
+    const ctx=await setup();
+    try {
+        const first=await upload(ctx.files,ctx.id,"first-row");
+        await upload(ctx.files,ctx.id,"second-row");
+        const run=await captureProjectKeyRun(ctx.files.pool,ctx.id);
+        assert.equal(run.objectCount,2);
+        const earlier=run.items[0]!.row.file_id;
+        const later=run.items[1]!.row.file_id;
+        const local=new LocalObjectStore(ctx.root);
+        let changed=false;
+        const source:BoundedCopyStore={
+            async getBounded(key,maxBytes) {
+                if (!changed) {
+                    changed=true;
+                    await ctx.files.archive({kind:"project",id:ctx.id},earlier);
+                }
+                return local.getBounded(key,maxBytes);
+            },
+        };
+        const objects=new Map<string,Buffer>(),writes:string[]=[];
+        await assert.rejects(advanceProjectKeyRun({database:ctx.files.pool,
+            source,destination:destination(objects,writes),runId:run.id,
+            projectId:ctx.id,apply:true,maxFiles:2}),/catalogue changed/);
+        assert.equal(changed,true);
+        assert.equal(run.items[1]!.row.file_id,later,"last cursor remains unchanged");
+        assert.equal(writes.length,0);
+        assert.equal((await projectKeyLedgerStatus(ctx.files.pool,run.id)).receipts,0);
+        assert.equal(first.id===earlier || first.id===later,true);
+    } finally { await ctx.close(); }
+});
