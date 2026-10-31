@@ -13,7 +13,7 @@ import { createHttpTransport } from '../apps/server/src/api/http/index.js';
 after(cleanupDatabases);
 const ack = (socket: WebSocket) => once(socket, 'message').then(([bytes]) => JSON.parse(String(bytes)) as any);
 
-test('queue configuration is strictly additional to ordinary directional approval', () => {
+test('queue configuration is strictly additional to ordinary directional approval', async () => {
     const source = randomUUID(), target = randomUUID();
     const base = { DATABASE_URL: 'postgresql://example.invalid/db' };
     const { supportsAndroidInbox } = await import('../apps/server/src/infrastructure/nodes/durable-share-inbox.js');
