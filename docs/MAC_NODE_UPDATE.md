@@ -16,7 +16,7 @@ LaunchAgent, and the updater scripts from this repository.
 
 Run from the repository checkout:
 
-\`\`\`bash
+```bash
 python3 scripts/macos-node-update.py status
 python3 scripts/macos-node-update.py check
 python3 scripts/macos-node-update.py check --json
@@ -29,10 +29,10 @@ python3 scripts/macos-node-update.py update
 
 # Roll back to the preceding LaunchAgent, with interactive confirmation
 python3 scripts/macos-node-update.py rollback
-\`\`\`
+```
 
 **There is no automatic installation.** The command displays the exact stable
-release tag and requires typing \`UPDATE node-vVERSION-SHA\`. It checks the
+release tag and requires typing `UPDATE node-vVERSION-SHA`. It checks the
 public release catalogue twice, including full source SHA, asset digest,
 monotonic same-version release sequence and the observed launchd entrypoint.
 It then downloads and verifies the selected archive against immutable release
@@ -48,10 +48,10 @@ the already-tested launchd lifecycle. That lifecycle uses one exclusive lock,
 journals changes before cutover, checks old PID termination, requires a fresh
 local connected heartbeat with a new PID and rolls back on failure. The
 coordinator pins the expected pre-update entrypoint inside that same lifecycle
-lock so concurrent \`atlasctl\` or lifecycle operations cannot silently turn
+lock so concurrent `atlasctl` or lifecycle operations cannot silently turn
 the approved upgrade into a downgrade.
 
-It preserves the original \`ATLAS_NODE_ENV_FILE\` path, LaunchAgent label,
+It preserves the original `ATLAS_NODE_ENV_FILE` path, LaunchAgent label,
 Node identity and workspaces. It doesn't copy the credential into the release
 folder or install a second Node. A fresh *local* heartbeat is **not** proof of
 authenticated Server-side registration. Verify the existing UUID in Atlas
@@ -59,8 +59,8 @@ Nodes after any real-host drill; verify sharing and Workspaces too.
 
 ## Status and recovery
 
-\`status --json\` reports local install kind, current entrypoint, PID, pending
-recovery and whether a rollback plist exists. \`check --json\` adds the latest
+`status --json` reports local install kind, current entrypoint, PID, pending
+recovery and whether a rollback plist exists. `check --json` adds the latest
 catalogue candidate, full source, archive digest and candidate-only verification
 state. A catalogue entry is **not verified signed code** until staging.
 
@@ -71,10 +71,10 @@ offline GitHub release check fails without changing the Node.
 
 If recovery is pending, use:
 
-\`\`\`bash
+```bash
 python3 scripts/macos-node-lifecycle.py recover
 python3 scripts/macos-node-update.py status
-\`\`\`
+```
 
 If the watchdog is loaded but outdated or modified, stop and inspect the
 existing installation. Do not delete/replace it while launchd is active.
