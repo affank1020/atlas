@@ -122,7 +122,11 @@ export async function rehearseProjectCutover(input:{
         // in the selected schema is concurrently dropped before LOCK.
         // The schema name is regex/identity checked above and SQL-quoted by
         // PostgreSQL; this setting is transaction-local and always rolled back.
-        await client.query("SELECT set_config('search_path',quote_ident($1),true)",[location.schema]);
+        // List pg_temp explicitly LAST: otherwise PostgreSQL may search
+        // temporary relations ahead of our schema even after pinning it.
+        await client.query(
+            "SELECT set_config('search_path','pg_catalog,' || quote_ident($1) || ',pg_temp',true)",
+            [location.schema]);
         await client.query("SET LOCAL lock_timeout='2500ms'");
         await client.query("SET LOCAL statement_timeout='15000ms'");
         // These locks serialize INSERT/UPDATE/DELETE across all three tables
