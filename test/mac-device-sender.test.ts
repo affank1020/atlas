@@ -168,7 +168,7 @@ test('local share IPC is private, strict, and never echoes submitted text', asyn
         assert.equal(delivered, 1, 'a local client must not bypass the native approval');
         const deliveryId=randomUUID();
         assert.deepEqual(await ipc(path,{action:'queue',targetNodeId:target,
-            text:'secret message',deliveryId}),{ok:true,result:{deliveryId,status:'queued',queued:true}});
+            text:'secret message',deliveryId}),{ok:true,result:{cancelled:true}});
         assert.equal(queued,0,'a denied queue must not enqueue');
         approvalGranted=true;
         assert.deepEqual(await ipc(path,{action:'queue',targetNodeId:target,
