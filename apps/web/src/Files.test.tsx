@@ -198,6 +198,39 @@ test('Portfolio originals and variants appear read-only under their Project and 
     await waitFor(() => expect(screen.queryByText('old.png')).not.toBeInTheDocument());
 });
 
+test('Pending Portfolio catalogue cannot block native files, controls or folder navigation', async () => {
+    vi.mocked(listFiles).mockImplementation(async (_owner, _status, destination) =>
+        destination === null ? [saved] as never : []);
+    vi.mocked(listProjectFolders).mockResolvedValue([firstFolder] as never);
+    // This promise deliberately never settles, simulating a stalled optional request.
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(() => new Promise(() => {}));
+    render(<Files />);
+    expect(await screen.findByText('research.pdf')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Refresh/ })).toBeEnabled();
+    expect(screen.queryByRole('status', { name: 'Loading files' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Modules' }));
+    await waitFor(() => expect(listFiles).toHaveBeenCalledWith(owner, 'active', folderId));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New folder' })).toBeEnabled());
+});
+
+test('Late Portfolio response from previous Project is ignored after switching Projects', async () => {
+    let resolveOld: ((rows: Awaited<ReturnType<typeof listPortfolioProjectMedia>>) => void) | undefined;
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(id => id === projectId
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve([]));
+    render(<Files />);
+    await waitFor(() => expect(resolveOld).toBeDefined());
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: otherProject } });
+    await waitFor(() => expect(listPortfolioProjectMedia).toHaveBeenCalledWith(otherProject));
+    resolveOld?.([{ id: '00000000-0000-4000-8000-000000000099', projectId,
+        fileName: 'stale.png', mimeType: 'image/png', byteSize: 1, checksum: 'a'.repeat(64),
+        status: 'active', createdAt: firstFolder.createdAt, updatedAt: firstFolder.updatedAt,
+        url: null, variants: [] }]);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled());
+    expect(screen.queryByText('stale.png')).not.toBeInTheDocument();
+});
+
 test('Portfolio projection failures do not hide native Project files', async () => {
     vi.mocked(listFiles).mockResolvedValue([saved] as never);
     vi.mocked(listPortfolioProjectMedia).mockRejectedValue(new Error('Media projection unavailable'));
