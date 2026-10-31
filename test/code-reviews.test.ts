@@ -36,7 +36,7 @@ test('Code Reviews is a project-owned first-party Application', () => {
     assert.equal(app.list(CODE_REVIEWS_PROJECT_ID)[0]?.slug, 'code-reviews');
     assert.equal(app.list('some-other-project').length, 0);
     assert.throws(() => app.get(null, 'code-reviews'), /not found/);
-    for (const operation of ['code_reviews_overview', 'code_reviews_list_runs', 'code_reviews_list_findings']) {
+    for (const operation of ['code_reviews_overview', 'code_reviews_dashboard', 'code_reviews_list_runs', 'code_reviews_list_findings']) {
         assert.equal(app.hasTool(operation), true);
     }
 });

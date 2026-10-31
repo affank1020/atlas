@@ -100,6 +100,38 @@ export function mockCodeReviewTool(name: string, input: Record<string, unknown>)
     switch (name) {
         case 'code_reviews_overview':
             return { projectId, reviewRuns: runs.length, findingObservations: findings.length };
+        case 'code_reviews_dashboard': {
+            const statuses: Record<number, 'open' | 'closed' | 'unavailable'> = {
+                59: 'open', 42: 'closed', 54: 'unavailable',
+            };
+            const groups = new Map<string, {
+                key: string; repository: string; prNumber: number;
+                latest: Record<string, unknown>; rounds: number; findings: number;
+                countsComplete: boolean; severities: Record<string, number>;
+                status: 'open' | 'closed' | 'unavailable';
+                reviewFreshness: 'current' | 'outdated' | 'unknown';
+            }>();
+            for (const run of runs) {
+                const n = Number(run.data.prNumber);
+                const key = repository.toLowerCase() + '#' + n;
+                let group = groups.get(key);
+                if (!group) {
+                    group = { key, repository, prNumber: n,
+                        latest: { id: run.id, ...run.data }, rounds: 0, findings: 0,
+                        countsComplete: true, severities: { sev1: 0, sev2: 0, sev3: 0, sev4: 0 },
+                        status: statuses[n] ?? 'unavailable',
+                        reviewFreshness: statuses[n] === 'unavailable' ? 'unknown' : 'current' };
+                    groups.set(key, group);
+                }
+                group.rounds++;
+                const counts = run.data.counts as Record<string, number>;
+                for (const severity of ['sev1', 'sev2', 'sev3', 'sev4']) {
+                    group.severities[severity] += counts[severity] ?? 0;
+                    group.findings += counts[severity] ?? 0;
+                }
+            }
+            return { totalRuns: runs.length, groups: [...groups.values()] };
+        }
         case 'code_reviews_list_runs':
             return page(runs, input);
         case 'code_reviews_list_findings':

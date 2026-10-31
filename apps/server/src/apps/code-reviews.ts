@@ -6,6 +6,7 @@ import type { GitHubReviewHistoryReader } from './github-review-history.js';
 import { structuredReviewSchema, assertStructuredCaller, existingStructuredReview, saveStructuredReview, type StructuredReview } from './review-submission.js';
 import type { AtlasData } from '../types.js';
 import { readCanonicalPrPage, readPrTimeline } from './review-timeline.js';
+import { readReviewDashboard } from './review-dashboard.js';
 import type { ReviewPublicationService } from './review-publication.js';
 import type { ManagedSummaryPreviewService } from './managed-summary.js';
 import type { ManagedSummaryPublicationService } from './managed-summary-publication.js';
@@ -290,6 +291,14 @@ export class CodeReviewsService {
         return readPrTimeline(this.catalog, ids, repository.toLowerCase(), prNumber, limit, offset, true);
     }
 
+    async dashboard() {
+        const ids = await this.storeIds();
+        const verify = this.history?.currentHead
+            ? (repository: string, prNumber: number) => this.history!.currentHead!(repository, prNumber)
+            : undefined;
+        return readReviewDashboard(this.catalog, ids.runs, verify);
+    }
+
     async overview() {
         const ids = await this.storeIds();
         const [runs, findings] = await Promise.all([
@@ -505,6 +514,11 @@ export function codeReviewsApplication(service: CodeReviewsService): Application
                     apply: z.boolean().default(false) },
                 invoke: ({ runId, includeInline, apply }: { runId: string; includeInline: boolean; apply: boolean },
                     caller?: ApplicationCaller) => service.publishReview(runId, includeInline, apply, caller),
+            },
+            {
+                name: 'code_reviews_dashboard',
+                description: 'Read all bounded saved PR review aggregates with independently checked GitHub open/closed status. Unverifiable state is unavailable, never closed. No writes.',
+                inputSchema: {}, invoke: () => service.dashboard(),
             },
             {
                 name: 'code_reviews_list_findings',
