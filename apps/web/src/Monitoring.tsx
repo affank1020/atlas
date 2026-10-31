@@ -153,9 +153,20 @@ function ActivityPanel({ filters, projectId, refreshVersion = 0 }: {
     ];
     const advancedCount = advancedKeys.filter(key =>
         Boolean(filters[key]) && !(key === 'projectId' && projectId)).length;
-    // Keep named Project Workspace selection and bookmarked advanced scopes visible on entry.
-    // The user can still collapse the native disclosure when it is not needed.
+    // Open a newly selected technical scope even when a same-tab Activity link
+    // reuses this component. Do not override a manual collapse when unrelated
+    // filters or the current scope's page/refresh change.
+    const advancedScopeKey = advancedKeys
+        .filter(key => Boolean(filters[key]) && !(key === 'projectId' && projectId))
+        .map(key => [key, filters[key]]);
+    const advancedScopeSignature = JSON.stringify(advancedScopeKey);
     const [advancedOpen, setAdvancedOpen] = useState(Boolean(projectId || advancedCount));
+    const previousAdvancedScope = useRef(advancedScopeSignature);
+    useEffect(() => {
+        if (previousAdvancedScope.current === advancedScopeSignature) return;
+        previousAdvancedScope.current = advancedScopeSignature;
+        if (advancedScopeKey.length > 0) setAdvancedOpen(true);
+    }, [advancedScopeSignature]);
     const hasActiveFilters = Object.entries(filters).some(([key, value]) =>
         Boolean(value) && key !== 'live' && key !== 'offset' && !(key === 'projectId' && projectId))
         || search !== (filters.search ?? '')
