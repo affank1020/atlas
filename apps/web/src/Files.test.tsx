@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Files } from './Files';
+import { useListProjectsQuery } from './atlasApi';
 import {
     archiveFile, archiveProjectFolder, createProjectFolder, downloadFile, listFiles, listProjectFolders,
     moveProjectFile, renameProjectFolder, restoreFile, restoreProjectFolder, uploadFile,
@@ -23,10 +24,10 @@ const saved = {
 } as const;
 
 vi.mock('./atlasApi', () => ({
-    useListProjectsQuery: () => ({
+    useListProjectsQuery: vi.fn(() => ({
         data: [{ id: projectId, name: 'Research' }, { id: otherProject, name: 'University' }],
         isLoading: false, error: null, isFetching: false, refetch: vi.fn(),
-    }),
+    })),
 }));
 vi.mock('./filesApi', () => ({
     listFiles: vi.fn(), listProjectFolders: vi.fn(), uploadFile: vi.fn(), downloadFile: vi.fn(),
@@ -168,4 +169,18 @@ test('Downloads and archives stay scoped to selected Project', async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive research.pdf' }));
     await waitFor(() => expect(archiveFile).toHaveBeenCalledWith(owner, saved.id));
     confirm.mockRestore();
+});
+
+test('pending Project selection shows a Files skeleton instead of an empty message or zero files', async () => {
+    vi.mocked(useListProjectsQuery).mockReturnValueOnce({
+        data: undefined, isLoading: true, isFetching: true, error: null, refetch: vi.fn(),
+    } as never);
+    const view = render(<Files />);
+    expect(screen.getByRole('status', { name: 'Loading projects' })).toBeInTheDocument();
+    expect(screen.queryByText('No Projects available. Create a Project to store files.')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 files · 0 B')).not.toBeInTheDocument();
+    expect(listFiles).not.toHaveBeenCalled();
+    view.rerender(<Files />);
+    expect(await screen.findByText('This folder is empty')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading projects' })).not.toBeInTheDocument();
 });

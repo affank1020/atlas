@@ -878,3 +878,26 @@ test('Workspace activity survives checkout close but resets across Workspace nav
     }, expect.any(AbortSignal)));
     expect(activityCalls()).toHaveLength(4);
 });
+
+test('Git actions use compact inspector placeholders until Git inspection resolves', async () => {
+    const status = deferred<{
+        available: boolean; branch: string; head: string; dirty: boolean; originRepository: string;
+    }>();
+    const original = vi.mocked(callTool).getMockImplementation();
+    vi.mocked(callTool).mockImplementation(async (name, input) => {
+        if (name === 'workspace_git_status') return await status.promise as never;
+        return original!(name, input) as never;
+    });
+    render(<Workspaces />);
+    const browser = screen.getByRole('region', { name: 'Workspace browser' });
+    await within(browser).findByRole('button', { name: 'Browse Atlas' });
+    openWorkspaceCheckout(browser, 'Atlas');
+    const inspector = screen.getByRole('region', { name: 'Checkout details' });
+    fireEvent.click(within(inspector).getByText('Git actions'));
+    expect(within(inspector).getByRole('status', { name: 'Loading Git actions' })).toHaveAttribute('aria-busy', 'true');
+    expect(within(inspector).queryByRole('button', { name: 'Create worktree' })).not.toBeInTheDocument();
+    status.resolve({ available: true, branch: 'atlas/feature', head: sha,
+        dirty: false, originRepository: 'example/atlas' });
+    expect(await within(inspector).findByRole('button', { name: 'Create worktree' })).toBeInTheDocument();
+    expect(within(inspector).queryByRole('status', { name: 'Loading Git actions' })).not.toBeInTheDocument();
+});
