@@ -2,18 +2,33 @@ import { createHash } from 'node:crypto';
 import { AtlasError } from '../shared/errors.js';
 import type { NodeService } from './service.js';
 import type { NodeShareApprovals } from './share-approvals.js';
-import { RemoteNodeRuntime } from '../infrastructure/nodes/remote-runtime.js';
+import type { NodeRuntime } from '@atlas/protocol/runtime';
+import type { DeviceImageDelivery } from '@atlas/protocol/device-protocol';
 import { MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
 import { imageDimensions } from '@atlas/protocol/image-format';
 
 const LIMIT_CONCURRENT = 4;
+const PREAUTH_CONCURRENT = 24;
+const PREAUTH_RATE_PER_MINUTE = 60;
+const PREAUTH_PEER_LIMIT = 128;
+const AUTHENTICATED_RATE_LIMIT = 512;
 const TTL_MS = 45_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type LiveImageOffer = {
     sourceId: string; targetId: string; deliveryId: string;
     mimeType: 'image/png' | 'image/jpeg'; sha256: string; bytes: Buffer;
 };
-type Entry = LiveImageOffer & { expiresAt: number; claimed: boolean; targetRuntime: RemoteNodeRuntime };
+/** Domain-facing interface: delivery is implemented by the live remote adapter,
+ * but the domain must not import infrastructure/nodes. */
+export type ImageDeliveryRuntime = NodeRuntime & {
+    deliverDeviceImage(input: Omit<DeviceImageDelivery, 'type' | 'kind' | 'requestId'>):
+        Promise<{ accepted: boolean }>;
+};
+function canDeliverImage(runtime: NodeRuntime | undefined): runtime is ImageDeliveryRuntime {
+    if (!runtime || !runtime.getCapabilities().includes('device.image.receive')) return false;
+    return typeof (runtime as Partial<ImageDeliveryRuntime>).deliverDeviceImage === 'function';
+}
+type Entry = LiveImageOffer & { expiresAt: number; claimed: boolean; targetRuntime: ImageDeliveryRuntime };
 
 /** In-memory and ephemeral: no image is written to PostgreSQL, R2, logs,
  * Workspace storage, or WebSocket JSON. This is NOT the offline inbox.
@@ -25,34 +40,85 @@ export class LiveImageRelay {
     private readonly entries = new Map<string, Entry>();
     private readonly seenIds = new Map<string, number>();
     private readonly rate = new Map<string, { window: number; count: number }>();
+    // Keyed by the actual socket peer (not client-supplied Node UUID or XFF).
+    // Reverse-proxy deployments must also apply upstream edge rate limits;
+    // this small, hard-bounded map protects DB authentication from floods.
+    private readonly preAuthPeers = new Map<string, { window: number; count: number }>();
+    private pendingAuthentications = 0;
     constructor(private readonly nodes: NodeService, private readonly approvals: NodeShareApprovals,
         private readonly imagePairs: ReadonlySet<string> = new Set()) {}
     private imageAllowed(source: string, target: string) {
         return this.imagePairs.has(source.toLowerCase() + ':' + target.toLowerCase());
     }
 
-    async admit(sourceId: string, targetId: string, credential: string): Promise<{
-        target: RemoteNodeRuntime; sourceRuntime: object; release: () => void;
-    }> {
-        const source = sourceId.toLowerCase(), target = targetId.toLowerCase();
-        if (!UUID.test(source) || !UUID.test(target) || source === target ||
-            this.active >= LIMIT_CONCURRENT || this.sourceActive.has(source))
-            throw new AtlasError('Image transfer is unavailable or busy.', 'SHARE_BUSY');
-        // Per-sender admission budget is bounded before DB or body reads;
-        // concurrent limits alone would permit repeated expensive dialogs.
+    private preAuthenticate(peerAddress: string): () => void {
+        if (this.pendingAuthentications >= PREAUTH_CONCURRENT)
+            throw new AtlasError('Image authentication is busy.', 'SHARE_BUSY');
         const now = Date.now();
-        if (this.rate.size >= 512) {
-            for (const [id, entry] of this.rate)
-                if (now - entry.window >= 60_000) this.rate.delete(id);
+        for (const [key, value] of this.preAuthPeers) {
+            if (now - value.window >= 60_000) this.preAuthPeers.delete(key);
+        }
+        // A peer key is the socket's actual network address, not a request
+        // header, and the map never grows beyond PREAUTH_PEER_LIMIT.
+        const peer = peerAddress.slice(0, 100) || 'unknown';
+        const previous = this.preAuthPeers.get(peer);
+        if (previous?.count && previous.count >= PREAUTH_RATE_PER_MINUTE)
+            throw new AtlasError('Image authentication rate limited.', 'SHARE_RATE_LIMIT');
+        if (!previous && this.preAuthPeers.size >= PREAUTH_PEER_LIMIT)
+            this.preAuthPeers.delete(this.preAuthPeers.keys().next().value!);
+        this.preAuthPeers.set(peer, previous
+            ? { window: previous.window, count: previous.count + 1 }
+            : { window: now, count: 1 });
+        this.pendingAuthentications++;
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            this.pendingAuthentications--;
+        };
+    }
+
+    private chargeAuthenticatedSender(source: string) {
+        const now = Date.now();
+        for (const [id, item] of this.rate) {
+            if (now - item.window >= 60_000) this.rate.delete(id);
         }
         const previous = this.rate.get(source);
-        const budget = previous && now - previous.window < 60_000
-            ? previous : { window: now, count: 0 };
-        if (budget.count >= 12)
+        if (previous && previous.count >= 12)
             throw new AtlasError('Image transfer rate limited.', 'SHARE_RATE_LIMIT');
-        budget.count++;
-        this.rate.set(source, budget);
-        // Reserve before async DB authentication and before reading any bytes.
+        if (!previous && this.rate.size >= AUTHENTICATED_RATE_LIMIT)
+            this.rate.delete(this.rate.keys().next().value!);
+        this.rate.set(source, previous
+            ? { window: previous.window, count: previous.count + 1 }
+            : { window: now, count: 1 });
+    }
+
+    get authenticatedRateEntries() { return this.rate.size; }
+    get preAuthRateEntries() { return this.preAuthPeers.size; }
+    get pendingAuthCount() { return this.pendingAuthentications; }
+
+
+    async admit(sourceId: string, targetId: string, credential: string,
+        peerAddress = 'unknown'): Promise<{
+        target: ImageDeliveryRuntime; sourceRuntime: NodeRuntime; release: () => void;
+    }> {
+        const source = sourceId.toLowerCase(), target = targetId.toLowerCase();
+        if (!UUID.test(source) || !UUID.test(target) || source === target)
+            throw new AtlasError('Invalid image transfer identities.', 'SHARE_INVALID');
+
+        // Invalid credentials must never change another Node's rate budget or
+        // reserve its active-transfer slot. Only cheap, independently keyed,
+        // bounded pre-auth checks run before credential authentication.
+        const finishAuth = this.preAuthenticate(peerAddress);
+        try { await this.nodes.identity!.authenticate(source, credential); }
+        finally { finishAuth(); }
+
+        if (this.active >= LIMIT_CONCURRENT || this.sourceActive.has(source))
+            throw new AtlasError('Image transfer is unavailable or busy.', 'SHARE_BUSY');
+        this.chargeAuthenticatedSender(source);
+
+        // Synchronous reservation after the verified identity, before any
+        // further awaits; concurrent requests from one Node cannot race it.
         this.active++;
         this.sourceActive.add(source);
         let released = false;
@@ -63,7 +129,6 @@ export class LiveImageRelay {
             this.sourceActive.delete(source);
         };
         try {
-            await this.nodes.identity!.authenticate(source, credential);
             const sender = await this.nodes.get(source);
             const receiver = await this.nodes.get(target);
             const senderRuntime = this.nodes.runtimes.get(source);
@@ -73,8 +138,7 @@ export class LiveImageRelay {
                 !sender.capabilities.includes('device.image.send') ||
                 !senderRuntime?.getCapabilities().includes('device.image.send') ||
                 !receiver.capabilities.includes('device.image.receive') ||
-                !(targetRuntime instanceof RemoteNodeRuntime) ||
-                !targetRuntime.getCapabilities().includes('device.image.receive') ||
+                !canDeliverImage(targetRuntime) ||
                 !this.imageAllowed(source, target) ||
                 !(await this.approvals.allowedForInbox(source, target)))
                 throw new AtlasError('Image transfer to that Node is not authorised.', 'SHARE_DENIED');
@@ -85,7 +149,7 @@ export class LiveImageRelay {
         }
     }
 
-    async deliver(admitted: {target: RemoteNodeRuntime; sourceRuntime: object}, offer: LiveImageOffer, credential: string): Promise<{accepted: boolean}> {
+    async deliver(admitted: {target: ImageDeliveryRuntime; sourceRuntime: NodeRuntime}, offer: LiveImageOffer, credential: string): Promise<{accepted: boolean}> {
         const sourceId = offer.sourceId.toLowerCase(), targetId = offer.targetId.toLowerCase();
         const key = offer.deliveryId.toLowerCase();
         if (!UUID.test(key) || !UUID.test(sourceId) || !UUID.test(targetId) ||
