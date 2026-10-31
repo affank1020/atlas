@@ -22,6 +22,19 @@ export function SkeletonCards({ count = 3, label = 'Loading cards', decorative =
         </div>)}
     </div>;
 }
+/** Match the single-column, inset application rows rather than the directory's cards. */
+export function SkeletonProjectApplications({ count = 3 }: { count?: number }) {
+    return <div className="application-grid" role="status" aria-label="Loading project applications" aria-busy="true">
+        {Array.from({ length: count }, (_, index) => <div className="application-card application-card-skeleton" key={index} aria-hidden="true">
+            <span className="atlas-skeleton atlas-skeleton-icon application-card-skeleton-icon" />
+            <span className="application-card-details atlas-skeleton-lines">
+                <SkeletonLine width="short" /><SkeletonLine width="long" /><SkeletonLine width="short" />
+            </span>
+            <span className="atlas-skeleton application-card-skeleton-launch" />
+        </div>)}
+    </div>;
+}
+
 export function SkeletonApplicationWindow() {
     return <div className="atlas-skeleton-app-window" role="status" aria-label="Loading application interface" aria-busy="true">
         <SkeletonLine width="short" /><SkeletonCards count={3} decorative />
