@@ -11,7 +11,7 @@ export function macShareSocketPath(): string {
 }
 
 const MAX_LOCAL_REQUEST = 80 * 1024; // UTF-8 JSON up to 16,384 UTF-16 characters.
-type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare'>;
+type ShareControl = Pick<StandaloneNode, 'shareRecipients' | 'sendDeviceShare' | 'queueDeviceShare'>;
 type Approve = (targetId: string, text: string) => Promise<boolean>;
 
 /** A local socket caller is not proof that the user consented. Require a
@@ -125,6 +125,23 @@ export async function startMacShareControlServer(
                             result = { cancelled: true };
                         } else {
                             result = await node.sendDeviceShare(data.targetNodeId, data.text);
+                        }
+                    } else if (data.action === 'queue' && Object.keys(data).length === 4 &&
+                        typeof data.targetNodeId === 'string' && typeof data.text === 'string' &&
+                        typeof data.deliveryId === 'string') {
+                        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+                            .test(data.targetNodeId) ||
+                            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+                            .test(data.deliveryId) ||
+                            !data.text.trim() || data.text.length > 16_384)
+                            throw Error('Invalid request');
+                        // Same explicit native approval as live Send, including
+                        // the destination. Never enqueue from an IPC call alone.
+                        if (!await approve(data.targetNodeId,data.text) || socket.destroyed) {
+                            result = { cancelled: true };
+                        } else {
+                            result = await node.queueDeviceShare(
+                                data.targetNodeId,data.text,data.deliveryId);
                         }
                     } else throw Error('Invalid request');
                     socket.end(JSON.stringify({ ok: true, result }) + '\n');
