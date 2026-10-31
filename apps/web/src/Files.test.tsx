@@ -219,6 +219,15 @@ test('Pending Portfolio catalogue cannot block native files, controls or folder 
     await waitFor(() => expect(screen.getByRole('button', { name: 'New folder' })).toBeEnabled());
 });
 
+test('Empty native Project has its own ready controls while Portfolio remains pending', async () => {
+    vi.mocked(listPortfolioProjectMedia).mockImplementation(() => new Promise(() => {}));
+    render(<Files />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Upload files' })).toBeEnabled());
+    expect(screen.getByRole('status', { name: 'Loading Portfolio media' })).toBeInTheDocument();
+    expect(screen.queryByText('This folder is empty')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading files' })).not.toBeInTheDocument();
+});
+
 test('Late Portfolio response from previous Project is ignored after switching Projects', async () => {
     let resolveOld: ((rows: Awaited<ReturnType<typeof listPortfolioProjectMedia>>) => void) | undefined;
     vi.mocked(listPortfolioProjectMedia).mockImplementation(id => id === projectId
