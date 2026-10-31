@@ -3,9 +3,12 @@ import { randomUUID } from 'node:crypto';
 import test, { after } from 'node:test';
 import { databaseFixture, cleanupDatabases } from './database.js';
 import { AuditService } from '../apps/server/src/core/audit.js';
-import { recordR2SeedObservation } from '../apps/server/src/server/operational-audit.js';
+import { recordR2SeedObservation, runObservedR2Seed } from '../apps/server/src/server/operational-audit.js';
 import { projectMonitoringEvent } from '../apps/server/src/core/monitoring-projection.js';
-import type { SeedReport } from '../apps/server/src/server/r2-backup-seeding.js';
+import { seedR2Backup, type SeedReport, type SeedStore } from '../apps/server/src/server/r2-backup-seeding.js';
+import { ObjectNotFound } from '../apps/server/src/server/file-storage.js';
+import { createHash } from 'node:crypto';
+import { presentActivity } from '../apps/web/src/activity.js';
 import type { AuditEvent } from '../apps/server/src/types.js';
 
 after(cleanupDatabases);
@@ -137,4 +140,82 @@ test('Forged monitoring details on unrelated operations cannot appear as Files o
     const fakeBackup = projectMonitoringEvent({ ...base, operation: 'backup.r2_seed_observed',
         resulting: { runId:suspicious.runId, mode:'apply',status:'completed',source:'operator-cli' } });
     assert.equal(fakeBackup.resulting,undefined,'Only the operator CLI label may expose backup observations');
+});
+
+test('thrown R2 backup reads and PUTs produce safe, failed and inconclusive Monitoring events', async () => {
+    for (const stage of ['read', 'put'] as const) {
+        const f = await databaseFixture();
+        const project = await f.catalog.createProject({ name: 'Aborted seed ' + stage });
+        const id = randomUUID(), runId = randomUUID(), contents = Buffer.from('private backup source');
+        const checksum = createHash('sha256').update(contents).digest('hex');
+        const row = { ...fileRow(id, 'project', project.id), checksum,
+            storage_key: 'files-' + id.replaceAll('-', '') + '-' + checksum,
+            byte_size: contents.length };
+        await insertFile(f.store.pool, row);
+        let externalWriteAttempted = false;
+        const backup: SeedStore = {
+            async getBounded() {
+                if (stage === 'read') throw new Error('secret R2 endpoint and private object path');
+                throw new ObjectNotFound();
+            },
+            async putIfAbsent() {
+                externalWriteAttempted = true;
+                // A network timeout may occur AFTER the remote copy was made.
+                throw new Error('secret PUT response / private object path');
+            },
+        };
+        const primary: SeedStore = { async getBounded() { return contents; } };
+        const result = await runObservedR2Seed(f.store.pool, runId, 'apply', () =>
+            seedR2Backup({ database: f.store.pool, primary, backup, apply: true }));
+        assert.deepEqual(result, { kind: 'aborted', auditRecorded: true });
+        assert.equal(externalWriteAttempted, stage === 'put');
+
+        const audit = new AuditService(f.store);
+        const filtered = await audit.monitoring({
+            category: 'backup', operation: 'backup.r2_seed_observed',
+            outcome: 'failed', safeDetails: true,
+        });
+        assert.equal(filtered.total, 1, stage);
+        const event = filtered.items[0]!;
+        assert.equal(event.client, 'atlas-backup-cli');
+        assert.deepEqual(safe(event), {
+            runId, source: 'operator-cli', mode: 'apply',
+            status: 'aborted', outcome: 'failed',
+        });
+        assert.equal(presentActivity(filtered.items)[0]?.status, 'failed');
+        assert.ok(!JSON.stringify(filtered).includes('secret'));
+        assert.ok(!JSON.stringify(filtered).includes(row.storage_key));
+        assert.ok(!JSON.stringify(filtered).includes(id), 'backup event must not expose individual file ID');
+        assert.equal((await audit.monitoring({ outcome: 'completed', category: 'backup' })).total, 0);
+    }
+});
+
+test('empty seed reports have failed Monitoring outcome and report and audit failures remain distinct', async () => {
+    const f = await databaseFixture(), runId = randomUUID();
+    const missingStore: SeedStore = { async getBounded() { throw new ObjectNotFound(); } };
+    const result = await runObservedR2Seed(f.store.pool, runId, 'dry-run',
+        () => seedR2Backup({ database: f.store.pool, primary: missingStore, backup: missingStore }));
+    assert.equal(result.kind, 'reported');
+    if (result.kind !== 'reported') throw new Error('Seed unexpectedly aborted');
+    assert.equal(result.report.status, 'empty');
+    assert.equal(result.auditRecorded, true);
+    const audit = new AuditService(f.store);
+    const page = await audit.monitoring({ category: 'backup', outcome: 'failed',
+        operation: 'backup.r2_seed_observed', safeDetails: true });
+    assert.equal(page.total, 1);
+    assert.equal(safe(page.items[0]).status, 'empty');
+    assert.equal(safe(page.items[0]).outcome, 'failed');
+    assert.equal(presentActivity(page.items)[0]?.status, 'failed');
+    assert.equal((await audit.monitoring({ category: 'backup', outcome: 'completed' })).total, 0);
+
+    // A report is still valid if its independent audit insert fails. Do not
+    // reclassify the R2 result itself as a thrown/aborted seed.
+    const unavailable = { query: async () => { throw new Error('private DB URL'); } } as any;
+    const reportLost = await runObservedR2Seed(unavailable, randomUUID(), 'dry-run',
+        async () => result.report);
+    assert.equal(reportLost.kind, 'reported');
+    assert.equal(reportLost.auditRecorded, false);
+    const abortLost = await runObservedR2Seed(unavailable, randomUUID(), 'apply',
+        async () => { throw new Error('sensitive connection detail'); });
+    assert.deepEqual(abortLost, { kind: 'aborted', auditRecorded: false });
 });

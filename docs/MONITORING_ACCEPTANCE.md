@@ -13,7 +13,7 @@ This is a **checklist**, not evidence of a live VPS/browser acceptance test. App
 | Runtime diagnostics | Current Server process ring stores only fixed codes, max 100 on read | server-diagnostics tests |
 | Server history | Fixed codes survive restart, 14-day read window, missing database is unavailable and gaps remain possible | server-diagnostic-history tests, deployed restart drill |
 | Files and folders | New metadata changes appear under Files with database-derived Project/checkout scoping; rolled-back changes create no audit; no names, keys or contents | monitoring-files-backup tests and Web/Node transfer checks |
-| R2 recovery seeding | Manual run ID, mode, bounded counters and partial/failed state are visible; copy outcome is not a restore attestation | operational-audit tests and manual CLI drill |
+| R2 recovery seeding | Manual run ID and bounded outcomes visible; thrown reads/PUTs emit redacted aborted/inconclusive evidence if database is available; empty runs and aborts are failed, never completed | monitoring-files-backup tests, interrupted-upload injection and manual CLI drill |
 | Host PostgreSQL backups | Check encrypted snapshot and sidecar outside Atlas; never claim central audit or tested restore from manifest alone | Operator-only verification; not proven by CI |
 | Automation | No new Server scheduler is implied; existing Workspace task audit is separately scoped | Explicit capability inventory; test when a scheduler is introduced |
 | Node technical logs | Fixed approved sources, bounded lines and bytes, no arbitrary journal/path selection | node-logs and linux-journal tests |
