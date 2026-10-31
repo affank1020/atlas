@@ -14,11 +14,21 @@ This changes only the **foundation** for a durable, expiring offline text inbox.
 - `queued` explicitly does **not** mean `copied`. Only a future authenticated user action can mark `user_copied`; a simultaneous or expired decision is rejected.
 - The source still sends ordinary live shares through `device.share.submit`. Do not auto-queue ambiguous live delivery failures (a disconnect might conceal a successful clipboard write).
 
-## Not wired yet
+## Authenticated Node protocol (feature gated)
 
-The migration and repository class are not automatically accessible to clients. A follow-up integration must add new authenticated, versioned Node protocol operations, proper source and target identity binding, sender-side queue UX, Android inbox and notifications, and a cleanup worker. Physical phone sleep reliability additionally requires FCM push with opaque item IDs and private Firebase credentials.
+The gateway now accepts four distinct Node v2 operations when `ATLAS_DEVICE_INBOX_KEY` is configured on Atlas Server:
+- `device.inbox.enqueue` from an authenticated sender with `device.share.send`; its `targetNodeId`, `deliveryId`, and text are validated against the sender identity derived from the registered connection. Reply distinguishes `status: queued` from a clipboard receipt.
+- `device.inbox.list` from an authenticated Node with `device.share.receive`; returns up to 50 unexpired, still-approved item metadata records, not contents.
+- `device.inbox.read` from the authenticated receiving Node; decrypts only one unexpired, still-authorised item, with expiry and permission checks repeated before read.
+- `device.inbox.decide` from the authenticated receiving Node; atomically records `user_copied` or `declined` and erases stored ciphertext. The *client* remains responsible for only requesting `user_copied` after a successful explicit clipboard write.
 
-Until that integration, this is a **storage/security foundation only**, not an end-to-end offline-delivery feature. Do not deploy and advertise a persistent mobile inbox from this PR alone.
+Each operation independently authenticates the current socket credential and checks the relevant registered Node capability. The gateway bounds requests to one inflight operation and one per 500ms per session. Existing `device.share.submit` remains synchronous and unchanged.
+
+## Still required for the daily workflow
+
+No Mac `atlasctl share` queue option, Android inbox UI/polling or FCM wake-up is included yet. The server's standalone encrypted mailbox is **not by itself a functional asleep-tablet user experience**. A follow-up implementation must add the Mac explicit queue UX, Android inbox and notifications, cleanup worker, and push transport with opaque delivery IDs / private Firebase credentials. Physical phone sleep reliability additionally requires Android acceptance under Doze and force-stop.
+
+Do not deploy and advertise a complete persistent mobile inbox from this PR alone.
 
 ## Operations
 
