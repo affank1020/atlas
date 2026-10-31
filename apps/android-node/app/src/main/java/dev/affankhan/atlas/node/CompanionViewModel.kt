@@ -133,7 +133,6 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     private val pushRevocationCallbacks = mutableListOf<(PushRevocationResult) -> Unit>()
     var forgetInProgress by mutableStateOf(false)
         private set
-        private set
     private val recentIncoming = RecentIncomingShares()
     private var pendingIncomingResponse: ((IncomingShareOutcome) -> Unit)? = null
     private var incomingTimeoutTask: Runnable? = null
