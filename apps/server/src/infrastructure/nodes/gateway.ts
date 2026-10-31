@@ -5,8 +5,10 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { registrationSchema, registeredSchema, MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION } from '../../nodes/protocol.js';
 import type { NodeService } from '../../nodes/service.js';
 import { RemoteNodeRuntime } from './remote-runtime.js';
-import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema } from '@atlas/protocol/device-protocol';
+import { deviceShareSubmissionSchema, deviceShareRecipientsRequestSchema, deviceShareRecipientsResultSchema,
+    deviceShareQueueSubmissionSchema, deviceShareInboxListSchema, deviceShareInboxResolveSchema } from '@atlas/protocol/device-protocol';
 import { DeviceShareRelay } from './share-relay.js';
+import type { DurableDeviceShareInbox } from './durable-share-inbox.js';
 import type { NodeShareApprovals } from '../../nodes/share-approvals.js';
 import { AtlasError } from '../../shared/errors.js';
 
@@ -22,7 +24,8 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals) {
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals,
+        private readonly inbox?: DurableDeviceShareInbox) {
         this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
     }
     private track(task: Promise<unknown>) {
@@ -135,7 +138,12 @@ export class RemoteNodeGateway {
                         await this.nodes.identity!.authenticate(originId, credential);
                         if (this.sessions.get(originId) !== current)
                             throw new AtlasError('Source Node connection changed.', 'NODE_DISCONNECTED');
-                        const recipients = await this.nodes.shareRecipients(originId);
+                        const recipients = (await this.nodes.shareRecipients(originId)).map(recipient => ({
+                            ...recipient,
+                            queueAvailable: recipient.platform === 'android' &&
+                                this.inbox?.allowsQueue(originId, recipient.nodeId) === true &&
+                                recipient.status !== 'unavailable',
+                        }));
                         respond(true, deviceShareRecipientsResultSchema.parse({ recipients }));
                     } catch (error) {
                         const known = error instanceof AtlasError;
@@ -143,6 +151,55 @@ export class RemoteNodeGateway {
                             message: known ? error.message.slice(0, 200) : 'Recipient directory is unavailable.' });
                     } finally {
                         current.directoryPending = false;
+                    }
+                })();
+                this.track(task);
+                return;
+            }
+            const queued = deviceShareQueueSubmissionSchema.safeParse(message);
+            if (queued.success) {
+                const originId = id, current = session, submission = queued.data;
+                const task = (async () => {
+                    try {
+                        if (!this.inbox) throw new AtlasError('Queued delivery unavailable.', 'SHARE_QUEUE_DISABLED');
+                        const result = await this.inbox.queue({
+                            sourceId: originId, runtime: current?.runtime, credential, submission,
+                        });
+                        if (socket.readyState === WebSocket.OPEN && this.sessions.get(originId) === current)
+                            socket.send(JSON.stringify({ type: 'response', requestId: submission.requestId, ok: true, result }));
+                    } catch (error) {
+                        if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                        const known = error instanceof AtlasError;
+                        socket.send(JSON.stringify({ type: 'response', requestId: submission.requestId, ok: false,
+                            error: { code: known ? error.code : 'SHARE_UNAVAILABLE',
+                                message: known ? error.message.slice(0,200) : 'Queued delivery is unavailable.' } }));
+                    }
+                })();
+                this.track(task);
+                return;
+            }
+            const inboxList = deviceShareInboxListSchema.safeParse(message);
+            const inboxResolve = deviceShareInboxResolveSchema.safeParse(message);
+            if (inboxList.success || inboxResolve.success) {
+                const originId = id, current = session;
+                const requestId = inboxList.success ? inboxList.data.requestId : inboxResolve.data.requestId;
+                const task = (async () => {
+                    try {
+                        if (!this.inbox) throw new AtlasError('Queued delivery unavailable.', 'SHARE_QUEUE_DISABLED');
+                        const auth = { targetId: originId, runtime: current?.runtime, credential };
+                        const result = inboxList.success
+                            ? await this.inbox.list(auth)
+                            : await this.inbox.resolve({ ...auth,
+                                deliveryId: inboxResolve.data.deliveryId,
+                                accepted: inboxResolve.data.accepted });
+                        if (socket.readyState === WebSocket.OPEN && this.sessions.get(originId) === current)
+                            socket.send(JSON.stringify({ type: 'response', requestId, ok: true, result }));
+                    } catch (error) {
+                        if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                        const known = error instanceof AtlasError;
+                        socket.send(JSON.stringify({ type: 'response', requestId, ok: false,
+                            error: { code: known ? error.code : 'SHARE_UNAVAILABLE',
+                                message: known ? error.message.slice(0,200) : 'Inbox unavailable.' } }));
                     }
                 })();
                 this.track(task);

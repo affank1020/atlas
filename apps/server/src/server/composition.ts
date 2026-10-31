@@ -1,3 +1,4 @@
+import { DurableDeviceShareInbox } from '../infrastructure/nodes/durable-share-inbox.js';
 import { Pool } from 'pg';
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { NodeIdentity } from '../nodes/identity.js';
@@ -83,7 +84,10 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const nodes = new NodeService(new PostgresNodeRepository(repository.pool, healthPool), executionHost, config.node.name, identity, shareApprovals, new NodeUpdateIntentLedger(repository.pool));
     const health = new MonitoringHealthService(healthPool, { list: () => nodes.listForMonitoring() },
         undefined, undefined, undefined, diagnosticHistory);
-    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals);
+    const shareInbox = new DurableDeviceShareInbox(repository.pool, nodes,
+        config.deviceShares.approvedPairs, config.deviceShares.queuePairs, shareApprovals,
+        config.deviceShares.queueKey);
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, shareInbox);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
     const lifecycle = new ServerLifecycle([{ close: async () => { try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
