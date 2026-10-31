@@ -392,3 +392,56 @@ snapshot atomicity, physical recovery-host isolation or a working restored
 Atlas service. Actual reversible cutover needs independent recovery
 acceptance, a writer-quiescence boundary, new-upload handling, tested
 rollback and separate operator approval before any keys are changed.
+
+
+## Stage 8 — atomic metadata switch/rollback rehearsal, always rolled back
+
+The code-only follow-up to Stage 7 can rehearse the **full Project-wide**
+native Files and Portfolio metadata key transition *on a disposable local
+PostgreSQL database*. No production activation path is included. It uses
+the exact Stage 4B immutable copy-run metadata and Stage 5/6 independent
+recovery manifest, and requires **all** old/new copy and recovery receipts
+to match before attempting any temporary SQL updates.
+
+The simulator opens one SERIALIZABLE transaction with short lock timeouts,
+locks the three existing authoritative catalogue tables against concurrent
+writes, and reconciles the whole current Project manifest. It conditionally
+swaps each exact old storage key to its versioned target in the correct
+table (atlas_files, media_assets or media_variants), checks each target,
+then conditionally swaps each row *back* and rechecks the original catalogue
+SHA-256. It **always executes ROLLBACK**, even on a successful rehearsal:
+no COMMIT or permanent activation operation exists. No object storage
+client is instantiated, and no R2 GET/PUT/DELETE occurs. This avoids
+constructing a production cutover path before the independent recovery
+drill and approval gates are met.
+
+The operator CLI does **not** load the server .env or accept DATABASE_URL.
+It requires an explicitly supplied local disposable database URL named
+atlas_cutover_rehearsal (optional suffix), the independent environment
+gate and the exact simulation-only confirmation. Never run the command on a
+production host, a production DB port-forward, or a production-derived
+snapshot containing secrets. The hostname and database-name checks are
+defence in depth and cannot prove host isolation.
+
+~~~sh
+# On an isolated, disposable database restored with matching manifests:
+npm run build:server
+
+ATLAS_CUTOVER_REHEARSAL_ENABLED=1 \
+ATLAS_CUTOVER_REHEARSAL_DATABASE_URL=postgresql://localhost/atlas_cutover_rehearsal \
+npm run files:r2:project-cutover-rehearsal -- \
+  --simulate --project=PROJECT_UUID \
+  --key-run=KEY_COPY_RUN_UUID --recovery-run=RECOVERY_RUN_UUID \
+  --confirm=SIMULATE_PROJECT_CUTOVER_ROLLBACK
+~~~
+
+An all-passed report demonstrates only that these existing SQL table shapes
+support the reversible, atomic metadata swaps under the tested snapshot
+conditions. It does not demonstrate that an actual live write freeze is
+practical, that the latest production objects remain healthy, or that
+Atlas can restore from independent backup. Stage 7 read-only R2 checks
+and the independently isolated PostgreSQL/R2 recovery drill are separate
+requirements. The next approved cutover design must address new uploads,
+post-cutover recovery manifest semantics, live application reads, old/new
+URL behavior, source retention and independently observed rollback.
+No retention, owner reassignment or source-key retirement is implemented.
