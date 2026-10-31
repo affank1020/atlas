@@ -29,7 +29,7 @@ The app intentionally lives inside `apps/` without a `package.json` and does not
 
 ## 0.7.0 — Explicit queued-text Inbox
 
-Android retrieves encrypted-at-rest queued text from Atlas only after it reconnects and the user opens **Inbox → Refresh**. Listings disclose only sender IDs and delivery metadata, and **Review** obtains one decrypted item into process memory. Copy and Decline are explicit user decisions. Neither the server nor Android automatically changes the clipboard, and no text goes to SavedState or disk.
+Android 0.7 advertises the new **`device.inbox.receive`** capability in addition to its existing live `device.share.receive`. Previous Android builds and live-only Mac Nodes do **not** advertise it and cannot be queued to. Atlas Server checks this capability again before storing each message, preventing misleading success for unsupported recipients. Android retrieves encrypted-at-rest queued text from Atlas only after it reconnects and the user opens **Inbox → Refresh**. Listings disclose only sender IDs and delivery metadata, and **Review** obtains one decrypted item into process memory. Copy and Decline are explicit user decisions. Neither the server nor Android automatically changes the clipboard, and no text goes to SavedState or disk.
 
 Requires a server-only `ATLAS_DEVICE_INBOX_KEY` and the Mac `./atlasctl share --queue` command from the corresponding Node update. Does not include FCM, instant screen-off delivery or image transport. See [offline inbox setup](../../docs/MOBILE_OFFLINE_INBOX.md).
 
