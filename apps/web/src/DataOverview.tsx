@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useApplicationRead, useListProjectsQuery, useListStoresQuery, useStorageUsageQuery, useWorkspaceStatusQuery } from './atlasApi';
 import type { Project } from './types';
 import './data-overview.css';
+import { Skeleton, SkeletonRows } from './Skeletons';
 
 type MediaAsset = { id: string; status: string; byteSize: number };
 
@@ -70,12 +71,12 @@ function ProjectStorageRow({ project }: { project: Project }) {
             <button className="data-project-toggle" type="button" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(value => !value)}>
                 <span className={'data-chevron' + (expanded ? ' expanded' : '')} aria-hidden="true" />
                 <span className="data-project-title">{project.name}</span>
-                <span className="data-project-count">{stores.error ? 'Unavailable' : active ? active.length + (active.length === 1 ? ' store' : ' stores') : 'Loading…'}</span>
+                <span className="data-project-count">{stores.error ? 'Unavailable' : active ? active.length + (active.length === 1 ? ' store' : ' stores') : <Skeleton width={58} height={12} />}</span>
             </button>
         </div>
         {expanded && <div id={id} className="data-project-stores">
             {stores.error ? <div className="data-subtle">Stores unavailable. <button type="button" className="data-text-button" onClick={() => void stores.refetch()}>Retry</button></div> : null}
-            {!stores.error && stores.isLoading ? <span className="data-subtle">Loading collections…</span> : null}
+            {!stores.error && stores.isLoading ? <SkeletonRows label="Loading collections" variant="list" rows={3} /> : null}
             {active?.map(store => <a className="data-store-link" key={store.id} href={'#/projects/' + project.id + '/stores/' + store.id + '/records'}>
                 <span>{store.name}</span><span className="data-store-arrow" aria-hidden="true">↗</span>
             </a>)}
@@ -149,7 +150,7 @@ export function DataOverview() {
                 {projectsWithStores?.map(project => <ProjectStorageRow key={project.id} project={project} />)}
                 {!projects.isLoading && !projects.error && projectsWithStores?.length === 0 && <p className="data-empty">No project data yet.</p>}
                 {projects.error && <p className="data-empty">Projects unavailable. <button type="button" className="data-text-button" onClick={() => void projects.refetch()}>Retry</button></p>}
-                {projects.isLoading && !projects.data && <p className="data-empty" role="status">Loading projects…</p>}
+                {projects.isLoading && !projects.data && !projects.error && <SkeletonRows label="Loading project data" variant="list" rows={4} />}
             </div>
         </section>
 
@@ -166,7 +167,7 @@ export function DataOverview() {
                 {postgres.tables?.length === 0 && <p className="data-empty">No application tables found.</p>}
                 <p className="data-usage-note">Largest {postgres.tables?.length ?? 0} tables by total size. Database size includes additional PostgreSQL storage.</p>
             </div> : <div className="data-information-row">
-                <div><strong>PostgreSQL table usage</strong><p>{postgres?.state === 'unavailable' || usage.error ? 'Unable to read database statistics.' : 'Loading database statistics…'}</p></div>
+                <div><strong>PostgreSQL table usage</strong>{postgres?.state === 'unavailable' || usage.error ? <p>Unable to read database statistics.</p> : <SkeletonRows label="Loading database statistics" variant="table" rows={3} />}</div>
             </div>}
         </section>
 
@@ -175,7 +176,7 @@ export function DataOverview() {
             <a className="data-file-row" href="#/portfolio?tab=media">
                 <span className="data-file-icon" aria-hidden="true"><StorageSymbol kind="objects" /></span>
                 <span className="data-file-copy"><strong>Portfolio media</strong><small>Images, PDFs and generated variants</small></span>
-                <span className="data-file-side">{media.error ? 'Unavailable' : assets ? assets.length + (assets.length === 1 ? ' asset' : ' assets') : 'Loading…'}</span>
+                <span className="data-file-side">{media.error ? 'Unavailable' : assets ? assets.length + (assets.length === 1 ? ' asset' : ' assets') : <Skeleton width={55} height={12} />}</span>
                 <span className="data-store-arrow" aria-hidden="true">↗</span>
             </a>
         </section>

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import type { AtlasNode } from './Nodes';
 import './node-sharing.css';
+import { SkeletonRows } from './Skeletons';
 
 export type ShareApproval = {
     sourceNodeId: string;
@@ -20,10 +21,12 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [revision, setRevision] = useState(0);
+    const previousSource = useRef(source.id);
     useEffect(() => {
         let live = true;
         setLoading(true);
-        setLoaded(false);
+        if (previousSource.current !== source.id) { setLoaded(false); setApprovals([]); }
+        previousSource.current = source.id;
         setError('');
         callTool<ShareApproval[]>('list_node_share_approvals').then(value => {
             if (live) {
@@ -31,13 +34,21 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
                 setApprovals(value);
                 setLoaded(true);
             }
-        }).catch(err => { if (live) setError(err instanceof Error ? err.message : String(err)); })
+        }).catch(err => {
+            if (!live) return;
+            // A failed refresh invalidates previously displayed grants. Do not
+            // present old approvals as verified after a registry read fails.
+            setLoaded(false);
+            setApprovals([]);
+            setNotice('');
+            setError(err instanceof Error ? err.message : String(err));
+        })
           .finally(() => { if (live) setLoading(false); });
         return () => { live = false; };
     }, [source.id, revision]);
 
     async function change(target: AtlasNode, enabled: boolean) {
-        if (busyId || loading || !loaded) return;
+        if (busyId || loading || !loaded || error) return;
         const environmentGranted = approvals.some(entry =>
             entry.origin === 'environment' &&
             entry.sourceNodeId.toLowerCase() === source.id.toLowerCase() &&
@@ -79,7 +90,7 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
             Receiving Nodes must still be online and explicitly accept every share.</p>
         {error && <p role="alert" className="node-page-notice">{error}</p>}
         {notice && <p role="status" className="node-page-notice">{notice}</p>}
-        {loading ? <p role="status">Loading sharing approvals…</p>
+        {loading && !loaded && !error ? <SkeletonRows label="Loading sharing approvals" variant="list" rows={3} />
             : !loaded ? <p role="status">Sharing approval state is unknown. Refresh approvals to retry.</p>
             : !targets.length ? <p>No other Nodes are enrolled yet.</p>
             : <ul className="node-share-list">
@@ -101,7 +112,7 @@ export function NodeSharePermissions({ source, nodes }: {source: AtlasNode; node
                         </div>
                         {env && !managed ? <span className="badge muted">Read-only</span>
                             : <button type="button" className={managed ? 'ghost danger' : 'ghost'}
-                                disabled={busyId !== null || (!permission && !canApprove)}
+                                disabled={loading || !!error || busyId !== null || (!permission && !canApprove)}
                                 title={!permission && !canApprove ? 'Both Nodes require active credentials' : undefined}
                                 onClick={() => void change(target, !managed)}>
                                 {busyId === target.id ? 'Saving…' : managed && env ? 'Revoke Atlas approval' : managed ? 'Revoke access' : 'Approve sharing'}

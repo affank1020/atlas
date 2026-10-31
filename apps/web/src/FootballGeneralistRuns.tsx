@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
+import { SkeletonRows } from './Skeletons';
 
 type Run = {
     id: string; family: string; scenario?: string; state: string;
@@ -24,9 +25,9 @@ export function FootballGeneralistRuns() {
         return () => { mounted = false; window.clearInterval(interval); };
     }, []);
     return <section className="football-panel" aria-label="Generalist training runs">
-        <div className="football-panel-head"><h2>Generalist runs</h2><span>{runs.length} discovered</span></div>
+        <div className="football-panel-head"><h2>Generalist runs</h2><span>{loading && !runs.length ? "—" : runs.length} discovered</span></div>
         <p className="football-muted">Runs are discovered from the generalist trainer receipts, including those started outside Atlas. Unknown means process state has not been verified.</p>
-        {loading && <p role="status">Loading generalist runs…</p>}
+        {loading && !runs.length && !error && <SkeletonRows label="Loading generalist runs" variant="run" rows={4} />}
         {error && <p role="alert">{error}</p>}
         {!loading && !error && runs.length === 0 && <p>No generalist training receipts found.</p>}
         {runs.length > 0 && <div className="football-run-list">{runs.map(run =>
