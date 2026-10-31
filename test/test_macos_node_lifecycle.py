@@ -183,6 +183,21 @@ class MacLifecycleTests(unittest.TestCase):
         self.assertEqual(self.fake.commands, [])
         self.assertEqual((Path(self.old_env)).read_text(), "PLACEHOLDER_SECRET_NOT_A_REAL_NODE_TOKEN\n")
 
+    def test_pinned_entrypoint_refuses_racing_manager_before_cutover(self):
+        self.with_watchdog()
+        before = self.layout.plist.read_bytes()
+        before_count = len(self.fake.commands)
+        with self.assertRaisesRegex(lifecycle.Refused, "changed since update confirmation"):
+            lifecycle.manage(self.layout, ["activate", self.tag, "--confirm",
+                                           "--expect-entrypoint", "/other/checkout/main.js"])
+        self.assertEqual(self.layout.plist.read_bytes(), before)
+        self.assertFalse(self.layout.pending.exists())
+        self.assertFalse(any(cmd[:2] == ("launchctl", "bootout")
+                             for cmd in self.fake.commands[before_count:]))
+        lifecycle.manage(self.layout, ["activate", self.tag, "--confirm",
+                                       "--expect-entrypoint", str(self.home / "Documents/Atlas" / lifecycle.ENTRYPOINT)])
+        self.assertEqual(self.plist()["ProgramArguments"][1], str(self.release / lifecycle.ENTRYPOINT))
+
     def test_verified_release_activates_with_new_pid_and_original_env(self):
         self.with_watchdog()
         lifecycle.manage(self.layout, ["activate", self.tag, "--confirm"])
