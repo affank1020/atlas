@@ -121,6 +121,8 @@ jobs:
           python3 -m py_compile scripts/linux-node-host-updater.py test/test_linux_node_lifecycle_integration.py
           python3 -m unittest discover -s test -p 'test_macos_node_stage.py' -v
           python3 -m py_compile scripts/macos-node-stage.py
+          python3 -m unittest discover -s test -p 'test_macos_node_lifecycle.py' -v
+          python3 -m py_compile scripts/macos-node-lifecycle.py
 
       - name: Install dependencies
         run: npm ci

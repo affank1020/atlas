@@ -273,6 +273,16 @@ function launchdPath() {
   return [...new Set(values.filter(value => value.startsWith("/")))].join(":");
 }
 
+function isReleaseManagedLaunchAgent() {
+  // A release-managed plist is owned by the explicit macOS lifecycle.
+  // Never silently point it back at a development checkout.
+  if (!existsSync(launchdPlist)) return false;
+  try {
+    const content = readFileSync(launchdPlist, "utf8");
+    return content.includes("/NodeSoftware/releases/") && content.includes(launchdLabel);
+  } catch { return false; }
+}
+
 function launchdConfiguration() {
   const strings = [process.execPath, compiledNodeEntrypoint].map(value => `      <string>${xmlEscape(value)}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -336,6 +346,10 @@ async function waitForLaunchdPid() {
 async function installLaunchd() {
   if (controlPlatform !== "darwin" || !commandExists("launchctl")) {
     console.error("Atlas Node launchd integration requires macOS and launchctl.");
+    return false;
+  }
+  if (isReleaseManagedLaunchAgent()) {
+    console.error("Atlas Node is release-managed. Use macos-node-lifecycle.py rollback; refusing to overwrite its LaunchAgent with a development checkout.");
     return false;
   }
   const configError = hostedConfigurationError();
@@ -730,8 +744,9 @@ async function stopHostedNode() {
 async function restartHostedNode() {
   const configError = hostedConfigurationError();
   if (configError) { console.error(configError); return false; }
-  if (!buildHostedNode()) return false;
   const launchd = launchdState();
+  // Restarting an installed release must not rebuild the unrelated dev checkout.
+  if (!isReleaseManagedLaunchAgent() && !buildHostedNode()) return false;
   if (launchd.loaded) {
     const restarted = spawnSync("launchctl", ["kickstart", "-k", launchdTarget], { encoding: "utf8" });
     if (restarted.status !== 0) {

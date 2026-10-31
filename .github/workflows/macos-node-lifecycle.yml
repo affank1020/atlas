@@ -1,0 +1,30 @@
+name: Atlas macOS Node lifecycle
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/macos-node-lifecycle.py"
+      - "test/test_macos_node_lifecycle.py"
+      - ".github/workflows/macos-node-lifecycle.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/macos-node-lifecycle.py"
+      - "test/test_macos_node_lifecycle.py"
+      - ".github/workflows/macos-node-lifecycle.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify macOS lifecycle and crash recovery
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test isolated launchd activation and rollback
+        run: |
+          python3 -m unittest discover -s test -p 'test_macos_node_lifecycle.py' -v
+          python3 -m py_compile scripts/macos-node-lifecycle.py
