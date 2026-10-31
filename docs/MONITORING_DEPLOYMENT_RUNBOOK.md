@@ -29,6 +29,7 @@
 - [ ] Test Project, Store, logical Workspace and physical checkout deep links, including an archived checkout assigned to another Node. Unrelated Project/Node events must not appear.
 - [ ] Compare grouped operation filters and pagination to the original audited event set: failure beats success, pending remains pending and totals are server-filtered before safe projection.
 - [ ] Validate manual-only refresh default; opt-in live view backs off after failures, never overlaps reads, pauses in hidden tabs and cannot overwrite a changed scope.
+- [ ] Expand an authorised Node lifecycle/transfer event in Monitoring Activity and distinguish **recorded client**, **transport**, **credential class**, **source/target Node** and **update-intent state** from a verified human actor. Do not infer a person from a Node credential or from a node-reported activation flag. Confirm untrusted/missing fields remain unknown, and that ordinary Activity previews do not gain expanded Monitoring-only evidence.
 - [ ] Validate rolling Server/Web revision mismatch: old health responses without diagnostic status render unknown, and old clients still read existing Server/Node/Files endpoints.
 
 ## Backup and operational boundaries
