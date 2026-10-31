@@ -292,7 +292,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     const parsed = Number(filters.lines);
     const limit = Number.isInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : 30;
     const [result, setResult] = useState<ServerDiagnosticResponse>();
-    const [settledPage, setSettledPage] = useState<{ scope: string; cursor?: string }>();
+    const [settledPage, setSettledPage] = useState<{ scope: string; cursor?: string; refresh: number }>();
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [search, setSearch] = useState('');
@@ -304,6 +304,11 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
         { scope: '', cursors: [undefined], index: 0 });
     const currentPage = pages.scope === pageScope ? pages
         : { scope: pageScope, cursors: [undefined], index: 0 };
+    // Persist the reset, not just a derived fallback. Otherwise switching
+    // history -> process -> history can revive an earlier history cursor.
+    useEffect(() => {
+        setPages({ scope: pageScope, cursors: [undefined], index: 0 });
+    }, [pageScope]);
     const cursor = history ? currentPage.cursors[currentPage.index] : undefined;
     useEffect(() => {
         const controller = new AbortController();
@@ -311,7 +316,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
         void callTool<ServerDiagnosticResponse>(history ? 'read_server_diagnostic_history' : 'read_server_diagnostics',
             history && cursor ? { limit, cursor } : { limit }, controller.signal)
             .then(value => { if (!controller.signal.aborted) {
-                setResult(value); setSettledPage({ scope: pageScope, cursor });
+                setResult(value); setSettledPage({ scope: pageScope, cursor, refresh });
             } })
             .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); })
             .finally(() => { if (!controller.signal.aborted) setBusy(false); });
@@ -319,6 +324,7 @@ function ServerDiagnosticsPanel({ filters }: { filters: MonitoringFilters }) {
     }, [limit, refresh, history, cursor]);
     // A bookmark/source switch must never briefly render rows from the other source.
     const visible = settledPage?.scope === pageScope && settledPage.cursor === cursor
+        && settledPage.refresh === refresh
         && result?.source === (history ? 'atlas-server-history' : 'atlas-server-process')
         ? result : undefined;
     const events = visible?.events.filter(event => (event.code + ' ' + event.message).toLowerCase().includes(search.toLowerCase())) ?? [];

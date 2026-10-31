@@ -115,3 +115,54 @@ test('a stale older-page response cannot overwrite a subsequent source switch', 
     expect(screen.queryByText(/Stale historical message/)).not.toBeInTheDocument();
     expect(screen.getByText(/Live process text/)).toBeInTheDocument();
 });
+
+
+test('re-entering retained history after inspecting process logs starts from newest page', async () => {
+    location.hash = '#/monitoring?tab=logs&target=server&history=1';
+    const calls: Array<{ name: string; cursor?: string }> = [];
+    vi.mocked(callTool).mockImplementation(async (name, input) => {
+        calls.push({ name, cursor: (input as { cursor?: string }).cursor });
+        if (name === 'read_server_diagnostics') return {
+            source: 'atlas-server-process', available: true,
+            retention: 'current-process', startedAt: '2026-10-31T10:00:00Z',
+            truncated: false, events: [event('Process event')],
+        } as never;
+        return ((input as { cursor?: string }).cursor
+            ? history(['Old history page'])
+            : history(['Latest history page'], 'old-boundary')) as never;
+    });
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Latest history page/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Older events' }));
+    expect(await screen.findByText(/Old history page/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Diagnostic source'), { target: { value: 'process' } });
+    fireEvent(window, new Event('hashchange'));
+    expect(await screen.findByText(/Process event/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Diagnostic source'), { target: { value: 'history' } });
+    fireEvent(window, new Event('hashchange'));
+    expect(await screen.findByText(/Latest history page/)).toBeInTheDocument();
+    expect(screen.getByText('History page 1')).toBeInTheDocument();
+    expect(calls.filter(call => call.name === 'read_server_diagnostic_history').map(call => call.cursor))
+        .toEqual([undefined, 'old-boundary', undefined]);
+});
+
+test('restoring an earlier page size cannot revive its previous pagination cursor', async () => {
+    location.hash = '#/monitoring?tab=logs&target=server&history=1';
+    vi.mocked(callTool).mockImplementation(async (_name, input) =>
+        ((input as { cursor?: string }).cursor
+            ? history(['Old size page'])
+            : history(['Fresh size page'], 'size-cursor')) as never);
+    render(<MonitoringPage />);
+    expect(await screen.findByText(/Fresh size page/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Older events' }));
+    expect(await screen.findByText(/Old size page/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Diagnostic events'), { target: { value: '5' } });
+    fireEvent(window, new Event('hashchange'));
+    expect(await screen.findByText(/Fresh size page/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Diagnostic events'), { target: { value: '30' } });
+    fireEvent(window, new Event('hashchange'));
+    await waitFor(() => expect(callTool).toHaveBeenLastCalledWith('read_server_diagnostic_history',
+        { limit: 30 }, expect.any(AbortSignal)));
+    expect(screen.getByText('History page 1')).toBeInTheDocument();
+    expect(screen.queryByText(/Old size page/)).not.toBeInTheDocument();
+});
