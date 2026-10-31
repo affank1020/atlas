@@ -18,7 +18,6 @@ type Catalogue = Pick<CoreService,'store'|'listStores'|'queryRecords'|'updateRec
 type Rest = Pick<GitHubInlineThreadReader,'inspect'>;
 type Head = Pick<GitHubInlineRootWriter,'checkHead'>;
 type Graph = Awaited<ReturnType<GitHubReviewThreadStateReader['inspect']>>;
-type Thread = Graph['threads'][number];
 type Identity = { runs:string; findings:string; repository:string; prNumber:number };
 type Claim = { state:'claimed'|'published'; claimId:string; runId:string; lineageKey:string;
     rootCommentId:number; threadId:string; headSha:string; fixReplyCommentId:number;
