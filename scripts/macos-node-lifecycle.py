@@ -450,7 +450,11 @@ def manage(layout: Layout, argv: list[str]) -> None:
         return
     if action not in ("status", "install-watchdog", "activate", "rollback", "recover"):
         raise Refused("Usage: status | plan vVERSION-SHA | install-watchdog | activate vVERSION-SHA --confirm | rollback --confirm | recover")
-    if action == "activate" and (len(argv) != 3 or argv[2] != "--confirm"):
+    if action == "activate" and not (
+        (len(argv) == 3 and argv[2] == "--confirm") or
+        (len(argv) == 5 and argv[2] == "--confirm" and
+         argv[3] == "--expect-entrypoint" and argv[4].startswith("/"))
+    ):
         raise Refused("Activation requires an exact staged version and --confirm.")
     if action == "rollback" and argv != ["rollback", "--confirm"]:
         raise Refused("Rollback requires --confirm.")
@@ -470,12 +474,16 @@ def manage(layout: Layout, argv: list[str]) -> None:
             if layout.pending.exists() or layout.pending.is_symlink():
                 raise Refused("Pending transaction requires recovery; refusing another update.")
             current = exact_plist_bytes(layout.plist, layout.uid)
-            decode_plist(current, layout)
+            current_data = decode_plist(current, layout)
+            if action == "activate" and len(argv) == 5 and (
+                current_data["ProgramArguments"][1] != argv[4]
+            ):
+                raise Refused("Node LaunchAgent changed since update confirmation; refusing cutover.")
             if launch_pid(layout) is None:
                 raise Refused("Current launchd Node has no live PID.")
             if action == "activate":
                 selected = release_path(layout, argv[1])
-                if decode_plist(current, layout)["ProgramArguments"][1] == str(selected / ENTRYPOINT):
+                if current_data["ProgramArguments"][1] == str(selected / ENTRYPOINT):
                     raise Refused("Selected Node release is already active.")
                 new = make_plist(current, layout, selected)
                 complete(layout, new, current, action)
