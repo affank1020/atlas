@@ -143,20 +143,24 @@ async function portfolioFailureFixture() {
 function interceptMediaQuery(media:PortfolioMediaService,
     decide:(sql:string)=>"before"|"after"|null) {
     const connect=media.pool.connect.bind(media.pool);
-    media.pool.connect=(async()=>{
-        const client=await connect();
-        const query=client.query.bind(client);
-        return new Proxy(client,{get(target,property){
-            if(property==="query")return async (sql:string,values?:unknown[])=>{
-                const mode=decide(sql);
-                if(mode==="before")throw new Error("injected database failure");
-                const result=await query(sql,values);
-                if(mode==="after")throw new Error("lost database acknowledgement");
-                return result;
-            };
-            const value=Reflect.get(target,property);
-            return typeof value==="function"?value.bind(target):value;
-        }});
+    media.pool.connect=((...args:unknown[])=>{
+        // Pool.query obtains a connection via callback mode. Forward it
+        // unchanged so the failure hook only wraps upload's transaction.
+        if(args.length)return Reflect.apply(connect,media.pool,args);
+        return connect().then(client=>{
+            const query=client.query.bind(client);
+            return new Proxy(client,{get(target,property){
+                if(property==="query")return async (sql:string,values?:unknown[])=>{
+                    const mode=decide(sql);
+                    if(mode==="before")throw new Error("injected database failure");
+                    const result=await query(sql,values);
+                    if(mode==="after")throw new Error("lost database acknowledgement");
+                    return result;
+                };
+                const value=Reflect.get(target,property);
+                return typeof value==="function"?value.bind(target):value;
+            }});
+        });
     }) as typeof media.pool.connect;
 }
 
