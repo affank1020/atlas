@@ -11,7 +11,7 @@ export type CutoverReadStore = { getBounded(key:string,maxBytes:number):Promise<
 type CutoverTable="atlas_files"|"media_assets"|"media_variants";
 type CutoverState="applied"|"rolled_back";
 type SavedCutover={
-    project_id:string;key_run_id:string;manifest_sha256:string;
+    attempt_id:string;project_id:string;key_run_id:string;manifest_sha256:string;
     object_count:number;state:CutoverState;applied_at:Date;rolled_back_at:Date|null;
 };
 type CatalogRow={
@@ -53,8 +53,9 @@ function changes(items:SnapshotItem[]):Change[]{
 }
 async function saved(database:Pick<Pool,"query">,projectId:string,lock=false):Promise<SavedCutover|null>{
     const result=await database.query<SavedCutover>(
-        "SELECT project_id,key_run_id,manifest_sha256,object_count,state,applied_at,rolled_back_at "+
-        "FROM atlas_project_storage_cutovers WHERE project_id=$1"+(lock?" FOR UPDATE":""),[projectId]);
+        "SELECT attempt_id,project_id,key_run_id,manifest_sha256,object_count,state,applied_at,rolled_back_at "+
+        "FROM atlas_project_storage_cutovers WHERE project_id=$1 "+
+        "ORDER BY attempt_id DESC LIMIT 1"+(lock?" FOR UPDATE":""),[projectId]);
     return result.rows[0]??null;
 }
 /** The view is authoritative before AND after cutover: the legacy-source
@@ -136,16 +137,19 @@ export async function executeProjectKeyCutover(input:{
     const project=uuid(input.projectId);
     if(input.mode!=="apply"&&input.mode!=="rollback")throw new Error("Invalid cutover mode.");
     const prior=await saved(input.database,project);
-    if(input.mode==="apply"&&prior)
-        throw new Error("Project already has a durable cutover record; use status.");
+    if(input.mode==="apply"&&prior?.state==="applied")
+        throw new Error("Project already has an applied cutover; use status.");
+    if(input.mode==="apply"&&prior?.key_run_id===input.keyRunId)
+        throw new Error("A previous cutover key run cannot be reused after rollback.");
     if(input.mode==="rollback"&&(!prior||prior.state!=="applied"))
         throw new Error("Project has no applied cutover to roll back.");
     const keyRunId=uuid(input.mode==="apply"?input.keyRunId!:prior!.key_run_id);
     const run=await loadProjectKeyRun(input.database,keyRunId);
     if(run.projectId!==project||run.items.length!==run.objectCount)
         throw new Error("Cutover run does not match the scoped Project.");
-    if(prior&&(prior.key_run_id!==run.id||prior.manifest_sha256!==run.manifestSha256||
-       prior.object_count!==run.objectCount))
+    if(input.mode==="rollback"&&prior&&
+       (prior.key_run_id!==run.id||prior.manifest_sha256!==run.manifestSha256||
+        prior.object_count!==run.objectCount))
         throw new Error("Saved rollback metadata differs from the immutable key manifest.");
     changes(run.items);
     if(input.mode==="apply"){
@@ -165,11 +169,26 @@ export async function executeProjectKeyCutover(input:{
         // Exact three authoritative tables. Prevent all ordinary metadata
         // INSERT/UPDATE/DELETE while checking and switching the keys.
         await client.query("LOCK TABLE atlas_files,media_assets,media_variants IN SHARE ROW EXCLUSIVE MODE");
+        // Lock the stable Project row to serialize concurrent attempts even
+        // when the cutover history has no rows yet. All checks below happen
+        // AFTER this lock and in the same serializable transaction.
+        const scope=await client.query("SELECT id FROM projects WHERE id=$1 FOR UPDATE",[project]);
+        if(scope.rowCount!==1)throw new Error("Project cutover scope disappeared.");
         await client.query("SELECT id FROM atlas_project_key_runs WHERE id=$1 FOR UPDATE",[run.id]);
         const latest=await saved(client,project,true);
-        if(input.mode==="apply"&&latest||input.mode==="rollback"&&
+        if(input.mode==="apply"&&latest?.state==="applied"||input.mode==="rollback"&&
            (!latest||latest.state!=="applied"||latest.key_run_id!==run.id))
             throw new Error("Project cutover state changed during the operation.");
+        if(input.mode==="rollback"&&latest&&
+           (latest.manifest_sha256!==run.manifestSha256||latest.object_count!==run.objectCount))
+            throw new Error("Saved rollback evidence changed during the operation.");
+        if(input.mode==="apply"){
+            // A rollback authorises a NEW run only. Any previously used run
+            // (including older attempts) must remain permanently single-use.
+            const reused=await client.query(
+                "SELECT attempt_id FROM atlas_project_storage_cutovers WHERE key_run_id=$1",[run.id]);
+            if(reused.rowCount)throw new Error("A previous cutover key run cannot be reused after rollback.");
+        }
         // Compare the entire live catalogue (not merely the changed page)
         // under table locks, after waiting for any in-flight writer.
         await assertCatalogue(client,run,input.mode==="apply"?"old":"new");
@@ -214,7 +233,7 @@ export async function executeProjectKeyCutover(input:{
 export async function getProjectKeyCutoverStatus(database:Pool,projectId:string){
     const row=await saved(database,uuid(projectId));
     if(!row)return {projectId,state:"not-applied" as const};
-    return {projectId,keyRunId:row.key_run_id,manifestSha256:row.manifest_sha256,
+    return {projectId,attemptId:row.attempt_id,keyRunId:row.key_run_id,manifestSha256:row.manifest_sha256,
         objectCount:row.object_count,state:row.state,
         appliedAt:new Date(row.applied_at).toISOString(),
         rolledBackAt:row.rolled_back_at?new Date(row.rolled_back_at).toISOString():null};
