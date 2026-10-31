@@ -159,6 +159,11 @@ export class ServerDiagnosticHistory {
                     caughtUp = true;
                     break;
                 }
+                // The dedicated archive pool has one connection: yield between
+                // full cleanup batches so queued diagnostic INSERTs / probes
+                // can acquire it rather than being starved by maintenance.
+                if (attempt + 1 < maxBatches)
+                    await new Promise<void>(resolve => setTimeout(resolve, 10));
             }
             // A full final batch means more old rows may remain, NOT that
             // retention has been fully enforced on disk.

@@ -406,3 +406,38 @@ test('disabled diagnostic archive never schedules maintenance', async () => {
     assert.equal(calls, 0);
     await service.close();
 });
+
+test('bounded retention backfill yields between full batches to let diagnostic writes progress', async () => {
+    const { setTimeout: pause } = await import('node:timers/promises');
+    let start!: () => void;
+    const first = new Promise<void>(resolve => { start = resolve; });
+    let deletes = 0;
+    let insertedDuringBackfill = false;
+    const service = new ServerDiagnosticHistory({
+        query: async sql => {
+            if (sql.startsWith('DELETE')) {
+                deletes++;
+                if (deletes === 1) start();
+                return { rows: Array.from({ length: 1000 }, () => ({ occurred_at: new Date(), code: 'server_initialised' })) };
+            }
+            if (sql.startsWith('INSERT')) {
+                insertedDuringBackfill = deletes < 10;
+                return { rows: [] };
+            }
+            return { rows: [] };
+        },
+    }, true, undefined, 300);
+    try {
+        await first;
+        service.record({ code: 'background_task_failed', level: 'warning', at: new Date().toISOString() });
+        await service.flush();
+        assert.equal(insertedDuringBackfill, true,
+            'writer should not wait for an entire 10-batch expiry sweep to finish');
+        const startWait = Date.now();
+        while ((await service.status()).retentionCleanup !== 'more-possible'
+            && Date.now() - startWait < 1500) await pause(10);
+        assert.equal((await service.status()).retentionCleanup, 'more-possible');
+    } finally {
+        await service.close();
+    }
+});
