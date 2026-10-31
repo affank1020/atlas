@@ -158,7 +158,7 @@ class BackgroundReceiverService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val model = (application as AtlasNodeApp).model
         if (intent?.action == ACTION_STOP) {
-            model.setPushEnabled(false)
+            model.updatePushConsent(false)
             model.stopBackgroundReceiving()
             stopSelf()
             return START_NOT_STICKY
@@ -204,7 +204,7 @@ class BackgroundReceiverService : Service() {
             return START_NOT_STICKY
         }
         model.startBackgroundReceiving()
-        model.setPushEnabled(true)
+        model.updatePushConsent(true)
         handler.removeCallbacks(verifyChannels)
         handler.postDelayed(verifyChannels, 10_000L)
         // No automatic restart after process death. The user must launch Atlas
