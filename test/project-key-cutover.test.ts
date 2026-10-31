@@ -81,7 +81,7 @@ test("Apply switches six Project Files atomically, retains old bytes, and rollba
                 "file-"+created.findIndex(x=>x.id===row.id));
         }
         assert.equal((await getProjectKeyCutoverStatus(ctx.files.pool,ctx.projectId)).state,"applied");
-        await assert.rejects(call(ctx,run.id,"apply"),/already has a durable cutover/);
+        await assert.rejects(call(ctx,run.id,"apply"),/already has an applied cutover/);
         const reverted=await call(ctx,run.id,"rollback");
         assert.equal(reverted.status,"rolled_back");
         const restored=await ctx.files.pool.query<{id:string;storage_key:string}>(
@@ -90,9 +90,76 @@ test("Apply switches six Project Files atomically, retains old bytes, and rollba
             assert.equal(row.storage_key,run.items.find(x=>x.row.file_id===row.id)!.row.storage_key);
         assert.equal((await getProjectKeyCutoverStatus(ctx.files.pool,ctx.projectId)).state,"rolled_back");
         await assert.rejects(call(ctx,run.id,"rollback"),/no applied cutover/);
-        await assert.rejects(call(ctx,run.id,"apply"),/already has a durable cutover/);
+        await assert.rejects(call(ctx,run.id,"apply"),/key run cannot be reused/);
     }finally{await ctx.close();}
 });
+test("A fresh fully verified run can reapply after rollback without discarding prior attempts",async()=>{
+    const ctx=await fixture();
+    try{
+        const original=await ctx.add("original-key");
+        const first=await ctx.prepare();
+        await call(ctx,first.id,"apply");
+        await call(ctx,first.id,"rollback");
+
+        // A fresh immutable snapshot and receipts can reuse matching existing
+        // v1 bytes, but the prior key-run ID can NEVER be used for another
+        // attempt, even though its metadata was restored to the old key.
+        await assert.rejects(call(ctx,first.id,"apply"),/key run cannot be reused/);
+        const second=await ctx.prepare();
+        assert.notEqual(second.id,first.id);
+        const secondResult=await call(ctx,second.id,"apply");
+        assert.equal(secondResult.status,"applied");
+        const current=await getProjectKeyCutoverStatus(ctx.files.pool,ctx.projectId);
+        assert.equal(current.state,"applied");
+        assert.equal(current.keyRunId,second.id);
+        const key=await ctx.files.pool.query<{storage_key:string}>(
+            "SELECT storage_key FROM atlas_files WHERE id=$1",[original.id]);
+        assert.equal(key.rows[0]!.storage_key,second.items[0]!.target);
+
+        const historical=await ctx.files.pool.query<{
+            key_run_id:string;state:string;rolled_back_at:Date|null
+        }>("SELECT key_run_id,state,rolled_back_at FROM atlas_project_storage_cutovers "+
+          "WHERE project_id=$1 ORDER BY attempt_id",[ctx.projectId]);
+        assert.deepEqual(historical.rows.map(x=>[x.key_run_id,x.state]),[
+            [first.id,"rolled_back"],[second.id,"applied"],
+        ]);
+        assert.ok(historical.rows[0]!.rolled_back_at);
+        assert.equal(historical.rows[1]!.rolled_back_at,null);
+        await assert.rejects(call(ctx,first.id,"apply"),/already has an applied cutover/);
+        await call(ctx,second.id,"rollback");
+        await assert.rejects(call(ctx,first.id,"apply"),/key run cannot be reused/);
+        await assert.rejects(call(ctx,second.id,"apply"),/key run cannot be reused/);
+        const end=await ctx.files.pool.query<{state:string}>(
+            "SELECT state FROM atlas_project_storage_cutovers WHERE project_id=$1 ORDER BY attempt_id",
+            [ctx.projectId]);
+        assert.deepEqual(end.rows.map(x=>x.state),["rolled_back","rolled_back"]);
+    }finally{await ctx.close();}
+});
+
+test("Reattempt after rollback still requires complete fresh receipts and intact destination bytes",async()=>{
+    const ctx=await fixture();
+    try{
+        await ctx.add("fresh-verified");
+        const first=await ctx.prepare();
+        await call(ctx,first.id,"apply");
+        await call(ctx,first.id,"rollback");
+        const second=await ctx.prepare();
+        const key=second.items[0]!.target,previous=ctx.newPrimary.objects.get(key)!;
+        ctx.newPrimary.objects.set(key,Buffer.from("tampered"));
+        await assert.rejects(call(ctx,second.id,"apply"),/bytes differ/);
+        ctx.newPrimary.objects.set(key,previous);
+        await ctx.files.pool.query(
+            "DELETE FROM atlas_project_key_receipts WHERE run_id=$1",[second.id]);
+        await assert.rejects(call(ctx,second.id,"apply"),/receipts|copy ledger/);
+        assert.equal((await getProjectKeyCutoverStatus(ctx.files.pool,ctx.projectId)).state,"rolled_back");
+        const historical=await ctx.files.pool.query(
+            "SELECT key_run_id FROM atlas_project_storage_cutovers WHERE project_id=$1",
+            [ctx.projectId]);
+        assert.deepEqual(historical.rows.map(x=>x.key_run_id),[first.id],
+            "failed reattempts must not create history or mutate storage keys");
+    }finally{await ctx.close();}
+});
+
 test("Archived Portfolio image original/variants switch together; public IDs and URLs remain stable",async()=>{
     const ctx=await fixture(PORTFOLIO_PROJECT_ID);
     const media=new PortfolioMediaService(ctx.db,ctx.root);
