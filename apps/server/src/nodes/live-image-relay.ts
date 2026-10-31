@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { AtlasError } from '../shared/errors.js';
 import type { NodeService } from './service.js';
 import type { NodeShareApprovals } from './share-approvals.js';
@@ -10,7 +10,7 @@ import { imageDimensions } from '@atlas/protocol/image-format';
 const LIMIT_CONCURRENT = 4;
 const PREAUTH_CONCURRENT = 24;
 const PREAUTH_RATE_PER_MINUTE = 60;
-const PREAUTH_PEER_LIMIT = 128;
+const PREAUTH_KEY_LIMIT = 128;
 const AUTHENTICATED_RATE_LIMIT = 512;
 const TTL_MS = 45_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,10 +40,14 @@ export class LiveImageRelay {
     private readonly entries = new Map<string, Entry>();
     private readonly seenIds = new Map<string, number>();
     private readonly rate = new Map<string, { window: number; count: number }>();
-    // Keyed by the actual socket peer (not client-supplied Node UUID or XFF).
-    // Reverse-proxy deployments must also apply upstream edge rate limits;
-    // this small, hard-bounded map protects DB authentication from floods.
-    private readonly preAuthPeers = new Map<string, { window: number; count: number }>();
+    // Never bucket unauthenticated callers by the upstream TCP peer: behind
+    // Caddy that peer is a *single proxy IP* shared by all honest devices.
+    // A process-secret keyed digest isolates each presented credential without
+    // storing/logging raw tokens or trusting user-supplied X-Forwarded-For.
+    // Invalid credential churn is limited by a hard map cap and by the
+    // independent in-flight authentication ceiling.
+    private readonly preAuthSalt = randomBytes(32);
+    private readonly preAuthKeys = new Map<string, { window: number; count: number }>();
     private pendingAuthentications = 0;
     constructor(private readonly nodes: NodeService, private readonly approvals: NodeShareApprovals,
         private readonly imagePairs: ReadonlySet<string> = new Set()) {}
@@ -51,22 +55,21 @@ export class LiveImageRelay {
         return this.imagePairs.has(source.toLowerCase() + ':' + target.toLowerCase());
     }
 
-    private preAuthenticate(peerAddress: string): () => void {
+    private preAuthenticate(credential: string): () => void {
         if (this.pendingAuthentications >= PREAUTH_CONCURRENT)
             throw new AtlasError('Image authentication is busy.', 'SHARE_BUSY');
+        const key = createHmac('sha256', this.preAuthSalt).update(credential).digest('hex');
         const now = Date.now();
-        for (const [key, value] of this.preAuthPeers) {
-            if (now - value.window >= 60_000) this.preAuthPeers.delete(key);
+        for (const [entryKey, value] of this.preAuthKeys) {
+            if (now - value.window >= 60_000) this.preAuthKeys.delete(entryKey);
         }
-        // A peer key is the socket's actual network address, not a request
-        // header, and the map never grows beyond PREAUTH_PEER_LIMIT.
-        const peer = peerAddress.slice(0, 100) || 'unknown';
-        const previous = this.preAuthPeers.get(peer);
-        if (previous?.count && previous.count >= PREAUTH_RATE_PER_MINUTE)
+        const previous = this.preAuthKeys.get(key);
+        if (previous && previous.count >= PREAUTH_RATE_PER_MINUTE)
             throw new AtlasError('Image authentication rate limited.', 'SHARE_RATE_LIMIT');
-        if (!previous && this.preAuthPeers.size >= PREAUTH_PEER_LIMIT)
-            this.preAuthPeers.delete(this.preAuthPeers.keys().next().value!);
-        this.preAuthPeers.set(peer, previous
+        // An attacker can rotate bogus tokens; evict, never grow without bound.
+        if (!previous && this.preAuthKeys.size >= PREAUTH_KEY_LIMIT)
+            this.preAuthKeys.delete(this.preAuthKeys.keys().next().value!);
+        this.preAuthKeys.set(key, previous
             ? { window: previous.window, count: previous.count + 1 }
             : { window: now, count: 1 });
         this.pendingAuthentications++;
@@ -94,22 +97,22 @@ export class LiveImageRelay {
     }
 
     get authenticatedRateEntries() { return this.rate.size; }
-    get preAuthRateEntries() { return this.preAuthPeers.size; }
+    get preAuthRateEntries() { return this.preAuthKeys.size; }
     get pendingAuthCount() { return this.pendingAuthentications; }
 
 
-    async admit(sourceId: string, targetId: string, credential: string,
-        peerAddress = 'unknown'): Promise<{
+    async admit(sourceId: string, targetId: string, credential: string): Promise<{
         target: ImageDeliveryRuntime; sourceRuntime: NodeRuntime; release: () => void;
     }> {
         const source = sourceId.toLowerCase(), target = targetId.toLowerCase();
         if (!UUID.test(source) || !UUID.test(target) || source === target)
             throw new AtlasError('Invalid image transfer identities.', 'SHARE_INVALID');
 
-        // Invalid credentials must never change another Node's rate budget or
-        // reserve its active-transfer slot. Only cheap, independently keyed,
-        // bounded pre-auth checks run before credential authentication.
-        const finishAuth = this.preAuthenticate(peerAddress);
+        // Invalid credentials cannot consume the quota for another credential,
+        // even when all clients share the same reverse-proxy TCP peer. Only a
+        // bounded keyed token bucket and concurrency cap run before identity
+        // authentication; source ID charge happens only after authentication.
+        const finishAuth = this.preAuthenticate(credential);
         try { await this.nodes.identity!.authenticate(source, credential); }
         finally { finishAuth(); }
 
