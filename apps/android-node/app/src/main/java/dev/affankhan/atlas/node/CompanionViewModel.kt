@@ -942,8 +942,36 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     }
 
     fun sendCurrentDraft() {
-        if (session.image != null) {
-            shareStatus = "The image is imported locally; binary delivery is not available yet."
+        val image = session.image
+        if (image != null) {
+            val node = pairedNode
+            val targetId = shareTarget.trim()
+            if (!owners.connected || connectionStatus != "Online" ||
+                sharePending || node == null || !validNodeId(targetId) ||
+                targetId.equals(node.nodeId, ignoreCase = true) ||
+                recipientsLoading || recipientsError != null ||
+                recipients.none { it.nodeId.equals(targetId, ignoreCase = true) && it.available }) {
+                shareStatus = "Connect and select an approved online Mac to send the image."
+                return
+            }
+            sharePending = true
+            shareStatus = "Sending image to Mac for approval…"
+            viewModelScope.launch {
+                try {
+                    val accepted = withContext(Dispatchers.IO) {
+                        transport.sendImage(node, targetId, image)
+                    }
+                    shareStatus = if (accepted) "Image copied to the Mac clipboard."
+                        else "Mac declined the image. Nothing was copied."
+                } catch (cancelled: CancellationException) {
+                    shareStatus = "Image send interrupted; delivery is unconfirmed."
+                    throw cancelled
+                } catch (_: Exception) {
+                    shareStatus = "Image delivery was not confirmed. Check the Mac before trying again."
+                } finally {
+                    sharePending = false
+                }
+            }
             return
         }
         val target = shareTarget.trim()
@@ -1103,7 +1131,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                 session = completed
                 if (!sharePending && completed.lastDeliveryId == nextId) {
                     shareStatus = if (delivery.image != null)
-                        "Image imported locally; sending images is not yet supported."
+                        "Image ready. Select an approved Mac and press Send."
                     else "Image import failed; nothing was sent."
                 }
             }
