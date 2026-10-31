@@ -1,11 +1,11 @@
 import { PROJECT_RECOVERY_CAPTURE_CONFIRM, PROJECT_RECOVERY_SEED_CONFIRM } from "./project-independent-recovery.js";
 export type RecoveryCommand={
-    mode:"capture"|"dry-run"|"seed"|"isolated-verify";
+    mode:"capture"|"dry-run"|"seed"|"status"|"isolated-verify";
     projectId:string;runId?:string;versionedRunId?:string;fromOrdinal?:number;maxFiles:number;
 };
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export function parseProjectRecoveryArgs(args:string[]):RecoveryCommand{
-    const modes=["--capture","--dry-run","--seed","--isolated-verify"];
+    const modes=["--capture","--dry-run","--seed","--status","--isolated-verify"];
     const allowed=[...modes,"--project","--run","--versioned-run","--from","--max-files","--confirm"];
     const flags=new Map<string,string>();
     for(const a of args){
@@ -30,6 +30,8 @@ export function parseProjectRecoveryArgs(args:string[]):RecoveryCommand{
         (mode==="seed"?flags.get("--confirm")!==PROJECT_RECOVERY_SEED_CONFIRM:
           flags.has("--confirm")))
         throw new Error("Project recovery mode requires an exact scoped run and confirmation.");
+    if(mode==="status"&&(flags.has("--from")||flags.has("--max-files")))
+        throw new Error("Project recovery receipt status accepts only Project and run scope.");
     const maxFiles=flags.has("--max-files")?Number(flags.get("--max-files")):
         mode==="isolated-verify"?100:3;
     const max=mode==="isolated-verify"?2000:5;
