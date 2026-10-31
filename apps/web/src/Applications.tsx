@@ -8,6 +8,9 @@ const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExpe
 const CodeReviews = lazy(() => import('./CodeReviewsDashboard').then(module => ({ default: module.CodeReviewsDashboard })));
 import './applications.css';
 import { SkeletonProjectApplications, SkeletonApplicationWindow } from './Skeleton';
+import { PortfolioApplicationLoading } from './PortfolioLoading';
+import { CodeReviewsApplicationLoading } from './CodeReviewsDashboardLoading';
+import { FootballGeneralistApplicationLoading } from './FootballGeneralistLoading';
 
 export type ApplicationManifest = {
     type: string;
@@ -23,6 +26,15 @@ const applicationComponents: Record<string, ComponentType> = {
     portfolio: Portfolio,
     'football-training': FootballGeneralistExperience,
     'code-reviews': CodeReviews,
+};
+
+// The host selects a lightweight fallback supplied by each Application.
+// Before its manifest resolves, canonical slugs allow a matching placeholder;
+// once verified, registry type is authoritative, including noncanonical slugs.
+const applicationLoading: Record<string, ComponentType> = {
+    portfolio: PortfolioApplicationLoading,
+    'football-training': FootballGeneralistApplicationLoading,
+    'code-reviews': CodeReviewsApplicationLoading,
 };
 
 export function ProjectApplications({ projectId, refreshVersion = 0 }: { projectId: string; refreshVersion?: number }) {
@@ -61,6 +73,8 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
         if (currentApplication) rememberWork({ href: projectId ? `#/projects/${projectId}/applications/${slug}` : `#/applications/${slug}`, name: currentApplication.name, projectId: projectId ?? null, kind: 'Application' });
     }, [projectId, slug, currentApplication?.name]);
     const Component = currentApplication ? applicationComponents[currentApplication.type] : undefined;
+    const Fallback = (currentApplication ? applicationLoading[currentApplication.type] : applicationLoading[slug])
+        ?? SkeletonApplicationWindow;
     return <div className="application-window">
         <AtlasTopBar page="application" context={<nav className="application-breadcrumb" aria-label="Application location">
             <a href="#/applications" className="application-back">← Applications</a>
@@ -68,10 +82,10 @@ export function ApplicationWindow({ projectId, slug }: { projectId?: string; slu
             <span className="application-window-name" title={application?.name ?? slug}>{application?.name ?? 'Application'}</span>
         </nav>} />
         <main className="application-window-main">
-            {busy && !application && <SkeletonApplicationWindow />}
+            {busy && !currentApplication && !error && <Fallback />}
             {error && <div role="alert" className="notice error">{error} <button type="button" className="ghost" onClick={() => void refetch()}>Retry</button></div>}
             {!busy && !error && currentApplication && !Component && <div role="alert" className="notice error">This Application is registered on Atlas Server but its UI is not included in this version of Atlas Web.</div>}
-            {Component && <Suspense fallback={<SkeletonApplicationWindow />}><Component /></Suspense>}
+            {Component && <Suspense fallback={<Fallback />}><Component /></Suspense>}
         </main>
     </div>;
 }

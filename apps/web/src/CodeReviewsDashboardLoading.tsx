@@ -1,5 +1,6 @@
 import { Skeleton } from './Skeletons';
 import './code-reviews-dashboard.css';
+import './CodeReviewsDashboardLoading.css';
 
 /** The PR grid is shared by bundle fallback and the real dashboard's initial query. */
 export function CodeReviewsListLoading({ decorative = false }: { decorative?: boolean }) {
