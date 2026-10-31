@@ -12,6 +12,10 @@ This is a **checklist**, not evidence of a live VPS/browser acceptance test. App
 | Privacy | No raw previous/after snapshots, output, free-text errors, file paths or credentials in safe reads | monitoring-safe-details and projection tests |
 | Runtime diagnostics | Current Server process ring stores only fixed codes, max 100 on read | server-diagnostics tests |
 | Server history | Fixed codes survive restart, 14-day read window, missing database is unavailable and gaps remain possible | server-diagnostic-history tests, deployed restart drill |
+| Files and folders | New metadata changes appear under Files with database-derived Project/checkout scoping; rolled-back changes create no audit; no names, keys or contents | monitoring-files-backup tests and Web/Node transfer checks |
+| R2 recovery seeding | Manual run ID, mode, bounded counters and partial/failed state are visible; copy outcome is not a restore attestation | operational-audit tests and manual CLI drill |
+| Host PostgreSQL backups | Check encrypted snapshot and sidecar outside Atlas; never claim central audit or tested restore from manifest alone | Operator-only verification; not proven by CI |
+| Automation | No new Server scheduler is implied; existing Workspace task audit is separately scoped | Explicit capability inventory; test when a scheduler is introduced |
 | Node technical logs | Fixed approved sources, bounded lines and bytes, no arbitrary journal/path selection | node-logs and linux-journal tests |
 | Health | Failed database degrades, missing registry is unknown, stale/future heartbeats never show healthy | monitoring-health tests |
 | Live activity | Manual by default; no polling hidden tabs, overlap, burst retries or stale scope replacement | Monitoring.live tests |
@@ -29,7 +33,7 @@ This is a **checklist**, not evidence of a live VPS/browser acceptance test. App
 ```sh
 npm ci
 npm run build
-node --import tsx --test test/server-diagnostics.test.ts test/server-diagnostic-history.test.ts test/monitoring-health.test.ts test/monitoring-activity.test.ts test/monitoring-safe-details.test.ts
+node --import tsx --test test/server-diagnostics.test.ts test/server-diagnostic-history.test.ts test/monitoring-health.test.ts test/monitoring-activity.test.ts test/monitoring-safe-details.test.ts test/monitoring-files-backup.test.ts
 npm run test:web
 ```
 
