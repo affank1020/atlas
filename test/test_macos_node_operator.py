@@ -353,6 +353,73 @@ class MacOperatorTests(unittest.TestCase):
         self.assertEqual(result["reason"], "operator-changed-during-check")
         self.assertNotIn("candidate", result)
 
+    def test_checker_publication_blocks_promotion_at_exact_write_boundary(self):
+        """Reproduce the reviewer's check-then-write race deterministically.
+
+        The competing promoter tries to acquire the lifecycle lock *inside*
+        the final release-check observation write. Without the lock held by
+        background_check, it would switch the operator before the old result
+        is written; with the lock, it must fail closed and can retry later.
+        """
+        operator.initial_install(self.layout, self.version1)
+        record = operator.check_paths(self.layout)[1]
+        real_write = operator.lifecycle.atomic_write
+        interleaving = []
+
+        def attempt_promote_at_publish(path, content):
+            if path == record:
+                try:
+                    with operator.lifecycle.lock_state(self.layout):
+                        with patch.object(operator, "align_recovery_watchdog"):
+                            operator.promote(self.layout, self.version2,
+                                             require_existing=True)
+                    interleaving.append("promoted-before-write")
+                except BlockingIOError:
+                    interleaving.append("promotion-blocked-by-checker-lock")
+            return real_write(path, content)
+
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), self.mock_updater_discover(lambda _: {
+            "state": "available",
+            "installed": self.version1,
+            "candidate": "node-" + self.version2,
+        }), patch.object(operator.importlib.util, "module_from_spec",
+                         return_value=SimpleNamespace()), patch.object(
+            operator.lifecycle, "atomic_write", side_effect=attempt_promote_at_publish
+        ):
+            operator.background_check(self.layout)
+
+        self.assertEqual(interleaving, ["promotion-blocked-by-checker-lock"])
+        self.assertEqual(operator.current_target(self.layout), self.first / "scripts")
+        result = json.loads(record.read_text())
+        self.assertEqual(result["state"], "available")
+        self.assertEqual(result["installed"], self.version1)
+
+        # The pending promotion is legal only after publication's lock exits.
+        with operator.lifecycle.lock_state(self.layout):
+            with patch.object(operator, "align_recovery_watchdog"):
+                operator.promote(self.layout, self.version2, require_existing=True)
+        self.assertEqual(operator.current_target(self.layout), self.second / "scripts")
+
+    def test_checker_discovers_without_holding_node_lifecycle_lock(self):
+        operator.initial_install(self.layout, self.version1)
+        checks = []
+        def discover(_):
+            with operator.lifecycle.lock_state(self.layout):
+                checks.append("public-catalogue-read-happened-unlocked")
+            return {"state": "available", "installed": self.version1,
+                    "candidate": "node-" + self.version2}
+
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), self.mock_updater_discover(discover), patch.object(
+            operator.importlib.util, "module_from_spec",
+            return_value=SimpleNamespace()
+        ):
+            operator.background_check(self.layout)
+        self.assertEqual(checks, ["public-catalogue-read-happened-unlocked"])
+
     def test_background_checker_refuses_mutated_signed_source_and_result_symlink(self):
         operator.initial_install(self.layout, self.version1)
         path = operator.check_paths(self.layout)[1]
