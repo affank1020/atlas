@@ -4,6 +4,7 @@ import type { NodeService } from './service.js';
 import type { NodeShareApprovals } from './share-approvals.js';
 import { RemoteNodeRuntime } from '../infrastructure/nodes/remote-runtime.js';
 import { MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
+import { imageDimensions } from '@atlas/protocol/image-format';
 
 const LIMIT_CONCURRENT = 4;
 const TTL_MS = 45_000;
@@ -153,14 +154,5 @@ export class LiveImageRelay {
  * SHA-256, length and signature before touching NSPasteboard.
  */
 export function isImage(bytes: Buffer, type: string): boolean {
-    if (type === 'image/png')
-        return bytes.length >= 24 &&
-            bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) &&
-            bytes.toString('ascii',12,16) === 'IHDR' &&
-            bytes.readUInt32BE(16) > 0 && bytes.readUInt32BE(20) > 0 &&
-            bytes.readUInt32BE(16) <= 16384 && bytes.readUInt32BE(20) <= 16384;
-    if (type === 'image/jpeg')
-        return bytes.length >= 24 && bytes[0] === 255 && bytes[1] === 216 &&
-            bytes[bytes.length - 2] === 255 && bytes[bytes.length - 1] === 217;
-    return false;
+    return imageDimensions(bytes,type)!==null;
 }
