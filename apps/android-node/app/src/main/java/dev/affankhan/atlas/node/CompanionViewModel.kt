@@ -120,6 +120,15 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         private set
     var inboxStatus by mutableStateOf("No incoming shares yet.")
         private set
+    var queuedInboxItems by mutableStateOf<List<QueuedShareItem>>(emptyList())
+        private set
+    var queuedInboxLoading by mutableStateOf(false)
+        private set
+    var queuedInboxBusyIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+    private var pendingInboxListId: String? = null
+    private val pendingInboxResolutions = mutableMapOf<String, Pair<String, Boolean>>()
+
     private var pendingShareRequestId: String? = null
     private val directoryLookup = RecipientLookupGate(RECIPIENT_REFRESH_COOLDOWN_MS)
     private val pendingRecipientsRequestId: String? get() = directoryLookup.pendingRequestId
@@ -208,6 +217,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
         BackgroundReceiverService.cancelIncoming(getApplication())
         if (pairedNode != null && socket == null) connect()
+        else if (connectionStatus == "Online") refreshQueuedInbox()
     }
 
     fun stopConnection() {
@@ -259,6 +269,12 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         cancelBackgroundSocket(socket)
         socket = null
         clearRecipientLookup()
+        queuedInboxItems = emptyList()
+        queuedInboxBusyIds = emptySet()
+        queuedInboxLoading = false
+        pendingInboxListId = null
+        pendingInboxResolutions.clear()
+        BackgroundReceiverService.cancelQueued(getApplication())
         if (pendingShareRequestId != null) {
             pendingShareRequestId = null
             sharePending = false
@@ -281,11 +297,18 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                             reconnectDelayMs = 1_000
                             connectionStatus = "Online"
                             refreshRecipients()
+                            refreshQueuedInbox()
                         }
                         is ConnectionEvent.Offline -> {
                             connectionStatus = event.detail
                             clearRecipientLookup()
                             clearIncomingShare()
+                            queuedInboxItems = emptyList()
+                            queuedInboxBusyIds = emptySet()
+                            queuedInboxLoading = false
+                            pendingInboxListId = null
+                            pendingInboxResolutions.clear()
+                            BackgroundReceiverService.cancelQueued(getApplication())
                             if (pendingShareRequestId != null) {
                                 pendingShareRequestId = null
                                 sharePending = false
@@ -380,6 +403,45 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
                         disableUndeliverableBackgroundReceiving()
                     }
                 }
+            }, { reply ->
+                handler.post {
+                    if (!owners.connected || generation != connectionGeneration ||
+                        reply.requestId != pendingInboxListId) return@post
+                    pendingInboxListId = null
+                    queuedInboxLoading = false
+                    if (reply.items != null) {
+                        queuedInboxItems = reply.items.filter { it.expiresAtMs > System.currentTimeMillis() }
+                        inboxStatus = if (queuedInboxItems.isEmpty()) "No queued transfers." else
+                            queuedInboxItems.size.toString() + " queued transfer(s) awaiting your decision."
+                        if (!owners.activityVisible && queuedInboxItems.isNotEmpty())
+                            BackgroundReceiverService.notifyQueued(getApplication())
+                        else BackgroundReceiverService.cancelQueued(getApplication())
+                    } else {
+                        // Older server configurations may not opt into queues.
+                        inboxStatus = if (reply.errorCode == "SHARE_QUEUE_DISABLED")
+                            "Queued inbox is not enabled on the Atlas Server."
+                        else "Could not load queued transfers."
+                    }
+                }
+            }, { reply ->
+                handler.post {
+                    if (!owners.connected || generation != connectionGeneration) return@post
+                    val pending = pendingInboxResolutions.remove(reply.requestId) ?: return@post
+                    val (deliveryId, copied) = pending
+                    if (reply.state == (if (copied) "copied" else "declined")) {
+                        queuedInboxItems = queuedInboxItems.filterNot { it.deliveryId == deliveryId }
+                        queuedInboxBusyIds = queuedInboxBusyIds - deliveryId
+                        inboxStatus = if (copied) "Copied on tablet and confirmed by Atlas." else
+                            "Queued transfer declined."
+                    } else {
+                        // Do not expose an item to an accidental second Copy if
+                        // the clipboard write occurred but the receipt is uncertain.
+                        inboxStatus = if (copied)
+                            "Text copied locally; Atlas receipt unconfirmed. Do not copy again."
+                        else "Decline was not confirmed; retry after reconnect."
+                    }
+                    if (queuedInboxItems.isEmpty()) BackgroundReceiverService.cancelQueued(getApplication())
+                }
             })
         } catch (_: Exception) {
             connectionStatus = "Could not connect to Atlas."
@@ -388,6 +450,51 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         }
     }
 
+
+    /** Fetch pending server-encrypted messages only through the currently
+     * authenticated Node WebSocket. Never persist content to Android storage.
+     */
+    fun refreshQueuedInbox() {
+        if (!owners.connected || connectionStatus != "Online" ||
+            pendingInboxListId != null || queuedInboxBusyIds.isNotEmpty()) return
+        val requestId = UUID.randomUUID().toString()
+        val ws = socket ?: return
+        pendingInboxListId = requestId
+        queuedInboxLoading = true
+        if (!ws.send(inboxListRequest(requestId))) {
+            pendingInboxListId = null
+            queuedInboxLoading = false
+            inboxStatus = "Queued inbox unavailable."
+        }
+    }
+
+    fun decideQueuedShare(deliveryId: String, accepted: Boolean, copyText: (String) -> Unit) {
+        if (!owners.canApproveClipboard || connectionStatus != "Online" ||
+            pendingInboxListId != null || deliveryId in queuedInboxBusyIds) return
+        val item = queuedInboxItems.find { it.deliveryId == deliveryId } ?: return
+        if (item.expiresAtMs <= System.currentTimeMillis()) {
+            queuedInboxItems = queuedInboxItems.filterNot { it.deliveryId == deliveryId }
+            inboxStatus = "Queued transfer expired."
+            return
+        }
+        if (accepted) {
+            try { copyText(item.text) }
+            catch (_: Exception) { inboxStatus = "Could not copy queued transfer."; return }
+        }
+        // A successful clipboard write precedes the server receipt, never vice
+        // versa. On disconnect, this result is unconfirmed, not automatically retried.
+        queuedInboxBusyIds = queuedInboxBusyIds + deliveryId
+        val requestId = UUID.randomUUID().toString()
+        pendingInboxResolutions[requestId] = deliveryId to accepted
+        inboxStatus = if (accepted) "Copied locally; confirming receipt with Atlas…" else
+            "Declining queued transfer…"
+        if (socket?.send(inboxResolutionRequest(requestId, deliveryId, accepted)) != true) {
+            pendingInboxResolutions.remove(requestId)
+            inboxStatus = if (accepted)
+                "Copied locally; Atlas receipt unconfirmed. Do not copy again."
+            else "Decline was not submitted."
+        }
+    }
 
     /** A share counts as accepted only after a human clicks Copy and Android writes it. */
     fun copyIncomingShare(copyText: (String) -> Unit) {
@@ -568,6 +675,11 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         sharePending = false
         shareStatus = "Nothing sent yet"
         inboxStatus = "No incoming shares yet."
+        queuedInboxItems = emptyList()
+        queuedInboxBusyIds = emptySet()
+        queuedInboxLoading = false
+        pendingInboxListId = null
+        pendingInboxResolutions.clear()
         importSequence++
         session = CompanionSession()
         // Forgetting while the Activity is open must not prevent a new pair
@@ -593,7 +705,10 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
     var session by mutableStateOf(CompanionSession())
         private set
 
-    fun navigate(destination: Section) { session = session.navigate(destination) }
+    fun navigate(destination: Section) {
+        session = session.navigate(destination)
+        if (destination == Section.INBOX) refreshQueuedInbox()
+    }
     fun editDraft(value: String) {
         // The reducer cancels a loading *active* image. A separate deferred
         // screenshot keeps loading while the user edits the sent text draft.

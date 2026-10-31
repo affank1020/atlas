@@ -27,6 +27,7 @@ class BackgroundReceiverService : Service() {
         private const val CHANNEL_INCOMING = "atlas-node-incoming"
         private const val STATUS_ID = 9401
         private const val INCOMING_ID = 9402
+        private const val QUEUED_ID = 9403
 
         fun hasNotificationPermission(context: Context): Boolean =
             Build.VERSION.SDK_INT < 33 ||
@@ -101,6 +102,37 @@ class BackgroundReceiverService : Service() {
             } catch (_: RuntimeException) {
                 false
             }
+        }
+
+        /** A generic notification after the Node reconnects and discovers
+         * saved transfers. Never show payload or sender on the lock screen.
+         * FCM wake-up is intentionally a separate, later integration.
+         */
+        fun notifyQueued(context: Context): Boolean {
+            if (!hasUsableNotifications(context)) return false
+            return try {
+                val manager = context.getSystemService(NotificationManager::class.java)
+                val open = PendingIntent.getActivity(
+                    context, 4, Intent(context, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                val message = Notification.Builder(context, CHANNEL_INCOMING)
+                    .setSmallIcon(android.R.drawable.stat_notify_more)
+                    .setContentTitle("Atlas queued transfers")
+                    .setContentText("Open the Atlas inbox to review transfers.")
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .setVisibility(Notification.VISIBILITY_SECRET)
+                    .setCategory(Notification.CATEGORY_MESSAGE)
+                    .build()
+                manager.notify(QUEUED_ID, message)
+                true
+            } catch (_: RuntimeException) { false }
+        }
+
+        fun cancelQueued(context: Context) {
+            context.getSystemService(NotificationManager::class.java).cancel(QUEUED_ID)
         }
 
         fun cancelIncoming(context: Context) {
@@ -189,6 +221,7 @@ class BackgroundReceiverService : Service() {
         handler.removeCallbacks(verifyChannels)
         (application as AtlasNodeApp).model.stopBackgroundReceiving()
         cancelIncoming(this)
+        cancelQueued(this)
         super.onDestroy()
     }
 
