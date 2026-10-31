@@ -973,7 +973,8 @@ switch (command) {
     if (!failDevFlag() && !await restartHostedNode()) process.exitCode = 1;
     break;
   case "share":
-    if (argument && argument !== "--queue") {
+    if ((argument && argument !== "--queue") ||
+        process.argv.slice(2).length !== (argument ? 2 : 1)) {
       console.error("Usage: ./atlasctl share [--queue] (no text or tokens in command arguments)");
       process.exitCode = 2;
       break;
