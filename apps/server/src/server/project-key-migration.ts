@@ -138,6 +138,29 @@ export async function copyProjectKeys(input: {
     );
     if (result.rows.length > maxFiles + 1) throw new Error("Project key copy catalog exceeded batch limit.");
     const rows = result.rows.slice(0, maxFiles), remaining = result.rows.length > maxFiles;
+    return copyProjectKeyPage({ rows, remaining, projectId: input.projectId ??
+        (rows[0]?.project_id ?? ""), source:input.source, destination:input.destination, apply });
+}
+
+/** Copies exactly the explicitly supplied immutable manifest page, never a
+ * fresh live-catalogue selection. For the operator ledger this prevents a
+ * concurrent INSERT/archive/reorder from changing which R2 keys can be PUT.
+ * The caller must separately check that its snapshot still matches the
+ * authoritative catalogue; beforeWrite runs after preflight for added safety. */
+export async function copyProjectKeyPage(input: {
+    rows: readonly ProjectKeyCopyRow[]; remaining: boolean; projectId: string;
+    source: BoundedCopyStore; destination: BoundedCopyStore;
+    apply?: boolean; beforeWrite?: () => Promise<void>;
+}): Promise<KeyCopyReport> {
+    const rows = input.rows;
+    const remaining = input.remaining;
+    const apply = input.apply === true;
+    if (!(UUID.test(input.projectId) || rows.length === 0 && !apply && input.projectId === "") || typeof remaining !== "boolean" ||
+        rows.length > MAX_BATCH || (apply && !input.destination.putIfAbsent))
+        throw new Error("Invalid immutable Project copy page.");
+    if (rows.some(row => row.project_id !== input.projectId))
+        throw new Error("Immutable Project copy page contains an out-of-scope row.");
+    const maxFiles = rows.length;
     const report: KeyCopyReport = {
         mode: apply ? "apply" : "dry-run", status: "failed", checked: 0,
         alreadyVerified: 0, planned: 0, createdVerified: 0, racedVerified: 0,
@@ -173,6 +196,9 @@ export async function copyProjectKeys(input: {
     }
 
     if (apply) {
+        // Recheck the captured catalogue AFTER all bounded source/destination
+        // reads, before the first irreversible create-only PUT.
+        if (pending.length) await input.beforeWrite?.();
         for (const item of pending) {
             report.writesAttempted++;
             try {
