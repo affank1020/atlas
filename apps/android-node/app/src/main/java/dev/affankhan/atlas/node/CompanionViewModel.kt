@@ -286,7 +286,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             callbacks.forEach { it(result) }
             // The Activity can leave while Forget or Stop awaits the ack.
             // The temporary gate owns the socket until the operation finishes.
-            if (!owners.connected && socket != null) disconnect()
+            if (owners.mayReleaseSocket(revocationPending = false) && socket != null) disconnect()
         }
         pushRevocation = gate
         val deadline = Runnable { if (pushRevocation === gate) gate.deadlineExpired() }
@@ -439,7 +439,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
             }
             return
         }
-        if (pushRevocation == null) disconnect()
+        if (owners.mayReleaseSocket(pushRevocation != null)) disconnect()
     }
 
     fun startBackgroundReceiving() {
@@ -454,7 +454,7 @@ internal class CompanionViewModel(application: Application) : AndroidViewModel(a
         backgroundReceivingRunning = false
         // A correlated unregister still needs this socket if the last
         // Android connection owner disappears during the bounded opt-out.
-        if (!owners.connected && pushRevocation == null) disconnect()
+        if (owners.mayReleaseSocket(pushRevocation != null)) disconnect()
     }
 
     private fun disableUndeliverableBackgroundReceiving() {
