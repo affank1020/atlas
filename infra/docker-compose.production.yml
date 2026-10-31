@@ -33,6 +33,8 @@ services:
       ATLAS_NODE_EXECUTION: remote
       # Node-authenticated file intake is disabled until production R2 is verified.
       ATLAS_NODE_FILES_ENABLED: ${ATLAS_NODE_FILES_ENABLED:-false}
+      # Separate image direction grant; text share approvals do not imply image permission.
+      ATLAS_DEVICE_IMAGE_PAIRS: ${ATLAS_DEVICE_IMAGE_PAIRS:-}
       ATLAS_TRUSTED_INGRESS: "true"
       ATLAS_MCP_RESOURCE: ${ATLAS_MCP_RESOURCE:-}
       ATLAS_MCP_OAUTH_ISSUER: ${ATLAS_MCP_OAUTH_ISSUER:-}
