@@ -421,7 +421,15 @@ atlas_cutover_rehearsal (optional suffix), the independent environment
 gate and the exact simulation-only confirmation. Never run the command on a
 production host, a production DB port-forward, or a production-derived
 snapshot containing secrets. The hostname and database-name checks are
-defence in depth and cannot prove host isolation.
+defence in depth and cannot prove host isolation. The engine additionally
+checks, **before BEGIN or table locks**, that PostgreSQL resolves the
+authoritative atlas_files, media_assets, media_variants tables, the Project
+storage view, and the required Project key/recovery manifest and receipt
+tables **inside the selected disposable schema**. A similarly named but
+empty test schema prepended to public must fail, even if current_schema()
+returns its name. Within the transaction the search_path is restricted to
+pg_catalog, that verified schema, then pg_temp; no fallback to public is
+allowed. A regression test covers this exact name-resolution pitfall.
 
 ~~~sh
 # On an isolated, disposable database restored with matching manifests:
