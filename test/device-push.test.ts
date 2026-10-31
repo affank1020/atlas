@@ -50,7 +50,7 @@ test('registered device token is encrypted; FCM receives only opaque wake data',
     const service=new DevicePushService(db,randomBytes(32),{
         projectId:'atlas-test',clientEmail:'test@atlas-test.iam.gserviceaccount.com',privateKey,
     },{allowedForInbox:async()=>allowed} as never,fakeFetch as typeof fetch);
-    await service.register(target,token);
+    await service.register(target,token,"session-1");
     assert.ok(saved);
     await service.notifyQueued(source,target,delivery);
     assert.equal(calls.length,2);
@@ -64,6 +64,6 @@ test('registered device token is encrypted; FCM receives only opaque wake data',
     allowed=false;
     await service.notifyQueued(source,target,delivery);
     assert.equal(calls.length,2,'revocation must block the wake');
-    await service.unregister(target);
+    await service.unregister(target,"session-1");
     assert.equal(removed,true);
 });
