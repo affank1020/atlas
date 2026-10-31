@@ -52,7 +52,7 @@ internal class AtlasTransport {
         onShareReply: (ShareReply) -> Unit,
         onRecipientsReply: (RecipientsReply) -> Unit,
         onInboxReply: (InboxReply) -> Unit,
-        onPushReply: (String) -> Unit,
+        onPushReply: (PushRegistrationReply) -> Unit,
         onIncomingShare: (IncomingDeviceShare, (IncomingShareOutcome) -> Unit) -> Unit,
     ): WebSocket {
         val endpoint = parseAtlasEndpoint(node.origin)
@@ -94,7 +94,7 @@ internal class AtlasTransport {
                 val shareReply = parseShareReply(text)
                 val directoryReply = parseRecipientsReply(text)
                 val inboxReply = parseInboxReply(text)
-                val pushReply = AtlasPush.parseRegistrationAck(text)
+                val pushReply = AtlasPush.parseRegistrationReply(text)
                 if (shareReply != null || directoryReply != null || inboxReply != null || pushReply != null) {
                     // Error envelopes share the same wire shape. Callers correlate
                     // requestId to their pending operation and ignore other replies.
