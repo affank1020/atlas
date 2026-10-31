@@ -312,6 +312,26 @@ class MacOperatorTests(unittest.TestCase):
             operator.background_check(self.layout)
         self.assertEqual(json.loads(record.read_text())["state"], "needs-attention")
 
+    def test_background_checker_discards_candidate_when_operator_changes_midflight(self):
+        operator.initial_install(self.layout, self.version1)
+        selected = self.first / "scripts"
+        changed = self.second / "scripts"
+        with patch.object(operator, "__file__", str(
+            self.first / "scripts/macos-node-operator.py"
+        )), patch.object(
+            operator, "current_target", side_effect=[selected, changed]
+        ), self.mock_updater_discover(lambda _: {
+            "state": "available",
+            "installed": self.version1,
+            "candidate": "node-" + self.version2,
+        }), patch.object(operator.importlib.util, "module_from_spec",
+                         return_value=SimpleNamespace()):
+            operator.background_check(self.layout)
+        result = json.loads(operator.check_paths(self.layout)[1].read_text())
+        self.assertEqual(result["state"], "unavailable")
+        self.assertEqual(result["reason"], "operator-changed-during-check")
+        self.assertNotIn("candidate", result)
+
     def test_background_checker_refuses_mutated_signed_source_and_result_symlink(self):
         operator.initial_install(self.layout, self.version1)
         path = operator.check_paths(self.layout)[1]
