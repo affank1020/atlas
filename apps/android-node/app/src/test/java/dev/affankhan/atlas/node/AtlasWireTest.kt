@@ -134,6 +134,15 @@ class AtlasWireTest {
         val parsed = parseRecipientsReply(raw)
         assertEquals(id, parsed?.requestId)
         assertEquals(listOf(ShareRecipient(mac, "My Mac", "darwin", "online", true)), parsed?.recipients)
+        // New server adds durable receive eligibility; older server replies
+        // omit it and remain valid without silently claiming support.
+        val updated = raw.replace("\"available\":true", "\"available\":true,\"queueCapable\":true")
+        assertEquals(listOf(ShareRecipient(mac, "My Mac", "darwin", "online", true, true)),
+            parseRecipientsReply(updated)?.recipients)
+        assertEquals(null, parseRecipientsReply(updated.replace("\"queueCapable\":true",
+            "\"queueCapable\":\"true\"")))
+        assertEquals(null, parseRecipientsReply(updated.replace("\"queueCapable\":true",
+            "\"unexpected\":true")))
         assertEquals(null, parseShareReply(raw))
         val denied = """{"type":"response","requestId":"$id","ok":false,"error":{"code":"SHARE_DENIED","message":"Denied"}}"""
         assertEquals("SHARE_DENIED", parseRecipientsReply(denied)?.errorCode)
