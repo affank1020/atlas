@@ -156,7 +156,7 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onDeclineIncoming = model::declineIncomingShare,
-                backgroundReceiving = model.backgroundReceivingRunning,
+                backgroundReceiving = model.pushEnabled,
                 backgroundReceiveError = model.backgroundReceiveError,
                 onToggleBackgroundReceiving = ::setBackgroundReceiving,
                 onOpenNotificationSettings = ::openNotificationSettings,
@@ -491,10 +491,11 @@ private fun CompanionContent(
                 )
                 Text(
                     if (backgroundReceiving)
-                        "A persistent notification keeps the Node connection active while using other apps. " +
-                            "Open an incoming notification to approve Copy within 15 seconds."
-                    else "Off. Turn on to receive while using other apps. " +
-                        "Screen-off delivery is not guaranteed; there is no offline inbox or push yet.",
+                        "Enabled. Atlas may keep a foreground connection while Android allows it. " +
+                            "With Firebase configured, queued transfers can notify you even after the app closes. " +
+                            "Open Inbox to review; copying always requires a tap."
+                    else "Off. Turn on to enable the foreground receiver and opt in to queued-transfer notifications. " +
+                        "Queued text remains available from Inbox while connected.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (backgroundReceiveError != null) {
