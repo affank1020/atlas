@@ -80,6 +80,16 @@ test('offline encrypted shares preserve queued-vs-copied states, replay safety, 
             await new Promise(resolve => setTimeout(resolve, 20));
         assert.equal((await services.nodes.get(receiver.nodeId)).status, 'offline');
 
+        // Offline NodeService masks runtime capabilities, but an inbox-capable
+        // registered Android Node should still appear as queue-eligible.
+        const directory = await request(senderSocket, { type: 'device.share.recipients' });
+        assert.equal(directory.ok, true, JSON.stringify(directory));
+        const recipient = directory.result.recipients.find(
+            (entry: { nodeId: string }) => entry.nodeId === receiver.nodeId);
+        assert.ok(recipient);
+        assert.equal(recipient.available, false);
+        assert.equal(recipient.queueAvailable, true);
+
         const deliveryId = randomUUID(), text = 'Secret queued text: 😀\nnext line';
         const payload = { type: 'device.share.queue', deliveryId,
             targetNodeId: receiver.nodeId, text };
