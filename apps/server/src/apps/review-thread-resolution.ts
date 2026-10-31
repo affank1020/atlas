@@ -36,8 +36,9 @@ const node=/^[A-Za-z0-9_+/=-]{8,256}$/;
 const digest=(x:unknown)=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 
 function parsedClaim(run:AtlasRecord,lineage:string):Claim|undefined {
-    const coverage=run.data.coverage;
-    if(!object(coverage))throw new AtlasError('Resolution run coverage is missing.','CONFLICT');
+    // Historical imported rounds may have no structured coverage. They
+    // cannot authorize a mutation but must not masquerade as claims.
+    const coverage=object(run.data.coverage)?run.data.coverage:{};
     const claims=coverage.githubThreadResolutions;
     if(claims===undefined)return undefined;
     if(!object(claims)||Object.keys(claims).length>30)
