@@ -88,8 +88,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     // No new wire operations are enabled until the server has an explicit key.
     // Missing secret leaves existing live device shares unchanged.
     const offlineInbox = config.deviceInboxKey
-        ? new DeviceOfflineInbox(repository.pool, readInboxKey(config.deviceInboxKey),
-            (source,target,client) => shareApprovals.allowedForInbox(source,target,client))
+        ? new DeviceOfflineInbox(repository.pool, readInboxKey(config.deviceInboxKey), shareApprovals)
         : undefined;
     const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox);
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
