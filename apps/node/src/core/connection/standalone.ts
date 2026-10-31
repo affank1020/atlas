@@ -1,11 +1,12 @@
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import WebSocket from 'ws';
 import { AtlasError } from '@atlas/protocol/errors';
 import { MAX_NODE_FRAME_BYTES, NODE_PROTOCOL_VERSION, nodeRequestSchema, registeredSchema, validateNodeOperation } from '@atlas/protocol/node-protocol';
 import { requiredCapability } from '@atlas/protocol/runtime';
 import { deviceShareDeliverySchema, deviceShareReceiptSchema,
-    deviceShareRecipientsResultSchema, deviceInboxRecipientsResultSchema, deviceShareTextSchema } from '@atlas/protocol/device-protocol';
+    deviceShareRecipientsResultSchema, deviceInboxRecipientsResultSchema, deviceShareTextSchema,
+    deviceImageDeliverySchema, deviceImageReceiptSchema, MAX_DEVICE_IMAGE_BYTES } from '@atlas/protocol/device-protocol';
 import { z } from 'zod';
 import type { NodeRuntime } from '@atlas/protocol/runtime';
 
@@ -94,6 +95,16 @@ export class StandaloneNode extends EventEmitter {
                 this.inFlight.add(task);
                 return;
             }
+            const image = deviceImageDeliverySchema.safeParse(message);
+            if (image.success) {
+                if (this.inFlight.size >= 32) {
+                    this.reply(socket, image.data.requestId, false, {code: 'NODE_BUSY',message: 'Node is busy.'});
+                    return;
+                }
+                const task = this.handleImage(socket, image.data).finally(() => this.inFlight.delete(task));
+                this.inFlight.add(task);
+                return;
+            }
             const parsed = nodeRequestSchema.safeParse(message);
             if (!parsed.success) { socket.close(1008, 'Invalid request'); return; }
             if (this.inFlight.size >= 32) { this.reply(socket, parsed.data.requestId, false, { code: 'NODE_BUSY', message: 'Node execution limit reached.' }); return; }
@@ -137,6 +148,62 @@ export class StandaloneNode extends EventEmitter {
                 code: known ? error.code : 'SHARE_REJECTED',
                 message: known ? error.message.slice(0, 200) : 'Device share was not accepted.',
             });
+        }
+    }
+
+    /**
+     * Fetch once over authenticated HTTPS, never WebSocket/base64. The HTTP
+     * response has no redirects, no sensitive URL token, and a strict 8-MiB
+     * read limit. The receiver independently verifies digest and expiry.
+     */
+    private async handleImage(socket: WebSocket, input: ReturnType<typeof deviceImageDeliverySchema.parse>) {
+        try {
+            if (!this.runtime.getCapabilities().includes('device.image.receive') ||
+                !this.runtime.receiveDeviceImage || !this.registered || socket !== this.socket)
+                throw new AtlasError('Image receiving unavailable.', 'CAPABILITY_UNAVAILABLE');
+            if (Date.parse(input.expiresAt) <= Date.now())
+                throw new AtlasError('Image expired.', 'SHARE_EXPIRED');
+            const url = new URL(this.config.serverUrl);
+            url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+            url.pathname = '/node/images/' + input.deliveryId;
+            url.search = '';
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15_000);
+            let bytes: Buffer;
+            try {
+                const response = await fetch(url, {
+                    method:'GET',redirect:'error',signal:controller.signal,
+                    headers:{Authorization:'Bearer ' + this.config.token,
+                        'x-atlas-node-id':this.config.id},
+                });
+                if (!response.ok || response.headers.get('content-type') !== input.mimeType ||
+                    response.headers.get('x-atlas-image-sha256') !== input.sha256 ||
+                    Number(response.headers.get('content-length')) !== input.byteLength ||
+                    input.byteLength > MAX_DEVICE_IMAGE_BYTES || !response.body)
+                    throw new AtlasError('Image fetch unavailable or inconsistent.', 'SHARE_INVALID');
+                const chunks: Buffer[] = [];
+                let total = 0;
+                for await (const chunk of response.body) {
+                    const part = Buffer.from(chunk);
+                    total += part.length;
+                    if (total > input.byteLength) throw new AtlasError('Image exceeds declared size.', 'SHARE_INVALID');
+                    chunks.push(part);
+                }
+                bytes = Buffer.concat(chunks,total);
+            } finally { clearTimeout(timeout); }
+            if (bytes.length !== input.byteLength ||
+                createHash('sha256').update(bytes).digest('hex') !== input.sha256 ||
+                Date.parse(input.expiresAt) <= Date.now() || socket !== this.socket)
+                throw new AtlasError('Image failed integrity/connection validation.', 'SHARE_INVALID');
+            const receipt = deviceImageReceiptSchema.parse(await this.runtime.receiveDeviceImage({
+                deliveryId:input.deliveryId,sourceNodeId:input.sourceNodeId,
+                mimeType:input.mimeType,byteLength:input.byteLength,
+                sha256:input.sha256,expiresAt:input.expiresAt,bytes,
+            }));
+            this.reply(socket,input.requestId,true,receipt);
+        } catch(error) {
+            const code = error instanceof AtlasError ? error.code : 'SHARE_UNAVAILABLE';
+            this.reply(socket,input.requestId,false,{code,message:'Image could not be accepted.'});
         }
     }
 
