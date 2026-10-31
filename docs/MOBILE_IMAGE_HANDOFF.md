@@ -14,7 +14,7 @@
 
 ## Physical acceptance
 
-1. Upgrade the **server first**, enable the Mac image receiver and restart the Mac Node, preserve the existing Node UUID and credentials. Approve Android→Mac direction in Atlas Web.
+1. Upgrade the **server first** with the explicit `ATLAS_DEVICE_IMAGE_PAIRS=androidUUID:macUUID`, enable the Mac image receiver and restart the Mac Node, preserving the existing Node UUID and credentials. Approve Android→Mac direction in Atlas Web as a second check.
 2. On Samsung, **build Android 0.9.0 with the same persistent local signer**, verify fingerprint, then `adb install -r` without uninstall/re-enrolment. Never install an ephemerally CI-signed APK over the enrolled app.
 3. In Samsung Notes, a browser or Gallery, Share a *cropped screen snip* or PNG/JPEG image → Atlas → choose the Mac → Send image.
 4. Confirm the Mac displays a deliberate approval; press **Copy image**, then paste into ChatGPT with Cmd+V. Verify that **actual pixels** paste, not a filename, OCR/text or base64. Repeat for full images and JPEG.
