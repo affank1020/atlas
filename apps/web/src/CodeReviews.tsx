@@ -345,7 +345,7 @@ function FindingDetails({ entry, refreshVersion }: { entry: ReviewRun; refreshVe
             <p className="code-reviews-subtitle">These are saved Atlas receipts, not a fresh GitHub check.
                 A published fix reply does not mean the GitHub discussion was resolved.</p>
         </div>}
-        {entry.publication === 'claimed' && <p role="status">GitHub publication is uncertain; check its claim before retrying.</p>
+        {entry.publication === 'claimed' && <p role="status">GitHub publication is uncertain; check its claim before retrying.</p>}
         {entry.publication === 'published' && <p>Published on GitHub{entry.githubReviewId
             ? <> · <a href={`https://github.com/${entry.repository}/pull/${entry.prNumber}#pullrequestreview-${entry.githubReviewId}`}
                 target="_blank" rel="noopener noreferrer">View review ↗</a></> : null}</p>}
