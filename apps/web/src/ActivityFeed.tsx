@@ -29,7 +29,7 @@ function ActivityRow({ item, scopeLinks = false }: { item: ReturnType<typeof pre
             <div className="activity-evidence-header"><strong>Operation provenance</strong>
                 <small>Recorded metadata only. Client, transport and credential class do not establish a human operator.</small>
             </div>
-            <dl>{evidence.map(({ label, value }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+            <ul className="activity-evidence-list">{evidence.map(({ label, value }) => <li key={label}>{label}: {value}</li>)}</ul>
         </div>}<dl>{Object.entries(item.details).filter(([, value]) => value !== undefined).map(([key, value]) => <div key={key}><dt>{readable(key.replace(/([a-z])([A-Z])/g, '$1 $2'))}</dt><dd>{typeof value === 'object' ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value)}</dd></div>)}</dl>{scopeLinks && (item.projectId || item.workspaceId || nodeId || distinctPrevious || distinctSource || distinctTarget || storeId) && <nav aria-label="Related monitoring scopes" className="actions">
             {item.projectId && <a href={monitoringHash('activity', { projectId: item.projectId })}>Project activity</a>}
             {item.workspaceId && <a href={monitoringHash('activity', { workspaceId: item.workspaceId })}>Workspace activity</a>}
