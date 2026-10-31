@@ -107,18 +107,21 @@ def prepared_release(layout, selected: dict) -> None:
     tag = selected["tag"]
     target = layout.releases / tag.removeprefix("node-")
     if target.exists() or target.is_symlink():
-        release = lifecycle.release_path(layout, tag.removeprefix("node-"))
-        receipt_path = release / staging.RECEIPT
-        receipt = json.loads(receipt_path.read_text())
-        if (
-            receipt.get("archiveSha256") != selected["digest"]
-            or receipt.get("source") != selected["commit"]
-        ):
-            raise Refused("Existing staged release does not match the selected catalogue build.")
-        print("Using previously signed-staged release:", release)
+        print("Checking previously signed-staged release:", tag)
     else:
         print("Downloading and verifying signed release:", tag)
         staging.stage(tag, layout.releases)
+    # An exact immutable release tag is re-fetched during staging. Bind its
+    # verified receipt back to the full source and archive digest that the
+    # operator approved, even when this invocation did the initial staging.
+    release = lifecycle.release_path(layout, tag.removeprefix("node-"))
+    receipt_path = release / staging.RECEIPT
+    receipt = json.loads(receipt_path.read_text())
+    if (
+        receipt.get("archiveSha256") != selected["digest"]
+        or receipt.get("source") != selected["commit"]
+    ):
+        raise Refused("Signed-staged release does not match the selected catalogue build.")
 
 
 def apply_update(layout, *, migrate: bool) -> int:
