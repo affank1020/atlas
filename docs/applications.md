@@ -2,8 +2,8 @@
 
 Applications are **code-defined capabilities** with their own frontend and optional
 backend/MCP operations. They can belong to a Project or be standalone. They are distinct from Views:
-Views embed into the Project interface; Applications are **launched in a new
-browser tab** with a dedicated full-page interface.
+Views embed into the Project interface; Applications open **in the same browser
+tab** with a dedicated full-page interface and normal browser Back navigation.
 
 ## Current implementation
 
@@ -24,8 +24,8 @@ names remain unchanged. No migration or republishing of Portfolio data is needed
 - Standalone launch page: `#/applications/:slug`
 - UI component map: `apps/web/src/Applications.tsx`; global directory: `ApplicationsDirectory.tsx`
 
-Launch links use `target="_blank"` and `rel="noopener noreferrer"`; a direct
-deep link also works. The previous `#/portfolio` page remains available for
+Launch links use same-tab hash navigation so browser Back returns to the
+previous Atlas page; a direct deep link also works. The previous `#/portfolio` page remains available for
 compatibility. The new launch page uses the same compiled React component,
 without embedding it in a View sandbox or requiring another server.
 

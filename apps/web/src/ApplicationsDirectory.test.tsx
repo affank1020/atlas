@@ -30,12 +30,13 @@ afterEach(cleanup);
 
 test('lists applications from all projects with launch links, without fetching per-project lists', async () => {
     render(<ApplicationsDirectory />);
-    const portfolio = await screen.findByRole('link', { name: 'Launch Portfolio in a new tab' });
-    const football = screen.getByRole('link', { name: 'Launch Football Training in a new tab' });
+    const portfolio = await screen.findByRole('link', { name: 'Launch Portfolio' });
+    const football = screen.getByRole('link', { name: 'Launch Football Training' });
     expect(portfolio).toHaveAttribute('href', '#/projects/project-one/applications/portfolio');
     expect(football).toHaveAttribute('href', '#/projects/project-two/applications/football-training');
-    expect(portfolio).toHaveAttribute('target', '_blank');
-    expect(portfolio).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(portfolio).not.toHaveAttribute('target');
+    expect(portfolio).not.toHaveAttribute('rel');
+    expect(football).not.toHaveAttribute('target');
     expect(callTool).toHaveBeenCalledWith('list_all_applications', {}, expect.any(AbortSignal));
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'list_applications' || name === 'list_projects')).toBe(false);
     expect(screen.queryByRole('combobox', { name: /project/i })).not.toBeInTheDocument();
@@ -44,17 +45,17 @@ test('lists applications from all projects with launch links, without fetching p
 
 test('search narrows the directory without changing registrations', async () => {
     render(<ApplicationsDirectory />);
-    await screen.findByRole('link', { name: 'Launch Portfolio in a new tab' });
+    await screen.findByRole('link', { name: 'Launch Portfolio' });
     const search = screen.getByRole('searchbox', { name: 'Search applications' });
     expect(search.closest('.browse-toolbar')).toBeInTheDocument();
     fireEvent.change(search, { target: { value: 'FOOTBALL' } });
     expect(search).toHaveValue('FOOTBALL');
-    expect(screen.queryByRole('link', { name: 'Launch Portfolio in a new tab' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Launch Football Training in a new tab' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Launch Portfolio' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Launch Football Training' })).toBeInTheDocument();
     expect(screen.getByText('1 application')).toBeInTheDocument();
     fireEvent.change(search, { target: { value: 'publish' } });
-    expect(screen.getByRole('link', { name: 'Launch Portfolio in a new tab' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Launch Football Training in a new tab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Launch Portfolio' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Launch Football Training' })).not.toBeInTheDocument();
     fireEvent.change(search, { target: { value: '' } });
     expect(search).toHaveValue('');
     expect(screen.getByText('3 applications')).toBeInTheDocument();
@@ -62,8 +63,9 @@ test('search narrows the directory without changing registrations', async () => 
 
 test('standalone applications use project-independent URLs and remember launch history', async () => {
     render(<ApplicationsDirectory />);
-    const notes = await screen.findByRole('link', { name: 'Launch Notes in a new tab' });
+    const notes = await screen.findByRole('link', { name: 'Launch Notes' });
     expect(notes).toHaveAttribute('href', '#/applications/notes');
+    expect(notes).not.toHaveAttribute('target');
     fireEvent.click(notes);
     expect(readRecentWork()[0]).toMatchObject({ href: '#/applications/notes', projectId: null, kind: 'Application' });
 });

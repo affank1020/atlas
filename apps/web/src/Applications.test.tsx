@@ -1,7 +1,7 @@
 import { Provider } from 'react-redux';
 import { createAtlasStore } from './store';
 import type { ReactElement, ReactNode } from 'react';
-import { cleanup, render as rtlRender, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ProjectApplications, ApplicationWindow } from './Applications';
 import { callTool } from './api';
@@ -17,13 +17,16 @@ const manifest = {
 beforeEach(() => { vi.resetAllMocks(); sessionStorage.clear(); });
 afterEach(cleanup);
 
-test('Applications are launchable in a new tab from the owning Project', async () => {
+test('Project Applications navigate in the same tab and record recent work', async () => {
     vi.mocked(callTool).mockResolvedValue([manifest]);
     render(<ProjectApplications projectId="project-portfolio" />);
     const link = await screen.findByRole('link', { name: /Launch Portfolio/ });
     expect(link).toHaveAttribute('href', '#/projects/project-portfolio/applications/portfolio');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(link).not.toHaveAttribute('target');
+    expect(link).not.toHaveAttribute('rel');
+    expect(screen.getByText(/Applications open within Atlas/)).toBeInTheDocument();
+    fireEvent.click(link);
+    expect(readRecentWork()[0]).toMatchObject({ name: 'Portfolio', kind: 'Application', href: '#/projects/project-portfolio/applications/portfolio' });
     expect(callTool).toHaveBeenCalledWith('list_applications', { projectId: 'project-portfolio' }, expect.any(AbortSignal));
 });
 

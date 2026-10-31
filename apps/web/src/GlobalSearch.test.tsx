@@ -27,7 +27,8 @@ test('natural language app requests show launchable results and keyboard navigat
     fireEvent.change(screen.getByRole('textbox', { name: 'Search or describe an action' }), { target: { value: 'Open the portfolio app' } });
     const link = await screen.findByRole('link', { name: /Portfolio Editor/ }, { timeout: 3000 });
     expect(link).toHaveAttribute('href', '#/projects/p/applications/portfolio');
-    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).not.toHaveAttribute('target');
+    expect(link).not.toHaveAttribute('rel');
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('search_everything', { query: 'Open the portfolio app', limit: 45 }, expect.any(AbortSignal)));
     fireEvent.keyDown(screen.getByRole('dialog', { name: 'Search Atlas' }), { key: 'ArrowDown' });
     expect(link).toHaveAttribute('aria-current', 'true');

@@ -70,8 +70,14 @@ test('Home combines recent applications and views in last-used order', async () 
     ]);
     expect(within(recentlyUsed).getByText('View · Research')).toBeInTheDocument();
     expect(within(recentlyUsed).getByText('Application · Research')).toBeInTheDocument();
-    expect(within(recentlyUsed).getByRole('link', { name: /Studio/ })).toHaveAttribute('href', '#/projects/p/applications/studio');
-    expect(within(recentlyUsed).getByRole('link', { name: /Reading list/ })).toHaveAttribute('href', 'http://localhost:3000/projects/p/views/reading');
+    const studio = within(recentlyUsed).getByRole('link', { name: /Studio/ });
+    const readingList = within(recentlyUsed).getByRole('link', { name: /Reading list/ });
+    expect(studio).toHaveAttribute('href', '#/projects/p/applications/studio');
+    expect(studio).not.toHaveAttribute('target');
+    expect(studio).not.toHaveAttribute('rel');
+    expect(readingList).toHaveAttribute('href', 'http://localhost:3000/projects/p/views/reading');
+    expect(readingList).toHaveAttribute('target', '_blank');
+    expect(readingList).toHaveAttribute('rel', 'noopener noreferrer');
     expect(within(recentlyUsed).queryByText('Research project')).not.toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Attention needed' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));

@@ -39,11 +39,11 @@ export function ApplicationsDirectory() {
         {!isLoading && !error && visible.length === 0 && <p className="application-directory-state">{applications.length === 0 ? 'No applications are registered yet.' : 'No applications match your search.'}</p>}
         {!isLoading && !error && <div className="applications-directory-grid">
             {visible.map(app => <a key={`${app.projectId ?? 'standalone'}/${app.slug}`}
-                className="applications-directory-card" href={launchHref(app)} target="_blank" rel="noopener noreferrer"
-                aria-label={`Launch ${app.name} in a new tab`}
+                className="applications-directory-card" href={launchHref(app)}
+                aria-label={`Launch ${app.name}`}
                 onClick={() => rememberWork({ href: launchHref(app), name: app.name, projectId: app.projectId, kind: 'Application' })}>
                 <span className="applications-directory-icon"><ApplicationSymbol type={app.type} /></span>
-                <span className="applications-directory-arrow" aria-hidden="true">↗</span>
+                <span className="applications-directory-arrow" aria-hidden="true">→</span>
                 <span className="applications-directory-card-name">{app.name}</span>
                 <span className="applications-directory-card-copy">{app.description}</span>
             </a>)}
