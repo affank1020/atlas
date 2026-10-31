@@ -125,6 +125,21 @@ def prepared_release(layout, selected: dict) -> None:
         raise Refused("Signed-staged release does not match the selected catalogue build.")
 
 
+def sync_installed_operator(layout, tag: str) -> None:
+    """Advance an already-installed checkout-independent CLI after cutover.
+
+    The runtime activation is complete when this runs. A failed operator
+    promotion must not claim the Node itself failed or attempt a second
+    cutover; keep the previous signed CLI available for operator recovery.
+    """
+    current = layout.app / "operator" / "current"
+    if not current.exists() and not current.is_symlink():
+        return
+    operator = load_helper("macos-node-operator.py")
+    with lifecycle.lock_state(layout):
+        operator.promote(layout, tag, require_existing=True)
+
+
 def apply_update(layout, *, migrate: bool) -> int:
     if not sys.stdin.isatty():
         raise Refused("Updates require an interactive terminal and explicit confirmation.")
@@ -188,6 +203,13 @@ def apply_update(layout, *, migrate: bool) -> int:
             lifecycle.manage(layout, ["install-watchdog"])
     lifecycle.manage(layout, ["activate", tag.removeprefix("node-"), "--confirm",
                               "--expect-entrypoint", selected_state["currentEntrypoint"]])
+    try:
+        sync_installed_operator(layout, tag.removeprefix("node-"))
+    except (Refused, lifecycle.Refused, OSError, ValueError, RuntimeError) as exc:
+        print("Node activated but standalone updater could not be advanced:", exc,
+              file=sys.stderr)
+        print("Use the signed release operator sync command after inspection.",
+              file=sys.stderr)
     print("Local launchd reconnect verified; confirm authenticated Server registration separately.")
     return 0
 
