@@ -37,6 +37,19 @@ export class DurableDeviceShareInbox {
             throw new Error('ATLAS_DEVICE_SHARE_QUEUE_KEY is required when queue pairs are configured.');
     }
 
+    get enabled() { return !!this.key && this.queuePairs.size > 0; }
+
+    /** Expired plaintext is inaccessible immediately via list(); this sweep
+     * also erases its ciphertext without needing another incoming transfer.
+     */
+    async prune() {
+        await this.pool.query(`UPDATE node_share_inbox
+            SET status='expired',nonce=NULL,ciphertext=NULL,auth_tag=NULL,resolved_at=now()
+            WHERE status='queued' AND expires_at <= now()`);
+        await this.pool.query(`DELETE FROM node_share_inbox
+            WHERE expires_at < now() - interval '7 days'`);
+    }
+
     allowsQueue(source: string, target: string) {
         return !!this.key && this.queuePairs.has(source.toLowerCase() + ':' + target.toLowerCase());
     }

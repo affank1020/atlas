@@ -14,7 +14,8 @@ import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
 const DEFAULT_TIMING: GatewayTiming = { heartbeatMs: 15_000, staleMs: 45_000, registrationMs: 5_000, persistMs: 60_000 };
-type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean };
+type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean;
+    lastInboxRead: number; inboxPending: boolean; inboxResolveWindow: number; inboxResolveCount: number };
 /** HTTP upgrade boundary. All Workspace execution still flows through NodeRouter. */
 export class RemoteNodeGateway {
     private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_NODE_FRAME_BYTES });
@@ -24,9 +25,16 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
+    private readonly inboxMaintenance: ReturnType<typeof setInterval> | undefined;
     constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals,
         private readonly inbox?: DurableDeviceShareInbox) {
         this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
+        if (inbox?.enabled) {
+            this.inboxMaintenance = setInterval(() => {
+                this.track(inbox.prune().catch(() => undefined));
+            }, 60 * 60 * 1000);
+            this.inboxMaintenance.unref();
+        }
     }
     private track(task: Promise<unknown>) {
         this.pendingLifecycle.add(task);
@@ -93,6 +101,8 @@ export class RemoteNodeGateway {
                     const runtime = new RemoteNodeRuntime(socket, registration.capabilities);
                     const now = Date.now();
                     session = { id: sessionId, socket, runtime, lastPong: now, lastPersisted: now, lastDirectoryRead: 0, directoryPending: false,
+                        lastInboxRead: 0, inboxPending: false,
+                        inboxResolveWindow: 0, inboxResolveCount: 0,
                         heartbeat: setInterval(() => this.heartbeat(registration.nodeId, session!), this.timing.heartbeatMs) };
                     const previous = this.sessions.get(registration.nodeId);
                     this.sessions.set(registration.nodeId, session);
@@ -184,6 +194,35 @@ export class RemoteNodeGateway {
             if (inboxList.success || resolution) {
                 const originId = id, current = session;
                 const requestId = inboxList.success ? inboxList.data.requestId : resolution!.requestId;
+                const respondError = (code: string, message: string) => {
+                    if (socket.readyState !== WebSocket.OPEN || this.sessions.get(originId) !== current) return;
+                    socket.send(JSON.stringify({ type: 'response', requestId, ok: false,
+                        error: { code, message } }));
+                };
+                if (!current || this.sessions.get(originId) !== current ||
+                    !current.runtime.getCapabilities().includes('device.share.receive')) {
+                    respondError('SHARE_DENIED', 'Inbox operation is not permitted.');
+                    return;
+                }
+                const now = Date.now();
+                if (inboxList.success) {
+                    if (current.inboxPending || now - current.lastInboxRead < 2_000) {
+                        respondError('SHARE_RATE_LIMIT', 'Refresh the inbox less frequently.');
+                        return;
+                    }
+                    current.inboxPending = true;
+                    current.lastInboxRead = now;
+                } else {
+                    if (now - current.inboxResolveWindow >= 60_000) {
+                        current.inboxResolveWindow = now;
+                        current.inboxResolveCount = 0;
+                    }
+                    if (current.inboxResolveCount >= 40) {
+                        respondError('SHARE_RATE_LIMIT', 'Too many inbox decisions.');
+                        return;
+                    }
+                    current.inboxResolveCount++;
+                }
                 const task = (async () => {
                     try {
                         if (!this.inbox) throw new AtlasError('Queued delivery unavailable.', 'SHARE_QUEUE_DISABLED');
@@ -202,6 +241,8 @@ export class RemoteNodeGateway {
                         socket.send(JSON.stringify({ type: 'response', requestId, ok: false,
                             error: { code: known ? error.code : 'SHARE_UNAVAILABLE',
                                 message: known ? error.message.slice(0,200) : 'Inbox unavailable.' } }));
+                    } finally {
+                        if (inboxList.success) current.inboxPending = false;
                     }
                 })();
                 this.track(task);
@@ -258,6 +299,7 @@ export class RemoteNodeGateway {
     }
     async close() {
         this.closed = true;
+        if (this.inboxMaintenance) clearInterval(this.inboxMaintenance);
         const sessions = [...this.sessions]; this.sessions.clear();
         await Promise.all(sessions.map(async ([id, session]) => {
             clearInterval(session.heartbeat); session.runtime.dispose(); session.socket.terminate();
