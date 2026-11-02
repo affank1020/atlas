@@ -214,8 +214,20 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
     const scope = 'atlas:access';
     const relayTokenHash = env.ATLAS_MCP_RELAY_TOKEN_SHA256?.trim() || '';
+    const relayCodingTokenHash = env.ATLAS_MCP_RELAY_CODING_TOKEN_SHA256?.trim() || '';
+    const rawCodingBases = env.ATLAS_MCP_RELAY_CODING_CHECKOUTS?.trim() || '';
+    const relayCodingBaseCheckouts = new Set(rawCodingBases?rawCodingBases.split(',').map(x=>x.trim().toLowerCase()):[]);
     if (relayTokenHash && !/^[a-f0-9]{64}$/.test(relayTokenHash))
         throw new Error('ATLAS_MCP_RELAY_TOKEN_SHA256 must be a lowercase SHA-256 hex digest.');
+    if(relayCodingTokenHash&&!/^[a-f0-9]{64}$/.test(relayCodingTokenHash))
+        throw new Error('ATLAS_MCP_RELAY_CODING_TOKEN_SHA256 must be a lowercase SHA-256 hex digest.');
+    const codingIds=rawCodingBases?rawCodingBases.split(','):[];
+    if((!!relayCodingTokenHash)!==(codingIds.length>0)||codingIds.length>12||
+       new Set(codingIds.map(x=>x.trim().toLowerCase())).size!==codingIds.length||
+       codingIds.some(x=>!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(x.trim())))
+        throw new Error('Relay coding requires a separate token digest and up to 12 unique allowed checkout UUIDs.');
+    if(relayTokenHash&&relayTokenHash===relayCodingTokenHash)
+        throw new Error('Relay read and coding service credentials must be independent.');
     if (oauthIssuer || oauthSubject || mcpResource) {
         if (!oauthIssuer || !oauthSubject || !mcpResource) throw new Error('Atlas MCP OAuth requires ATLAS_MCP_OAUTH_ISSUER, ATLAS_MCP_OAUTH_ALLOWED_SUBJECT and ATLAS_MCP_RESOURCE together.');
         const issuer = new URL(oauthIssuer);
@@ -255,7 +267,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         serverDiagnosticsEnabled: env.ATLAS_SERVER_DIAGNOSTICS_ENABLED !== 'false',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,
-            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope, relayTokenHash },
+            issuer: oauthIssuer, subject: oauthSubject, resource: mcpResource, scope, relayTokenHash,relayCodingTokenHash,relayCodingBaseCheckouts },
         nodeFiles: { enabled: env.ATLAS_NODE_FILES_ENABLED === 'true' },
         // Fail closed until the separately reviewed host executor is installed.
         nodeUpdateClaims: { enabled: env.ATLAS_NODE_UPDATE_CLAIMS_ENABLED === 'true' },
