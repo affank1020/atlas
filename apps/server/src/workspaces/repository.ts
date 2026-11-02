@@ -16,7 +16,7 @@ export interface WorkspaceTransaction extends WorkspaceReader {
     lockWorkspace(id: string): Promise<void>;
     lockExecution(binding: string): Promise<void>;
     managedWorktreeBranch(workspaceId: string, rootPath: string): Promise<string | null>;
-    insert(input: { nodeId: string; projectId?: string | null; name: string; rootPath: string; kind: 'generic' | 'unity'; logicalWorkspaceId?: string; repository?: string }): Promise<Workspace>;
+    insert(input: { nodeId: string; projectId?: string | null; name: string; rootPath: string; kind: 'generic' | 'unity'; logicalWorkspaceId?: string; repository?: string; devTasks?:Workspace['devTasks'] }): Promise<Workspace>;
     attachRepository(workspaceId: string, repository: string): Promise<Workspace>;
     link(workspaceId: string, projectId: string): Promise<void>;
     unlink(workspaceId: string, projectId: string): Promise<void>;

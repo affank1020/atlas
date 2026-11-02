@@ -125,3 +125,14 @@ Managed worktrees created through Atlas are already explicitly recorded with a
 `managedKind=git_worktree` audit marker. Persistent main checkouts and manually
 registered directories are not automatically eligible for deletion. There is no
 scheduled retirement or background Worker in this phase.
+
+## Worktree named development tasks
+
+When creating an `atlas/*` worktree, the Server copies the original
+checkout's owner-configured `devTasks` *at registration time* to that newly
+registered Workspace. This does not copy process state, arbitrary caller
+commands, credentials or a mutable link to the source's future settings.
+The same bounded Node task runner executes approved names in the new checkout.
+A newly cloned repository still starts with no configured tasks.
+Configure useful test/build tasks on the source checkout first; changes made to
+the source's task config later do not propagate to previously-created worktrees.

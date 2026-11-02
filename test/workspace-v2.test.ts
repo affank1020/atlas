@@ -826,6 +826,9 @@ test('managed worktree creation auto-registers an independent Workspace and remo
         new NodeRouter(new NodeService(new PostgresNodeRepository(store.pool), runtime, 'Test Node')), broker);
     const originalWorkspace: any = await svc.call('create_workspace',
         { name: 'Main checkout', rootPath: source, kind: 'generic' });
+    const sourceTasks={test:{executable:'npm',args:['test'],timeoutMs:30000,passEnvironment:[]}};
+    await store.pool.query('UPDATE workspaces SET dev_tasks=$2 WHERE id=$1',
+        [originalWorkspace.id,JSON.stringify(sourceTasks)]);
     const dest = path.join(parent, 'feature-checkout');
     const created: any = await svc.call('workspace_git_create_worktree', {
         workspaceId: originalWorkspace.id, name: 'Feature checkout',
@@ -833,6 +836,7 @@ test('managed worktree creation auto-registers an independent Workspace and remo
     });
     assert.equal(created.workspace.rootPath, dest);
     assert.equal(created.workspace.name, 'Feature checkout');
+    assert.deepEqual(created.workspace.devTasks,sourceTasks,'Feature inherits reviewed test commands');
     assert.notEqual(created.workspace.id, originalWorkspace.id);
     const entries: any = await svc.call('workspace_git_list_worktrees', { workspaceId: originalWorkspace.id });
     assert.equal(entries.worktrees.length, 2);

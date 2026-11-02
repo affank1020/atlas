@@ -322,6 +322,11 @@ export class WorkspaceService {
                     ...(name === 'workspace_git_clone_repository' && x.projectId
                         ? { projectId: x.projectId } : {}),
                     rootPath: boundPath, name: x.name ?? x.branch ?? x.repository, kind: 'generic',
+                    // Owner-defined, bounded named commands are safe to reuse in
+                    // an isolated worktree of the same repository on the same Node.
+                    // Clone still starts with no inherited execution authority.
+                    ...(name === 'workspace_git_create_worktree'
+                        ? { devTasks: current.devTasks } : {}),
                     // A feature worktree inherits the source's logical identity.
                     // A fresh clone joins the globally verified repository identity.
                     ...(name === 'workspace_git_create_worktree'

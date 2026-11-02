@@ -221,3 +221,30 @@ No autonomous write privilege is enabled by this change.
 
 If the service token leaks, regenerate it, update both private env files,
 and redeploy Atlas and Relay.
+
+## Dedicated Relay coding credential (separate opt-in)
+
+The existing `ATLAS_MCP_RELAY_TOKEN_SHA256` continues to grant read-only
+Atlas MCP access. **Do not replace it with an unrestricted OAuth token.**
+To opt into coding, generate a fresh independent 32-byte hex token on a trusted
+terminal. Save the raw token in Relay's private `ATLAS_MCP_TOKEN`; put only
+its SHA-256 digest in Atlas's private `ATLAS_MCP_RELAY_CODING_TOKEN_SHA256`.
+Set `ATLAS_MCP_RELAY_CODING_CHECKOUTS` to up to 12 exact existing base checkout
+UUIDs. Both values are required; absence disables this credential.
+
+This separate identity sees ordinary read tools plus only file create/patch/delete,
+Git worktree creation/stage/commit/push/draft PR and named development tasks.
+It cannot see arbitrary Node, Project, Store, deployment or shell mutations.
+Before *each* coding mutation Atlas independently verifies the checkout. A
+configured base may create a new `atlas/*` worktree, but may not be edited
+through the coding identity unless itself on an `atlas/*` branch. Other edits
+must target `atlas/*` worktrees sharing the trusted base's Node, logical
+Workspace and verified GitHub repository. Atlas independently enforces
+operation-specific Git safety and approved development task commands.
+
+Use Relay's `RELAY_ATLAS_CODING_CHECKOUTS` with the same base UUIDs to enforce
+an independent client-side grant and per-turn user approvals. On first rollout,
+verify the catalogue with both credentials, then perform one disposable
+worktree-to-draft-PR acceptance before trusting it for unattended changes.
+Changes to private credentials require deployment/recreation of the Atlas Server
+and Relay. Do not put raw tokens in git or logs.
