@@ -14,7 +14,7 @@ import { AtlasError } from "../../shared/errors.js";
 import { standaloneViewPage } from "../../view-standalone.js";
 import { verifyContentfulWebhook } from "../../integrations/contentful.js";
 import type { ServerServices } from "../../server/composition.js";
-import { createMcpTransport, RELAY_READ_TOOLS } from "../mcp/index.js";
+import { createMcpTransport, RELAY_READ_TOOLS, RELAY_CODING_TOOLS } from "../mcp/index.js";
 import { createMcpTokenVerifier, mcpResourceMetadata, verifyRelayServiceToken } from '../mcp/oauth.js';
 export function createHttpTransport(services: ServerServices) {
     const { catalog, askPortfolio, contentful, portfolio, media, lifecycle, config } = services;
@@ -135,7 +135,7 @@ export function createHttpTransport(services: ServerServices) {
         });
         // Public ingress MUST fail closed unless OAuth is configured. Local
         // loopback development retains its existing direct MCP behavior.
-        if (config.mcpAuth.trustedIngress && !config.mcpAuth.enabled && !config.mcpAuth.relayTokenHash) {
+        if (config.mcpAuth.trustedIngress && !config.mcpAuth.enabled && !config.mcpAuth.relayTokenHash && !config.mcpAuth.relayCodingTokenHash) {
             response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
             response.end(JSON.stringify({ error: 'MCP_OAUTH_NOT_CONFIGURED' }));
             return;
@@ -143,8 +143,9 @@ export function createHttpTransport(services: ServerServices) {
         // Relay uses a separately configured, high-entropy service token. Human
         // ChatGPT callers continue to use exactly the existing Auth0 OAuth flow.
         const relayAuthenticated = verifyRelayServiceToken(request.headers.authorization, config.mcpAuth.relayTokenHash);
-        if (config.mcpAuth.enabled || config.mcpAuth.relayTokenHash) {
-            let authenticated = relayAuthenticated;
+        const codingAuthenticated = verifyRelayServiceToken(request.headers.authorization, config.mcpAuth.relayCodingTokenHash);
+        if (config.mcpAuth.enabled || config.mcpAuth.relayTokenHash || config.mcpAuth.relayCodingTokenHash) {
+            let authenticated = relayAuthenticated || codingAuthenticated;
             stage = 'authenticating'; trace('stage');
             if (!authenticated && config.mcpAuth.enabled) {
                 try { authenticated = await mcpVerifier.authenticate(request.headers.authorization); }
@@ -172,9 +173,10 @@ export function createHttpTransport(services: ServerServices) {
         try {
             stage = 'creating_transport'; trace('stage');
             server = createMcpTransport(services,
-                relayAuthenticated ? undefined : config.mcpAuth.enabled ? config.mcpAuth.scope : undefined,
-                !relayAuthenticated && config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined,
-                relayAuthenticated ? RELAY_READ_TOOLS : undefined);
+                relayAuthenticated || codingAuthenticated ? undefined : config.mcpAuth.enabled ? config.mcpAuth.scope : undefined,
+                !relayAuthenticated && !codingAuthenticated && config.mcpAuth.enabled ? { kind: 'mcp-oauth', subject: config.mcpAuth.subject, issuer: config.mcpAuth.issuer } : undefined,
+                relayAuthenticated ? RELAY_READ_TOOLS : codingAuthenticated ? RELAY_CODING_TOOLS : undefined,
+                codingAuthenticated ? config.mcpAuth.relayCodingBaseCheckouts : undefined);
             const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
             const connectedServer = server;
             response.once('close', () => { void connectedServer.close().catch(() => trace('cleanup_failed')); });
