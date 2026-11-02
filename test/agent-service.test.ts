@@ -250,6 +250,18 @@ test('a genuine failed process remains incomplete rather than successful through
     const done:any=await until(()=>f.call('agent_get',{runId:f.request.runId}),x=>x.state==='incomplete');
     assert.equal(done.result.exitCode,2);assert.equal(done.evidence.taskSuccessVerified,false);
 });
+test('real worker session construction failures persist redacted failure events and release admission',{skip:!sdkInstalled},async t=>{
+    const f=await setup(t,'sdk','session-error');await f.grant();await f.call('agent_start');
+    const done:any=await until(()=>f.call('agent_get',{runId:f.request.runId}),x=>x.state==='failed');
+    assert.equal(done.result.reason,'pi_error');assert.equal(done.evidence.taskSuccessVerified,false);
+    const events:any=await f.call('agent_events',{runId:f.request.runId});
+    assert.ok(events.events.some((x:any)=>x.type==='worker_error'&&Object.keys(x.data).length===0));
+    assert.ok(!JSON.stringify(events).includes('Private provider'));
+    const next={...f.request,runId:randomUUID(),approvalId:randomUUID()};
+    await f.grant(next);await f.call('agent_start',next);
+    await until(()=>f.call('agent_get',{runId:next.runId}),x=>x.state==='failed');
+    assert.equal(f.launches(),2);
+});
 test('full job channel hosts the real Pi SDK tool loop against a simulated model; model claims are never test receipts', {timeout:15000,skip:!sdkInstalled},async t=>{
     let calls=0;
     const server=createServer(async(req,res)=>{

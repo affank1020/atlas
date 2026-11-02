@@ -35,7 +35,7 @@ export const agentReceiptSchema = z.object({
 // Metadata only. Drop raw text/args/results on the producer; reject them at the wire boundary.
 const eventBase={cursor:cursor.refine(x=>x>0),at:z.string().datetime()};
 export const agentEventSchema = z.discriminatedUnion('type',[
-    z.object({...eventBase,type:z.enum(['starting','agent_start','agent_end','agent_settled','process_heartbeat']),data:z.object({}).strict()}).strict(),
+    z.object({...eventBase,type:z.enum(['starting','agent_start','agent_end','agent_settled','process_heartbeat','worker_error']),data:z.object({}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('ready'),data:z.object({version:z.literal('1.5.0')}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('tool_execution_start'),data:z.object({tool:z.literal('read')}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('tool_execution_end'),data:z.object({tool:z.literal('read'),isError:z.boolean()}).strict()}).strict(),
