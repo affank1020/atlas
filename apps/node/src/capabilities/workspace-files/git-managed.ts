@@ -83,6 +83,19 @@ export async function listManagedWorktrees(root: string, files: WorkspaceFiles) 
     }
     return { worktrees: visible };
 }
+/** Read-only admission for a locally approved agent; never accept the primary checkout. */
+export async function verifyManagedAgentWorktree(root: string, files: WorkspaceFiles,
+    expectedHead: string, expectedBranch: string) {
+    if (!branchAllowed(expectedBranch)) throw new AtlasError('Invalid managed branch.', 'WORKSPACE_DENIED');
+    await trustedTarget(root, files);
+    if (!(await lstat(path.join(root, '.git'))).isFile())
+        throw new AtlasError('Pi requires a linked worktree.', 'WORKSPACE_DENIED');
+    const entry = (await allWorktrees(root, files)).find(x => x.rootPath === root);
+    if (!entry || entry.detached || entry.branch !== expectedBranch || entry.head !== expectedHead)
+        throw new AtlasError('Managed worktree identity changed.', 'WORKSPACE_DENIED');
+    return entry;
+}
+
 export async function createManagedWorktree(root: string, files: WorkspaceFiles,
     branch: string, targetPath: string) {
     if (!branchAllowed(branch)) throw new AtlasError('Only atlas/* branches can be created.', 'INVALID_REQUEST');
