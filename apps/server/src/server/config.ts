@@ -214,6 +214,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
     const mcpResource = env.ATLAS_MCP_RESOURCE?.trim() || '';
     const scope = 'atlas:access';
     const relayTokenHash = env.ATLAS_MCP_RELAY_TOKEN_SHA256?.trim() || '';
+    const agentsWebTokenHash = env.ATLAS_AGENTS_WEB_TOKEN_SHA256?.trim() || '';
+    if(agentsWebTokenHash && (!/^[a-f0-9]{64}$/.test(agentsWebTokenHash) || !trustedIngress || !oauthIssuer || !oauthSubject || !mcpResource))
+        throw new Error('Agents Web requires a separate SHA-256 ingress credential, trusted ingress and configured owner OAuth.');
     const relayCodingTokenHash = env.ATLAS_MCP_RELAY_CODING_TOKEN_SHA256?.trim() || '';
     const rawCodingBases = env.ATLAS_MCP_RELAY_CODING_CHECKOUTS?.trim() || '';
     const relayCodingBaseCheckouts = new Set(rawCodingBases?rawCodingBases.split(',').map(x=>x.trim().toLowerCase()):[]);
@@ -228,6 +231,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         throw new Error('Relay coding requires a separate token digest and up to 12 unique allowed checkout UUIDs.');
     if(relayTokenHash&&relayTokenHash===relayCodingTokenHash)
         throw new Error('Relay read and coding service credentials must be independent.');
+    if(agentsWebTokenHash && [relayTokenHash,relayCodingTokenHash].includes(agentsWebTokenHash))
+        throw new Error('Agents Web ingress and Relay service credentials must be independent.');
     if (oauthIssuer || oauthSubject || mcpResource) {
         if (!oauthIssuer || !oauthSubject || !mcpResource) throw new Error('Atlas MCP OAuth requires ATLAS_MCP_OAUTH_ISSUER, ATLAS_MCP_OAUTH_ALLOWED_SUBJECT and ATLAS_MCP_RESOURCE together.');
         const issuer = new URL(oauthIssuer);
@@ -264,6 +269,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, overrides
         throw new Error('Atlas Code Reviews legacy and managed GitHub publishing must not overlap for a repository.');
     return {
         databaseUrl, host, port,
+        agentsWeb:{tokenHash:agentsWebTokenHash},
         mcpDiagnostics: env.ATLAS_MCP_DIAGNOSTICS === 'true',
         serverDiagnosticsEnabled: env.ATLAS_SERVER_DIAGNOSTICS_ENABLED !== 'false',
         mcpAuth: { enabled: Boolean(oauthIssuer && oauthSubject && mcpResource), trustedIngress,

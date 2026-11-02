@@ -1,4 +1,5 @@
 import { timed } from '../../shared/performance.js';
+import { serveAgentsRequest } from './agents.js';
 import { serveFilesRequest } from './files.js';
 import { serveNodeFileUpload } from './node-files.js';
 import { serveNodeImages } from './node-images.js';
@@ -61,6 +62,7 @@ export function createHttpTransport(services: ServerServices) {
         // Files handles its own strict preflight; never return wildcard CORS
         // headers for the private /api/files namespace.
         if (await serveFilesRequest(request, response, services)) return;
+        if (await serveAgentsRequest(request, response, services)) return;
         if (request.method === "OPTIONS") { response.writeHead(204, cors); response.end(); return; }
         if (request.method === "POST" && request.url === "/integrations/contentful/webhook") {
             const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));

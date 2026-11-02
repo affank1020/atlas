@@ -92,7 +92,7 @@ test('OAuth MCP → durable dispatch → real child receipts; client lifetime is
     // so use a second HTTP listener with the configured OAuth boundary and the same domain services.
     const config=loadServerConfig({DATABASE_URL:f.db.databaseUrl,ATLAS_NODE_EXECUTION:'remote',
         ATLAS_TRUSTED_INGRESS:'true',ATLAS_MCP_OAUTH_ISSUER:caller.issuer,ATLAS_MCP_OAUTH_ALLOWED_SUBJECT:caller.subject,
-        ATLAS_MCP_RESOURCE:'https://atlas.example/mcp'});
+        ATLAS_MCP_RESOURCE:'https://atlas.example/mcp',ATLAS_AGENTS_WEB_TOKEN_SHA256:createHash('sha256').update('a'.repeat(64)).digest('hex')});
     const http=createHttpTransport({...f.services,config});http.listen(0,'127.0.0.1');await once(http,'listening');
     t.after(()=>new Promise<void>(r=>http.close(()=>r())));
     const encode=(x:any)=>Buffer.from(JSON.stringify(x)).toString('base64url');
@@ -128,6 +128,12 @@ test('OAuth MCP → durable dispatch → real child receipts; client lifetime is
     const restarted=new AgentService(f.db.store.pool,f.services.nodes);
     assert.equal((await restarted.call('agent_get',{runId:f.request.runId},caller)).state,'completed');
     assert.equal(JSON.stringify(done).includes(f.request.instruction),false);
+    const web=await original('http://127.0.0.1:'+(http.address() as any).port+'/api/agents/get',{method:'POST',headers:{'content-type':'application/json','x-atlas-agents-ingress':'Bearer '+'a'.repeat(64)},body:JSON.stringify({runId:f.request.runId})});
+    assert.equal(web.status,200);assert.deepEqual(await web.json(),JSON.parse(JSON.stringify(done)));
+    assert.ok(done.startedAt); // Actual process observation is retained for the browser, not inferred from admission.
+    const listing=await mcp('agent_list',{checkoutId:f.workspace.id});
+    assert.deepEqual(listing.structuredContent.result.runs[0],JSON.parse(JSON.stringify(done)));
+
 });
 
 test('approval, caller, placement and model boundaries fail before dispatch; revocation is durable',async t=>{

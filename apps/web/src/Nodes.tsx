@@ -1,3 +1,4 @@
+import { AgentPreview } from './AgentPreview';
 import { useEffect, useState } from 'react';
 import { callTool } from './api';
 import { NodeSharePermissions } from './NodeSharePermissions';
@@ -12,7 +13,7 @@ export type AtlasNode = {
     workspaces?: { id: string; projectId: string | null; name: string; kind: string }[];
     activity?: {operation: string; createdAt: string}[];
 };
-const labels: Record<string, string> = { 'workspace.files': 'Filesystem', 'workspace.git': 'Git', 'workspace.dev': 'Development', unity: 'Unity' };
+const labels: Record<string, string> = { 'workspace.files': 'Filesystem', 'workspace.git': 'Git', 'workspace.dev': 'Development', unity: 'Unity', 'agent.pi': 'Pi agents' };
 export function NodeStatus({ status }: { status: AtlasNode['status'] }) {
     return <span className={`badge ${status === 'online' ? 'success' : 'muted'}`}>{status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : 'Unavailable'}</span>;
 }
@@ -140,6 +141,7 @@ function NodeDetails({ node, detail, loading, detailError, refreshVersion }: {
                     <div><dt>Last connected</dt><dd>{formatWhen(node.lastSeen)}</dd></div>
                 </dl>
             </section>
+            <AgentPreview nodeId={node.id} refreshVersion={refreshVersion} />
             <NodeSoftwareSummary node={current} />
         </div>
     </section>;

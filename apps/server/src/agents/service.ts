@@ -25,6 +25,10 @@ export const approvalInputSchema = z.object({
     expiresAt: z.string().datetime(),
 }).strict();
 const denied = () => new AtlasError('Agent run or approval is unavailable to this caller.', 'AGENT_DENIED');
+const projection = `SELECT r.*, to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at,
+    n.name AS node_name,w.name AS checkout_name,a.root_path AS approved_root
+    FROM agent_runs r JOIN nodes n ON n.id=r.node_id JOIN workspaces w ON w.id=r.checkout_id
+    JOIN agent_approvals a ON a.id=r.approval_id`;
 /** PostgreSQL is the dispatch/approval authority. The job is independent of its MCP request. */
 export class AgentService {
     private closing = false;
@@ -57,15 +61,19 @@ export class AgentService {
         }
     }
     private async owned(id: string, owner: string, c: Pool | PoolClient = this.pool) {
-        const r = (await c.query('SELECT * FROM agent_runs WHERE id=$1 AND owner_key=$2',[id,owner])).rows[0];
+        const r = (await c.query(projection+' WHERE r.id=$1 AND r.owner_key=$2',[id,owner])).rows[0];
         if (!r) throw denied(); return r;
     }
     private view(r: any) {
         const stale = !terminal.has(r.state) && (!this.nodes.runtimes.has(r.node_id) ||
             (Date.now() - new Date(r.observed_at??r.created_at).getTime() > 15_000));
+        const state=stale?'unknown':r.state;
         return { runId:r.id, checkoutId:r.checkout_id, nodeId:r.node_id, projectId:r.project_id,
             logicalWorkspaceId:r.logical_workspace_id, state:stale?'unknown':r.state, permission:r.permission,
-            requestedProfileId:r.profile.id, actualProfile:r.actual_profile,
+            requestedProfileId:r.profile.id, requestedProfile:r.profile, actualProfile:r.actual_profile,
+            nodeName:r.node_name, nodeOnline:this.nodes.runtimes.has(r.node_id), checkoutName:r.checkout_name, approvedRoot:r.approved_root,
+            source:'owner-oauth', canCancel:!terminal.has(r.state), startedAt:r.started_at??r.receipt?.startedAt??null,
+            hierarchy:{agentId:r.id,parentAgentId:null,role:'root',state,actualProfile:r.actual_profile,children:[]},
             head:r.head, branch:r.branch, createdAt:r.created_at, observedAt:r.observed_at, finishedAt:r.finished_at,
             cancelRequestedAt:r.cancel_requested_at, lastCursor:r.last_cursor, eventGap:r.event_gap,
             result:r.receipt, reason:stale?'node_observation_unavailable':r.status_reason,
@@ -75,6 +83,7 @@ export class AgentService {
     async call(name: AgentTool, raw: unknown, caller?: ApplicationCaller) {
         const owner = agentOwner(caller), x: any = agentSchemas[name].parse(raw);
         if (this.closing) throw new AtlasError('Agent service is stopping.', 'AGENT_UNAVAILABLE');
+        if (name === 'agent_list') return this.list(x,owner);
         if (name === 'agent_start') return this.start(x, owner);
         const r = await this.owned(x.runId,owner);
         if (name === 'agent_get') return this.view(r);
@@ -91,12 +100,38 @@ export class AgentService {
         catch { await this.unknown(r.id,'cancel_delivery_uncertain'); }
         return this.view(await this.owned(r.id,owner));
     }
+    private async list(x:z.infer<typeof agentSchemas.agent_list>,owner:string) {
+        const values:unknown[]=[owner],where=['r.owner_key=$1'];
+        const add=(sql:string,value:unknown)=>{values.push(value);where.push(sql.replace('?',`$${values.length}`));};
+        if(x.nodeId) add('r.node_id=?',x.nodeId);
+        if(x.checkoutId) add('r.checkout_id=?',x.checkoutId);
+        if(x.logicalWorkspaceId) add('r.logical_workspace_id=?',x.logicalWorkspaceId);
+        // Use the exact same effective status as agent_get, including stale dispatches.
+        if(x.state) {
+            values.push([...this.nodes.runtimes.keys()]);
+            const effective=`CASE WHEN r.finished_at IS NULL AND (NOT(r.node_id=ANY($${values.length}::uuid[])) OR COALESCE(r.observed_at,r.created_at)<now()-interval '15 seconds') THEN 'unknown' ELSE r.state END`;
+            if(x.state==='active') where.push(`(${effective}) IN ('dispatching','starting','running','cancelling','unknown')`);
+            else add(`(${effective})=?`,x.state);
+        }
+        if(x.before) {values.push(x.before.createdAt,x.before.runId);where.push(`(r.created_at,r.id)<($${values.length-1}::timestamptz,$${values.length}::uuid)`);}
+        values.push(x.limit+1);
+        const rows=(await this.pool.query(projection+' WHERE '+where.join(' AND ')+` ORDER BY r.created_at DESC,r.id DESC LIMIT $${values.length}`,values)).rows;
+        // Filter choices come from the owner's complete history, not just this page
+        // or the unscoped Node/Workspace directory. Keep response size bounded.
+        const [nodeScopes,checkoutScopes]=await Promise.all([
+            this.pool.query('SELECT DISTINCT n.id,n.name FROM agent_runs r JOIN nodes n ON n.id=r.node_id WHERE r.owner_key=$1 ORDER BY n.name,n.id LIMIT 201',[owner]),
+            this.pool.query('SELECT DISTINCT w.id,w.name FROM agent_runs r JOIN workspaces w ON w.id=r.checkout_id WHERE r.owner_key=$1 ORDER BY w.name,w.id LIMIT 201',[owner]),
+        ]);
+        const more=rows.length>x.limit,visible=rows.slice(0,x.limit),last=visible.at(-1);
+        return {runs:visible.map(r=>this.view(r)),next:more?{createdAt:last.cursor_created_at,runId:last.id}:null,
+            scopes:{nodes:nodeScopes.rows.slice(0,200),checkouts:checkoutScopes.rows.slice(0,200),truncated:nodeScopes.rows.length>200||checkoutScopes.rows.length>200}};
+    }
     private async start(x: z.infer<typeof agentSchemas.agent_start>, owner: string) {
         const digest = hash(x);
         const existing = (await this.pool.query('SELECT * FROM agent_runs WHERE id=$1',[x.runId])).rows[0];
         if (existing) {
             if (existing.owner_key !== owner || existing.request_sha256 !== digest) throw denied();
-            return this.view(existing);
+            return this.view(await this.owned(x.runId,owner));
         }
         const w = await new PostgresWorkspaceRepository(this.pool).getById(x.checkoutId);
         const runtime = await new NodeRouter(this.nodes).resolve(w.nodeId,'agent.pi');
@@ -213,8 +248,9 @@ export class AgentService {
                 }
             } else if (receipt?.finishedAt) state=r.cancel_requested_at?'cancelling':'running';
             await c.query(`UPDATE agent_runs SET state=$2,last_cursor=$3,event_gap=$4,evidence=$5,
-                observed_at=now(),receipt=$6,finished_at=$7,status_reason=$8,actual_profile=$9,dispatch_session=COALESCE($10::uuid,dispatch_session) WHERE id=$1`,
-                [r.id,state,cursor,gap,evidence,saved,finished,reason,evidence.runtimeReady?r.profile:null,sessionId??null]);
+                observed_at=now(),receipt=$6,finished_at=$7,status_reason=$8,actual_profile=$9,dispatch_session=COALESCE($10::uuid,dispatch_session),
+                started_at=COALESCE(started_at,$11::timestamptz) WHERE id=$1`,
+                [r.id,state,cursor,gap,evidence,saved,finished,reason,evidence.runtimeReady?r.profile:null,sessionId??null,receipt?.startedAt??null]);
             await c.query('DELETE FROM agent_events WHERE run_id=$1 AND cursor<=$2',[r.id,cursor-2000]);
             return cursor;
         });

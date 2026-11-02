@@ -36,6 +36,7 @@ services:
       # Separate image direction grant; text share approvals do not imply image permission.
       ATLAS_DEVICE_IMAGE_PAIRS: ${ATLAS_DEVICE_IMAGE_PAIRS:-}
       ATLAS_TRUSTED_INGRESS: "true"
+      ATLAS_AGENTS_WEB_TOKEN_SHA256: ${ATLAS_AGENTS_WEB_TOKEN_SHA256:-}
       ATLAS_MCP_RESOURCE: ${ATLAS_MCP_RESOURCE:-}
       ATLAS_MCP_OAUTH_ISSUER: ${ATLAS_MCP_OAUTH_ISSUER:-}
       ATLAS_MCP_OAUTH_ALLOWED_SUBJECT: ${ATLAS_MCP_OAUTH_ALLOWED_SUBJECT:-}
@@ -109,6 +110,7 @@ services:
     restart: unless-stopped
     environment:
       ATLAS_SITE_ADDRESS: ${ATLAS_SITE_ADDRESS:?Set ATLAS_SITE_ADDRESS in infra/production.env}
+      ATLAS_AGENTS_WEB_TOKEN: ${ATLAS_AGENTS_WEB_TOKEN:-}
       # Shared human login is owned by vps-infra/.env after migration.
       # Legacy fallback preserves the current Atlas deployment until cutover.
       VPS_ADMIN_USER: ${VPS_ADMIN_USER:-${ATLAS_ADMIN_USER:?Set VPS_ADMIN_USER in vps-infra/.env or legacy ATLAS_ADMIN_USER}}
