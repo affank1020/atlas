@@ -1,3 +1,4 @@
+import { agentCommandSchema, type AgentCommand } from '@atlas/protocol/agent-jobs';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { AtlasError } from '../../shared/errors.js';
@@ -12,8 +13,14 @@ import { deviceShareReceiptSchema } from '@atlas/protocol/device-protocol';
 export class RemoteNodeRuntime implements NodeRuntime {
     private readonly pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
     private closed = false;
+    readonly agentSessionId=randomUUID();
     constructor(readonly socket: WebSocket, private readonly capabilities: NodeCapability[], private readonly timeoutOverrideMs?: number) {}
     getCapabilities() { return [...this.capabilities]; }
+    agentCommand(command:AgentCommand) {
+        if(this.closed||this.socket.readyState!==WebSocket.OPEN||!this.capabilities.includes('agent.pi')||this.socket.bufferedAmount>65536)
+            throw new AtlasError('Agent Node connection unavailable.','NODE_DISCONNECTED');
+        this.socket.send(JSON.stringify(agentCommandSchema.parse(command)));
+    }
     bind(rootPath: string): Promise<string> { return this.request({ kind: 'bind', rootPath }, 15_000).then(value => {
         if (typeof value !== 'string') throw new AtlasError('Node returned an invalid binding.', 'NODE_PROTOCOL');
         return value;

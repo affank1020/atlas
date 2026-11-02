@@ -1,3 +1,4 @@
+import { AgentService } from '../agents/service.js';
 import { Pool } from 'pg';
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { DeviceOfflineInbox } from '../nodes/offline-inbox.js';
@@ -101,7 +102,8 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     const push = fcmCredentials && config.deviceInboxKey
         ? new DevicePushService(repository.pool, readInboxKey(config.deviceInboxKey), fcmCredentials, shareApprovals)
         : undefined;
-    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox, push);
+    const agents=new AgentService(repository.pool,nodes);
+    const nodeGateway = new RemoteNodeGateway(nodes, undefined, config.deviceShares.approvedPairs, shareApprovals, offlineInbox, push, agents);
     const imageRelay = new LiveImageRelay(nodes, shareApprovals, config.deviceImages.approvedPairs);
     // Bounded periodic retention cleanup, including while the inbox is idle.
     const inboxCleanup = offlineInbox && setInterval(() => {
@@ -110,7 +112,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
     inboxCleanup?.unref();
     identity.disconnect = id => nodeGateway?.disconnectNode(id);
     const workspaces = new WorkspaceService(catalog, new PostgresWorkspaceRepository(repository.pool), new NodeRouter(nodes));
-    const lifecycle = new ServerLifecycle([{ close: async () => { if (inboxCleanup) clearInterval(inboxCleanup); try { await nodeGateway?.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
+    const lifecycle = new ServerLifecycle([{ close: async () => { if (inboxCleanup) clearInterval(inboxCleanup); try { await nodeGateway?.close(); await agents.close(); await nodes.close(); } finally { try { await diagnosticHistory.close(); } finally {
                     try { await diagnosticPool.end(); } finally {
                         try { await healthPool.end(); } finally { await repository.close(); }
                     }
@@ -149,7 +151,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         inlineFixPublisher, reviewThreadState, threadResolution);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
     diagnostics.record('server_initialised');
-    const services = { config, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, imageRelay, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, agents, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, imageRelay, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

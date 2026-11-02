@@ -20,7 +20,7 @@ import type { Workspace, WorkspaceAdapter } from '@atlas/protocol/workspace';
 import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 export class LocalNodeRuntime implements NodeRuntime {
     private readonly shutdown = new AbortController();
-    async close() { this.shutdown.abort(); await this.piWorkers?.close(); }
+    async close() { this.shutdown.abort(); await this.piWorkers?.close(); await this.agentHost?.close(); }
     readonly files: WorkspaceFiles;
     readonly adapters: Map<string, WorkspaceAdapter>;
     private readonly platform: NodeJS.Platform;
@@ -29,7 +29,7 @@ export class LocalNodeRuntime implements NodeRuntime {
     private readonly shareSenderEnabled: boolean;
     constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>,
         platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver,
-        shareSenderEnabled = false, imageReceiver?: MacImageReceiver, readonly piWorkers?: PiWorkers) {
+        shareSenderEnabled = false, imageReceiver?: MacImageReceiver, readonly piWorkers?: PiWorkers, readonly agentHost?: import('../../capabilities/pi/agent-host.js').AgentNodeHost) {
         this.platform = platform;
         this.shareSenderEnabled = platform === 'darwin' && shareSenderEnabled;
         this.shareReceiver = platform === 'darwin' ? shareReceiver : undefined;
@@ -43,7 +43,7 @@ export class LocalNodeRuntime implements NodeRuntime {
     getCapabilities(): NodeCapability[] {
         const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
         if (this.platform === 'linux') return [...shared, 'node.logs'];
-        return [...shared, "workspace.dev", "football.training", "node.logs",
+        return [...shared, ...(this.platform==='darwin'&&this.agentHost ? ["agent.pi" as const] : []), "workspace.dev", "football.training", "node.logs",
             ...(this.adapters.has("unity") ? ["unity" as const] : []),
             ...(this.shareReceiver ? ["device.share.receive" as const] : []),
             ...(this.shareSenderEnabled ? ["device.share.send" as const] : []),

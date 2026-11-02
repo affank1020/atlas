@@ -5,7 +5,7 @@ import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { piReadOperations } from '../dist/capabilities/pi/permissions.js';
 
 // Endpoint override is trusted test/host wiring, never accepted by worker protocol.
-export async function createPiSession(cwd, modelId, baseUrl = 'http://127.0.0.1:11434/v1') {
+export async function createPiSession(cwd, modelId, baseUrl = 'http://127.0.0.1:11434/v1', limits = { contextWindow: 32768, maxTokens: 4096 }) {
     const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
         allowModelNetwork: false, refreshOnCreate: false });
     // Fixed local endpoint. No credentials or caller-selected URLs/providers.
@@ -13,7 +13,7 @@ export async function createPiSession(cwd, modelId, baseUrl = 'http://127.0.0.1:
         baseUrl, apiKey: 'local-only', api: 'openai-completions',
         models: [{ id: modelId, name: modelId, reasoning: false, input: ['text'],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 32768, maxTokens: 4096 }],
+            contextWindow: limits.contextWindow, maxTokens: limits.maxTokens }],
     });
     const resourceLoader = {
         getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),

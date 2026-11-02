@@ -16,7 +16,8 @@
     "./image-format": "./dist/image-format.js",
     "./errors": "./dist/errors.js",
     "./node-model": "./dist/node-model.js",
-    "./pi-worker": "./dist/pi-worker.js"
+    "./pi-worker": "./dist/pi-worker.js",
+    "./agent-jobs": "./dist/agent-jobs.js"
   },
   "dependencies": {
     "zod": "^4.6.5"

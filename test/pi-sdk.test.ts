@@ -8,10 +8,9 @@ import { once } from 'node:events';
 
 // Separate install is intentional: ordinary Atlas Nodes retain their existing dependencies.
 // CI installs this lockfile; local npm test can still run without the optional Pi runtime.
-const available = await import('../apps/node/pi-runtime/session.mjs').catch(error => {
-    if (error.code === 'ERR_MODULE_NOT_FOUND') return null;
-    throw error;
-});
+const installed = await import('node:fs/promises').then(fs=>fs.readFile(new URL('../apps/node/pi-runtime/node_modules/@earendil-works/pi-coding-agent/package.json',import.meta.url),'utf8'))
+    .catch(error=>{if(error.code==='ENOENT') return null;throw error;});
+const available = installed ? await import('../apps/node/pi-runtime/session.mjs') : null;
 test('real pinned Pi SDK performs native tool loop against a simulated model, with guarded read only',
     { skip: !available, timeout: 15_000 }, async t => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'atlas-pi-sdk-')));

@@ -5,6 +5,7 @@ export const piStartSchema = z.object({
     expectedHead: z.string().regex(/^[a-f0-9]{40}$/),
     expectedBranch: z.string().regex(/^atlas\/[a-z0-9][a-z0-9/_-]{0,72}$/)
         .refine(x => !x.includes('//') && !x.endsWith('/')),
+    modelProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
     prompt: z.string().min(1).max(16_384),
     permission: z.literal('read-only'),
     timeoutMs: z.number().int().min(100).max(600_000),
@@ -21,7 +22,7 @@ export type PiReceipt = {
 /** A local operator grants this exact prompt/target/deadline once. Never caller supplied. */
 export type PiApproval = {
     runId: string; workspaceId: string; rootPath: string; nodeId: string;
-    head: string; branch: string; promptSha256: string; timeoutMs: number; expiresAt: string;
+    head: string; branch: string; modelProfile?: string; promptSha256: string; timeoutMs: number; expiresAt: string;
 };
 export interface PiWorkers {
     start(workspace: import('./workspace.js').Workspace, input: PiStart): Promise<PiReceipt>;

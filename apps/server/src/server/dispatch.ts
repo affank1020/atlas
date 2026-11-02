@@ -1,3 +1,5 @@
+import { agentSchemas, type AgentTool } from '@atlas/protocol/agent-jobs';
+import type { AgentService } from '../agents/service.js';
 import { timed } from '../shared/performance.js';
 import { nodeSchemas, type NodeToolName } from '../nodes/contracts.js';
 import type { NodeService } from '../nodes/service.js';
@@ -20,6 +22,7 @@ import type { ServerDiagnostics } from './diagnostics.js';
 import type { ServerDiagnosticHistory } from './diagnostic-history.js';
 import type { MonitoringHealthService } from './monitoring-health.js';
 export interface ApplicationServices {
+    agents?: Pick<AgentService,'call'>;
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
     storageUsage?: Pick<StorageUsageService, 'get'>;
@@ -43,6 +46,10 @@ export function createDispatcher(services: ApplicationServices) {
     return async (name: string, input: any = {}, caller: ShareAuditClient = 'atlas-server', authenticatedCaller?: ApplicationCaller): Promise<unknown> => {
         try {
             return await timed(`tool.${/^[a-z_]+$/.test(name) ? name : 'unknown'}`, async () => {
+        if(Object.hasOwn(agentSchemas,name)) {
+            if(!services.agents) throw new AtlasError('Agent execution unavailable.','AGENT_UNAVAILABLE');
+            return services.agents.call(name as AgentTool,input,authenticatedCaller);
+        }
         if (Object.hasOwn(nodeSchemas, name)) {
             if (!services.nodes) throw new AtlasError("Node registry is unavailable.", "NODE_UNAVAILABLE");
             return services.nodes.call(name as NodeToolName, input, caller);

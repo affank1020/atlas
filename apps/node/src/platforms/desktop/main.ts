@@ -1,5 +1,8 @@
+import { AgentNodeHost, readAgentPolicy } from '../../capabilities/pi/agent-host.js';
+import path from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { hostname } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { installedNodeVersion, nodeStatusPath } from '../../core/node-installation.js';
@@ -44,7 +47,17 @@ const shareSenderEnabled = process.platform === 'darwin' && process.env.ATLAS_NO
 // Image receiving is separately opt-in and keeps text sharing unchanged.
 const imageReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_IMAGE_RECEIVE_ENABLED === 'true'
     ? new MacImageReceiver() : undefined;
-const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver, shareSenderEnabled, imageReceiver);
+// Separately installed runtime and private local policy are required; Linux remains unsupported.
+if(process.env.ATLAS_PI_POLICY_FILE && process.platform==='darwin') {
+    const [major,minor]=process.versions.node.split('.').map(Number);
+    if((major??0)<22 || (major===22&&(minor??0)<19)) throw new Error('Pi requires Node >=22.19.0.');
+    const installed=JSON.parse(await readFile(new URL('../../../pi-runtime/node_modules/@earendil-works/pi-coding-agent/package.json',import.meta.url),'utf8'));
+    if(installed.version!=='1.5.0') throw new Error('Install the pinned optional Pi runtime before enabling agent.pi.');
+}
+const agentHost=process.platform==='darwin' && process.env.ATLAS_PI_POLICY_FILE
+    ? new AgentNodeHost(await readAgentPolicy(process.env.ATLAS_PI_POLICY_FILE,id),
+        process.env.ATLAS_PI_STATE_DIR || path.join(dirname(nodeStatusPath()),'agent-runs'),files) : undefined;
+const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver, shareSenderEnabled, imageReceiver, undefined, agentHost);
 const node = new StandaloneNode({ id, name, platform: process.env.ATLAS_NODE_PLATFORM || process.platform, version: process.env.ATLAS_NODE_VERSION || installedNodeVersion(), serverUrl: serverUrl.toString(), token }, runtime);
 const offlineQueue = process.env.ATLAS_NODE_FILE_QUEUE_ENABLED === '1'
     ? new NodeOfflineFileQueue({nodeId:id,credential:token,serverUrl:serverUrl.toString()})

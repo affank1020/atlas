@@ -1,3 +1,5 @@
+import { agentReportSchema } from '@atlas/protocol/agent-jobs';
+import type { AgentService } from '../../agents/service.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
@@ -20,7 +22,7 @@ import { AtlasError } from '../../shared/errors.js';
 
 export interface GatewayTiming { heartbeatMs: number; staleMs: number; registrationMs: number; persistMs: number }
 const DEFAULT_TIMING: GatewayTiming = { heartbeatMs: 15_000, staleMs: 45_000, registrationMs: 5_000, persistMs: 60_000 };
-type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean; inboxPending: boolean; lastInboxCommand: number; pushMutations: OrderedPushMutations };
+type Session = { id: string; socket: WebSocket; runtime: RemoteNodeRuntime; heartbeat: ReturnType<typeof setInterval>; lastPong: number; lastPersisted: number; lastDirectoryRead: number; directoryPending: boolean; inboxPending: boolean; lastInboxCommand: number; pushMutations: OrderedPushMutations; agentPending?:boolean };
 /** HTTP upgrade boundary. All Workspace execution still flows through NodeRouter. */
 export class RemoteNodeGateway {
     private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_NODE_FRAME_BYTES });
@@ -30,7 +32,7 @@ export class RemoteNodeGateway {
     private readonly pendingLifecycle = new Set<Promise<unknown>>();
     private closed = false;
     private readonly shares: DeviceShareRelay;
-    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals, private readonly offlineInbox?: DeviceOfflineInbox, private readonly push?: DevicePushService) {
+    constructor(readonly nodes: NodeService, private readonly timing = DEFAULT_TIMING, approvedPairs: ReadonlySet<string> = new Set(), managedApprovals?: NodeShareApprovals, private readonly offlineInbox?: DeviceOfflineInbox, private readonly push?: DevicePushService, private readonly agents?: AgentService) {
         this.shares = new DeviceShareRelay(nodes, approvedPairs, managedApprovals);
     }
     private track(task: Promise<unknown>) {
@@ -46,6 +48,7 @@ export class RemoteNodeGateway {
         clearInterval(session.heartbeat);
         session.runtime.dispose('NODE_REVOKED');
         this.nodes.detachRemote(id, session.runtime);
+        if(this.agents) this.track(this.agents.disconnected(id,session.runtime.agentSessionId));
         session.socket.close(1008, 'Credential changed');
         this.track(this.nodes.repository.offline(id, session.id));
     }
@@ -106,6 +109,8 @@ export class RemoteNodeGateway {
                     await this.nodes.identity!.audit(this.nodes.identity!.pool, 'node.connected', { nodeId: registration.nodeId });
                     if (previous) { previous.runtime.dispose(); previous.socket.close(1000, 'Replaced by newer session'); }
                     socket.send(JSON.stringify(registeredSchema.parse({ type: 'registered', protocol: NODE_PROTOCOL_VERSION, nodeId: id })));
+                    if(registration.capabilities.includes('agent.pi')&&this.agents)
+                        this.track(this.agents.connected(id).catch(()=>undefined));
                 } catch (error) {
                     if (persisted && !session) await this.nodes.repository.offline(registration.nodeId, sessionId).catch(() => undefined);
                     socket.close(1008, error instanceof Error ? error.message.slice(0, 100) : 'Authentication failed');
@@ -115,6 +120,24 @@ export class RemoteNodeGateway {
                     if (this.registrations.get(registration.nodeId) === thisRegistration) this.registrations.delete(registration.nodeId);
                 }
                 return;
+            }
+            const agentReport=agentReportSchema.safeParse(message);
+            if(agentReport.success) {
+                const originId=id,current=session;
+                if(!this.agents||!current||this.sessions.get(originId)!==current||
+                    !current.runtime.getCapabilities().includes('agent.pi')) {socket.close(1008,'Agent reports unavailable');return;}
+                if(current.agentPending) return; // Producer retransmits until durable cursor acknowledgement.
+                current.agentPending=true;
+                this.track((async()=>{
+                    try {
+                        await this.nodes.identity!.authenticate(originId,credential);
+                        if(this.sessions.get(originId)!==current) return;
+                        const cursor=await this.agents!.receive(originId,agentReport.data,current.runtime.agentSessionId);
+                        if(socket.readyState===WebSocket.OPEN&&this.sessions.get(originId)===current)
+                            socket.send(JSON.stringify({type:'agent.ack',runId:agentReport.data.runId,token:agentReport.data.token,cursor}));
+                    } catch {socket.close(1008,'Invalid agent report');}
+                    finally {current.agentPending=false;}
+                })());return;
             }
             const directory = deviceShareRecipientsRequestSchema.safeParse(message);
             const queueDirectory = deviceInboxRecipientsRequestSchema.safeParse(message);
@@ -317,6 +340,7 @@ export class RemoteNodeGateway {
         this.sessions.delete(id);
         this.nodes.detachRemote(id, session.runtime);
         await this.nodes.repository.offline(id, session.id);
+        await this.agents?.disconnected(id,session.runtime.agentSessionId);
         await this.nodes.identity!.audit(this.nodes.identity!.pool, 'node.disconnected', { nodeId: id });
     }
     async close() {

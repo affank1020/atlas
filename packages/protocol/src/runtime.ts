@@ -4,6 +4,9 @@ import type { NodeCapability } from './node-model.js';
 export type NodeOperation = WorkspaceOperation;
 /** Transport-neutral, bounded domain operations. Bindings are interpreted only by the runtime. */
 export interface NodeRuntime {
+    readonly agentSessionId?: string;
+    agentCommand?(command: import('./agent-jobs.js').AgentCommand): void;
+    agentHost?: { handle(command: import('./agent-jobs.js').AgentCommand): Promise<void>; report(): Promise<import('./agent-jobs.js').AgentReport | undefined>; ack(message: unknown): void; close(): Promise<void> };
     /** Local operator wiring only; not routed before durable approval transport exists. */
     readonly piWorkers?: import('./pi-worker.js').PiWorkers;
     /** Optional, explicitly approved by the recipient. Never automatically change clipboard. */
