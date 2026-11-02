@@ -33,6 +33,9 @@ test('Node release contains runtime/protocol but never credentials or Server/Web
         assert.match(release.install, /--ignore-scripts/);
         assert.ok((await readFile(path.join(extracted, 'apps/node/dist/platforms/desktop/main.js'))).length > 0);
         assert.ok((await readFile(path.join(extracted, 'packages/protocol/dist/node-protocol.js'))).length > 0);
+        assert.ok((await readFile(path.join(extracted,'apps/node/pi-runtime/worker.mjs'))).length>0);
+        const pi=JSON.parse(await readFile(path.join(extracted,'apps/node/pi-runtime/package.json'),'utf8'));
+        assert.equal(pi.dependencies['@earendil-works/pi-coding-agent'],'1.5.0');
         const listing = execFileSync('tar', ['-tzf', output.archive], { encoding: 'utf8' });
         for (const forbidden of ['.env', '.env.node', 'apps/server/dist/', 'apps/web/dist/', 'node_modules/', 'apps/server/data/']) {
             assert.ok(!listing.split('\n').some(line => line.includes(forbidden)), forbidden);

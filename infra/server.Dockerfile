@@ -32,6 +32,7 @@ COPY apps/server/migrations apps/server/migrations
 COPY scripts/db.mjs scripts/db.mjs
 # Local operator-only CLI; not an HTTP/MCP endpoint.
 COPY scripts/configure-workspace-dev-tasks.mjs scripts/configure-workspace-dev-tasks.mjs
+COPY scripts/agent-approval.mjs scripts/agent-approval.mjs
 COPY scripts/lib/workspace-dev.mjs scripts/lib/workspace-dev.mjs
 USER node
 WORKDIR /atlas

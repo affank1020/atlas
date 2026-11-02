@@ -1,3 +1,4 @@
+import { agentCommandSchema, agentAckSchema } from '@atlas/protocol/agent-jobs';
 import { EventEmitter } from 'node:events';
 import { randomUUID, createHash } from 'node:crypto';
 import WebSocket from 'ws';
@@ -18,6 +19,8 @@ export interface StandaloneNodeConfig {
 /** Outbound-only Node connection. Socket state never changes the trusted local runtime policy. */
 export class StandaloneNode extends EventEmitter {
     private socket?: WebSocket;
+    private agentTimer?: ReturnType<typeof setInterval>;
+    private agentPumping=false;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
     private registrationTimer?: ReturnType<typeof setTimeout>;
     private heartbeatTimer?: ReturnType<typeof setInterval>;
@@ -67,7 +70,18 @@ export class StandaloneNode extends EventEmitter {
                 const parsed = registeredSchema.safeParse(message);
                 if (!parsed.success || parsed.data.nodeId !== this.config.id) { socket.close(1008, 'Invalid registration acknowledgement'); return; }
                 clearTimeout(this.registrationTimer);
-                this.registered = true; this.reconnectAttempt = 0; this.errorReported = false; this.emit('online'); return;
+                this.registered = true; this.reconnectAttempt = 0; this.errorReported = false; this.emit('online');
+                if(this.runtime.agentHost&&!this.agentTimer) this.agentTimer=setInterval(()=>{void this.pumpAgent();},250);
+                return;
+            }
+            const agentCommand=agentCommandSchema.safeParse(message);
+            const agentAck=agentAckSchema.safeParse(message);
+            if(agentAck.success) { this.runtime.agentHost?.ack(agentAck.data); return; }
+            if(agentCommand.success) {
+                if(!this.runtime.getCapabilities().includes('agent.pi')||!this.runtime.agentHost) { socket.close(1008,'Agent capability unavailable'); return; }
+                if(this.inFlight.size>=32) return;
+                const task=this.runtime.agentHost.handle(agentCommand.data).catch(()=>undefined).finally(()=>this.inFlight.delete(task));
+                this.inFlight.add(task);return;
             }
             // Responses to local outbound requests share this same authenticated
             // socket with incoming requests. Unsolicited/late replies are ignored.
@@ -128,6 +142,17 @@ export class StandaloneNode extends EventEmitter {
             if (wasOnline) this.emit('offline');
             if (this.running) this.scheduleReconnect();
         });
+    }
+    private async pumpAgent() {
+        const socket=this.socket;
+        if(this.agentPumping||!this.registered||!socket||socket.readyState!==WebSocket.OPEN||
+            !this.runtime.agentHost||socket.bufferedAmount>65536) return;
+        this.agentPumping=true;
+        try {
+            const report=await this.runtime.agentHost.report();
+            if(report&&socket===this.socket&&socket.readyState===WebSocket.OPEN) socket.send(JSON.stringify(report));
+        } catch { /* Never log job content; retry bounded report observation only. */ }
+        finally {this.agentPumping=false;}
     }
     private async handleShare(socket: WebSocket, request: ReturnType<typeof deviceShareDeliverySchema.parse>) {
         try {
@@ -331,6 +356,7 @@ export class StandaloneNode extends EventEmitter {
     }
     async stop() {
         this.running = false;
+        clearInterval(this.agentTimer);this.agentTimer=undefined;
         clearTimeout(this.reconnectTimer); clearTimeout(this.registrationTimer); clearInterval(this.heartbeatTimer); this.heartbeatTimer = undefined;
         const runtimeClosing = this.runtime.close?.();
         this.rejectOutbound('NODE_DISCONNECTED');

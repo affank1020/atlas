@@ -1,4 +1,8 @@
-# Pi worker foundation (Node-local, read-only)
+# Pi worker foundation (read-only)
+
+The asynchronous Server/MCP integration is now documented in [AGENT_SERVICE.md](AGENT_SERVICE.md).
+The sections below record the original local harness and its security boundary; current
+Server/MCP operation and remaining acceptance are described in the new guide.
 
 Implements the first Node-local slice of [#196](https://github.com/affank1020/atlas/issues/196)
 and [#198](https://github.com/affank1020/atlas/issues/198). It does **not** complete the
@@ -27,7 +31,7 @@ It deliberately exposes no generic RPC command forwarding, steering, bash or she
 
 The optional runtime requires Node >=22.19.0 and is installed separately. Existing Atlas
 Nodes retain their dependency graph and normal startup; the production desktop entrypoint
-does not enable this capability or advertise it to Server. CI installs the optional lockfile
+keeps this capability disabled unless the new private Node policy explicitly enables it. CI installs the optional lockfile
 to run the real SDK integration test.
 
 ## Functional behavior
@@ -118,8 +122,8 @@ remove the empty lock directory. Use a new run ID and explicit fresh approval.
 No durable receipts or cross-restart replay protection exist yet: operator invocation
 is new authority, not recovery of an old run.
 
-Server disconnect does not mean process success or termination. This slice has no remote
-start/status transport, so it cannot claim live remote cancellation/reconnection behavior.
+Server disconnect does not mean process success or termination. The original slice had no remote start/status transport. The follow-up implements the
+transport in AGENT_SERVICE.md but still does not claim live Mac/model acceptance.
 A future transport must fence placement changes, persist approval consumption/run/events
 and explicitly reconcile uncertain prior work; it must never replay starts automatically.
 
@@ -149,5 +153,6 @@ Real Mac acceptance still required:
 5. Exercise the eventual authenticated Server/MCP transport with durable approvals/events.
 6. Assess a pinned subagent extension separately. No subagent orchestration is implemented.
 
-Durable registry/approval transport (#199), MCP controls (#200), monitoring UI (#201),
+This follow-up adds durable registry/approval transport (#199) and MCP controls (#200).
+Monitoring UI (#201),
 subagents (#202), write isolation and end-to-end coding/PR acceptance (#203) remain open.

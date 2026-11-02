@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { z } from 'zod';
 import { AtlasError } from '@atlas/protocol/errors';
+import type { AgentModelProfile } from '@atlas/protocol/agent-jobs';
 import { piStartSchema, type PiApproval, type PiEvent, type PiReceipt, type PiWorkers } from '@atlas/protocol/pi-worker';
 import type { Workspace } from '@atlas/protocol/workspace';
 import { WorkspaceFiles } from '../workspace-files/files.js';
@@ -44,7 +45,7 @@ export class PiWorkerSupervisor implements PiWorkers {
     private closed = false;
     constructor(private nodeId: string, private files: WorkspaceFiles, approvals: PiApproval[],
         // Trusted host wiring/test seam; never deserialize these dependencies from a request.
-        private dependencies: { launch?: Launch; platform?: NodeJS.Platform; lockDirectory?: string } = {}) {
+        private dependencies: { launch?: Launch; platform?: NodeJS.Platform; lockDirectory?: string; approve?: (workspace: Workspace, input: import("@atlas/protocol/pi-worker").PiStart) => PiApproval; profiles?: AgentModelProfile[] } = {}) {
         this.approvals = new Map(approvals.map(x => [x.runId, { ...x }]));
     }
     private emit(run: Run, type: string, data: PiEvent['data'] = {}) {
@@ -71,14 +72,16 @@ export class PiWorkerSupervisor implements PiWorkers {
             throw new AtlasError('Pi workers require macOS.', 'CAPABILITY_UNAVAILABLE');
         if (this.closed || this.busy || this.runs.size >= 64 || this.runs.has(input.runId))
             throw new AtlasError('Pi worker admission unavailable; runs are never replayed.', 'CONFLICT');
+        if(input.modelProfile&&!this.dependencies.profiles?.some(x=>x.id===input.modelProfile))
+            throw new AtlasError('Model profile is not enabled on this Node.','CAPABILITY_UNAVAILABLE');
         this.busy = true; // Reserve before asynchronous filesystem checks.
         try {
-            const grant = this.approvals.get(input.runId);
+            const grant = this.approvals.get(input.runId) ?? this.dependencies.approve?.(workspace, input);
             if (!grant || workspace.status !== 'active' || workspace.nodeId !== this.nodeId ||
                 input.workspaceId !== workspace.id || grant.workspaceId !== workspace.id ||
                 grant.nodeId !== this.nodeId || grant.rootPath !== workspace.rootPath ||
                 grant.head !== input.expectedHead || grant.branch !== input.expectedBranch ||
-                grant.timeoutMs !== input.timeoutMs ||
+                grant.timeoutMs !== input.timeoutMs || grant.modelProfile !== input.modelProfile ||
                 grant.promptSha256 !== createHash('sha256').update(input.prompt).digest('hex') ||
                 !(Date.parse(grant.expiresAt) > Date.now())) throw denied();
             await verifyManagedAgentWorktree(workspace.rootPath, this.files, input.expectedHead, input.expectedBranch);
@@ -96,11 +99,12 @@ export class PiWorkerSupervisor implements PiWorkers {
                     permission: 'read-only', head: input.expectedHead, branch: input.expectedBranch, lastCursor: 0 } };
             this.runs.set(input.runId, run);
             this.emit(run, 'starting');
-            this.supervise(run, input.prompt, input.timeoutMs);
+            const profile = input.modelProfile ? this.dependencies.profiles?.find(x => x.id === input.modelProfile) : undefined;
+            this.supervise(run, input.prompt, input.timeoutMs, profile);
             return { ...run.receipt };
         } catch (error) { this.busy = false; throw error; }
     }
-    private supervise(run: Run, prompt: string, timeoutMs: number) {
+    private supervise(run: Run, prompt: string, timeoutMs: number, profile?: AgentModelProfile) {
         let child: ChildProcessWithoutNullStreams;
         try { child = (this.dependencies.launch ?? launch)(run.root); }
         catch { void this.finish(run, 'failed', 'spawn_failed'); return; }
@@ -173,7 +177,7 @@ export class PiWorkerSupervisor implements PiWorkers {
                 : result === false ? 'failed' : 'incomplete');
             void this.finish(run, state, run.reason ?? (state === 'completed' ? 'pi_finished' : 'unexpected_exit_or_result'));
         });
-        child.stdin.write(JSON.stringify({ prompt, modelId: 'qwen3-coder:30b' }) + '\n');
+        child.stdin.write(JSON.stringify({ prompt, profile: profile ?? { id: 'local-qwen', provider: 'ollama', model: 'qwen3-coder:30b', contextWindow: 32768, maxTokens: 4096 } }) + '\n');
     }
     private async finish(run: Run, state: PiReceipt['state'], reason: string) {
         if (terminal(run)) return;

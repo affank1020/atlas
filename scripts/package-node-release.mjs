@@ -24,6 +24,8 @@ const macOperatorSources = [
 ];
 const required = [
     'apps/node/package.json', 'apps/node/dist',
+    'apps/node/pi-runtime/package.json', 'apps/node/pi-runtime/package-lock.json',
+    'apps/node/pi-runtime/session.mjs', 'apps/node/pi-runtime/worker.mjs',
     'packages/protocol/package.json', 'packages/protocol/dist',
 ];
 const version = JSON.parse(await readFile(join(repo, 'apps/node/package.json'), 'utf8')).version;

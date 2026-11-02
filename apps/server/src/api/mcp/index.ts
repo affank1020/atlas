@@ -1,3 +1,4 @@
+import { agentSchemas } from '@atlas/protocol/agent-jobs';
 import { nodeSchemas, type NodeToolName } from '../../nodes/contracts.js';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -42,6 +43,30 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
       async (input) => { try { if(codingBases&&RELAY_CODING_MUTATIONS.has(name)) await admitRelayCodingMutation(services,name,input as Record<string,unknown>,codingBases); return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
     };
 
+    // Owner OAuth only. Service tokens and unauthenticated local MCP never acquire job authority.
+    if(authenticatedCaller&&services.agents) {
+        const descriptions={
+            agent_start:'Start an explicitly approved, asynchronous read-only Pi job in a registered checkout. Returns durable admission, not task success.',
+            agent_get:'Inspect an owned agent run and authenticated Node execution receipts. Model prose is not test evidence.',
+            agent_events:'Read bounded, ordered metadata events for an owned agent run by cursor; retention gaps are explicit.',
+            agent_control:'Request cancellation of an owned agent run. A request alone does not confirm process termination.',
+        };
+        for(const name of Object.keys(agentSchemas) as Array<keyof typeof agentSchemas>) {
+            if(allowedTools&&!allowedTools.has(name)) continue;
+            server.registerTool(name,{
+                description:descriptions[name],inputSchema:agentSchemas[name],
+                ...(oauthScope?{securitySchemes:[{type:'oauth2' as const,scopes:[oauthScope]}]}:{}),
+            },async(input:unknown)=>{
+                try {return result(await services.dispatch(name,input,'atlas-mcp',authenticatedCaller));}
+                catch(error) {
+                    return {isError:true,content:[{type:'text' as const,text:JSON.stringify({
+                        error:error instanceof AtlasError?error.code:'INVALID_REQUEST',
+                        message:error instanceof AtlasError?error.message:'Invalid agent request.',
+                    })}]};
+                }
+            });
+        }
+    }
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
     // Prioritize active Application workflows while retaining the same registry
     // dispatch path, input validation and authenticated caller context.
