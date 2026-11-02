@@ -4,6 +4,8 @@ import type { NodeCapability } from './node-model.js';
 export type NodeOperation = WorkspaceOperation;
 /** Transport-neutral, bounded domain operations. Bindings are interpreted only by the runtime. */
 export interface NodeRuntime {
+    /** Local operator wiring only; not routed before durable approval transport exists. */
+    readonly piWorkers?: import('./pi-worker.js').PiWorkers;
     /** Optional, explicitly approved by the recipient. Never automatically change clipboard. */
     receiveDeviceShare?(input: {
         deliveryId: string; sourceNodeId: string; text: string; expiresAt: string;

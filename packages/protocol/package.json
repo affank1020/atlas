@@ -15,7 +15,8 @@
     "./device-protocol": "./dist/device-protocol.js",
     "./image-format": "./dist/image-format.js",
     "./errors": "./dist/errors.js",
-    "./node-model": "./dist/node-model.js"
+    "./node-model": "./dist/node-model.js",
+    "./pi-worker": "./dist/pi-worker.js"
   },
   "dependencies": {
     "zod": "^4.6.5"

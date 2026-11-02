@@ -1,3 +1,4 @@
+import type { PiWorkers } from '@atlas/protocol/pi-worker';
 import { runDevTask } from '../../capabilities/dev/runner.js';
 import { readAtlasNodeLog } from '../../capabilities/node-logs.js';
 import { readAtlasLinuxJournal } from '../../capabilities/linux-journal.js';
@@ -19,7 +20,7 @@ import type { Workspace, WorkspaceAdapter } from '@atlas/protocol/workspace';
 import type { WorkspaceOperation } from '@atlas/protocol/workspace-operations';
 export class LocalNodeRuntime implements NodeRuntime {
     private readonly shutdown = new AbortController();
-    close() { this.shutdown.abort(); }
+    async close() { this.shutdown.abort(); await this.piWorkers?.close(); }
     readonly files: WorkspaceFiles;
     readonly adapters: Map<string, WorkspaceAdapter>;
     private readonly platform: NodeJS.Platform;
@@ -28,7 +29,7 @@ export class LocalNodeRuntime implements NodeRuntime {
     private readonly shareSenderEnabled: boolean;
     constructor(roots: string[], adapters?: Map<string, WorkspaceAdapter>,
         platform: NodeJS.Platform = process.platform, shareReceiver?: MacShareReceiver,
-        shareSenderEnabled = false, imageReceiver?: MacImageReceiver) {
+        shareSenderEnabled = false, imageReceiver?: MacImageReceiver, readonly piWorkers?: PiWorkers) {
         this.platform = platform;
         this.shareSenderEnabled = platform === 'darwin' && shareSenderEnabled;
         this.shareReceiver = platform === 'darwin' ? shareReceiver : undefined;

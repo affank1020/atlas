@@ -30,7 +30,7 @@ export class StandaloneNode extends EventEmitter {
         resolve: (value: unknown) => void; reject: (reason: Error) => void;
         timer: ReturnType<typeof setTimeout>;
     }>();
-    constructor(readonly config: StandaloneNodeConfig, readonly runtime: NodeRuntime & { close?: () => void }) { super(); }
+    constructor(readonly config: StandaloneNodeConfig, readonly runtime: NodeRuntime & { close?: () => void | Promise<void> }) { super(); }
     start() { if (this.running) return; this.running = true; this.connect(); }
     private connect() {
         if (!this.running) return;
@@ -332,13 +332,13 @@ export class StandaloneNode extends EventEmitter {
     async stop() {
         this.running = false;
         clearTimeout(this.reconnectTimer); clearTimeout(this.registrationTimer); clearInterval(this.heartbeatTimer); this.heartbeatTimer = undefined;
-        this.runtime.close?.();
+        const runtimeClosing = this.runtime.close?.();
         this.rejectOutbound('NODE_DISCONNECTED');
         const socket = this.socket;
         if (socket?.readyState === WebSocket.OPEN) socket.close(1000, 'Node shutdown');
         if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate();
         let timeout: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([Promise.allSettled([...this.inFlight]), new Promise(resolve => { timeout = setTimeout(resolve, 3_000); })]);
+        await Promise.race([Promise.allSettled([...this.inFlight, runtimeClosing]), new Promise(resolve => { timeout = setTimeout(resolve, 3_000); })]);
         clearTimeout(timeout);
         this.socket = undefined; this.registered = false;
     }
