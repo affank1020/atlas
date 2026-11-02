@@ -7,6 +7,7 @@ import { viewManifestSchema } from "../../views.js";
 import { askAtlasInputSchema } from "../../ai/ask-atlas/input.js";
 import { AtlasError } from "../../shared/errors.js";
 import { atlasStatus } from "../../status.js";
+import { RELAY_CODING_MUTATIONS, admitRelayCodingMutation } from './relay-coding.js';
 import { fabricSearchSchema, fabricContextSchema } from "../../retrieval/input.js";
 import { globalSearchInput } from "../../server/global-search.js";
 import type { TransportServices } from "../../server/dispatch.js";
@@ -29,15 +30,16 @@ export const RELAY_READ_TOOLS: ReadonlySet<string> = new Set([
     // out of the service-token catalogue even when a client requests them.
     'code_reviews_overview', 'code_reviews_pr_summary', 'code_reviews_list_findings',
 ]);
+export const RELAY_CODING_TOOLS:ReadonlySet<string> = new Set([...RELAY_READ_TOOLS,...RELAY_CODING_MUTATIONS]);
 const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
 
-export function createMcpTransport(services: TransportServices, oauthScope?: string, authenticatedCaller?: ApplicationCaller, allowedTools?: ReadonlySet<string>) {
+export function createMcpTransport(services: TransportServices, oauthScope?: string, authenticatedCaller?: ApplicationCaller, allowedTools?: ReadonlySet<string>, codingBases?:ReadonlySet<string>) {
     const server = new McpServer({ name: atlasStatus.name, version: atlasStatus.version });
     const tool = (name: string, description: string, inputSchema: Record<string, z.ZodType>) => {
       if (allowedTools && !allowedTools.has(name)) return;
       return server.registerTool(name,
       { description, inputSchema, ...(oauthScope ? { securitySchemes: [{ type: 'oauth2' as const, scopes: [oauthScope] }] } : {}) },
-      async (input) => { try { return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
+      async (input) => { try { if(codingBases&&RELAY_CODING_MUTATIONS.has(name)) await admitRelayCodingMutation(services,name,input as Record<string,unknown>,codingBases); return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
     };
 
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
