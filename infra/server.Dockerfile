@@ -30,6 +30,9 @@ COPY --from=build /atlas/packages/protocol/dist packages/protocol/dist
 COPY --from=build /atlas/packages/view-runtime/dist packages/view-runtime/dist
 COPY apps/server/migrations apps/server/migrations
 COPY scripts/db.mjs scripts/db.mjs
+# Local operator-only CLI; not an HTTP/MCP endpoint.
+COPY scripts/configure-workspace-dev-tasks.mjs scripts/configure-workspace-dev-tasks.mjs
+COPY scripts/lib/workspace-dev.mjs scripts/lib/workspace-dev.mjs
 USER node
 WORKDIR /atlas
 CMD ["sh", "-c", "node scripts/db.mjs migrate && exec node apps/server/dist/server.js"]
