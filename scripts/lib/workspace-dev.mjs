@@ -10,8 +10,9 @@ export async function configureDevTasks(pool, workspaceId, tasks) {
     const db = await pool.connect();
     try {
         await db.query('BEGIN');
-        const previous = await db.query(`SELECT w.id,w.project_id,w.dev_tasks FROM workspaces w JOIN projects p ON p.id=w.project_id
-            WHERE w.id=$1 AND w.archived_at IS NULL AND p.archived_at IS NULL FOR UPDATE OF w`, [workspaceId]);
+        const previous = await db.query(`SELECT w.id,w.project_id,w.dev_tasks FROM workspaces w LEFT JOIN projects p ON p.id=w.project_id
+            WHERE w.id=$1 AND w.archived_at IS NULL
+              AND (w.project_id IS NULL OR p.archived_at IS NULL) FOR UPDATE OF w`, [workspaceId]);
         if (!previous.rowCount) throw new Error('Active Workspace not found.');
         const row = previous.rows[0];
         await db.query('UPDATE workspaces SET dev_tasks=$2,updated_at=now() WHERE id=$1', [workspaceId, configured]);
