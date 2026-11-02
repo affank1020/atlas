@@ -8,6 +8,8 @@ export type McpAuthOptions = {
     subject: string;
     scope: string;
     relayTokenHash?: string;
+    relayCodingTokenHash?: string;
+    relayCodingBaseCheckouts?: ReadonlySet<string>;
 };
 
 type JwtHeader = { alg?: unknown; kid?: unknown; typ?: unknown };
