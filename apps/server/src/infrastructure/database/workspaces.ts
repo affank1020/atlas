@@ -120,7 +120,7 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
             [source.logicalWorkspaceId]);
         return this.getById(workspaceId);
     }
-    async insert(input: { nodeId: string; projectId?: string | null; name: string; rootPath: string; kind: 'generic' | 'unity'; logicalWorkspaceId?: string; repository?: string }) {
+    async insert(input: { nodeId: string; projectId?: string | null; name: string; rootPath: string; kind: 'generic' | 'unity'; logicalWorkspaceId?: string; repository?: string; devTasks?:Workspace['devTasks'] }) {
         try {
             let logicalId = input.logicalWorkspaceId;
             if (!logicalId && input.repository)
@@ -130,9 +130,9 @@ class PostgresWorkspaceTransaction extends WorkspaceReader implements WorkspaceT
                 await this.connection.query('INSERT INTO logical_workspaces(id,name) VALUES($1,$2)', [logicalId, input.name]);
             }
             const result = await this.connection.query(
-                'INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+                'INSERT INTO workspaces(id,project_id,name,root_path,kind,adapter,node_id,logical_workspace_id,dev_tasks) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
                 [randomUUID(), input.projectId ?? null, input.name, input.rootPath, input.kind,
-                    input.kind === 'unity' ? 'unity' : null, input.nodeId, logicalId]);
+                    input.kind === 'unity' ? 'unity' : null, input.nodeId, logicalId,JSON.stringify(input.devTasks??{})]);
             const workspace = row(result.rows[0]);
             if (input.projectId) await this.linkLogical(logicalId, input.projectId);
             else await this.syncLogicalProjects(logicalId);
