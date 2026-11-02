@@ -54,3 +54,7 @@ Python driver is developed separately in the FYP workspace. See
 
 Portfolio and Ask Portfolio no longer have global sidebar entries; the
 legacy URLs remain supported. Portfolio links to Ask Portfolio internally.
+
+Agents is a global, code-defined Application backed by the durable Pi run service.
+Its private owner-scoped browser API is separately authenticated; registry discovery
+does not grant run access. See [Agents Application](AGENTS_APPLICATION.md).

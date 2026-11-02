@@ -46,6 +46,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     // Owner OAuth only. Service tokens and unauthenticated local MCP never acquire job authority.
     if(authenticatedCaller&&services.agents) {
         const descriptions={
+            agent_list:'List owned durable Pi runs across Nodes and checkouts, including uncertain outcomes, with bounded keyset pagination.',
             agent_start:'Start an explicitly approved, asynchronous read-only Pi job in a registered checkout. Returns durable admission, not task success.',
             agent_get:'Inspect an owned agent run and authenticated Node execution receipts. Model prose is not test evidence.',
             agent_events:'Read bounded, ordered metadata events for an owned agent run by cursor; retention gaps are explicit.',
@@ -70,7 +71,7 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
     // ChatGPT connectors may expose only a bounded prefix of the MCP tool catalogue.
     // Prioritize active Application workflows while retaining the same registry
     // dispatch path, input validation and authenticated caller context.
-    const appTools = services.applications.tools();
+    const appTools = services.applications.tools().filter(tool=>!Object.hasOwn(agentSchemas,tool.name));
     const generalistPriorityNames = [
         'football_generalist_evaluate',
         'football_generalist_baseline',

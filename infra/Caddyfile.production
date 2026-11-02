@@ -41,8 +41,17 @@
             {$VPS_ADMIN_USER} {$VPS_ADMIN_PASSWORD_HASH}
         }
 
+        # Single authenticated human owner, explicitly mapped by Server configuration
+        # to the MCP owner. Always replace any client-supplied ingress credential.
+        @agents path /api/agents/*
+        reverse_proxy @agents server:3000 {
+            header_up X-Atlas-Agents-Ingress "Bearer {$ATLAS_AGENTS_WEB_TOKEN:}"
+            header_up X-Forwarded-Proto https
+        }
+
         @backend path /api/* /mcp /projects/* /health
         reverse_proxy @backend server:3000 {
+            header_up -X-Atlas-Agents-Ingress
             # Atlas is always externally HTTPS: after cutover it receives
             # HTTP from the standalone proxy over a private Docker bridge.
             header_up X-Forwarded-Proto https

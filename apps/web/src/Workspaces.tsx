@@ -1,3 +1,4 @@
+import { AgentPreview } from './AgentPreview';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { callTool, IS_MOCK_MODE } from './api';
 import { monitoringHash } from './monitoringLinks';
@@ -589,6 +590,7 @@ export function Workspaces() {
                                         <h3>Activity</h3>
                                         {logical.length > 0 && focusedLogical && <a className="wm-link" href={monitoringHash('activity', { logicalWorkspaceId: focusedLogical.id })}>All Workspace activity</a>}
                                     </div>
+                                    <AgentPreview key={selected?.id ?? focusedGroup.checkouts[0].id} checkoutId={selected && focusedGroup.checkouts.some(checkout => checkout.id === selected.id) ? selected.id : focusedGroup.checkouts[0].id} refreshVersion={revision} />
                                     <WorkspaceActivityPreview
                                         key={focusedGroup.id}
                                         logicalWorkspaceId={logical.length > 0 ? focusedLogical?.id : undefined}

@@ -1,4 +1,5 @@
 import { AgentService } from '../agents/service.js';
+import { agentsApplication } from '../apps/agents.js';
 import { Pool } from 'pg';
 import { RemoteNodeGateway } from '../infrastructure/nodes/gateway.js';
 import { DeviceOfflineInbox } from '../nodes/offline-inbox.js';
@@ -149,7 +150,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         config.codeReviews.trustedPublishers, publisher, managedSummary, managedPublisher,
         inlinePreflight, inlineInventory, inlineRootPublisher, inlineReplyPublisher,
         inlineFixPublisher, reviewThreadState, threadResolution);
-    const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews)]);
+    const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews),agentsApplication(agents)]);
     diagnostics.record('server_initialised');
     const services = { config, agents, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, imageRelay, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };

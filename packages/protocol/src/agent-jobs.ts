@@ -52,6 +52,12 @@ export const agentReportSchema = z.object({
 export type AgentReport = z.infer<typeof agentReportSchema>;
 export const agentAckSchema = z.object({ type: z.literal('agent.ack'), runId: uuid, token: uuid, cursor }).strict();
 export const agentSchemas = {
+    agent_list: z.object({
+        state: z.enum(['active','dispatching','starting','running','cancelling','unknown','completed','failed','cancelled','timed_out','incomplete']).optional(),
+        nodeId: uuid.optional(), checkoutId: uuid.optional(), logicalWorkspaceId: uuid.optional(),
+        before: z.object({createdAt:z.string().datetime(),runId:uuid}).strict().optional(),
+        limit:z.number().int().min(1).max(100).default(50),
+    }).strict(),
     agent_start: z.object({ runId: uuid, checkoutId: uuid, approvalId: uuid,
         instruction: z.string().min(1).max(16384), profileId: modelProfileSchema.shape.id,
         permission: z.literal('read-only'), timeoutMs: piStartSchema.shape.timeoutMs }).strict(),
@@ -60,3 +66,27 @@ export const agentSchemas = {
     agent_control: z.object({ runId: uuid, action: z.literal('cancel') }).strict(),
 };
 export type AgentTool = keyof typeof agentSchemas;
+
+export type AgentState = 'dispatching' | 'starting' | 'running' | 'cancelling' | 'unknown' |
+    'completed' | 'failed' | 'cancelled' | 'timed_out' | 'incomplete';
+// A hierarchy is an observation contract, not authority to delegate. This runtime
+// currently emits one root and no children. Future child producers must be reviewed.
+export type AgentHierarchyNode = {
+    agentId:string; parentAgentId:string|null; role:string; state:AgentState;
+    actualProfile:AgentModelProfile|null; children:AgentHierarchyNode[];
+};
+export type AgentRunView = {
+    runId:string; checkoutId:string; nodeId:string; projectId:string|null; logicalWorkspaceId:string|null;
+    state:AgentState; permission:'read-only'; requestedProfileId:string; requestedProfile:AgentModelProfile;
+    actualProfile:AgentModelProfile|null; head:string; branch:string;
+    createdAt:string; startedAt:string|null; observedAt:string|null; finishedAt:string|null; cancelRequestedAt:string|null;
+    lastCursor:number; eventGap:boolean; result:z.infer<typeof agentReceiptSchema>|null; reason:string|null;
+    nodeName:string; nodeOnline:boolean; checkoutName:string; approvedRoot:string;
+    source:'owner-oauth'; canCancel:boolean; hierarchy:AgentHierarchyNode;
+    evidence:{source:'authenticated_node_process_receipts';verifiedTests:never[];verifiedCommits:never[];
+        taskSuccessVerified:false;runtimeReady?:boolean;agentStarted?:boolean;agentSettled?:boolean;
+        piResult?:boolean;terminalCompleted?:boolean;toolExecutions?:number};
+};
+export type AgentRunPage = {runs:AgentRunView[];next:{createdAt:string;runId:string}|null;
+    scopes?:{nodes:{id:string;name:string}[];checkouts:{id:string;name:string}[];truncated:boolean}};
+export type AgentEventPage = {runId:string;events:z.infer<typeof agentEventSchema>[];oldestCursor:number;lastCursor:number;truncated:boolean};

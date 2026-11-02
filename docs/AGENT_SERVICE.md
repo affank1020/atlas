@@ -22,7 +22,7 @@ Execution requires all of:
 
 The domain, MCP contract and wire channel are platform-neutral. Only the initial desktop
 macOS adapter enables execution. Linux (#204), subagents/review orchestration and the
-Agents UI (#201) are not implemented. Existing Nodes neither advertise nor receive
+rich subagent UI are not implemented. The first monitoring Application is documented in AGENTS_APPLICATION.md. Existing Nodes neither advertise nor receive
 agent commands and retain protocol v2 / Workspace behavior.
 
 No production rollout or live ChatGPT/Ollama acceptance was performed during implementation.
@@ -225,4 +225,5 @@ Still required before a real ChatGPT → Atlas MCP → Pi demonstration:
 
 Write authority remains disabled. Real macOS process/file/network/credential isolation
 must be designed and tested before enabling write/edit/bash or untrusted extensions.
-This milestone does not close #197/#203 live acceptance or enable subagents/review/UI.
+This milestone does not close #197/#203 live acceptance or enable subagents/review orchestration.
+The monitoring Application is documented in [AGENTS_APPLICATION.md](AGENTS_APPLICATION.md).

@@ -9,6 +9,12 @@ COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/view-runtime/package.json packages/view-runtime/package.json
 RUN npm ci --ignore-scripts
 
+# The Agents UI consumes exported protocol types. Build this package inside the
+# isolated image before compiling the web application (host dist is not copied).
+COPY packages/protocol/src packages/protocol/src
+COPY packages/protocol/tsconfig.json packages/protocol/tsconfig.json
+RUN npm run build:protocol
+
 COPY packages/view-runtime/src packages/view-runtime/src
 COPY packages/view-runtime/tsconfig.json packages/view-runtime/tsconfig.json
 COPY apps/web apps/web

@@ -3,6 +3,7 @@ import { rememberWork } from './recentWork';
 import { useEffect, useRef, lazy, Suspense, type ComponentType } from 'react';
 import { useApplicationRead } from './atlasApi';
 import { AtlasTopBar } from './AtlasTopBar';
+const Agents = lazy(() => import('./Agents').then(module => ({ default: module.Agents })));
 const Portfolio = lazy(() => import('./Portfolio').then(module => ({ default: module.Portfolio })));
 const FootballGeneralistExperience = lazy(() => import('./FootballGeneralistExperience').then(module => ({ default: module.FootballGeneralistExperience })));
 const CodeReviews = lazy(() => import('./CodeReviewsDashboard').then(module => ({ default: module.CodeReviewsDashboard })));
@@ -23,6 +24,7 @@ export type ApplicationManifest = {
 // First-party UI components ship with Atlas Web; the Server registry controls
 // which Applications are attached to each Project.
 const applicationComponents: Record<string, ComponentType> = {
+    agents: Agents,
     portfolio: Portfolio,
     'football-training': FootballGeneralistExperience,
     'code-reviews': CodeReviews,
