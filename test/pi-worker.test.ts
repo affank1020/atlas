@@ -37,8 +37,8 @@ async function fixture(t: any) {
     return { root, base, checkout, workspace, request, approval, git, files: new WorkspaceFiles([root]) };
 }
 const script = fileURLToPath(new URL('./fixtures/pi-process.cjs', import.meta.url));
-function service(f: Awaited<ReturnType<typeof fixture>>, mode: string, grant = f.approval) {
-    return new PiWorkerSupervisor(f.workspace.nodeId, f.files, [grant], { platform: 'darwin', lockDirectory: path.join(f.root, 'pi.lock'),
+function service(f: Awaited<ReturnType<typeof fixture>>, mode: string, grant = f.approval, platform: NodeJS.Platform = 'darwin') {
+    return new PiWorkerSupervisor(f.workspace.nodeId, f.files, [grant], { platform, lockDirectory: path.join(f.root, 'pi.lock'),
         launch: cwd => spawn(process.execPath, [script, mode], { cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
             env: { PATH: '/usr/bin:/bin' } }) });
 }
@@ -135,8 +135,15 @@ test('spawn errors and unsupported platforms fail closed', async t => {
         platform: 'darwin', lockDirectory: path.join(f.root, 'pi.lock'), launch: () => spawn('/nonexistent-atlas-pi', [], { detached: true, stdio: ['pipe','pipe','pipe'] }) });
     await s.start(f.workspace, f.request);
     assert.equal((await finished(s, f.workspace, f.request.runId)).state, 'failed'); await s.close();
-    const linux = new PiWorkerSupervisor(f.workspace.nodeId, f.files, [f.approval], { platform: 'linux' });
-    await assert.rejects(linux.start(f.workspace, f.request)); await linux.close();
+    const unsupported = new PiWorkerSupervisor(f.workspace.nodeId, f.files, [f.approval], { platform: 'win32' });
+    await assert.rejects(unsupported.start(f.workspace, f.request)); await unsupported.close();
+});
+test('Linux read-only worker uses the same checkout, approval and process contracts', async t => {
+    const f = await fixture(t), s = service(f, 'events', f.approval, 'linux');
+    t.after(() => s.close());
+    await s.start(f.workspace, f.request);
+    assert.equal((await finished(s, f.workspace, f.request.runId)).state, 'completed');
+    assert.equal(s.events(f.workspace, f.request.runId).events.at(-1)?.type, 'terminal');
 });
 test('missing grants, trusted-root violations, changed Git identity and primary checkouts are rejected before launch', async t => {
     const f = await fixture(t);
