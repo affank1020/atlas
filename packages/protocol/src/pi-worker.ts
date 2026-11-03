@@ -12,7 +12,9 @@ export const piStartSchema = z.object({
 }).strict();
 export type PiStart = z.infer<typeof piStartSchema>;
 export type PiState = 'starting' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'incomplete';
-export type PiEvent = { cursor: number; at: string; type: string; data: Record<string, string | number | boolean | null> };
+// Internal supervisor event bag. The authenticated Node wire uses the strict,
+// field-allowlisted agentEventSchema; arbitrary values never cross that boundary.
+export type PiEvent = { cursor: number; at: string; type: string; data: Record<string, unknown> };
 export type PiReceipt = {
     runId: string; workspaceId: string; nodeId: string; state: PiState;
     startedAt: string; finishedAt?: string; exitCode?: number | null; signal?: string | null;
