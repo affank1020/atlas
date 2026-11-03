@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import { agentSchemas, agentReportSchema, modelProfileSchema, type AgentCommand, type AgentTool } from '@atlas/protocol/agent-jobs';
+import { agentSchemas, agentReportSchema, modelProfileSchema, type AgentCommand, type AgentTool, type AgentState } from '@atlas/protocol/agent-jobs';
+import { buildAgentHierarchy } from './hierarchy.js';
 import type { ApplicationCaller } from '../apps/registry.js';
 import { AtlasError } from '../shared/errors.js';
 import type { NodeService } from '../nodes/service.js';
@@ -26,7 +27,13 @@ export const approvalInputSchema = z.object({
 }).strict();
 const denied = () => new AtlasError('Agent run or approval is unavailable to this caller.', 'AGENT_DENIED');
 const projection = `SELECT r.*, to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at,
-    n.name AS node_name,w.name AS checkout_name,a.root_path AS approved_root
+    n.name AS node_name,w.name AS checkout_name,a.root_path AS approved_root,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'agentId',child.agent_id,'parentAgentId',child.parent_agent_id,
+        'role',child.role,'state',child.state,'requestedProfileId',child.requested_profile_id,
+        'actualProfile',child.actual_profile,'startedAt',child.started_at,
+        'observedAt',child.observed_at,'finishedAt',child.finished_at
+    ) ORDER BY child.start_cursor) FROM agent_children child WHERE child.run_id=r.id),'[]'::jsonb) AS children
     FROM agent_runs r JOIN nodes n ON n.id=r.node_id JOIN workspaces w ON w.id=r.checkout_id
     JOIN agent_approvals a ON a.id=r.approval_id`;
 /** PostgreSQL is the dispatch/approval authority. The job is independent of its MCP request. */
@@ -73,7 +80,7 @@ export class AgentService {
             requestedProfileId:r.profile.id, requestedProfile:r.profile, actualProfile:r.actual_profile,
             nodeName:r.node_name, nodeOnline:this.nodes.runtimes.has(r.node_id), checkoutName:r.checkout_name, approvedRoot:r.approved_root,
             source:'owner-oauth', canCancel:!terminal.has(r.state), startedAt:r.started_at??r.receipt?.startedAt??null,
-            hierarchy:{agentId:r.id,parentAgentId:null,role:'root',state,actualProfile:r.actual_profile,children:[]},
+            hierarchy:buildAgentHierarchy(r.id,state as AgentState,r.actual_profile,r.children),
             head:r.head, branch:r.branch, createdAt:r.created_at, observedAt:r.observed_at, finishedAt:r.finished_at,
             cancelRequestedAt:r.cancel_requested_at, lastCursor:r.last_cursor, eventGap:r.event_gap,
             result:r.receipt, reason:stale?'node_observation_unavailable':r.status_reason,
@@ -187,6 +194,37 @@ export class AgentService {
     private async unknown(id: string, reason: string) {
         await this.pool.query("UPDATE agent_runs SET state='unknown',status_reason=$2 WHERE id=$1 AND finished_at IS NULL",[id,reason]);
     }
+    private async receiveChild(c:PoolClient,runId:string,event:z.infer<typeof agentReportSchema>['events'][number]) {
+        if(event.type==='child_start') {
+            const {agentId,parentAgentId,role,requestedProfileId}=event.data;
+            if(agentId===runId) throw new AtlasError('A child cannot use the root identity.','AGENT_PROTOCOL');
+            const count=await c.query('SELECT count(*)::integer AS total FROM agent_children WHERE run_id=$1',[runId]);
+            if(Number(count.rows[0].total)>=32) throw new AtlasError('Agent child limit exceeded.','AGENT_PROTOCOL');
+            if(parentAgentId!==runId) {
+                const parent=await c.query('SELECT 1 FROM agent_children WHERE run_id=$1 AND agent_id=$2',[runId,parentAgentId]);
+                if(!parent.rowCount) throw new AtlasError('Unobserved parent agent.','AGENT_PROTOCOL');
+            }
+            await c.query(`INSERT INTO agent_children(
+                run_id,agent_id,parent_agent_id,role,requested_profile_id,state,started_at,observed_at,start_cursor,last_cursor
+            ) VALUES($1,$2,$3,$4,$5,'starting',$6,$6,$7,$7)`,
+            [runId,agentId,parentAgentId,role,requestedProfileId,event.at,event.cursor]);
+        } else if(event.type==='child_state') {
+            const {agentId,state,actualProfile}=event.data;
+            const updated=await c.query(`UPDATE agent_children SET state=$3,observed_at=$4,
+                actual_profile=COALESCE($5::jsonb,actual_profile),last_cursor=$6
+                WHERE run_id=$1 AND agent_id=$2 AND finished_at IS NULL
+                  AND (state='starting' OR $3='running') RETURNING agent_id`,
+                [runId,agentId,state,event.at,actualProfile??null,event.cursor]);
+            if(!updated.rowCount) throw new AtlasError('Invalid child state transition.','AGENT_PROTOCOL');
+        } else if(event.type==='child_terminal') {
+            const {agentId,state,actualProfile}=event.data;
+            const updated=await c.query(`UPDATE agent_children SET state=$3,observed_at=$4,finished_at=$4,
+                actual_profile=COALESCE($5::jsonb,actual_profile),last_cursor=$6
+                WHERE run_id=$1 AND agent_id=$2 AND finished_at IS NULL RETURNING agent_id`,
+                [runId,agentId,state,event.at,actualProfile??null,event.cursor]);
+            if(!updated.rowCount) throw new AtlasError('Missing or completed child agent.','AGENT_PROTOCOL');
+        }
+    }
     async receive(nodeId: string, raw: unknown, sessionId=this.nodes.runtimes.get(nodeId)?.agentSessionId) {
         const report = agentReportSchema.parse(raw);
         let cancel:AgentCommand|undefined;
@@ -229,6 +267,11 @@ export class AgentService {
                 if (event.type==='result' && event.data.ok===true) evidence.piResult=true;
                 if (event.type==='terminal' && event.data.state==='completed') evidence.terminalCompleted=true;
                 if (event.type==='tool_execution_end') evidence.toolExecutions=(evidence.toolExecutions??0)+1;
+                if(event.type.startsWith('child_')) {
+                    if(!evidence.runtimeReady||!evidence.agentStarted)
+                        throw new AtlasError('Child event before the parent Pi loop.','AGENT_PROTOCOL');
+                    await this.receiveChild(c,r.id,event);
+                }
             }
             const receipt=report.receipt;
             if(receipt && terminal.has(receipt.state)!==!!receipt.finishedAt)
@@ -247,6 +290,10 @@ export class AgentService {
                     state='incomplete'; reason='completion_evidence_missing';
                 }
             } else if (receipt?.finishedAt) state=r.cancel_requested_at?'cancelling':'running';
+            if(state==='completed') {
+                const unresolved=await c.query('SELECT 1 FROM agent_children WHERE run_id=$1 AND finished_at IS NULL LIMIT 1',[r.id]);
+                if(unresolved.rowCount) {state='incomplete';reason='child_evidence_missing';}
+            }
             await c.query(`UPDATE agent_runs SET state=$2,last_cursor=$3,event_gap=$4,evidence=$5,
                 observed_at=now(),receipt=$6,finished_at=$7,status_reason=$8,actual_profile=$9,dispatch_session=COALESCE($10::uuid,dispatch_session),
                 started_at=COALESCE(started_at,$11::timestamptz) WHERE id=$1`,
