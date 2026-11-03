@@ -47,14 +47,17 @@ const shareSenderEnabled = process.platform === 'darwin' && process.env.ATLAS_NO
 // Image receiving is separately opt-in and keeps text sharing unchanged.
 const imageReceiver = process.platform === 'darwin' && process.env.ATLAS_NODE_IMAGE_RECEIVE_ENABLED === 'true'
     ? new MacImageReceiver() : undefined;
-// Separately installed runtime and private local policy are required; Linux remains unsupported.
-if(process.env.ATLAS_PI_POLICY_FILE && process.platform==='darwin') {
+// Separately installed runtime and private local policy are required on either desktop Node.
+// Never advertise agent.pi merely because the package was bundled.
+if(process.env.ATLAS_PI_POLICY_FILE && !['darwin','linux'].includes(process.platform))
+    throw new Error('Pi is supported only on approved macOS and Linux desktop Nodes.');
+if(process.env.ATLAS_PI_POLICY_FILE) {
     const [major,minor]=process.versions.node.split('.').map(Number);
     if((major??0)<22 || (major===22&&(minor??0)<19)) throw new Error('Pi requires Node >=22.19.0.');
     const installed=JSON.parse(await readFile(new URL('../../../pi-runtime/node_modules/@earendil-works/pi-coding-agent/package.json',import.meta.url),'utf8'));
     if(installed.version!=='1.5.0') throw new Error('Install the pinned optional Pi runtime before enabling agent.pi.');
 }
-const agentHost=process.platform==='darwin' && process.env.ATLAS_PI_POLICY_FILE
+const agentHost=process.env.ATLAS_PI_POLICY_FILE
     ? new AgentNodeHost(await readAgentPolicy(process.env.ATLAS_PI_POLICY_FILE,id),
         process.env.ATLAS_PI_STATE_DIR || path.join(dirname(nodeStatusPath()),'agent-runs'),files) : undefined;
 const runtime = new LocalNodeRuntime(roots, adapters, process.platform, shareReceiver, shareSenderEnabled, imageReceiver, undefined, agentHost);
