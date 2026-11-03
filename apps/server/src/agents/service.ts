@@ -201,7 +201,7 @@ export class AgentService {
             const count=await c.query('SELECT count(*)::integer AS total FROM agent_children WHERE run_id=$1',[runId]);
             if(Number(count.rows[0].total)>=32) throw new AtlasError('Agent child limit exceeded.','AGENT_PROTOCOL');
             if(parentAgentId!==runId) {
-                const parent=await c.query('SELECT 1 FROM agent_children WHERE run_id=$1 AND agent_id=$2',[runId,parentAgentId]);
+                const parent=await c.query('SELECT 1 FROM agent_children WHERE run_id=$1 AND agent_id=$2 AND finished_at IS NULL',[runId,parentAgentId]);
                 if(!parent.rowCount) throw new AtlasError('Unobserved parent agent.','AGENT_PROTOCOL');
             }
             await c.query(`INSERT INTO agent_children(
@@ -218,6 +218,12 @@ export class AgentService {
             if(!updated.rowCount) throw new AtlasError('Invalid child state transition.','AGENT_PROTOCOL');
         } else if(event.type==='child_terminal') {
             const {agentId,state,actualProfile}=event.data;
+            if(state==='completed') {
+                const active=await c.query(
+                    'SELECT 1 FROM agent_children WHERE run_id=$1 AND parent_agent_id=$2 AND finished_at IS NULL LIMIT 1',
+                    [runId,agentId]);
+                if(active.rowCount) throw new AtlasError('Child completed with live descendants.','AGENT_PROTOCOL');
+            }
             const updated=await c.query(`UPDATE agent_children SET state=$3,observed_at=$4,finished_at=$4,
                 actual_profile=COALESCE($5::jsonb,actual_profile),last_cursor=$6
                 WHERE run_id=$1 AND agent_id=$2 AND finished_at IS NULL RETURNING agent_id`,
