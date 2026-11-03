@@ -72,6 +72,37 @@ test('Agents is a global code-defined Application; list pagination is scoped, or
     for(const privateField of ['owner_key','token','private-hash'])assert.ok(!JSON.stringify(all).includes(privateField));
 });
 
+test('ordered authenticated child events persist into the same MCP and browser hierarchy',async t=>{
+    const f=await setup(t),runId=await f.seed('running');
+    const token=(await f.db.store.pool.query('SELECT token FROM agent_runs WHERE id=$1',[runId])).rows[0].token;
+    const childId=randomUUID(),grandchildId=randomUUID(),at=new Date().toISOString();
+    const events=[
+        {type:'ready',cursor:1,at,data:{version:'1.5.0'}},
+        {type:'agent_start',cursor:2,at,data:{}},
+        {type:'child_start',cursor:3,at,data:{agentId:childId,parentAgentId:runId,role:'scout',requestedProfileId:'local'}},
+        {type:'child_state',cursor:4,at,data:{agentId:childId,state:'running',actualProfile:profile}},
+        {type:'child_start',cursor:5,at,data:{agentId:grandchildId,parentAgentId:childId,role:'reviewer',requestedProfileId:'local'}},
+        {type:'child_terminal',cursor:6,at,data:{agentId:grandchildId,state:'completed'}},
+        {type:'child_terminal',cursor:7,at,data:{agentId:childId,state:'completed'}}, 
+    ];
+    await f.services.agents.receive(f.nodeId,{type:'agent.report',runId,token,status:'observed',
+        receipt:null,profile,oldestCursor:1,events});
+    const detail=(await f.request('get',{runId})).body;
+    assert.equal(detail.hierarchy.children.length,1);
+    assert.equal(detail.hierarchy.children[0].role,'scout');
+    assert.equal(detail.hierarchy.children[0].actualProfile.model,'coder');
+    assert.equal(detail.hierarchy.children[0].children[0].role,'reviewer');
+    assert.equal(detail.hierarchy.children[0].children[0].state,'completed');
+    const mcp=await f.services.agents.call('agent_get',{runId},caller);
+    assert.deepEqual(detail,JSON.parse(JSON.stringify(mcp)));
+    const page=(await f.request('events',{runId,after:2,limit:10})).body;
+    assert.deepEqual(page.events.map((x:any)=>x.type),['child_start','child_state','child_start','child_terminal','child_terminal']);
+    await assert.rejects(f.services.agents.receive(f.nodeId,{type:'agent.report',runId,token,
+        status:'observed',receipt:null,profile,oldestCursor:8,
+        events:[{type:'child_terminal',cursor:8,at,data:{agentId:childId,state:'completed'}}]}));
+    assert.equal((await f.db.store.pool.query('SELECT last_cursor FROM agent_runs WHERE id=$1',[runId])).rows[0].last_cursor,7);
+});
+
 test('browser authentication fails closed; caller headers cannot change owner or broaden operations',async t=>{
     const f=await setup(t);const hidden=await f.seed('running',other);
     assert.equal((await f.request('list',{}, {'x-atlas-agents-ingress':''})).status,401);

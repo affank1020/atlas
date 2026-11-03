@@ -54,7 +54,7 @@ function AgentList({state,nodeId,checkoutId}:{state:string;nodeId:string;checkou
     </>;
 }
 export function AgentTree({node}:{node:AgentHierarchyNode}) {
-    return <ul className="agent-tree"><li><span>{node.role} Pi agent</span> <code>{node.agentId.slice(0,8)}</code> · <AgentStatus state={node.state}/> · {node.actualProfile?`${node.actualProfile.provider} / ${node.actualProfile.model}`:'Model not observed'}
+    return <ul className="agent-tree"><li><span>{node.role} Pi agent</span> <code>{node.agentId.slice(0,8)}</code> · <AgentStatus state={node.state}/> · {node.actualProfile?`${node.actualProfile.provider} / ${node.actualProfile.model}`:node.requestedProfileId?`Requested model profile: ${node.requestedProfileId}`:'Model not observed'}
         {node.children.map(child=><AgentTree key={child.agentId} node={child}/>)}</li></ul>;
 }
 const eventTitle=(event:AgentEventPage['events'][number])=>{
@@ -63,6 +63,9 @@ const eventTitle=(event:AgentEventPage['events'][number])=>{
         case 'agent_end':return 'Pi turn ended';case 'agent_settled':return 'Pi agent settled';case 'process_heartbeat':return 'Process observed';
         case 'tool_execution_start':return 'Read tool started';case 'tool_execution_end':return event.data.isError?'Read tool returned an error':'Read tool completed';
         case 'worker_error':return 'Pi worker error (details redacted)';case 'result':return event.data.ok?'Pi returned a successful process result':'Pi returned an error result';
+        case 'child_start':return event.data.role+' child agent started ('+event.data.agentId.slice(0,8)+')';
+        case 'child_state':return 'Child agent '+event.data.agentId.slice(0,8)+' '+label(event.data.state);
+        case 'child_terminal':return 'Child agent '+event.data.agentId.slice(0,8)+' '+label(event.data.state);
         case 'stopping':return 'Stopping: '+label(event.data.reason);case 'terminal':return 'Process '+label(event.data.state)+': '+label(event.data.reason);
     }
 };
@@ -109,7 +112,7 @@ function AgentDetail({runId}:{runId:string}) {
                 <div><dt>Last observed / finished</dt><dd>{when(run.observedAt)} / {when(run.finishedAt)}</dd></div>
                 {run.projectId&&<div><dt>Project</dt><dd><a href={'#/projects/'+run.projectId}>Open associated Project</a></dd></div>}
                 <div><dt>Cancellation</dt><dd>{run.cancelRequestedAt?`Requested ${when(run.cancelRequestedAt)}${terminal.has(run.state)?'':' · termination not confirmed'}`:'Not requested'}</dd></div></dl>
-            <section className="agent-section"><h3>Agents</h3><AgentTree node={run.hierarchy}/>{run.hierarchy.children.length===0&&<p className="hint">No child agents recorded. Subagent execution is not enabled.</p>}</section>
+            <section className="agent-section"><h3>Agents</h3><AgentTree node={run.hierarchy}/>{run.hierarchy.children.length===0&&<p className="hint">No child-agent lifecycle events observed. Subagent execution remains disabled until the reviewed Pi extension is enabled.</p>}</section>
             <section className="agent-section"><h3>Execution timeline</h3><p className="hint">Observed metadata only. Tool arguments, file contents and model prose are redacted.</p>{(gap||events.length===2000)&&<p className="notice">History is bounded. Earlier events may be unavailable; complete execution evidence cannot be inferred from this timeline.</p>}
                 <ol className="agent-timeline">{events.map(event=><li key={event.cursor}><span className="agent-event-cursor">{event.cursor}</span><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString()}</time><span>{eventTitle(event)}</span></li>)}</ol>
                 {!events.length&&<p>No execution events received.</p>}{more&&<p role="status">Catching up with persisted events… <button className="ghost" onClick={()=>setRefresh(n=>n+1)}>Refresh history</button></p>}</section>

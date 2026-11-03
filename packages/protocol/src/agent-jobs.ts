@@ -34,12 +34,30 @@ export const agentReceiptSchema = z.object({
 }).strict();
 // Metadata only. Drop raw text/args/results on the producer; reject them at the wire boundary.
 const eventBase={cursor:cursor.refine(x=>x>0),at:z.string().datetime()};
+export const agentChildRoleSchema=z.enum(['scout','worker','reviewer','general']);
+export const agentChildTerminalSchema=z.enum(['completed','failed','cancelled','timed_out','incomplete']);
+const childId=z.string().uuid();
+const childProfileId=modelProfileSchema.shape.id;
 export const agentEventSchema = z.discriminatedUnion('type',[
     z.object({...eventBase,type:z.enum(['starting','agent_start','agent_end','agent_settled','process_heartbeat','worker_error']),data:z.object({}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('ready'),data:z.object({version:z.literal('1.5.0')}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('tool_execution_start'),data:z.object({tool:z.literal('read')}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('tool_execution_end'),data:z.object({tool:z.literal('read'),isError:z.boolean()}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('result'),data:z.object({ok:z.boolean()}).strict()}).strict(),
+    // Produced only by a reviewed native Pi child runtime. No prompt, raw tool data or
+    // model text is accepted; an event is observation, not authority to spawn a child.
+    z.object({...eventBase,type:z.literal('child_start'),data:z.object({
+        agentId:childId,parentAgentId:childId,role:agentChildRoleSchema,
+        requestedProfileId:childProfileId,
+    }).strict()}).strict(),
+    z.object({...eventBase,type:z.literal('child_state'),data:z.object({
+        agentId:childId,state:z.enum(['starting','running']),
+        actualProfile:modelProfileSchema.optional(),
+    }).strict()}).strict(),
+    z.object({...eventBase,type:z.literal('child_terminal'),data:z.object({
+        agentId:childId,state:agentChildTerminalSchema,
+        actualProfile:modelProfileSchema.optional(),
+    }).strict()}).strict(),
     z.object({...eventBase,type:z.literal('stopping'),data:z.object({reason:agentReceiptSchema.shape.reason.unwrap()}).strict()}).strict(),
     z.object({...eventBase,type:z.literal('terminal'),data:z.object({state:agentStateSchema,reason:agentReceiptSchema.shape.reason.unwrap()}).strict()}).strict(),
 ]);
@@ -69,11 +87,13 @@ export type AgentTool = keyof typeof agentSchemas;
 
 export type AgentState = 'dispatching' | 'starting' | 'running' | 'cancelling' | 'unknown' |
     'completed' | 'failed' | 'cancelled' | 'timed_out' | 'incomplete';
-// A hierarchy is an observation contract, not authority to delegate. This runtime
-// currently emits one root and no children. Future child producers must be reviewed.
+// A hierarchy is an observation contract, never authority to delegate. Child rows
+// require authenticated Node runtime events; the first Pi worker still emits only root.
 export type AgentHierarchyNode = {
     agentId:string; parentAgentId:string|null; role:string; state:AgentState;
-    actualProfile:AgentModelProfile|null; children:AgentHierarchyNode[];
+    actualProfile:AgentModelProfile|null; requestedProfileId?:string;
+    startedAt?:string|null; observedAt?:string|null; finishedAt?:string|null;
+    children:AgentHierarchyNode[];
 };
 export type AgentRunView = {
     runId:string; checkoutId:string; nodeId:string; projectId:string|null; logicalWorkspaceId:string|null;
