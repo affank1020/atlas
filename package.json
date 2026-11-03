@@ -48,7 +48,7 @@
     "verify:workspace": "node --import tsx scripts/workspace-live-verify.mjs",
     "test:benchmark": "node scripts/benchmark-ci.mjs",
     "test:pi": "npm run build:node && node --import tsx --test test/pi-worker.test.ts test/pi-sdk.test.ts",
-    "test:agents": "npm run build:server && npm run build:node && node --import tsx --test test/agent-service.test.ts test/agent-policy.test.ts test/pi-worker.test.ts test/pi-sdk.test.ts"
+    "test:agents": "npm run build:server && npm run build:node && node --import tsx --test test/agent-service.test.ts test/agent-policy.test.ts test/agent-children.test.ts test/agent-monitoring.test.ts test/pi-worker.test.ts test/pi-sdk.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
