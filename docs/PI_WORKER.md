@@ -29,7 +29,9 @@ The SDK lets us replace the native read tool's filesystem operations and turn di
 off entirely. The private child protocol is bounded JSONL, not a public replacement for Pi RPC.
 It deliberately exposes no generic RPC command forwarding, steering, bash or shell arguments.
 
-The optional runtime requires Node >=22.19.0 and is installed separately. Existing Atlas
+The optional runtime requires Node >=22.19.0 and is installed separately. The same
+read-only worker can now run on an explicitly approved Linux desktop Node; production
+Linux acceptance is still pending. Existing Atlas
 Nodes retain their dependency graph and normal startup; the production desktop entrypoint
 keeps this capability disabled unless the new private Node policy explicitly enables it. CI installs the optional lockfile
 to run the real SDK integration test.
