@@ -18,11 +18,12 @@ Execution requires all of:
 - a registered, active, approved physical checkout;
 - explicit single-run approval by a Server-local administrator;
 - a separate private Node-local policy allowing that checkout and model profile;
-- macOS, Node >=22.19.0, the pinned optional Pi 1.5.0 install and working local Ollama.
+- macOS or Linux desktop Node, Node >=22.19.0, the pinned optional Pi 1.5.0 install and working local Ollama.
 
-The domain, MCP contract and wire channel are platform-neutral. Only the initial desktop
-macOS adapter enables execution. Linux (#204), subagents/review orchestration and the
-rich subagent UI are not implemented. The first monitoring Application is documented in AGENTS_APPLICATION.md. Existing Nodes neither advertise nor receive
+The domain, MCP contract and wire channel are platform-neutral. The desktop Node
+now has an opt-in Linux read-only adapter using the same approved-checkout and process
+contracts as macOS. Neither platform has write authority or an OS sandbox. Live Linux
+acceptance (#204), subagents and review orchestration are still outstanding. The first monitoring Application is documented in AGENTS_APPLICATION.md. Existing Nodes neither advertise nor receive
 agent commands and retain protocol v2 / Workspace behavior.
 
 No production rollout or live ChatGPT/Ollama acceptance was performed during implementation.
@@ -55,7 +56,7 @@ These are instructions, not actions performed against production by this PR.
 
 Apply the ordinary Server migration procedure, then build the Server and Node.
 Standalone Node bundles include the optional Pi descriptors/entrypoints but do not
-install Pi or enable the capability automatically. On the approved Mac installation:
+install Pi or enable the capability automatically. On an approved development Mac or Linux installation:
 
     npm ci --ignore-scripts --prefix apps/node/pi-runtime
 
@@ -82,7 +83,10 @@ Set ATLAS_PI_POLICY_FILE on that Node. Optionally set ATLAS_PI_STATE_DIR to a de
 private directory; otherwise the Node uses agent-runs beside its status file.
 Keep ATLAS_WORKSPACE_ROOTS and ATLAS_GIT_TRUSTED_ROOTS configured as before. Restart
 the Node to load/revoke the policy. Do not delete or reuse its journal for retrying jobs.
-The Mac startup preflight checks the optional installed Pi version and Node engine.
+The desktop startup preflight checks the optional installed Pi version and Node engine.
+Linux runs are allowed only with the same explicit Node-private policy; an existing
+production VPS must never be implicitly enrolled or have its deployment checkout approved.
+The Linux adapter has not been exercised against a live Ollama/model deployment.
 
 A Server-local admin reviews an exact instruction, checkout, expected commit and profile,
 then prepares a private JSON file:
@@ -216,7 +220,7 @@ without it only the SDK-specific cases skip.
 
 Still required before a real ChatGPT → Atlas MCP → Pi demonstration:
 1. Deliberate operator deployment/install of this reviewed milestone (not performed here).
-2. Enrol/configure a real Mac, pinned Pi and Ollama model; record exact versions, model
+2. Enrol/configure a real Mac (or isolated Linux development Node), pinned Pi and Ollama model; record exact versions, model
    digest and effective context. Verify the owner OAuth MCP connection can see the tools.
 3. Create/register an isolated worktree, install Node policy, grant one exact instruction.
 4. Start/poll/cancel from ChatGPT; capture actual receipts and verify no base or worktree
