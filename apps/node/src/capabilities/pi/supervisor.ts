@@ -68,8 +68,8 @@ export class PiWorkerSupervisor implements PiWorkers {
     }
     async start(workspace: Workspace, raw: unknown) {
         const input = piStartSchema.parse(raw);
-        if ((this.dependencies.platform ?? process.platform) !== 'darwin')
-            throw new AtlasError('Pi workers require macOS.', 'CAPABILITY_UNAVAILABLE');
+        if (!['darwin', 'linux'].includes(this.dependencies.platform ?? process.platform))
+            throw new AtlasError('Pi workers require an approved macOS or Linux Node.', 'CAPABILITY_UNAVAILABLE');
         if (this.closed || this.busy || this.runs.size >= 64 || this.runs.has(input.runId))
             throw new AtlasError('Pi worker admission unavailable; runs are never replayed.', 'CONFLICT');
         if(input.modelProfile&&!this.dependencies.profiles?.some(x=>x.id===input.modelProfile))
