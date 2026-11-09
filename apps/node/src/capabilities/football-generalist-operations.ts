@@ -451,6 +451,8 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
             '--seed', String(x.seed ?? 42), '--base-port', String(x.basePort ?? 5605), '--arenas', String(x.arenas ?? 1),
             ...(sourceId ? ['--initialize-from-run', sourceId] : [])];
         return launch(workspace, x.action, cmd, { run_id: runId, scenario, preset: x.preset ?? 'smoke',
+            trainer_type: scenario === 's3-pass-two-learners-v2' ? 'poca' : 'ppo',
+            physical_proof_required: scenario === 's3-pass-two-learners-v2',
             initialization_source_run_id: sourceId ?? null });
     }
     const ticket = randomUUID();
