@@ -44,7 +44,7 @@
   `X-Atlas-File-Name`, and `X-Atlas-File-Type` headers. The server independently
   validates all metadata, owner existence and private visibility.
 - Existing `POST /api/files/upload` JSON/base64 clients remain supported.
-  Both paths are **limited to 25 MiB** per file. Server memory still buffers the
+  Both paths are **limited to 50 MiB** per file. Server memory still buffers the
   bounded upload; this is **not yet resumable, multipart or direct-to-R2**.
   Multiple selected files are transferred sequentially.
 - File downloads verify both the stored byte count and SHA-256 checksum
