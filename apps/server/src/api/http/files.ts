@@ -4,8 +4,9 @@ import type { FileOwner } from '../../server/atlas-files.js';
 import { folderId as parseFolderId } from '../../server/project-file-folders.js';
 import { AtlasError } from '../../shared/errors.js';
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_UPLOAD_BODY_BYTES = 35 * 1024 * 1024;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+// JSON/base64 legacy uploads expand binary bytes by ~4/3 plus metadata.
+const MAX_UPLOAD_BODY_BYTES = 70 * 1024 * 1024;
 // A 255-character filename can expand to 9 percent-encoded bytes per UTF-16
 // code unit (e.g. CJK characters). The decoded name is still validated by
 // AtlasFilesService.upload, including its 255-character limit.
