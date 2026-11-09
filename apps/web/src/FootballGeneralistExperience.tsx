@@ -268,21 +268,23 @@ export function FootballGeneralistExperience() {
         </div>)}
         {tab === 'drills' && <GeneralistDrillCatalog manifest={manifest} selected={selectedDrillScenario} onSelect={setSelectedDrillScenario} onTrain={id => { setScenario(id); setTab('train'); }}/>} 
         {tab === 'train' && <section className="fg-panel">
-            <h2>New training run</h2><p className="fg-muted">{scenario === 's3-pass-two-learners-v2'
+            <h2>New training run</h2><p className="fg-muted">{scenario === 's3-pass-two-learners-v3'
+                ? 'S3 V3 trains the separate shorter-start, physically shaped two-player curriculum with a fresh 8,192-step MA-POCA smoke. Atlas verifies the stamped Unity build and paired scripted/no-kick physical success across multiple seeds; it never promotes the model automatically.'
+                : scenario === 's3-pass-two-learners-v2'
                 ? 'S3 V2 launches the 8,192-step MA-POCA cooperative smoke on the connected Mac. Atlas rechecks the saved Unity build and runs paired scripted/no-kick physical probes before training. Scratch only; no automatic promotion.'
                 : 'Starts a new PPO learner. S1 rehearsal samples 75% dribbling and 25% S0 contact episodes; it requires a compatible recorded checkpoint as the initial weights, not a resume of the old run.'}</p>
             <div className="fg-form">
                 <GeneralistDrillPicker scenarios={scenarios} mode="train" value={scenario} onChange={id => {
                     setScenario(id);
-                    if (id === 's3-pass-two-learners-v2') { setPreset('smoke'); setWorkers(1); setInitializeFromRunId(''); }
+                    if (['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(id)) { setPreset('smoke'); setWorkers(1); setInitializeFromRunId(''); }
                 }}/>
-                <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_50k' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_50k" disabled={scenario !== 's2-score-basic-v1'}>S2.2b pilot · 50k steps</option><option value="pilot_100k" disabled={scenario === 's3-pass-two-learners-v2'}>Pilot · 100k steps</option></select></label>
-                <label>Initial weights<select aria-label="Initial weights" value={initializeFromRunId} disabled={scenario === 's3-pass-two-learners-v2'} onChange={e => setInitializeFromRunId(e.target.value)}>
+                <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_50k' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_50k" disabled={scenario !== 's2-score-basic-v1'}>S2.2b pilot · 50k steps</option><option value="pilot_100k" disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)}>Pilot · 100k steps</option></select></label>
+                <label>Initial weights<select aria-label="Initial weights" value={initializeFromRunId} disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)} onChange={e => setInitializeFromRunId(e.target.value)}>
                     <option value="">Start with random weights</option>
                     {initializationRuns.map(r => <option key={r.id} value={r.id}>{r.id} · {r.scenario ?? 'Generalist'}</option>)}
                 </select></label>
                 <label>Training seed<input type="number" value={seed} min={0} onChange={e => setSeed(Number(e.target.value))}/></label>
-                <label>Parallel environments<input type="number" value={workers} min={1} max={16} disabled={scenario === 's3-pass-two-learners-v2'} onChange={e => setWorkers(Number(e.target.value))}/></label>
+                <label>Parallel environments<input type="number" value={workers} min={1} max={16} disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)} onChange={e => setWorkers(Number(e.target.value))}/></label>
                 <label>Base port<input type="number" value={basePort} min={1024} max={65519} onChange={e => setBasePort(Number(e.target.value))}/></label>
             </div>
             {manifest?.scenarios.scenarios.find(s => s.id === scenario) && <div className="fg-drill-training-note">
@@ -292,10 +294,10 @@ export function FootballGeneralistExperience() {
             </div>}
             <button className="fg-button primary" disabled={!!busy || !manifest || manifest.curriculum.held_out_seeds?.includes(seed) ||
                 (scenario === 's1_rehearsal' && !initializeFromRunId) ||
-                (scenario === 's3-pass-two-learners-v2' &&
+                (['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario) &&
                  (preset !== 'smoke' || workers !== 1 || !!initializeFromRunId))} onClick={() => {
-                if (window.confirm(scenario === 's3-pass-two-learners-v2'
-                    ? 'Start one 8,192-step MA-POCA cooperative training run after automatically repeating the physical safety probe on the Mac?'
+                if (window.confirm(['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)
+                    ? 'Start a new 8,192-step MA-POCA cooperative run only after the scenario-matched physical proof passes on the Mac?'
                     : 'Start one generalist PPO training run on the connected Mac?')) void doAction('train', 'football_generalist_train', { scenario, preset, seed, arenas: workers, basePort, ...(initializeFromRunId ? { initializeFromRunId } : {}) });
             }}>{busy === 'train' ? 'Starting…' : 'Launch generalist training'}</button>
             {scenario === 's1_rehearsal' && !initializeFromRunId && <p role="alert">Select a recorded S0 checkpoint before S1 continuation.</p>}
