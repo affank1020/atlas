@@ -43,6 +43,19 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
       async (input) => { try { if(codingBases&&RELAY_CODING_MUTATIONS.has(name)) await admitRelayCodingMutation(services,name,input as Record<string,unknown>,codingBases); return result(await services.dispatch(name, Object.hasOwn(workspaceSchemas, name) && "client" in workspaceSchemas[name as WorkspaceToolName].shape ? { ...input, client: input.client ?? server.server.getClientVersion()?.name ?? "mcp-client" } : input, 'atlas-mcp', authenticatedCaller)); } catch (error) { const known = error instanceof AtlasError; return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: known ? error.code : "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) }, null, 2) }] }; } });
     };
 
+    // Private Files are discoverable only over owner-authenticated MCP.
+    // These tools transmit metadata and short-lived R2 links, never file bytes.
+    if (authenticatedCaller?.kind === 'mcp-oauth') {
+        tool('list_project_files', 'List active files in one Atlas Project (all folders by default). Bounded pagination; no file bytes.', {
+            projectId: z.string().uuid(), folderId: z.string().uuid().nullable().optional(),
+            limit: z.number().int().min(1).max(100).optional(),
+            offset: z.number().int().min(0).max(10000).optional(),
+        });
+        tool('get_project_file', 'Get exact active Project file metadata and an expiring R2 download URL (120 seconds). URL grants temporary read access; do not log or share it. Does not download the file into ChatGPT.', {
+            projectId: z.string().uuid(), fileId: z.string().uuid(),
+        });
+    }
+
     // Owner OAuth only. Service tokens and unauthenticated local MCP never acquire job authority.
     if(authenticatedCaller&&services.agents) {
         const descriptions={
