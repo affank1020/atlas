@@ -29,7 +29,7 @@ export function validateParams(manifest: ViewManifest | undefined, value: unknow
     return {...allowed,...result.data};
 }
 const tags=new Set('a img abbr address mark s del ins sup sub u samp kbd var wbr main header footer section article aside nav div span p h1 h2 h3 h4 h5 h6 ul ol li dl dt dd strong em b i small br hr pre code blockquote table caption thead tbody tfoot tr th td colgroup col details summary time figure figcaption label input button select option optgroup textarea dialog canvas progress meter fieldset legend output datalist'.split(' '));
-const components=new Set('atlas-page atlas-header atlas-section atlas-card atlas-stat atlas-stat-grid atlas-badge atlas-table atlas-tabs atlas-progress atlas-empty-state atlas-loading atlas-error atlas-button atlas-toast'.split(' '));
+const components=new Set('atlas-page atlas-header atlas-section atlas-card atlas-stat atlas-stat-grid atlas-badge atlas-table atlas-tabs atlas-progress atlas-empty-state atlas-loading atlas-error atlas-button atlas-toast atlas-rich-text'.split(' '));
 const unsafeAttributes=new Set('href src srcset action formaction srcdoc ping target rel download data poster background codebase xlink:href xmlns is nonce http-equiv'.split(' '));
 const forbiddenCss = /@import\b|expression\s*\(|url\s*\(|<\/?style\b|<\/?script\b/i;
 function safeExternalUrl(value:string){
