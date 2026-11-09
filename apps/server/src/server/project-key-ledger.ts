@@ -9,7 +9,7 @@ import {
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const MAX_OBJECTS = 1000;
 const MAX_BATCH = 5;
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = 50 * 1024 * 1024;
 export const CAPTURE_PROJECT_KEY_MANIFEST = "CAPTURE_PROJECT_KEY_MANIFEST";
 
 export type SnapshotItem = { ordinal: number; row: ProjectKeyCopyRow; target: string };
