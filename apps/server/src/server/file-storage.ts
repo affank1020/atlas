@@ -72,7 +72,7 @@ export class LocalObjectStore implements ObjectStore {
     /** Read legacy local Atlas Files for manual backup seeding with a hard
      * byte cap. Do not follow leaf symlinks or read files with unknown size. */
     async getBounded(key: string, maxBytes: number): Promise<Buffer> {
-        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 25 * 1024 * 1024)
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 50 * 1024 * 1024)
             throw new Error("Invalid bounded local Files size.");
         const filename = localPath(this.root, key);
         let handle;
@@ -249,7 +249,7 @@ export class R2ObjectStore implements ObjectStore {
     /** Atomically create an absent object. A 412 means another committed object
      * exists; callers MUST GET and checksum that object before accepting it. */
     async putIfAbsent(key: string, bytes: Buffer, mimeType: string): Promise<boolean> {
-        if (bytes.length < 1 || bytes.length > 25 * 1024 * 1024)
+        if (bytes.length < 1 || bytes.length > 50 * 1024 * 1024)
             throw new Error("Invalid bounded R2 seed size.");
         const response = await this.perform("PUT", key, bytes, mimeType, undefined, true);
         return response.status !== 412;
@@ -262,7 +262,7 @@ export class R2ObjectStore implements ObjectStore {
      * This is also used for independent R2 backup recovery verification.
      */
     async getBounded(key: string, maxBytes: number): Promise<Buffer> {
-        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 25 * 1024 * 1024)
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 50 * 1024 * 1024)
             throw new Error("Invalid bounded R2 recovery size.");
         const response = await this.perform("GET", key);
         const length = response.headers.get("content-length");
