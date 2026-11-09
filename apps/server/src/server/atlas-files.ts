@@ -3,7 +3,7 @@ import { Pool, type PoolClient } from "pg";
 import { AtlasError } from "../shared/errors.js";
 import { ProjectFileFolders, folderId as parseFolderId } from "./project-file-folders.js";
 import { listPortfolioProjectMedia, type ProjectPortfolioMedia } from "./project-storage-catalog.js";
-import { createObjectStore, ObjectNotFound, projectStorageKey, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
+import { createObjectStore, ObjectNotFound, projectStorageKey, R2ObjectStore, type ObjectStore, type R2StorageConfig } from "./file-storage.js";
 
 export type FileOwner = { kind: "project" | "workspace" | "application"; id: string };
 export type FileVisibility = "private" | "public";
@@ -45,11 +45,13 @@ export class AtlasFilesService {
     readonly pool: Pool;
     readonly objects: ObjectStore;
     readonly folders: ProjectFileFolders;
+    private readonly r2Signer: R2ObjectStore | null;
     constructor(databaseUrl: string, root: string, r2: R2StorageConfig | null = null, objects?: ObjectStore,
         readonly versionedProjectWrites = false) {
         this.pool = new Pool({ connectionString: databaseUrl });
         this.folders = new ProjectFileFolders(this.pool);
         this.objects = objects ?? createObjectStore(root, r2);
+        this.r2Signer = r2 ? new R2ObjectStore(r2) : null;
     }
     async close() { await this.pool.end(); }
 
@@ -72,6 +74,44 @@ export class AtlasFilesService {
                 [owner.id, status, folder]);
         return result.rows.map(fileRow);
     }
+    /** Bounded, project-only listing for the owner-authorized MCP transport. */
+    async listProjectPage(projectId: string, folderId?: string | null, limit = 50):
+        Promise<{ files: AtlasFile[]; hasMore: boolean }> {
+        if (!UUID.test(projectId) || !Number.isInteger(limit) || limit < 1 || limit > 100)
+            throw new AtlasError("Invalid Project file listing.");
+        const folder = folderId === undefined ? undefined : parseFolderId(folderId);
+        const params: (string | number | null)[] = [projectId.toLowerCase()];
+        const folderWhere = folder === undefined ? "" : " AND folder_id IS NOT DISTINCT FROM $2::uuid";
+        if (folder !== undefined) params.push(folder);
+        params.push(limit + 1);
+        const rows = await this.pool.query(
+            `SELECT * FROM atlas_files WHERE owner_kind='project' AND owner_id=$1
+             AND status='active'${folderWhere} ORDER BY created_at DESC, id DESC LIMIT ${params.length}`,
+            params);
+        return { files: rows.rows.slice(0, limit).map(fileRow), hasMore: rows.rows.length > limit };
+    }
+
+    /**
+     * Return an R2 capability URL only for the exact active Project-owned file.
+     * No bytes or storage keys enter the MCP response. This does not expose a
+     * public bucket, and the signed link expires after two minutes.
+     * Legacy local-only files cannot be linked using R2.
+     */
+    async projectDownloadLink(projectId: string, fileId: string):
+        Promise<{ file: AtlasFile; downloadUrl: string | null; expiresAt: string | null; availability: "r2" | "r2_not_configured" }> {
+        if (!UUID.test(projectId) || !UUID.test(fileId)) throw new AtlasError("Invalid Project file identity.");
+        const selected = await this.pool.query(
+            "SELECT * FROM atlas_files WHERE id=$1 AND owner_kind='project' AND owner_id=$2 AND status='active'",
+            [fileId.toLowerCase(), projectId.toLowerCase()]);
+        if (!selected.rows[0]) throw new AtlasError("Atlas file was not found.", "NOT_FOUND");
+        const row = selected.rows[0]!;
+        const file = fileRow(row);
+        if (!this.r2Signer)
+            return { file, downloadUrl: null, expiresAt: null, availability: "r2_not_configured" };
+        const signed = this.r2Signer.presignGet(String(row.storage_key), 120);
+        return { file, downloadUrl: signed.url, expiresAt: signed.expiresAt, availability: "r2" };
+    }
+
     async upload(input: {
         owner: FileOwner; fileName: string; mimeType: string; bytes: Buffer;
         visibility?: FileVisibility; client?: string; database?: PoolClient; folderId?: string | null;
