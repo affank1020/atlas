@@ -420,14 +420,17 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (!historicalWatch && !scenarios.has(scenario))
         throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
-        // S3 V2 has two agents sharing one SimpleMultiAgentGroup. Only the
-        // project's dedicated, evidence-gated 8192-step MA-POCA bridge may
-        // train it. The generic Atlas PPO presets must never be substituted.
-        if (scenario === 's3-pass-two-learners-v2' &&
+        // S3 V2 benchmark and the separate S3 V3 training curriculum both
+        // use a two-player SimpleMultiAgentGroup. Never route either through
+        // the legacy PPO path: only source/physics-evidence-gated 8k POCA
+        // scratch is approved, with no checkpoint initialization.
+        const cooperativeS3 = scenario === 's3-pass-two-learners-v2' ||
+            scenario === 's3-pass-two-learners-v3';
+        if (cooperativeS3 &&
             ((x.preset ?? 'smoke') !== 'smoke' || (x.arenas ?? 1) !== 1 ||
              !!x.initializeFromRunId)) {
             throw new AtlasError(
-                'Cooperative S3 V2 requires MA-POCA smoke (8192 steps), one environment and scratch initialisation.',
+                'Cooperative S3 V2/V3 requires MA-POCA smoke (8192 steps), one environment and scratch initialisation.',
                 'INVALID_ARGUMENT');
         }
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
@@ -451,8 +454,8 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
             '--seed', String(x.seed ?? 42), '--base-port', String(x.basePort ?? 5605), '--arenas', String(x.arenas ?? 1),
             ...(sourceId ? ['--initialize-from-run', sourceId] : [])];
         return launch(workspace, x.action, cmd, { run_id: runId, scenario, preset: x.preset ?? 'smoke',
-            trainer_type: scenario === 's3-pass-two-learners-v2' ? 'poca' : 'ppo',
-            physical_proof_required: scenario === 's3-pass-two-learners-v2',
+            trainer_type: cooperativeS3 ? 'poca' : 'ppo',
+            physical_proof_required: cooperativeS3,
             initialization_source_run_id: sourceId ?? null });
     }
     const ticket = randomUUID();
