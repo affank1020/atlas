@@ -358,7 +358,7 @@ It reconciles the current Project catalogue with three sources of evidence:
 
 The entire bounded metadata catalogue is reconciled before any R2 read,
 but each explicit verify operation reads at most **five** catalogue entries
-(20 bounded reads, each capped at 25 MiB). Each successful result describes
+(20 bounded reads, each capped at 50 MiB). Each successful result describes
 only its page; a final page is not evidence that earlier pages were checked.
 
 Operator example (no live cutover or object writes):
