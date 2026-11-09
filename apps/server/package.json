@@ -24,7 +24,8 @@
     "@atlas/protocol": "2.0.0",
     "ws": "^8.22.0",
     "zod": "^4.6.5",
-    "@atlas/view-runtime": "1.0.0"
+    "@atlas/view-runtime": "1.0.0",
+    "@atlas/pdf-text": "1.0.0"
   },
   "devDependencies": {},
   "files": [

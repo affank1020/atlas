@@ -30,6 +30,7 @@ import { ServerDiagnosticHistory } from './diagnostic-history.js';
 import { MonitoringHealthService } from './monitoring-health.js';
 import { StorageUsageService } from './storage-usage.js';
 import { AtlasFilesService } from './atlas-files.js';
+import { ProjectPdfService } from './project-pdf.js';
 import { NodeFileIngestService } from './node-file-ingest.js';
 import { NodeResumableTransferService } from './node-resumable-transfer.js';
 import { ApplicationRegistry } from '../apps/registry.js';
@@ -84,6 +85,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         config.projectVersionedWrites.enabled);
     const files = new AtlasFilesService(config.databaseUrl, config.portfolio.mediaRoot, config.portfolio.r2,
         undefined, config.projectVersionedWrites.enabled);
+    const projectPdf = new ProjectPdfService(files);
     const identity = new NodeIdentity(repository.pool);
     const nodeFileIngest = new NodeFileIngestService(repository.pool, identity, files);
     const nodeResumable = new NodeResumableTransferService(repository.pool, nodeFileIngest);
@@ -152,7 +154,7 @@ export function composeServer(config: ServerConfig = loadServerConfig(), executi
         inlineFixPublisher, reviewThreadState, threadResolution);
     const applications = new ApplicationRegistry([portfolioApplication({ portfolio, media, askPortfolio, contentful }), footballTrainingApplication(football), codeReviewsApplication(codeReviews),agentsApplication(agents)]);
     diagnostics.record('server_initialised');
-    const services = { config, agents, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, imageRelay, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, applications, lifecycle };
+    const services = { config, agents, catalog, diagnostics, diagnosticHistory, health, storageUsage, nodes, identity, shareApprovals, nodeGateway, imageRelay, nodeFileIngest, nodeResumable, views: new ViewService(catalog), workspaces, retrieval, askAtlas, askPortfolio, contentful, portfolio, media, files, projectPdf, applications, lifecycle };
     return { ...services, dispatch: createDispatcher(services) };
 }
 export type ServerServices = ReturnType<typeof composeServer>;

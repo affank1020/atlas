@@ -14,10 +14,10 @@
     "start:server": "npm run start -w @atlas/server",
     "start:node": "npm run start -w @atlas/node",
     "build:protocol": "npm run build -w @atlas/protocol",
-    "build:server": "npm run build:protocol && npm run build:views && npm run build -w @atlas/server",
+    "build:server": "npm run build:protocol && npm run build:views && npm run build:pdf-text && npm run build -w @atlas/server",
     "build:node": "npm run build:protocol && npm run build -w @atlas/node",
     "build:web": "npm run build:views && npm run build -w @atlas/web",
-    "build": "npm run build:protocol && npm run build:views && npm run build -w @atlas/server && npm run build -w @atlas/node && npm run build -w @atlas/web",
+    "build": "npm run build:protocol && npm run build:views && npm run build:pdf-text && npm run build -w @atlas/server && npm run build -w @atlas/node && npm run build -w @atlas/web",
     "test:server": "npm run build:server && node --import tsx --test test/*.test.ts",
     "test:node": "npm run build:node && node --import tsx --test test/remote-node.test.ts test/node-identity.test.ts test/workspace-dev.test.ts test/workspaces.test.ts",
     "test:web": "npm run test -w @atlas/web",
@@ -48,7 +48,8 @@
     "verify:workspace": "node --import tsx scripts/workspace-live-verify.mjs",
     "test:benchmark": "node scripts/benchmark-ci.mjs",
     "test:pi": "npm run build:node && node --import tsx --test test/pi-worker.test.ts test/pi-sdk.test.ts",
-    "test:agents": "npm run build:server && npm run build:node && node --import tsx --test test/agent-service.test.ts test/agent-policy.test.ts test/pi-worker.test.ts test/pi-sdk.test.ts"
+    "test:agents": "npm run build:server && npm run build:node && node --import tsx --test test/agent-service.test.ts test/agent-policy.test.ts test/pi-worker.test.ts test/pi-sdk.test.ts",
+    "build:pdf-text": "npm run build -w @atlas/pdf-text"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

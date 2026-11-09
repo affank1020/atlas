@@ -18,6 +18,7 @@ import { callCoreTool } from './core-dispatch.js';
 import { globalSearchInput, searchEverywhere } from './global-search.js';
 import type { ApplicationRegistry, ApplicationCaller } from '../apps/registry.js';
 import type { StorageUsageService } from './storage-usage.js';
+import type { ProjectPdfService } from './project-pdf.js';
 import type { AtlasFilesService } from './atlas-files.js';
 import type { ServerDiagnostics } from './diagnostics.js';
 import type { ServerDiagnosticHistory } from './diagnostic-history.js';
@@ -31,6 +32,7 @@ export interface ApplicationServices {
     diagnostics?: Pick<ServerDiagnostics, 'read' | 'record'>;
     diagnosticHistory?: Pick<ServerDiagnosticHistory, 'read'>;
     health?: Pick<MonitoringHealthService, 'read'>;
+    projectPdf?: Pick<ProjectPdfService, 'read' | 'search'>;
     views: ViewService;
     workspaces: Pick<WorkspaceService, "call">;
     retrieval: RetrievalService;
@@ -90,6 +92,17 @@ export function createDispatcher(services: ApplicationServices) {
             case 'search_atlas': return retrieval.search(fabricSearchSchema.parse(input));
             case 'search_everything': return searchEverywhere({ listProjects: catalog.listProjects.bind(catalog), listStores: catalog.listStores.bind(catalog), views, retrieval, applications, nodes: services.nodes }, globalSearchInput.parse(input));
             case 'request_context': return retrieval.context(fabricContextSchema.parse(input));
+            case 'read_project_file':
+            case 'search_project_file': {
+                // A file ID (even a correct one) is never read authority.
+                if (authenticatedCaller?.kind !== 'mcp-oauth')
+                    throw new AtlasError('Owner OAuth is required for private Project files.', 'CAPABILITY_UNAVAILABLE');
+                if (!services.projectPdf) throw new AtlasError('Project PDF reading unavailable.', 'CAPABILITY_UNAVAILABLE');
+                await catalog.getProject(input.projectId);
+                return name === 'read_project_file'
+                    ? services.projectPdf.read(input.projectId, input.fileId, input.startPage, input.pageCount)
+                    : services.projectPdf.search(input.projectId, input.fileId, input.query, input.limit, input.offset);
+            }
         }
         if (name === 'list_projects' && input.withMetrics === true) {
             const [projects, resourceCounts] = await Promise.all([
