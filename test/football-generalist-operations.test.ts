@@ -96,6 +96,51 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
 });
 
 
+test('S3 V2 trains only with the bounded Atlas MA-POCA smoke path', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-s3-poca-'));
+    try {
+        await mkdir(path.join(root, 'ml-agents/config'), { recursive: true });
+        await mkdir(path.join(root, 'Assets/Resources/Generalist'), { recursive: true });
+        await writeFile(path.join(root, 'ml-agents/config/football_generalist_v2_contract.json'), JSON.stringify({
+            contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2',
+            observations: { size: 54, fields: [] }, actions: { continuous: 5, channels: [] },
+        }));
+        await writeFile(path.join(root, 'Assets/Resources/Generalist/scenarios.json'), JSON.stringify({
+            sceneVersion: 's3', physicsVersion: 'p3',
+            scenarios: [{ id: 's3-pass-two-learners-v2', cooperativeSpawnV2: true }],
+        }));
+        await writeFile(path.join(root, 'ml-agents/config/generalist_curriculum.json'), JSON.stringify({
+            stages: [{ id: 'S0' }], held_out_seeds: [515, 616, 717, 828],
+        }));
+        // Harmless fixture: the Node action is only tested for dispatch and
+        // receipt metadata, never allowed to invoke a real Unity trainer.
+        await writeFile(path.join(root, 'atlas_generalist_launch.py'),
+            'import sys\nprint("Atlas S3 launch fixture; never trains", flush=True)\n');
+        const fields = { ...input, action: 'generalist_train', scenario: 's3-pass-two-learners-v2',
+            seed: 42, preset: 'smoke', arenas: 1, basePort: 5605 };
+        for (const patch of [
+            { preset: 'pilot_50k' }, { preset: 'pilot_100k' },
+            { arenas: 2 }, { initializeFromRunId: 'atlas-generalist-abc123def456' },
+        ]) {
+            await assert.rejects(footballControl(ws(root), { ...fields, ...patch }),
+                (e: any) => e.code === 'INVALID_ARGUMENT' && /MA-POCA/.test(e.message));
+        }
+        await assert.rejects(footballControl(ws(root), { ...fields, seed: 515 }),
+            (e: any) => e.code === 'INVALID_ARGUMENT' && /Held-out/.test(e.message));
+        const accepted = await footballControl(ws(root), fields) as any;
+        assert.equal(accepted.accepted, true);
+        assert.equal(accepted.action, 'generalist_train');
+        const receipt = await footballControl(ws(root), {
+            ...input, action: 'generalist_status', runId: accepted.ticket,
+        }) as any;
+        assert.equal(receipt.trainer_type, 'poca');
+        assert.equal(receipt.physical_proof_required, true);
+        assert.equal(receipt.scenario, 's3-pass-two-learners-v2');
+        assert.equal(receipt.preset, 'smoke');
+        assert.match(receipt.run_id, /^atlas-generalist-[a-z0-9]{12}$/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('generalist run detail safely provides saved checkpoints and reports missing terminal logs', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-detail-'));
     try {

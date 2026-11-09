@@ -420,6 +420,16 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (!historicalWatch && !scenarios.has(scenario))
         throw new AtlasError('Scenario is not present in the generalist manifest.', 'INVALID_ARGUMENT');
     if (x.action === 'generalist_train') {
+        // S3 V2 has two agents sharing one SimpleMultiAgentGroup. Only the
+        // project's dedicated, evidence-gated 8192-step MA-POCA bridge may
+        // train it. The generic Atlas PPO presets must never be substituted.
+        if (scenario === 's3-pass-two-learners-v2' &&
+            ((x.preset ?? 'smoke') !== 'smoke' || (x.arenas ?? 1) !== 1 ||
+             !!x.initializeFromRunId)) {
+            throw new AtlasError(
+                'Cooperative S3 V2 requires MA-POCA smoke (8192 steps), one environment and scratch initialisation.',
+                'INVALID_ARGUMENT');
+        }
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
         if (x.preset === 'pilot_50k' && !['s2-score-basic-v1', 's2_phase_shoot_retention_v2', 's2_phase_interception_rehearsal_v3', 's2_phase_balanced_rehearsal_v4', 's2_phase_early_intercept_reversal_v5', 's2_phase_early_intercept_balanced_v6', 's2_phase_near_reversal_retention_v7'].includes(scenario))
             throw new AtlasError('50k pilot is reserved for the versioned S2.2 curricula.', 'INVALID_ARGUMENT');
@@ -441,6 +451,8 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
             '--seed', String(x.seed ?? 42), '--base-port', String(x.basePort ?? 5605), '--arenas', String(x.arenas ?? 1),
             ...(sourceId ? ['--initialize-from-run', sourceId] : [])];
         return launch(workspace, x.action, cmd, { run_id: runId, scenario, preset: x.preset ?? 'smoke',
+            trainer_type: scenario === 's3-pass-two-learners-v2' ? 'poca' : 'ppo',
+            physical_proof_required: scenario === 's3-pass-two-learners-v2',
             initialization_source_run_id: sourceId ?? null });
     }
     const ticket = randomUUID();
