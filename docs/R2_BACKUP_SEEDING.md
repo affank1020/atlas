@@ -83,7 +83,7 @@ The command never overwrites a backup object. For each valid catalog row:
   and do **not** touch it.
 - Missing destination: read the primary R2 object or, only when that key is
   confirmed absent, the matching local legacy object from `ATLAS_MEDIA_DIR`.
-  Both reads enforce the 25 MiB cap and exact SHA-256/byte-length validation.
+  Both reads enforce the 50 MiB cap and exact SHA-256/byte-length validation.
   A truly missing or corrupt source is not uploaded. Remote bucket or
   permission errors are **not** permission to fall back to local storage.
 - Authorized copy: use signed `PutObject` with **`If-None-Match: *`**. R2
@@ -145,7 +145,7 @@ inconclusive failure instead of silently accepting absent Files. R2 access,
 network, authorization, NoSuchBucket and malformed 404 errors **never**
 authorize local fallback. No DB transaction is held during remote requests.
 No seed/PUT/DELETE, plaintext download to disk, server route or scheduler is
-introduced. Note that a run may download up to 25 MiB per object **from each
+introduced. Note that a run may download up to 50 MiB per object **from each
 bucket** for Files that are in primary R2. Local legacy reads replace
 primary-R2 GET payloads when its key is confirmed missing, so R2 costs
 and operator runtime vary by catalog composition.
