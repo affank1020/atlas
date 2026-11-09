@@ -7,7 +7,7 @@ const FILE_KEY=/^files-[a-f0-9]{32}-[a-f0-9]{64}$/;
 const SHA=/^[a-f0-9]{64}$/;
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const APP_ID=/^[a-z][a-z0-9-]{0,79}$/;
-const MAX_BYTES=25*1024*1024;
+const MAX_BYTES=50*1024*1024;
 export const ISOLATED_LEGACY_MAX_RECORDS=2000;
 export const ISOLATED_LEGACY_DEFAULT_RECORDS=100;
 
