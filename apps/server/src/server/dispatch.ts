@@ -18,6 +18,7 @@ import { callCoreTool } from './core-dispatch.js';
 import { globalSearchInput, searchEverywhere } from './global-search.js';
 import type { ApplicationRegistry, ApplicationCaller } from '../apps/registry.js';
 import type { StorageUsageService } from './storage-usage.js';
+import type { AtlasFilesService } from './atlas-files.js';
 import type { ServerDiagnostics } from './diagnostics.js';
 import type { ServerDiagnosticHistory } from './diagnostic-history.js';
 import type { MonitoringHealthService } from './monitoring-health.js';
@@ -26,6 +27,7 @@ export interface ApplicationServices {
     nodes?: Pick<NodeService, "call">;
     catalog: CoreService;
     storageUsage?: Pick<StorageUsageService, 'get'>;
+    files?: Pick<AtlasFilesService, 'listProjectPage' | 'projectDownloadLink'>;
     diagnostics?: Pick<ServerDiagnostics, 'read' | 'record'>;
     diagnosticHistory?: Pick<ServerDiagnosticHistory, 'read'>;
     health?: Pick<MonitoringHealthService, 'read'>;
@@ -70,6 +72,19 @@ export function createDispatcher(services: ApplicationServices) {
             case 'get_storage_usage': {
                 if (!services.storageUsage) throw new AtlasError('Storage metrics unavailable.', 'NOT_FOUND');
                 return services.storageUsage.get(input.refresh === true);
+            }
+            case 'list_project_files':
+            case 'get_project_file': {
+                // This endpoint can reveal private filenames or grant temporary
+                // R2 read access. A Project ID alone is never authorization.
+                // Relay service credentials and unauthenticated MCP are denied.
+                if (authenticatedCaller?.kind !== 'mcp-oauth')
+                    throw new AtlasError('Owner OAuth is required for private Project files.', 'CAPABILITY_UNAVAILABLE');
+                if (!services.files) throw new AtlasError('Atlas Files unavailable.', 'CAPABILITY_UNAVAILABLE');
+                await catalog.getProject(input.projectId);
+                return name === 'list_project_files'
+                    ? services.files.listProjectPage(input.projectId, input.folderId, input.limit, input.offset)
+                    : services.files.projectDownloadLink(input.projectId, input.fileId);
             }
             case 'ask_atlas': return askAtlas.ask(input);
             case 'search_atlas': return retrieval.search(fabricSearchSchema.parse(input));
