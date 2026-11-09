@@ -96,7 +96,7 @@ test('generalist operations fail closed for missing scripts, invalid scenarios a
 });
 
 
-test('S3 V2 trains only with the bounded Atlas MA-POCA smoke path', async () => {
+test('S3 V2 and V3 train only with bounded Atlas MA-POCA smoke paths', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-s3-poca-'));
     try {
         await mkdir(path.join(root, 'ml-agents/config'), { recursive: true });
@@ -107,7 +107,10 @@ test('S3 V2 trains only with the bounded Atlas MA-POCA smoke path', async () => 
         }));
         await writeFile(path.join(root, 'Assets/Resources/Generalist/scenarios.json'), JSON.stringify({
             sceneVersion: 's3', physicsVersion: 'p3',
-            scenarios: [{ id: 's3-pass-two-learners-v2', cooperativeSpawnV2: true }],
+            scenarios: [
+                { id: 's3-pass-two-learners-v2', cooperativeSpawnV2: true },
+                { id: 's3-pass-two-learners-v3', cooperativeSpawnV2: true, cooperativeTrainingV3: true },
+            ],
         }));
         await writeFile(path.join(root, 'ml-agents/config/generalist_curriculum.json'), JSON.stringify({
             stages: [{ id: 'S0' }], held_out_seeds: [515, 616, 717, 828],
@@ -138,6 +141,28 @@ test('S3 V2 trains only with the bounded Atlas MA-POCA smoke path', async () => 
         assert.equal(receipt.scenario, 's3-pass-two-learners-v2');
         assert.equal(receipt.preset, 'smoke');
         assert.match(receipt.run_id, /^atlas-generalist-[a-z0-9]{12}$/);
+        // V3 is a separate training-only curriculum, never silently mapped
+        // to generic PPO, and cannot bypass the identical safety limits.
+        const v3 = { ...fields, scenario: 's3-pass-two-learners-v3' };
+        for (const patch of [
+            { preset: 'pilot_50k' }, { preset: 'pilot_100k' },
+            { arenas: 2 }, { initializeFromRunId: 'atlas-generalist-abc123def456' },
+        ]) {
+            await assert.rejects(footballControl(ws(root), { ...v3, ...patch }),
+                (e: any) => e.code === 'INVALID_ARGUMENT' && /MA-POCA/.test(e.message));
+        }
+        await assert.rejects(footballControl(ws(root), { ...v3, seed: 616 }),
+            (e: any) => e.code === 'INVALID_ARGUMENT' && /Held-out/.test(e.message));
+        const acceptedV3 = await footballControl(ws(root), v3) as any;
+        assert.equal(acceptedV3.accepted, true);
+        const v3Receipt = await footballControl(ws(root), {
+            ...input, action: 'generalist_status', runId: acceptedV3.ticket,
+        }) as any;
+        assert.equal(v3Receipt.trainer_type, 'poca');
+        assert.equal(v3Receipt.physical_proof_required, true);
+        assert.equal(v3Receipt.scenario, 's3-pass-two-learners-v3');
+        assert.equal(v3Receipt.initialization_source_run_id, null);
+        assert.equal(v3Receipt.preset, 'smoke');
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
