@@ -49,8 +49,8 @@ export async function listFiles(owner: FileOwner, status: AtlasFile['status'] = 
 
 export async function uploadFile(owner: FileOwner, file: File, folderId?: string | null): Promise<AtlasFile> {
     if (folderId !== undefined && owner.kind !== 'project') throw new Error('Folders require Project ownership.');
-    if (file.size === 0 || file.size > 25 * 1024 * 1024)
-        throw new Error('Choose a non-empty file up to 25 MiB.');
+    if (file.size === 0 || file.size > 50 * 1024 * 1024)
+        throw new Error('Choose a non-empty file up to 50 MiB.');
     if (IS_MOCK_MODE) {
         if (folderId !== undefined) validateDemoDestination(owner.id, folderId);
         const stamp = new Date().toISOString();
@@ -63,7 +63,7 @@ export async function uploadFile(owner: FileOwner, file: File, folderId?: string
         return saved;
     }
     // Transfer bytes directly instead of allocating a base64 string (33% overhead).
-    // The server keeps a strict 25 MiB cap; resumable uploads are a later phase.
+    // The server keeps a strict 50 MiB cap; resumable uploads are a later phase.
     const response = await fetch(`${API_BASE}/api/files/upload-binary`, {
         method: 'POST',
         headers: {
