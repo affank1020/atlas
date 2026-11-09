@@ -10,7 +10,7 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 const CURSOR_UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 export const R2_RECOVERY_DEFAULT_FILES = 3;
 export const R2_RECOVERY_MAX_FILES = 10;
-export const R2_RECOVERY_MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const R2_RECOVERY_MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const R2_RECOVERY_DEFAULT_CATALOG_RECORDS = 100;
 export const R2_RECOVERY_MAX_CATALOG_RECORDS = 200;
 
