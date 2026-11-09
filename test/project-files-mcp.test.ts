@@ -114,7 +114,7 @@ test('Project file lookup binds both file ID and Project ID and never returns R2
     assert.match(queries[0]!.sql, /owner_kind='project'.*owner_id=\$2.*status='active'/);
     assert.deepEqual(queries[0]!.params, [fileId, projectId]);
     await assert.rejects(svc.projectDownloadLink(otherProject, fileId), /not found/);
-    assert.rejects(svc.projectDownloadLink(projectId, '../bad'), /identity/);
+    await assert.rejects(svc.projectDownloadLink(projectId, '../bad'), /identity/);
 });
 
 test('Project listing uses bounded SQL pagination and folder-scoped parameters', async () => {
