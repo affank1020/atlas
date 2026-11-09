@@ -148,7 +148,7 @@ export class R2ObjectStore implements ObjectStore {
         const resource = encodeURIComponent(this.config.bucket) + "/" +
             safeKey(key).split("/").map(segment => encodeURIComponent(segment)).join("/");
         const url = new URL(resource, this.endpoint);
-        const timestamp = now.toISOString().replace(/[:-]|\\.\\d{3}/g, "");
+        const timestamp = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
         const date = timestamp.slice(0, 8);
         const scope = `${date}/auto/s3/aws4_request`;
         const query = new URLSearchParams({
