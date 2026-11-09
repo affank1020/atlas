@@ -13,12 +13,13 @@ import { SkeletonRows } from './Skeletons';
 import { FootballGeneralistContentLoading } from './FootballGeneralistLoading';
 
 type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string; initialization_available?: boolean; initialization?: { source_run_id?: string; checkpoint_sha256?: string } | null };
-type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
+type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; legacy_preview_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
 type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
 
 const SHOWCASE_DRILL = 'dribbling_showcase_v1';
+const LEGACY_PREVIEW = 'legacy_preview_v1';
 const tabs: { id: Tab; label: string }[] = [
     { id: 'home', label: 'Home' }, { id: 'drills', label: 'Drills' }, { id: 'train', label: 'Train' },
     { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
@@ -88,7 +89,7 @@ export function FootballGeneralistExperience() {
             if (p.status === 'fulfilled' && Array.isArray(p.value)) {
                 setPolicies(p.value);
                 setSelectedPolicy(current => current && p.value.some(policy => policy.id === current) ? current :
-                    p.value.find(policy => policy.featured && (policy.compatible_metadata || policy.historical_watch_available) &&
+                    p.value.find(policy => policy.featured && (policy.compatible_metadata || policy.historical_watch_available || policy.legacy_preview_available) &&
                         policy.onnx_available && policy.bundle_available)?.id ||
                     p.value.find(policy => policy.compatible_metadata && policy.onnx_available && policy.bundle_available)?.id || '');
             } else failures.push('policies');
@@ -130,10 +131,13 @@ export function FootballGeneralistExperience() {
     const runnablePolicies = policies.filter(p => p.compatible_metadata && p.bundle_available && p.onnx_available);
     const historicalWatchPolicies = policies.filter(p => p.featured && !p.compatible_metadata &&
         p.historical_watch_available && p.bundle_available && p.onnx_available);
-    const watchPolicies = [...runnablePolicies, ...historicalWatchPolicies];
+    const legacyPreviewPolicies = policies.filter(p => !p.compatible_metadata && !historicalWatchPolicies.includes(p) &&
+        p.legacy_preview_available && p.bundle_available && p.onnx_available);
+    const watchPolicies = [...runnablePolicies, ...historicalWatchPolicies, ...legacyPreviewPolicies];
     const selectablePolicies = tab === 'watch' ? watchPolicies : runnablePolicies;
     const currentPolicy = policies.find(p => p.id === selectedPolicy);
     const historicalSelected = tab === 'watch' && currentPolicy && historicalWatchPolicies.some(p => p.id === currentPolicy.id);
+    const previewSelected = tab === 'watch' && currentPolicy && legacyPreviewPolicies.some(p => p.id === currentPolicy.id);
     // Discovered receipts include evaluations started through ChatGPT or another Atlas client.
     const evaluations = activity.filter(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action));
     const progressLabel = (item: Receipt) => item.result?.episodes == null ? 'No outcomes yet' :
@@ -353,20 +357,26 @@ export function FootballGeneralistExperience() {
         </section>}
         {(tab === 'evaluate' || tab === 'watch') && <section className="fg-panel">
             <h2>{tab === 'watch' ? 'Watch a generalist policy' : 'Evaluate a generalist policy'}</h2>
-            <p className="fg-muted">{tab === 'watch' ? 'Open a windowed Unity player on the connected Mac. Featured historical players use their own original verified build and saved drill.' : 'Run seeded inference against the selected current generalist scenario.'} Policies need a model and bundle; historical playback is Watch-only.</p>
+            <p className="fg-muted">{tab === 'watch' ? 'Open Unity on the connected Mac. Original historical playback requires an exact archived build; Legacy preview plays saved weights on today’s physics and cannot certify historical results.' : 'Run seeded inference against the selected current generalist scenario.'} Models and bundles remain immutable.</p>
             <div className="fg-form">
                 <label>Policy<select value={selectedPolicy} onChange={e => setSelectedPolicy(e.target.value)}>
                     <option value="">Choose policy</option>
                     <optgroup label="Featured players">{selectablePolicies.filter(p => p.featured).map(p =>
-                        <option key={p.id} value={p.id}>{p.display_name || p.id}{!p.compatible_metadata ? ' · Historical' : ''}</option>)}</optgroup>
-                    <optgroup label="Current research checkpoints">{selectablePolicies.filter(p => !p.featured).map(p =>
-                        <option key={p.id} value={p.id}>{p.display_name || p.id}</option>)}</optgroup>
+                        <option key={p.id} value={p.id}>{p.display_name || p.id}{historicalWatchPolicies.includes(p) ? ' · Historical' : legacyPreviewPolicies.includes(p) ? ' · Modern preview' : ''}</option>)}</optgroup>
+                    <optgroup label="Research checkpoints and legacy previews">{selectablePolicies.filter(p => !p.featured).map(p =>
+                        <option key={p.id} value={p.id}>{p.display_name || p.id}{legacyPreviewPolicies.includes(p) ? ' · Modern preview' : ''}</option>)}</optgroup>
                 </select></label>
                 {historicalSelected ? <div className="fg-historical-watch-note" role="status">
                     <strong>Historical playback</strong>
                     <p>Uses {currentPolicy!.display_name || currentPolicy!.id}'s original versioned Unity build and saved scenario
                         ({currentPolicy!.view_scenario || 'not recorded'}). Current drills cannot be selected for this model.
                         Its model and earlier training evidence remain unchanged.</p>
+                </div> : previewSelected ? <div className="fg-historical-watch-note" role="status">
+                    <strong>Legacy model preview — modern environment</strong>
+                    <p>The original ONNX weights and model bundle will be hash-verified and loaded into today's
+                        54/5 generalist Unity player for a fixed 3m dribbling drill. Physics, scenarios and
+                        agent implementation differ from the original. This is visual inspection only, not
+                        authentic historical playback or an evaluation result.</p>
                 </div> :
                     <GeneralistDrillPicker scenarios={scenarios} mode={tab === 'watch' ? 'watch' : 'evaluate'}
                         value={tab === 'watch' ? watchScenario : scenario} onChange={tab === 'watch' ? setWatchScenario : setScenario}/>}
@@ -375,8 +385,8 @@ export function FootballGeneralistExperience() {
             </div>
             {currentPolicy && <button className="fg-record-link" onClick={() => setDetail({ kind: 'policy', id: currentPolicy.id })}>View {currentPolicy.id} profile →</button>}
             {currentPolicy && !selectablePolicies.some(p => p.id === currentPolicy.id) &&
-                <p role="alert">This policy cannot be played here. Historical featured players require their saved Unity build; current evaluation requires current scenario metadata.</p>}
-            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !selectablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario: tab === 'watch' ? (historicalSelected ? currentPolicy!.view_scenario : watchScenario) : scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
+                <p role="alert">This policy cannot be played here. Original historical playback requires its archived Unity build; a preview requires a verified current player and unchanged model/ABI.</p>}
+            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !selectablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario: tab === 'watch' ? (previewSelected ? LEGACY_PREVIEW : historicalSelected ? currentPolicy!.view_scenario : watchScenario) : scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
                 {tab === 'evaluate' && <button type="button" className="fg-button" disabled={!!busy} onClick={() => void doAction('baseline', 'football_generalist_baseline', { scenario, seed: evaluationSeed, episodes })}>Run baseline</button>}</div>
             {tab === 'evaluate' && <div className="fg-evaluation-history">
                 <div className="fg-panel-title"><h3>Evaluation history</h3><span>{activeEvaluations.length} active</span></div>

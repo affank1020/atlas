@@ -39,6 +39,14 @@ The first-party Football application route now mounts `FootballGeneralistExperie
 - Validation: Unity `generalist_contract_tests` 22 passed; Atlas `npm test` 164 backend / 87 web plus native Node UI; Atlas `npm run build` passed.
 
 
+## Legacy model preview when original .app builds are missing (2026-11-09)
+
+- A saved policy's original ONNX and Unity AssetBundle can survive after macOS clears its pinned `/private/tmp/atlas-football-generalist-build*.app`. In that state **historical playback remains unavailable** and the saved training/evaluation provenance is never rewritten.
+- The Watch UI offers an explicitly labelled **Modern preview** only when an older generalist policy has its original bundle and ONNX present, matches the *exact same full observation/action contract fingerprint*, and a stamped modern Unity player with the current scenario fingerprint is discoverable.
+- Launch uses the distinct `legacy_preview_v1` Watch-only intent, mapped to current `s1-dribble-3m-v1` (not the archived policy's drill). The Python runner independently validates its current source fingerprints, binary and all app assets, Watch camera digest, model SHA, bundle SHA, behavior name and complete policy ABI; mismatches fail closed.
+- These previews are **visual experiments with historic weights in today's environment**, NOT the original historic physical model, NOT held-out evaluation, NOT historical results and NOT evidence of graduation. `generalist_evaluate`, training, promotion and genuine featured historical Watch retain their existing strict policies. Receipts identify `legacy_preview: true`.
+- A runtime (Unity or Atlas Node) update is required to activate a new preview; repository build alone does not update a running Node or hosted Web. A Mac graphical acceptance check is necessary before declaring the screen watchable.
+
 ## Featured historical Watch (2026-10-16)
 
 - **Featured** is a saved presentation/categorisation flag, separate from runtime compatibility.

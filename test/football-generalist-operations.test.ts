@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { mkdtemp, mkdir, writeFile, symlink, rm, rename } from 'node:fs/promises';
 import os from 'node:os';
@@ -268,6 +269,86 @@ test('Watch receipts reject false visibility from unrelated files or exited laun
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+
+test('legacy model preview is separate from historical playback and never enables Evaluate or Train', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-legacy-preview-'));
+    const baseApp = await mkdtemp(path.join('/tmp', 'atlas-football-generalist-build-preview-'));
+    const app = baseApp + '.app';
+    await rename(baseApp, app);
+    try {
+        const config = path.join(root, 'ml-agents/config');
+        const assets = path.join(root, 'Assets/Resources/Generalist');
+        await mkdir(config, { recursive: true });
+        await mkdir(assets, { recursive: true });
+        const contract = JSON.stringify({
+            contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2',
+            observations: { size: 54, fields: [] }, actions: { continuous: 5, channels: [] },
+        });
+        const scenarios = JSON.stringify({
+            sceneVersion: 's3', physicsVersion: 'p3',
+            scenarios: [{ id: 's1-dribble-3m-v1' }, { id: 's3-pass-two-learners-v1' }],
+        });
+        await writeFile(path.join(config, 'football_generalist_v2_contract.json'), contract);
+        await writeFile(path.join(assets, 'scenarios.json'), scenarios);
+        await writeFile(path.join(config, 'generalist_curriculum.json'), JSON.stringify({
+            stages: [{ id: 'S0' }], held_out_seeds: [515],
+        }));
+        const contractHash = createHash('sha256').update(contract).digest('hex');
+        const scenarioHash = createHash('sha256').update(scenarios).digest('hex');
+        const binary = path.join(app, 'Contents', 'MacOS', 'AI Football');
+        await mkdir(path.dirname(binary), { recursive: true });
+        await writeFile(binary, 'modern isolated Unity player');
+        await writeFile(path.join(app, 'Contents', 'generalist-build.json'), JSON.stringify({
+            family: 'generalist', contract: { behavior: 'FootballGeneralistV2' },
+            contract_sha256: contractHash, scenario_sha256: scenarioHash,
+            implementation_sha256: 'modern', binary_sha256: 'stamped-verified-by-python',
+            runner_sha256: 'stamped-verified-by-python',
+            watch_presentation_sha256: 'camera-stamped-verified-by-python',
+            scenarios: { scenarios: [{ id: 's1-dribble-3m-v1' }] },
+        }));
+        const run = path.join(root, 'training-driver-runs', 'run-old');
+        await mkdir(run, { recursive: true });
+        const bundle = path.join(run, 'old.footballpolicy');
+        const onnx = path.join(run, 'old.onnx');
+        await writeFile(bundle, 'model bundle');
+        await writeFile(onnx, 'original model');
+        await writeFile(path.join(root, 'football_generalist.py'), '# placeholder');
+        await writeFile(path.join(run, 'policy.json'), JSON.stringify({
+            id: 'generalist-musiala-v1', family: 'generalist', behavior: 'FootballGeneralistV2',
+            contract_sha256: contractHash, scenario_sha256: 'old-scenario-hash',
+            implementation_sha256: 'old-implementation-hash',
+            onnx_path: onnx, bundle_path: bundle, runner_binary: '/private/tmp/removed-old.app/Contents/MacOS/AI Football',
+            view_scenario: 's1-dribble-moving-interception-v1',
+        }));
+        const [policy] = await footballControl(ws(root), { ...input, action: 'generalist_policies' }) as any[];
+        assert.equal(policy.compatible_metadata, false);
+        assert.equal(policy.historical_watch_available, false);
+        assert.equal(policy.legacy_preview_available, true);
+        assert.equal(policy.onnx_available, true);
+        // An explicit preview only plays a fixed CURRENT drill and records
+        // nonhistorical provenance, never a trained/evaluated result.
+        const launched = await footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: policy.id, scenario: 'legacy_preview_v1', seed: 515 }) as any;
+        assert.equal(launched.accepted, true);
+        const receiptFile = path.join(root, 'training-driver-runs', 'atlas-generalist-operations', launched.ticket + '.json');
+        const receipt = JSON.parse(await (await import('node:fs/promises')).readFile(receiptFile, 'utf8'));
+        assert.equal(receipt.legacy_preview, true);
+        assert.equal(receipt.historical_watch, false);
+        assert.equal(receipt.scenario, 's1-dribble-3m-v1');
+        assert.match(receipt.preview_note, /not historical replay/);
+        // Evaluate and Train cannot use a preview alias; arbitrary scenarios
+        // remain disallowed for an old policy without its exact historical app.
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_evaluate',
+            policyId: policy.id, scenario: 'legacy_preview_v1', seed: 515 }), (e: any) => e.code === 'INVALID_ARGUMENT');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_train',
+            scenario: 'legacy_preview_v1', preset: 'smoke', seed: 42 }), (e: any) => e.code === 'INVALID_ARGUMENT');
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: policy.id, scenario: 's1-dribble-3m-v1', seed: 515 }), (e: any) => e.code === 'INVALID_ARGUMENT');
+    } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(app, { recursive: true, force: true });
+    }
+});
 
 test('historical featured policy exposes versioned playback only with its pinned recorded runner', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'atlas-generalist-historical-'));
