@@ -19,6 +19,8 @@ names remain unchanged. No migration or republishing of Portfolio data is needed
 - Typed Application operations: contributed by the definition and exposed on
   both the HTTP tool API and authenticated MCP transport.
 - Global Applications launcher: `#/applications` (searchable and filterable)
+  - A distinct **Project Views** section below Applications lists active Views across active Projects, with its own search and direct standalone links. Views remain owned and edited within their Projects.
+  - The Web client aggregates `list_projects` + scoped `list_views` reads in bounded batches; no global View write permissions or additional backend endpoint are introduced.
 - Project Applications tab: `#/projects/:projectId/applications`
 - Project launch page: `#/projects/:projectId/applications/:slug`
 - Standalone launch page: `#/applications/:slug`

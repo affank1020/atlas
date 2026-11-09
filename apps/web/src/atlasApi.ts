@@ -16,6 +16,8 @@ type ViewScope = ProjectScope & { viewId: string };
 type RenderScope = ViewScope & { params: Record<string, string> };
 type Tag = { type: 'ApplicationData' | 'Projects' | 'Project' | 'Stores' | 'Store' | 'Records' | 'Views' | 'View' | 'ViewRender'; id: string };
 export type AtlasMutation = ToolMutation;
+/** Lightweight metadata for launching a View from outside its Project. */
+export type DirectoryView = Pick<View, 'id' | 'projectId' | 'slug' | 'name' | 'description'> & { projectName: string };
 const tag = (type: Tag['type'], id: string): Tag => ({ type, id });
 const scoped = (projectId: string, id: string) => `${projectId}/${id}`;
 const projectScope = (projectId: string) => `project:${projectId}`;
@@ -32,10 +34,10 @@ export function mutationTags({ name, input }: AtlasMutation): Tag[] {
     const projectId = String(input.projectId ?? '');
     const storeId = String(input.storeId ?? '');
     const viewId = String(input.viewId ?? '');
-    if (/_project$/.test(name)) return [tag('Projects', 'LIST'), ...(projectId ? [tag('Project', projectId), tag('ApplicationData', projectId), tag('Stores', projectId), tag('Views', projectId), tag('Records', projectScope(projectId)), tag('ViewRender', projectScope(projectId))] : [])];
+    if (/_project$/.test(name)) return [tag('Projects', 'LIST'), ...(projectId ? [tag('Project', projectId), tag('ApplicationData', projectId), tag('Stores', projectId), tag('Views', projectId), tag('Views', 'ALL'), tag('Records', projectScope(projectId)), tag('ViewRender', projectScope(projectId))] : [])];
     if (/_store$|_store_schema$/.test(name)) return [tag('Projects', 'LIST'), tag('Stores', projectId), ...(storeId ? [tag('Store', scoped(projectId, storeId)), tag('Records', scoped(projectId, storeId))] : []), tag('ViewRender', projectScope(projectId))];
     if (/_record$|_records$/.test(name)) return [tag('Projects', 'LIST'), tag('Records', scoped(projectId, storeId)), tag('ViewRender', projectScope(projectId))];
-    if (/_view$/.test(name)) return [tag('Projects', 'LIST'), tag('Views', projectId), ...(viewId ? [tag('View', scoped(projectId, viewId)), tag('ViewRender', scoped(projectId, viewId))] : [])];
+    if (/_view$/.test(name)) return [tag('Projects', 'LIST'), tag('Views', projectId), tag('Views', 'ALL'), ...(viewId ? [tag('View', scoped(projectId, viewId)), tag('ViewRender', scoped(projectId, viewId))] : [])];
     if (name === 'execute_view_action') return [tag('ViewRender', projectScope(projectId)), tag('ViewRender', scoped(projectId, viewId)), tag('Records', projectScope(projectId))];
     return [];
 }
@@ -97,6 +99,30 @@ export const atlasApi = createApi({
             queryFn: (arg, api) => read<View[]>('list_views', arg, api.signal),
             providesTags: (result, _error, arg) => [tag('Views', arg.projectId), ...(result ?? []).map(view => tag('View', scoped(arg.projectId, view.id)))],
         }),
+        /** Compose active Views across active Projects; no new server endpoint or storage model. */
+        allViews: build.query<DirectoryView[], void>({
+            queryFn: async (_arg, api) => {
+                try {
+                    const projects = await callTool<Project[]>('list_projects', {}, api.signal);
+                    const result: DirectoryView[] = [];
+                    // Bound concurrent reads to avoid a burst of one request per Project.
+                    for (let offset = 0; offset < projects.length; offset += 8) {
+                        const batch = await Promise.all(projects.slice(offset, offset + 8).map(async project => {
+                            const views = await callTool<View[]>('list_views', { projectId: project.id }, api.signal);
+                            return views.filter(view => !view.archivedAt).map(view => ({
+                                id: view.id, projectId: view.projectId, name: view.name,
+                                slug: view.slug, description: view.description, projectName: project.name,
+                            }));
+                        }));
+                        result.push(...batch.flat());
+                    }
+                    return { data: result };
+                } catch (error) {
+                    return { error: { message: error instanceof Error ? error.message : String(error) } };
+                }
+            },
+            providesTags: [tag('Views', 'ALL'), tag('Projects', 'LIST')],
+        }),
         getView: build.query<View, ViewScope>({
             queryFn: (arg, api) => read<View>('get_view', arg, api.signal),
             providesTags: (_result, _error, arg) => [tag('View', scoped(arg.projectId, arg.viewId)), tag('Project', arg.projectId)],
@@ -120,7 +146,7 @@ export const atlasApi = createApi({
 });
 
 export const { useWorkspaceStatusQuery, useStorageUsageQuery, useWorkspaceNodesQuery, useApplicationReadQuery, useListProjectsQuery, useGetProjectQuery, useListStoresQuery, useGetStoreQuery,
-    useListRecordsQuery, useListViewsQuery, useGetViewQuery, useGetViewHistoryQuery, useRenderViewQuery, useMutateMutation } = atlasApi;
+    useListRecordsQuery, useListViewsQuery, useAllViewsQuery, useGetViewQuery, useGetViewHistoryQuery, useRenderViewQuery, useMutateMutation } = atlasApi;
 
 export function useAtlasMutation() {
     const [mutate] = useMutateMutation();
