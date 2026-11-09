@@ -16,6 +16,9 @@ COPY apps/server/tsconfig.json apps/server/tsconfig.json
 RUN npm run build:server
 
 FROM node:22-bookworm-slim
+# Native PDF-to-text parser for bounded owner-authenticated Project PDF reads.
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /atlas
 COPY package.json package-lock.json ./

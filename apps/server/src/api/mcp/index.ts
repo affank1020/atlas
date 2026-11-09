@@ -120,6 +120,22 @@ export function createMcpTransport(services: TransportServices, oauthScope?: str
 
     for (const name of Object.keys(workspaceSchemas) as WorkspaceToolName[]) tool(name, workspaceDescriptions[name], workspaceSchemas[name].shape);
 
+    // Text-only PDF reads are owner-OAuth tools. Never expose private file
+    // contents to Relay/service credentials or anonymous MCP clients.
+    if (authenticatedCaller?.kind === 'mcp-oauth') {
+        tool('read_project_file', 'Read up to five PDF pages as bounded extracted text, with original page numbers. Equations may need checking against the original PDF.', {
+            projectId: z.string().uuid(), fileId: z.string().uuid(),
+            startPage: z.number().int().min(1).optional(),
+            pageCount: z.number().int().min(1).max(5).optional(),
+        });
+        tool('search_project_file', 'Case-insensitive phrase search across the text of a Project PDF; returns bounded page snippets and page numbers.', {
+            projectId: z.string().uuid(), fileId: z.string().uuid(),
+            query: z.string().trim().min(2).max(200),
+            limit: z.number().int().min(1).max(20).optional(),
+            offset: z.number().int().min(0).max(10000).optional(),
+        });
+    }
+
     const nodeDescriptions: Record<NodeToolName, string> = {
         list_nodes: 'List persistent Nodes with live status, capabilities, credential state and Workspace counts.',
         list_node_share_approvals: 'List approved directional text-sharing pairs; environment grants are read-only.',
