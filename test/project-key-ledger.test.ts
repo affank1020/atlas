@@ -21,7 +21,7 @@ after(cleanupDatabases);
 function destination(values: Map<string,Buffer>, attempted: string[] = []): BoundedCopyStore {
     return {
         async getBounded(key,maxBytes) {
-            assert.equal(maxBytes,25*1024*1024);
+            assert.equal(maxBytes,50 * 1024 * 1024);
             const bytes=values.get(key);
             if (!bytes) throw new ObjectNotFound();
             return Buffer.from(bytes);
