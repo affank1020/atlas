@@ -23,7 +23,7 @@ service tokens cannot access bytes or cached text.
 
 ## Extraction, deployment and resource bounds
 
-Poppler's `pdftotext -layout -enc UTF-8` runs without a shell. PDF bytes
+The dedicated `@atlas/pdf-text` package invokes Poppler's `pdftotext -layout -enc UTF-8` without a shell. The server calls its narrow extractor interface and retains the direct-process isolation guard. PDF bytes
 are streamed to the subprocess via stdin. The existing Files service reads
 the original object (local or R2) with byte-count and SHA-256 verification.
 No temporary unencrypted PDF files are written.
