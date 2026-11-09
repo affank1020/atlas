@@ -35,7 +35,7 @@ function database(rows: Row[]) {
 function store(objects: Map<string, Buffer>, calls: string[], writeCalls: string[] = []): SeedStore {
     return {
         getBounded: async (key, maxBytes) => {
-            assert.equal(maxBytes, 25 * 1024 * 1024);
+            assert.equal(maxBytes, 50 * 1024 * 1024);
             calls.push(key);
             if (!objects.has(key)) throw new ObjectNotFound();
             return objects.get(key)!;
@@ -340,12 +340,12 @@ test('local fallback fails closed for oversized bytes, corrupt data and symlink 
         const target=path.join(root,'private-outside-allowed-key');
         await writeFile(target,bytes);
         await symlink(target,path.join(root,row.storage_key));
-        await assert.rejects(local.getBounded(row.storage_key,25*1024*1024));
+        await assert.rejects(local.getBounded(row.storage_key,50 * 1024 * 1024));
         await rm(path.join(root,row.storage_key));
 
         await assert.rejects(local.getBounded('invalid/../../secret',1024),/Invalid Atlas media object key/);
         await assert.rejects(local.getBounded(row.storage_key,0),/Invalid bounded/);
-        await assert.rejects(local.getBounded(row.storage_key,25*1024*1024),ObjectNotFound);
+        await assert.rejects(local.getBounded(row.storage_key,50 * 1024 * 1024),ObjectNotFound);
     } finally {
         await rm(root,{recursive:true,force:true});
     }
