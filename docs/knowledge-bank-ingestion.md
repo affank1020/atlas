@@ -43,3 +43,13 @@ COMP33511's two official timed tests prohibit AI assistance of any kind. Use the
 - All **52** existing Entries include original-text quotations. Some numerical assertions from the lecturer remain unverified against original research papers; preserve attribution and caveats.
 - `pirsig-zamm-1974`: a **planned**, separately registered recommended book mentioned in the Preamble. The original book has not been ingested.
 - Chapters 2–18 and other unprovided readings remain unprocessed.
+
+## Mathematical lecture notes (Markov Processes and other maths modules)
+- Keep existing Sources, Sections, Entries and Relationships stores. Mathematical content is Markdown with LaTeX in the existing Entry detail string; no schema migration, OCR service or separate app. Keep summary search-friendly and put detailed formulas and explanations in detail.
+- Support inline $...$ or \(...\) and standalone display $$...$$ or \[...\]. Transcribe mathematical notation into LaTeX, retaining assumptions, quantifiers, definitions, proofs, examples, and any relevant theorem numbers. The atlas-rich-text View component uses KaTeX MathML and preserves raw text when rendering fails.
+- PDF extraction can scramble fractions, subscripts, matrices, and diagrams. Verify every equation visually against its actual source page before marking source_checked; otherwise mark needs_review and record the uncertain symbol or term. Do not silently repair doubtful transcriptions.
+- sourceExcerpt must remain a verified verbatim passage. Reconstructed LaTeX is a mathematical transcription, not a verbatim quotation: place it in detail with its source locator and provenance. Retain both PDF page and printed page if they differ.
+- Link diagrams/complex layouts to the PDF page rather than fabricating their geometry. When the user has manually uploaded the source PDF to project R2, record the actual durable Atlas file reference in the existing Source fileRef; do not invent R2 links.
+- Register the source and section hierarchy once, then ingest requested sections incrementally and track planned, partial, and complete accurately. Use stable keys like math37011-notes:2.1.
+- Example detail field: For all $i,j\in S$: followed by a separate display equation $$p_{i,j}(m+n)=\sum_{k\in S}p_{i,k}(m)p_{k,j}(n).$$
+- Roll out the persisted Knowledge Bank View only after deploying the View runtime changes. Preview and update the existing View using the staged docs/knowledge-bank-view-server-search.json, never create a replacement.

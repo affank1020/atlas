@@ -49,4 +49,6 @@ test('staged Knowledge Bank View passes sandbox and renders with server-side dec
  assert.match(v.renderedHtml,/Always ask why/);
  assert.match(v.renderedHtml,/Search all records/);
  assert.match(v.document,/kb-reader/);
+ assert.match(v.renderedHtml,/<atlas-rich-text>/);
+ assert.match(v.document,/katex@0\.19\.1/);
 });

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useApplicationRead } from './atlasApi';
+import { useAllViewsQuery, useApplicationRead } from './atlasApi';
+import { editViewHash, standaloneViewUrl } from './viewLinks';
 import { rememberWork } from './recentWork';
 import { CatalogueHeading, CatalogueToolbar, filterCatalogue } from './CatalogueBrowse';
 import type { ApplicationManifest } from './Applications';
@@ -23,9 +24,13 @@ function ApplicationSymbol({ type }: { type: string }) {
 /** Global launcher: one read of the server registry, independent of how many Projects exist. */
 export function ApplicationsDirectory() {
     const [search, setSearch] = useState('');
+    const [viewSearch, setViewSearch] = useState('');
     const { data: applications = [], error, isLoading, isFetching, refetch } = useApplicationRead<ApplicationManifest[]>('list_all_applications');
     const visible = filterCatalogue(applications, search, app => `${app.name} ${app.description}`)
         .sort((a, b) => a.name.localeCompare(b.name) || a.slug.localeCompare(b.slug));
+    const { data: views = [], error: viewsError, isLoading: viewsLoading, isFetching: viewsFetching, refetch: refetchViews } = useAllViewsQuery();
+    const visibleViews = filterCatalogue(views, viewSearch, view => `${view.name} ${view.description ?? ''} ${view.projectName}`)
+        .sort((a, b) => a.name.localeCompare(b.name) || a.projectName.localeCompare(b.projectName));
 
     return <section className="applications-directory catalogue-page" aria-label="Applications">
         <CatalogueHeading title="Applications" actions={
@@ -49,5 +54,31 @@ export function ApplicationsDirectory() {
                 <span className="applications-directory-card-copy">{app.description}</span>
             </a>)}
         </div>}
+        <section className="views-directory" aria-label="Views">
+            <header className="views-directory-head">
+                <div><p className="eyebrow">Views</p><h2>Project Views</h2>
+                    <p>Open dashboards and saved Views directly, without navigating through Projects.</p></div>
+                <button type="button" className="ghost" onClick={() => void refetchViews()} disabled={viewsFetching}
+                    aria-label="Refresh views">↻ Refresh</button>
+            </header>
+            <CatalogueToolbar label="Search views" placeholder="Find a View or project…" query={viewSearch}
+                onQueryChange={setViewSearch} count={viewsLoading ? null : visibleViews.length} itemName="view" />
+            {viewsLoading && <SkeletonCards count={4} label="Loading views" />}
+            {viewsError && <div className="notice error" role="alert">Couldn't load Views. <button type="button" className="ghost" onClick={() => void refetchViews()}>Try again</button></div>}
+            {viewsFetching && !viewsLoading && !viewsError && <small role="status" className="applications-refresh-status">Refreshing Views…</small>}
+            {!viewsLoading && !viewsError && visibleViews.length === 0 && <p className="application-directory-state">{views.length === 0 ? 'No Views have been created yet.' : 'No Views match your search.'}</p>}
+            {!viewsLoading && !viewsError && <div className="views-directory-grid">
+                {visibleViews.map(view => <a key={`${view.projectId}/${view.id}`}
+                    className="views-directory-card" href={standaloneViewUrl(view)} target="_blank" rel="noopener noreferrer"
+                    aria-label={`Open ${view.name} from ${view.projectName} in new tab`}
+                    onClick={() => rememberWork({ href: editViewHash(view), name: view.name, projectId: view.projectId, kind: 'View', viewSlug: view.slug })}>
+                    <span className="views-directory-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 14h4m-4 3h8" /></svg></span>
+                    <span className="views-directory-body"><span className="views-directory-card-name">{view.name}</span>
+                        <span className="views-directory-card-project">{view.projectName}</span>
+                        {view.description && <span className="views-directory-card-copy">{view.description}</span>}</span>
+                    <span className="views-directory-arrow" aria-hidden="true">↗</span>
+                </a>)}
+            </div>}
+        </section>
     </section>;
 }

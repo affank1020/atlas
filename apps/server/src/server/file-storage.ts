@@ -136,6 +136,40 @@ export class R2ObjectStore implements ObjectStore {
         if (!config.accessKeyId || !config.secretAccessKey) throw new Error("R2 credentials are required.");
     }
 
+    /**
+     * Generate a short-lived R2 GET capability without transferring object bytes
+     * through MCP. The URL itself grants read access until expiry: never log it.
+     * Only the owner-authorized Atlas Files service should call this method.
+     */
+    presignGet(key: string, expiresSeconds = 120, now = new Date()): { url: string; expiresAt: string } {
+        if (!Number.isInteger(expiresSeconds) || expiresSeconds < 1 || expiresSeconds > 300 ||
+            !Number.isFinite(now.getTime()))
+            throw new Error("Invalid R2 signed download expiry.");
+        const resource = encodeURIComponent(this.config.bucket) + "/" +
+            safeKey(key).split("/").map(segment => encodeURIComponent(segment)).join("/");
+        const url = new URL(resource, this.endpoint);
+        const timestamp = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+        const date = timestamp.slice(0, 8);
+        const scope = `${date}/auto/s3/aws4_request`;
+        const query = new URLSearchParams({
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": `${this.config.accessKeyId}/${scope}`,
+            "X-Amz-Date": timestamp,
+            "X-Amz-Expires": String(expiresSeconds),
+            "X-Amz-SignedHeaders": "host",
+        });
+        const escaped = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g,
+            char => "%" + char.charCodeAt(0).toString(16).toUpperCase());
+        const canonicalQuery = [...query.entries()].sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0)
+            .map(([name, value]) => escaped(name) + "=" + escaped(value)).join("&");
+        const canonical = `GET\n${url.pathname}\n${canonicalQuery}\nhost:${url.host}\n\nhost\nUNSIGNED-PAYLOAD`;
+        const stringToSign = `AWS4-HMAC-SHA256\n${timestamp}\n${scope}\n${digest(canonical)}`;
+        const signingKey = mac(mac(mac(mac(`AWS4${this.config.secretAccessKey}`, date), "auto"), "s3"), "aws4_request");
+        const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+        url.search = canonicalQuery + "&X-Amz-Signature=" + signature;
+        return { url: url.toString(), expiresAt: new Date(now.getTime() + expiresSeconds * 1000).toISOString() };
+    }
+
     private async perform(method: "PUT" | "GET" | "DELETE", key: string | null, bytes?: Buffer, mimeType?: string, query?: URLSearchParams, createOnly = false): Promise<Response> {
         const target = encodeURIComponent(this.config.bucket) +
             (key === null ? "" : "/" + safeKey(key).split("/").map(segment => encodeURIComponent(segment)).join("/"));
