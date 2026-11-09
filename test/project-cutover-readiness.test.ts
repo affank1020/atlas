@@ -20,7 +20,7 @@ after(cleanupDatabases);
 
 function bucket(values:Map<string,Buffer>,writes:string[]=[]):BoundedCopyStore{
     return {async getBounded(key,maxBytes){
-        assert.equal(maxBytes,25*1024*1024);
+        assert.equal(maxBytes,50 * 1024 * 1024);
         const bytes=values.get(key);
         if(bytes===undefined)throw new ObjectNotFound();
         return Buffer.from(bytes);
