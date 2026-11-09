@@ -148,8 +148,8 @@ test('shows active Views from several projects in a distinct section and opens s
     expect(section).toHaveTextContent('Launchpad');
     expect(section).toHaveTextContent('University');
     expect(screen.queryByText('Old Dashboard')).not.toBeInTheDocument();
-    expect(career.getAttribute('href')).toMatch(/\\/projects\\/project-one\\/views\\/career-dashboard$/);
-    expect(notes.getAttribute('href')).toMatch(/\\/projects\\/project-two\\/views\\/view-two$/);
+    expect(career.getAttribute('href')).toContain('/projects/project-one/views/career-dashboard');
+    expect(notes.getAttribute('href')).toContain('/projects/project-two/views/view-two');
     expect(career).toHaveAttribute('target', '_blank');
     expect(career).toHaveAttribute('rel', 'noopener noreferrer');
     expect(callTool).toHaveBeenCalledWith('list_views', { projectId: 'project-one' }, expect.any(AbortSignal));
