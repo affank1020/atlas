@@ -75,18 +75,22 @@ export class AtlasFilesService {
         return result.rows.map(fileRow);
     }
     /** Bounded, project-only listing for the owner-authorized MCP transport. */
-    async listProjectPage(projectId: string, folderId?: string | null, limit = 50):
+    async listProjectPage(projectId: string, folderId?: string | null, limit = 50, offset = 0):
         Promise<{ files: AtlasFile[]; hasMore: boolean }> {
-        if (!UUID.test(projectId) || !Number.isInteger(limit) || limit < 1 || limit > 100)
+        if (!UUID.test(projectId) || !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+            !Number.isInteger(offset) || offset < 0 || offset > 10000)
             throw new AtlasError("Invalid Project file listing.");
         const folder = folderId === undefined ? undefined : parseFolderId(folderId);
         const params: (string | number | null)[] = [projectId.toLowerCase()];
         const folderWhere = folder === undefined ? "" : " AND folder_id IS NOT DISTINCT FROM $2::uuid";
         if (folder !== undefined) params.push(folder);
         params.push(limit + 1);
+        const limitParam = params.length;
+        params.push(offset);
+        const offsetParam = params.length;
         const rows = await this.pool.query(
             `SELECT * FROM atlas_files WHERE owner_kind='project' AND owner_id=$1
-             AND status='active'${folderWhere} ORDER BY created_at DESC, id DESC LIMIT ${params.length}`,
+             AND status='active'${folderWhere} ORDER BY created_at DESC, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
             params);
         return { files: rows.rows.slice(0, limit).map(fileRow), hasMore: rows.rows.length > limit };
     }
