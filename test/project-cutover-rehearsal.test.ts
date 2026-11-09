@@ -24,7 +24,7 @@ after(cleanupDatabases);
 
 function store(objects:Map<string,Buffer>,attempts:string[]=[]):BoundedCopyStore{
     return {async getBounded(key,max){
-        assert.equal(max,25*1024*1024);
+        assert.equal(max,50 * 1024 * 1024);
         const b=objects.get(key);
         if(!b)throw new ObjectNotFound();
         return Buffer.from(b);
