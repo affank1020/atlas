@@ -138,7 +138,7 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
             method: 'POST', headers: binaryHeaders, body: Buffer.alloc(0),
         })).status, 400);
         assert.equal((await fetch(`${url}/api/files/upload-binary`, {
-            method: 'POST', headers: binaryHeaders, body: Buffer.alloc(25 * 1024 * 1024 + 1),
+            method: 'POST', headers: binaryHeaders, body: Buffer.alloc(50 * 1024 * 1024 + 1),
         })).status, 400);
 
         const content = Buffer.from('<script>not executed</script>');
@@ -171,6 +171,15 @@ test('private Files HTTP API is owner-scoped and denies untrusted origins', asyn
         assert.deepEqual(Buffer.from(await (await post('download', { owner, fileId: file.id })).arrayBuffer()), content);
         assert.equal((await (await post('list', { owner, status: 'archived' })).json() as unknown[]).length, 2);
         assert.equal((await post('restore', { owner, fileId: file.id })).status, 404);
+        // A file larger than the old 25 MiB cap must reach the upload service.
+        const larger = Buffer.alloc(30 * 1024 * 1024, 0x5a);
+        const largerResponse = await fetch(`${url}/api/files/upload-binary`, {
+            method: 'POST', headers: binaryHeaders, body: larger,
+        });
+        assert.equal(largerResponse.status, 201);
+        const largerFile = await largerResponse.json() as { byteSize: number };
+        assert.equal(largerFile.byteSize, larger.length);
+
     } finally {
         server.closeAllConnections();
         await new Promise<void>(resolve => server.close(() => resolve()));
