@@ -14,7 +14,7 @@ export type AtlasFile = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APP_ID = /^[a-z][a-z0-9-]{0,79}$/;
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = 50 * 1024 * 1024;
 
 function ownerScope(owner: FileOwner): FileOwner {
     if (!owner || !["project", "workspace", "application"].includes(owner.kind)
@@ -138,7 +138,7 @@ export class AtlasFilesService {
         if (!/^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/i.test(input.mimeType ?? ""))
             throw new AtlasError("Invalid Atlas file MIME type.");
         if (!Buffer.isBuffer(input.bytes) || !input.bytes.length || input.bytes.length > MAX_BYTES)
-            throw new AtlasError("Atlas Files accepts nonempty buffers up to 25 MiB.");
+            throw new AtlasError("Atlas Files accepts nonempty buffers up to 50 MiB.");
         const visibility = input.visibility ?? "private";
         if (visibility !== "private" && visibility !== "public") throw new AtlasError("Invalid Atlas file visibility.");
         const id = randomUUID();
