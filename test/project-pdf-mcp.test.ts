@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ProjectPdfService } from '../apps/server/src/server/project-pdf.js';
+import { spawnSync } from 'node:child_process';
+import { ProjectPdfService, extractPdfText } from '../apps/server/src/server/project-pdf.js';
 import { createDispatcher } from '../apps/server/src/server/dispatch.js';
 import type { AtlasFile, AtlasFilesService } from '../apps/server/src/server/atlas-files.js';
 
@@ -156,3 +157,33 @@ test('PDF MCP dispatch enforces owner OAuth and Project activity before touching
         'atlas-mcp', authorized), /Archived project/);
     assert.equal(calls.at(-1), 'project:' + otherProject);
 });
+
+/** A small valid, text-selectable PDF without a fixture binary or dependency. */
+function minimalPdf() {
+    const drawing = 'BT /F1 16 Tf 40 250 Td (Atlas Markov Notes) Tj ET';
+    const objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+        '<< /Length ' + Buffer.byteLength(drawing) + ' >>\nstream\n' + drawing + '\nendstream',
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    objects.forEach((body, i) => {
+        offsets.push(Buffer.byteLength(pdf));
+        pdf += (i + 1) + ' 0 obj\n' + body + '\nendobj\n';
+    });
+    const xref = Buffer.byteLength(pdf);
+    pdf += 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
+    offsets.slice(1).forEach(offset => { pdf += String(offset).padStart(10, '0') + ' 00000 n \n'; });
+    pdf += 'trailer\n<< /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\n';
+    pdf += 'startxref\n' + xref + '\n%%EOF\n';
+    return Buffer.from(pdf);
+}
+
+const popplerAvailable = !spawnSync('pdftotext', ['-v']).error;
+test('native pdftotext extracts real PDF text when Poppler is installed',
+    { skip: popplerAvailable ? false : 'pdftotext unavailable on this host' }, async () => {
+        assert.match(await extractPdfText(minimalPdf()), /Atlas Markov Notes/);
+    });
