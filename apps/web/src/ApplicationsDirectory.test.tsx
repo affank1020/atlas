@@ -7,7 +7,7 @@ import { ApplicationsDirectory } from './ApplicationsDirectory';
 import { callTool } from './api';
 import { readRecentWork } from './recentWork';
 
-vi.mock('./api', () => ({ IS_MOCK_MODE: false, callTool: vi.fn(), onToolMutation: () => () => {} }));
+vi.mock('./api', () => ({ API_BASE: 'http://localhost:3000', IS_MOCK_MODE: false, callTool: vi.fn(), onToolMutation: () => () => {} }));
 const apps = [
     { type: 'portfolio', slug: 'portfolio', name: 'Portfolio', description: 'Publish content', projectId: 'project-one' },
     { type: 'football-training', slug: 'football-training', name: 'Football Training', description: 'Run evaluations', projectId: 'project-two' },
@@ -37,7 +37,7 @@ beforeEach(() => {
     vi.mocked(callTool).mockImplementation(async (name, input) => {
         if (name === 'list_all_applications') return apps as never;
         if (name === 'list_projects') return projects as never;
-        if (name === 'list_views') return (projectViews[input.projectId as keyof typeof projectViews] ?? []) as never;
+        if (name === 'list_views') return (projectViews[input?.projectId as keyof typeof projectViews] ?? []) as never;
         throw new Error('Unexpected tool ' + name);
     });
 });
