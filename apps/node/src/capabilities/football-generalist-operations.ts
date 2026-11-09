@@ -12,6 +12,9 @@ type Args = { displayName?: string; featured?: boolean; action: string; runId?: 
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 // Watch-only curated playlist; not a training/evaluation scenario or policy ABI change.
 const showcaseScenario = 'dribbling_showcase_v1';
+// Explicit Watch-only sentinel. The player instead receives a real current drill.
+const legacyPreviewAlias = 'legacy_preview_v1';
+const legacyPreviewDrill = 's1-dribble-3m-v1';
 const env = () => Object.fromEntries(['PATH','HOME','TMPDIR','LANG','USER','LOGNAME'].filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
 
 function safeFile(workspace: Workspace, file: string): string {
@@ -27,7 +30,7 @@ function safeRunnerBinary(workspace: Workspace, file: string): string {
     const resolved = realpathSync(file);
     const temp = realpathSync('/tmp');
     const relative = path.relative(temp, resolved).replaceAll(path.sep, '/');
-    if (!/^atlas-football-generalist-build[a-zA-Z0-9_-]*\.app\/Contents\/MacOS\/AI Football$/.test(relative) ||
+    if (!/^(?:atlas-football-generalist-build[a-zA-Z0-9_-]*|atlas-football-generalist-s3-v1)\.app\/Contents\/MacOS\/AI Football$/.test(relative) ||
         lstatSync(file).isSymbolicLink() || !statSync(resolved).isFile())
         throw new AtlasError('Runner must be a recorded workspace build or an allowlisted isolated generalist build.', 'INVALID_ARGUMENT');
     return resolved;
@@ -74,9 +77,39 @@ function historicalWatchRunner(workspace: Workspace, policy: any) {
     } catch { return null; }
 }
 
+/** A *candidate* current Unity player for clearly labelled legacy model preview.
+ * Discovery verifies path, saved build metadata and model ABI only. At launch
+ * the Python runner independently verifies source fingerprint, every binary
+ * and asset digest, camera, ONNX and model-bundle SHA before invoking Unity.
+ * Never used for historical Watch, training, evaluation or promotion. */
+function modernPreviewRunner(workspace: Workspace, manifest = generalistManifest(workspace)): string | null {
+    const temp = realpathSync('/tmp');
+    const names = readdirSync(temp).filter(name =>
+        /^(?:atlas-football-generalist-build[a-zA-Z0-9_-]*|atlas-football-generalist-s3-v1)\.app$/.test(name));
+    const candidates = names.map(name => path.join(temp, name))
+        .filter(app => { try { return !lstatSync(app).isSymbolicLink() && statSync(app).isDirectory(); } catch { return false; } })
+        .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    for (const app of candidates) {
+        try {
+            const binary = safeRunnerBinary(workspace, path.join(app, 'Contents/MacOS/AI Football'));
+            const stamp = readJson(path.join(app, 'Contents/generalist-build.json'));
+            if (stamp.family === 'generalist' && stamp.contract?.behavior === manifest.contract.behavior &&
+                stamp.contract_sha256 === manifest.fingerprints.contract_sha256 &&
+                stamp.scenario_sha256 === manifest.fingerprints.scenario_sha256 &&
+                typeof stamp.implementation_sha256 === 'string' &&
+                typeof stamp.runner_sha256 === 'string' && typeof stamp.binary_sha256 === 'string' &&
+                typeof stamp.watch_presentation_sha256 === 'string' &&
+                stamp.scenarios?.scenarios?.some((s: { id: string }) => s.id === legacyPreviewDrill))
+                return binary;
+        } catch { /* old or unstamped app, never approve it */ }
+    }
+    return null;
+}
+
 export function generalistPolicies(workspace: Workspace) {
     const curated = readCuration(workspace.rootPath);
     const manifest = generalistManifest(workspace);
+    const previewRunner = modernPreviewRunner(workspace, manifest);
     const found = [];
     const seen = new Set<string>();
     for (const file of scan(workspace, 'policy.json')) {
@@ -89,8 +122,15 @@ export function generalistPolicies(workspace: Workspace) {
                 policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
             const featured = curated[policy.id]?.featured === true;
             const historicalRunner = featured && !compatibleMetadata ? historicalWatchRunner(workspace, policy) : null;
+            // Preview is explicitly a different environment. Same exact ABI,
+            // original ONNX/bundle present, and a candidate stamped CURRENT
+            // Unity player; Python rechecks all hashes before actual playback.
+            const previewAvailable = !compatibleMetadata && !historicalRunner &&
+                !!previewRunner && policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
+                typeof policy.onnx_path === 'string' && typeof policy.bundle_path === 'string' &&
+                existsSync(policy.onnx_path) && existsSync(policy.bundle_path);
             found.push({ id: policy.id, display_name: curated[policy.id]?.display_name ?? (typeof policy.display_name === 'string' && policy.display_name.trim() ? policy.display_name.trim().slice(0, 80) : null),
-                featured, historical_watch_available: !!historicalRunner, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
+                featured, historical_watch_available: !!historicalRunner, legacy_preview_available: previewAvailable, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
                 onnx_sha256: typeof policy.onnx_sha256 === 'string' ? policy.onnx_sha256 : null, family: 'generalist', behavior: policy.behavior, status: policy.status ?? 'unverified',
                 source: path.relative(workspace.rootPath, file), compatible_metadata: compatibleMetadata,
                 source_run_id: typeof (policy.source_run_id ?? policy.run_id) === 'string' && idPattern.test(policy.source_run_id ?? policy.run_id) ? (policy.source_run_id ?? policy.run_id) : null,
@@ -350,13 +390,24 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     const currentWatch = pinnedWatch && pinnedWatch.policy.behavior === manifest.contract.behavior &&
         pinnedWatch.policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
         pinnedWatch.policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
-    const historicalWatch = !!pinnedWatch && !currentWatch;
+    const previewRequested = x.action === 'generalist_watch' && x.scenario === legacyPreviewAlias;
+    const legacyPreview = !!pinnedWatch && !currentWatch && previewRequested;
+    if (previewRequested && !legacyPreview)
+        throw new AtlasError('Legacy preview requires an older saved generalist policy.', 'INVALID_ARGUMENT');
+    const historicalWatch = !!pinnedWatch && !currentWatch && !legacyPreview;
     const archivedRunner = historicalWatch ? historicalWatchRunner(workspace, pinnedWatch.policy) : null;
     if (historicalWatch && (!readCuration(workspace.rootPath)[pinnedWatch!.policy.id]?.featured || !archivedRunner))
         throw new AtlasError('Historical playback requires a featured policy with its exact saved Unity build and model artifacts.', 'INVALID_ARGUMENT');
-    // Historical Watch is restricted to the recorded original scenario; arbitrary
-    // current scenarios and the current showcase playlist are intentionally excluded.
-    const scenario = historicalWatch ? archivedRunner!.scenario : x.scenario ?? 'mix';
+    const previewRunner = legacyPreview ? modernPreviewRunner(workspace, manifest) : null;
+    if (legacyPreview && (!previewRunner ||
+        pinnedWatch!.policy.family !== 'generalist' ||
+        pinnedWatch!.policy.behavior !== manifest.contract.behavior ||
+        pinnedWatch!.policy.contract_sha256 !== manifest.fingerprints.contract_sha256))
+        throw new AtlasError('Legacy preview requires matching generalist ABI, saved model, and a modern stamped Unity player.', 'INVALID_ARGUMENT');
+    // Historical Watch uses the original drill. Legacy preview is *not*
+    // historical playback: restrict to one named CURRENT scene for inspection.
+    const scenario = legacyPreview ? legacyPreviewDrill :
+        historicalWatch ? archivedRunner!.scenario : x.scenario ?? 'mix';
     if (historicalWatch && x.scenario !== scenario)
         throw new AtlasError('Historical Watch must use the scenario saved with this policy.', 'INVALID_ARGUMENT');
     const scenarios = new Set(['mix', 's1_rehearsal', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
@@ -402,11 +453,12 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     let binary: string;
     if (action !== 'baseline') {
         const p = policyFile(workspace, x.policyId!);
-        if (!historicalWatch && (p.policy.behavior !== manifest.contract.behavior ||
+        if (!historicalWatch && !legacyPreview && (p.policy.behavior !== manifest.contract.behavior ||
             p.policy.contract_sha256 !== manifest.fingerprints.contract_sha256 ||
             p.policy.scenario_sha256 !== manifest.fingerprints.scenario_sha256))
             throw new AtlasError('Generalist policy provenance does not match the current contract/scenarios.', 'INVALID_ARGUMENT');
-        binary = historicalWatch ? archivedRunner!.binary : safeRunnerBinary(workspace, p.policy.runner_binary);
+        binary = legacyPreview ? previewRunner! :
+            historicalWatch ? archivedRunner!.binary : safeRunnerBinary(workspace, p.policy.runner_binary);
         const bundle = safeFile(workspace, p.policy.bundle_path);
         safeFile(workspace, p.policy.onnx_path);
         args.push('--policy', p.file, '--bundle', bundle);
@@ -427,8 +479,12 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     }
     const script = safeFile(workspace, path.join(workspace.rootPath, 'football_generalist.py'));
     const cmd = [script, action, '--binary', binary, ...args,
-        ...(historicalWatch ? ['--historical-watch'] : [])];
-    return launch(workspace, x.action, cmd, { scenario, historical_watch: historicalWatch, policy_id: x.policyId ?? null, output,
+        ...(historicalWatch ? ['--historical-watch'] : []),
+        ...(legacyPreview ? ['--legacy-preview'] : [])];
+    return launch(workspace, x.action, cmd, { scenario, historical_watch: historicalWatch,
+        legacy_preview: legacyPreview,
+        preview_note: legacyPreview ? 'Older saved ONNX on current Unity physics; Watch only, not historical replay or evaluation' : null,
+        policy_id: x.policyId ?? null, output,
         seed: x.seed ?? 515,
         ...(action !== 'watch' ? { requested_episodes: x.episodes ?? 10 } : {}) }, ticket);
 }

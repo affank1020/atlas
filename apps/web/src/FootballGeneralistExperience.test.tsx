@@ -395,6 +395,42 @@ test('featured historical policy remains selectable in Watch with its saved scen
     expect(screen.queryByRole('button', { name: 'Open Unity player' })).not.toBeInTheDocument();
 });
 
+test('missing original Unity app offers explicitly labelled legacy preview, never Evaluate', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_policies') return [{
+            id: 'generalist-musiala-v1', display_name: 'Musiala', featured: true,
+            status: 'unevaluated', behavior: 'FootballGeneralistV2',
+            compatible_metadata: false, historical_watch_available: false, legacy_preview_available: true,
+            view_scenario: 's1-dribble-moving-interception-v1',
+            onnx_available: true, bundle_available: true,
+        }] as never;
+        if (name === 'football_generalist_watch') return {
+            accepted: true, status: 'launching', action: 'generalist_watch',
+            ticket: '09c1e4d6-0080-4ba5-9d37-e1ecdc975aba',
+        } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    const option = await screen.findByRole('option', { name: 'Musiala · Modern preview' });
+    expect(option).toHaveValue('generalist-musiala-v1');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
+        target: { value: 'generalist-musiala-v1' },
+    });
+    expect(screen.getByText('Legacy model preview — modern environment')).toBeInTheDocument();
+    expect(screen.getByText(/not.*authentic historical playback/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
+        'football_generalist_watch',
+        expect.objectContaining({ policyId: 'generalist-musiala-v1', scenario: 'legacy_preview_v1' }),
+    ));
+    fireEvent.click(screen.getByRole('button', { name: 'Evaluate' }));
+    expect(screen.queryByRole('option', { name: 'Musiala · Modern preview' })).not.toBeInTheDocument();
+});
+
 test('historical featured players lacking an original runner remain visible but unwatchable', async () => {
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'football_generalist_manifest') return contract as never;
