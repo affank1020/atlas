@@ -90,7 +90,7 @@ export class AtlasFilesService {
         const offsetParam = params.length;
         const rows = await this.pool.query(
             `SELECT * FROM atlas_files WHERE owner_kind='project' AND owner_id=$1
-             AND status='active'${folderWhere} ORDER BY created_at DESC, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+             AND status='active'${folderWhere} ORDER BY created_at DESC, id DESC LIMIT $${limitParam} OFFSET $${offsetParam}`,
             params);
         return { files: rows.rows.slice(0, limit).map(fileRow), hasMore: rows.rows.length > limit };
     }
