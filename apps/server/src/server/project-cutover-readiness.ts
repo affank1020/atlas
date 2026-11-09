@@ -10,7 +10,7 @@ import {
 } from "./project-independent-recovery.js";
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const MAX_PAGE=5,MAX_BYTES=25*1024*1024;
+const MAX_PAGE=5,MAX_BYTES=50*1024*1024;
 type Store=Pick<RecoveryObjectStore,"getBounded">;
 type KeyReceipt={
     ordinal:number; source:string; file_id:string; variant:string;
