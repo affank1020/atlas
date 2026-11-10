@@ -331,7 +331,7 @@ test('local fallback fails closed for oversized bytes, corrupt data and symlink 
         assert.equal(corrupted.status,'failed');
         assert.equal(corrupted.primaryCorrupt,1);
 
-        await writeFile(path.join(root,row.storage_key),Buffer.alloc(26*1024*1024));
+        await writeFile(path.join(root,row.storage_key),Buffer.alloc(51*1024*1024));
         await assert.rejects(seedR2Backup({
             database:database([row]).db,primary:source,backup,
         }),/bounded regular file/);
