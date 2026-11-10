@@ -37,7 +37,7 @@ function store(contents: Map<string, Buffer>) {
     const backend = {
         getBounded: async (key: string, maxBytes: number) => {
             get.push(key);
-            assert.equal(maxBytes, 25 * 1024 * 1024);
+            assert.equal(maxBytes, 50 * 1024 * 1024);
             const bytes = contents.get(key);
             if (bytes === undefined) throw new ObjectNotFound();
             return bytes;
@@ -166,7 +166,7 @@ test('legacy local-only File is seeded then catalog-verified without primary R2'
     let writes = 0;
     const backup = {
         getBounded: async (key: string, maxBytes: number) => {
-            assert.ok(maxBytes <= 25 * 1024 * 1024);
+            assert.ok(maxBytes <= 50 * 1024 * 1024);
             const bytes = recovered.get(key);
             if (bytes === undefined) throw new ObjectNotFound();
             return bytes;
