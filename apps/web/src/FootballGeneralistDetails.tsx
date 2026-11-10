@@ -259,7 +259,7 @@ export function GeneralistPolicyView({ policy, runs, activity, assessment, onBac
     const [newName, setNewName] = useState(policy.display_name || policy.id);
     const linkedEvaluations = activity.filter(item => (item.policy_id === policy.id || item.policy_id === policy.source_policy_id) && item.action === 'generalist_evaluate');
     const runnable = policy.compatible_metadata && policy.onnx_available && policy.bundle_available;
-    const historicalPlayback = policy.featured && !policy.compatible_metadata && policy.historical_watch_available &&
+    const historicalPlayback = !policy.compatible_metadata && policy.historical_watch_available &&
         policy.onnx_available && policy.bundle_available;
     const legacyPreview = !runnable && !historicalPlayback && policy.legacy_preview_available &&
         policy.onnx_available && policy.bundle_available;
