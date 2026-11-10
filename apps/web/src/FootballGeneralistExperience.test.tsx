@@ -501,3 +501,68 @@ test.each(['unavailable', 'invalid contract'] as const)(
         ]);
     },
 );
+
+
+test('unfeatured FootV1 supports historical Watch and a gated 50k warm-start from the exact FootV1 2k source', async () => {
+    const footScenario = 's1-dribble-foot-touch-g05-v1';
+    const sourceId = 'atlas-generalist-61a91798db31';
+    const footId = 'generalist-atlas-generalist-61a91798db31';
+    const customContract = {
+        ...contract, scenarios: { ...contract.scenarios,
+            scenarios: [...contract.scenarios.scenarios, {
+                id: footScenario, name: 'G0.5 physical foot control',
+                stage: 1, objectiveType: 'controlled_dribble',
+            }],
+        },
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return customContract as never;
+        if (name === 'football_generalist_runs') return [{
+            id: sourceId, scenario: footScenario, state: 'completed',
+            initialization_available: false, contract_sha256: 'separate-54-7-ABI',
+        }] as never;
+        if (name === 'football_generalist_policies') return [{
+            id: footId, display_name: 'FootV1 experimental', featured: false,
+            behavior: 'FootballGeneralistFootV1', status: 'experimental',
+            compatible_metadata: false, historical_watch_available: true,
+            historical_scenarios: [footScenario], view_scenario: footScenario,
+            onnx_available: true, bundle_available: true,
+        }] as never;
+        if (name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_train') return {
+            accepted: true, action: 'generalist_train', status: 'launching',
+            ticket: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        } as never;
+        if (name === 'football_generalist_watch') return {
+            accepted: true, action: 'generalist_watch', status: 'launching',
+            ticket: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        } as never;
+        return [] as never;
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Train' }));
+    fireEvent.click(screen.getByRole('button', { name: 'S0 mixed contact starts' }));
+    fireEvent.click(screen.getByRole('button', { name: /G0.5 physical foot control/ }));
+    expect(screen.getByRole('combobox', { name: 'Initial weights' })).toHaveValue(sourceId);
+    expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch generalist training' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_train',
+        expect.objectContaining({
+            scenario: footScenario, preset: 'pilot_50k', arenas: 2,
+            initializeFromRunId: sourceId,
+        })));
+    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    expect(await screen.findByRole('option', { name: 'FootV1 experimental · Historical' }))
+        .toHaveValue(footId);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
+        target: { value: footId },
+    });
+    expect(screen.getByText('Historical playback')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Historical scenario' })).toHaveValue(footScenario);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_watch',
+        expect.objectContaining({ policyId: footId, scenario: footScenario })));
+    vi.mocked(window.confirm).mockRestore();
+});
