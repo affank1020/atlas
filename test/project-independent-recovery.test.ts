@@ -17,7 +17,7 @@ import { cleanupDatabases,databaseFixture } from "./database.js";
 after(cleanupDatabases);
 function bucket(values:Map<string,Buffer>,writes:string[]=[]):RecoveryObjectStore{
     return {async getBounded(key,max){
-        assert.equal(max,25*1024*1024);
+        assert.equal(max,50 * 1024 * 1024);
         const bytes=values.get(key);
         if(!bytes)throw new ObjectNotFound();
         return Buffer.from(bytes);
@@ -166,7 +166,7 @@ test("Portfolio originals and archived checksum-less variants are included and v
         assert.equal(new Set(manifest.entries.map(x=>x.variant)).size,3);
         for(const entry of manifest.entries){
             assert.equal(entry.sha256,createHash("sha256").update(
-                await primary.getBounded(entry.storageKey,25*1024*1024)).digest("hex"));
+                await primary.getBounded(entry.storageKey,50 * 1024 * 1024)).digest("hex"));
         }
         const backup=bucket(new Map());
         await seedProjectRecovery({database:files.pool,source:primary,backup,

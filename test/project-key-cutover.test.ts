@@ -21,7 +21,7 @@ after(cleanupDatabases);
 function memory(){
     const objects=new Map<string,Buffer>();
     return {objects,async getBounded(key:string,maxBytes:number){
-        assert.equal(maxBytes,25*1024*1024);
+        assert.equal(maxBytes,50 * 1024 * 1024);
         const bytes=objects.get(key);
         if(!bytes)throw new ObjectNotFound();
         return Buffer.from(bytes);

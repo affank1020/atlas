@@ -20,7 +20,7 @@ async function fixture(){
     const local=new LocalObjectStore(root);
     const objects=new Map<string,Buffer>(),reads:string[]=[];
     const backup={async getBounded(key:string,max:number){
-        assert.equal(max,25*1024*1024);
+        assert.equal(max,50 * 1024 * 1024);
         reads.push(key);
         const data=objects.get(key);
         if(!data)throw new ObjectNotFound();
@@ -40,14 +40,14 @@ async function fixture(){
         const result=await files.pool.query<{storage_key:string}>(
             "SELECT storage_key FROM atlas_files WHERE id=$1",[file.id]);
         const key=result.rows[0]!.storage_key;
-        objects.set(key,await local.getBounded(key,25*1024*1024));
+        objects.set(key,await local.getBounded(key,50 * 1024 * 1024));
         return {file,key};
     };
     const capture=async(projectId:string)=>{
         const m=await captureProjectRecoveryManifest({
             database:files.pool,source:local,projectId});
         for(const entry of m.entries)
-            objects.set(entry.storageKey,await local.getBounded(entry.storageKey,25*1024*1024));
+            objects.set(entry.storageKey,await local.getBounded(entry.storageKey,50 * 1024 * 1024));
         return {projectId,runId:m.id};
     };
     return {files,root,db,project,upload,capture,objects,reads,backup,

@@ -6,7 +6,7 @@ import type { BoundedCopyStore } from "./project-key-migration.js";
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SHA=/^[a-f0-9]{64}$/;
-const MAX_BYTES=25*1024*1024,MAX_ENTRIES=2000,MAX_PAGE=5;
+const MAX_BYTES=50*1024*1024,MAX_ENTRIES=2000,MAX_PAGE=5;
 export const PROJECT_RECOVERY_CAPTURE_CONFIRM="CAPTURE_PROJECT_RECOVERY";
 export const PROJECT_RECOVERY_SEED_CONFIRM="SEED_PROJECT_RECOVERY";
 

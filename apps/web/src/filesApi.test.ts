@@ -46,9 +46,19 @@ test('Web rejects empty and oversized files before sending a request', async () 
     vi.stubGlobal('fetch', fetcher);
     const owner = { kind: 'project' as const, id: '00000000-0000-4000-8000-000000000001' };
     await expect(uploadFile(owner, new File([], 'empty.png'))).rejects.toThrow(/non-empty/);
-    const big = new File([new Uint8Array(25 * 1024 * 1024 + 1)], 'oversize.png');
-    await expect(uploadFile(owner, big)).rejects.toThrow(/25 MiB/);
+    const big = new File([new Uint8Array(50 * 1024 * 1024 + 1)], 'oversize.png');
+    await expect(uploadFile(owner, big)).rejects.toThrow(/50 MiB/);
     expect(fetcher).not.toHaveBeenCalled();
+});
+
+test('Web accepts 30 MiB Atlas Files uploads below the 50 MiB cap', async () => {
+    const owner = { kind: 'project' as const, id: '00000000-0000-4000-8000-000000000001' };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ id: 'large-file' }), { status: 201 }));
+    vi.stubGlobal('fetch', fetcher);
+    const file = new File([new Uint8Array(30 * 1024 * 1024)], 'lecture.pdf', { type: 'application/pdf' });
+    expect(await uploadFile(owner, file)).toEqual({ id: 'large-file' });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body).toBe(file);
 });
 
 test('Project folder requests send scoped JSON and binary uploads select their destination', async () => {

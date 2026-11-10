@@ -22,7 +22,7 @@ async function fixture(){
     const files=new AtlasFilesService(created.databaseUrl,root);
     const objects=new Map<string,Buffer>(),reads:string[]=[];
     const recovery={async getBounded(key:string,max:number){
-        assert.equal(max,25*1024*1024);reads.push(key);
+        assert.equal(max,50 * 1024 * 1024);reads.push(key);
         const bytes=objects.get(key);
         if(bytes===undefined)throw new ObjectNotFound();
         return Buffer.from(bytes);
@@ -40,7 +40,7 @@ async function add(ctx:Awaited<ReturnType<typeof fixture>>,
     const row=await ctx.files.pool.query<{storage_key:string}>(
         "SELECT storage_key FROM atlas_files WHERE id=$1",[uploaded.id]);
     const key=row.rows[0]!.storage_key;
-    const bytes=await new LocalObjectStore(ctx.root).getBounded(key,25*1024*1024);
+    const bytes=await new LocalObjectStore(ctx.root).getBounded(key,50 * 1024 * 1024);
     ctx.objects.set(key,bytes);
     return {uploaded,key};
 }

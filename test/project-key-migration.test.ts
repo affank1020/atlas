@@ -50,7 +50,7 @@ function database(rows: Row[]) {
 function store(values: Map<string, Buffer>, writes: string[] = []): BoundedCopyStore {
     return {
         async getBounded(key,maxBytes) {
-            assert.equal(maxBytes,25 * 1024 * 1024);
+            assert.equal(maxBytes,50 * 1024 * 1024);
             const value=values.get(key);
             if (!value) throw new ObjectNotFound();
             return Buffer.from(value);
@@ -119,13 +119,13 @@ test("Signed R2 requests preserve nested path segments and create-only condition
             new Response("",{status:200});
     }) as typeof fetch);
     assert.equal(await remote.putIfAbsent(key,Buffer.from("abc"),"image/webp"),true);
-    assert.deepEqual(await remote.getBounded(key,25*1024*1024),Buffer.from("abc"));
+    assert.deepEqual(await remote.getBounded(key,50 * 1024 * 1024),Buffer.from("abc"));
     assert.equal(observed.length,2);
     assert.ok(observed.every(x=>x.url.endsWith("/atlas-files/"+key)));
     assert.equal(observed[0]!.headers["if-none-match"],"*");
     assert.match(observed[0]!.headers.authorization,/SignedHeaders=host;if-none-match;x-amz-content-sha256;x-amz-date/);
     assert.equal(observed[1]!.method,"GET");
-    await assert.rejects(remote.getBounded("projects/../../secret",25*1024*1024),/Invalid Atlas media object key/);
+    await assert.rejects(remote.getBounded("projects/../../secret",50 * 1024 * 1024),/Invalid Atlas media object key/);
 });
 
 test("CLI accepts bounded dry-run and explicitly scoped apply only", () => {

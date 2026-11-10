@@ -223,7 +223,7 @@ export function Files() {
                     {choices.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select></label>
             </div>
-            <span className="files-private-note">Private by default · 25 MiB per file</span>
+            <span className="files-private-note">Private by default · 50 MiB per file</span>
         </div>
         {projects.error && <p className="notice error" role="alert">Could not load Projects. <button type="button" className="ghost" onClick={() => void projects.refetch()}>Retry</button></p>}
         {error && <p className="notice error" role="alert">{error}</p>}
