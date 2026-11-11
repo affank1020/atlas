@@ -35,6 +35,29 @@ function openSectionTab(section: 'Experiments' | 'Evidence' | 'Archive', tab?: s
     if (tab) fireEvent.click(within(screen.getByRole('navigation', { name: `${section} steps` })).getByRole('button', { name: tab }));
 }
 
+test('records a human review against an existing run without promoting a policy', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'completed', scenario: 's0-contact-easy-v1' }] as never;
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity' || name === 'football_generalist_reviews') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_review_update') return { ok: true } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    await screen.findByRole('button', { name: 'external-s0 →' });
+    openSectionTab('Evidence', 'Review decision');
+    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 's0-contact-easy-v1' } });
+    fireEvent.change(screen.getByLabelText('Training run'), { target: { value: 'external-s0' } });
+    fireEvent.change(screen.getByLabelText('Verdict'), { target: { value: 'revise' } });
+    fireEvent.change(screen.getByLabelText(/What did the reviewer observe/), { target: { value: 'The ball escaped after contact.' } });
+    fireEvent.change(screen.getByLabelText(/Visual evidence source/), { target: { value: 'Owner review: seed 515 episode 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save review' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_review_update',
+        expect.objectContaining({ scenario: 's0-contact-easy-v1', runId: 'external-s0', verdict: 'revise', visualEvidence: 'Owner review: seed 515 episode 2' })));
+    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_policy_update')).toBe(false);
+});
+
 test('failed optional assessments do not block the dashboard or subsequent refreshes', async () => {
     let runsRead = 0;
     vi.mocked(callTool).mockImplementation(async name => {

@@ -1,24 +1,33 @@
 # Football Training in Atlas — simplification roadmap
 
 Date: 2026-11-11
-Status: Partial local implementation plus remaining delivery plan. No Atlas deployment or policy promotion has occurred.
+Status: Implemented on the `codex/football-simplification` branch from Atlas `main` at `3de7187b`, including the still-open FootV1 integration commits from PR #220. Deployment, live Mac acceptance, and FYP phase decisions remain separate.
 
-## What happened on 11 November
+## Current branch scope
+
+- The Football application has Experiments / Evidence / Archive navigation, a visible launch setup summary, and contract/scenario fingerprints in run history.
+- Atlas now has typed read and audited write operations for a compact human experiment review. Reviews are stored atomically in the Unity workspace under `validation/generalist/atlas-experiment-reviews.json`, keyed by phase, scenario, and mechanics variant. A decision requires a linked existing run or evaluation/Watch receipt, a visual evidence source, and a written observation. Saving does not promote a policy or change training.
+- The Evidence section lets the user link a recorded run, evaluation, Watch ticket and policy, then record pending / keep / adopt / revise / stop. The same record shape supports G0.5 through G5 without inventing measurements for future phases.
+- PR #220's FootV1 50k allowlist and source-pinned Watch are included because `main` did not yet contain them. They still require integration and live Mac acceptance before a pilot can be claimed.
+
+The remaining research-dependent work is listed below. Atlas cannot build a matched G0.5 physics comparison or a G1–G4 score view until the corresponding source-stamped cases and outcomes exist; those are data and experiment gates, not missing UI buttons.
+
+## Previous delivery attempt on 11 November
 
 - The original Mac Atlas folder cannot currently be treated as a working source checkout: `git status` fails with `fatal: bad object HEAD`, its `main` ref points to a missing commit, and the active Football component plus several imports are absent from `apps/web/src`. These observations do not establish the underlying filesystem cause. Existing files and Git metadata were left in place.
 - A clean checkout was made from GitHub, then based on the open FootV1 integration branch from PR #220. The local `codex/atlas-simplification` branch implements a first UI slice: Experiments / Evidence / Archive navigation, a visible training setup summary, contract and scenario hashes on run cards, and matching loading UI. It changes no Atlas Node, Server, Unity runner, saved model, or policy promotion logic.
 - The focused Football UI suite passed 20/20 tests and `npm run build:web` passed in that clean checkout. These checks do not prove the Mac Node or hosted Web has loaded the change.
-- Automatic approval review rejected the attempt to push the branch to `affank1020/atlas`: implementation was authorized, but publication of the code and documentation to that remote was not explicitly authorized. No branch was pushed and no PR was opened. A local patch is saved at the Atlas workspace root as `atlas-simplification-20261111.patch`; it applies on top of PR #220's head, not directly to current `main`.
+- Automatic approval review rejected the earlier push attempt because publication to the remote was not explicit at that time. The subsequent user request explicitly authorized a fresh `main` checkout and PR; this branch is that new delivery path.
 
 ### Completion ledger
 
 | Area | Current state | Remaining result |
 | --- | --- | --- |
-| A0 supported path | FootV1 typed operations exist on open PR #220; local UI slice builds against that branch | Restore a reliable Mac checkout, verify PR #220 and active Node/Web, then integrate the UI slice |
-| A1 G0.5 evidence | Run cards show the recorded scenario and contract hashes; setup distinguishes FootV1 54/7 | Comparison cases, negative controls, learned results, Watch packet, and human decision still need a connected evidence view |
-| A2 routine workflow | Three primary sections and a setup summary are implemented locally | Unify status wording and policy selection; check the full workflow in the live Atlas app |
-| A3 G1–G3 | Planned | Build only when those FYP protocols and results exist |
-| A4 G4 cooperation | Planned | Build only after the G4 research gate opens |
+| A0 supported path | FootV1 typed operations are included on this main-based branch | Verify the Mac Node/Web deployment and source-stamped G0.5 controls before a pilot |
+| A1 G0.5 evidence | Run fingerprints and a durable linked human review record are implemented | Ingest matched scripted cases, negative controls and episode playlist once produced |
+| A2 routine workflow | Three primary sections, setup summary and Review decision form are implemented | Unify all status wording and policy selection; check the live Atlas app |
+| A3 G1–G3 | The generic review record accepts these phases | Add phase-specific metrics and comparisons when the FYP protocols and results exist |
+| A4 G4 cooperation | The generic review record accepts G4 | Add cooperative metrics and setup after the G4 research gate opens |
 
 ## Purpose
 

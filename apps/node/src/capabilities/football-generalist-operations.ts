@@ -7,8 +7,9 @@ import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
 import { generalistManifest } from './football-generalist.js';
 import { generalistRunDetail, listGeneralistRuns } from './football-generalist-runs.js';
+import { readExperimentReviews, writeExperimentReview } from './generalist-experiment-reviews.js';
 
-type Args = { displayName?: string; featured?: boolean; action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
+type Args = { displayName?: string; featured?: boolean; action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number; phase?: string; variant?: string; verdict?: string; note?: string; visualEvidence?: string; evaluationTicket?: string; watchTicket?: string; contractSha256?: string; scenarioSha256?: string };
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const g05FootScenario = 's1-dribble-foot-touch-g05-v1';
 const g05FootBehavior = 'FootballGeneralistFootV1';
@@ -344,6 +345,28 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (x.action === 'generalist_runs') return listGeneralistRuns(workspace);
     if (x.action === 'generalist_run_detail') return generalistRunDetail(workspace, x.runId!);
     if (x.action === 'generalist_policies') return generalistPolicies(workspace);
+    if (x.action === 'generalist_reviews') return readExperimentReviews(workspace);
+    if (x.action === 'generalist_review_update') {
+        const knownRuns = listGeneralistRuns(workspace);
+        const knownActivity = reports(workspace);
+        const reviewRun = knownRuns.find(run => run.id === x.runId && run.scenario === x.scenario);
+        if (x.runId && !reviewRun)
+            throw new AtlasError('Review run must belong to the selected scenario.', 'INVALID_ARGUMENT');
+        if ((x.contractSha256 && x.contractSha256 !== reviewRun?.contract_sha256) ||
+            (x.scenarioSha256 && x.scenarioSha256 !== reviewRun?.scenario_sha256))
+            throw new AtlasError('Review fingerprints must match the linked run.', 'INVALID_ARGUMENT');
+        if (x.evaluationTicket && !knownActivity.some(item => item.ticket === x.evaluationTicket && item.action === 'generalist_evaluate' && item.scenario === x.scenario))
+            throw new AtlasError('Review evaluation must belong to the selected scenario.', 'INVALID_ARGUMENT');
+        if (x.watchTicket && !knownActivity.some(item => item.ticket === x.watchTicket && item.action === 'generalist_watch' && item.scenario === x.scenario))
+            throw new AtlasError('Review Watch ticket must belong to the selected scenario.', 'INVALID_ARGUMENT');
+        if (x.policyId && !generalistPolicies(workspace).some(policy => policy.id === x.policyId))
+            throw new AtlasError('Review policy was not found.', 'INVALID_ARGUMENT');
+        return writeExperimentReview(workspace, { phase: x.phase!, scenario: x.scenario!, variant: x.variant!, verdict: x.verdict!, note: x.note!,
+            ...(x.visualEvidence ? { visual_evidence: x.visualEvidence } : {}),
+            ...(x.policyId ? { policy_id: x.policyId } : {}), ...(x.runId ? { run_id: x.runId } : {}),
+            ...(x.evaluationTicket ? { evaluation_ticket: x.evaluationTicket } : {}), ...(x.watchTicket ? { watch_ticket: x.watchTicket } : {}),
+            ...(x.contractSha256 ? { contract_sha256: x.contractSha256 } : {}), ...(x.scenarioSha256 ? { scenario_sha256: x.scenarioSha256 } : {}) });
+    }
     if (x.action === 'generalist_policy_update') {
         if (typeof x.policyId !== 'string' || !idPattern.test(x.policyId))
             throw new AtlasError('Invalid policy identifier.', 'INVALID_ARGUMENT');
@@ -396,7 +419,7 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         const directory = realpathSync(path.join(root, String(run.output_dir)));
         if (!directory.startsWith(root + path.sep) || !statSync(directory).isDirectory())
             throw new AtlasError('Generalist training directory is outside the workspace.', 'INVALID_ARGUMENT');
-        const exportedBehavior = run.scenario === g05FootScenario ? g05FootBehavior : manifest.contract.behavior;
+        const exportedBehavior = run.scenario === g05FootScenario ? g05FootBehavior : generalistManifest(workspace).contract.behavior;
         if (exportedBehavior === g05FootBehavior && run.contract_sha256 !== footContractSha256(workspace))
             throw new AtlasError('Experimental FootV1 model export contract changed.', 'INVALID_ARGUMENT');
         if (!existsSync(path.join(directory, x.runId, exportedBehavior + '.onnx')))

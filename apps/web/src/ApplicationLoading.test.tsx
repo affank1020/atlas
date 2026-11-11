@@ -71,7 +71,7 @@ test('Football generalist placeholder uses activity, five stats and curriculum /
     expect(container.querySelectorAll('.fg-stats > div')).toHaveLength(5);
     expect(container.querySelectorAll('.fg-curriculum-row')).toHaveLength(3);
     expect(container.querySelectorAll('.fg-panel')).toHaveLength(4);
-    expect(container.querySelectorAll('.fg-nav .fg-loading-tab')).toHaveLength(9);
+    expect(container.querySelectorAll('.fg-nav .fg-loading-tab')).toHaveLength(3);
     expect(container.querySelectorAll('button, a, input, textarea, select')).toHaveLength(0);
     expect(screen.getAllByRole('status')).toHaveLength(1);
 });
