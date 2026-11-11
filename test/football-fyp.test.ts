@@ -49,8 +49,9 @@ test('FYP operation refuses missing source bridge and unsafe training arguments'
             workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11',
             action: 'fyp_train', preset: 'pilot_100k', seed: 42, basePort: 5605,
         });
-        assert.equal(req.success, true); // Node must still reject unknown presets on dispatch.
-        await assert.rejects(fypOperation(ws, req.data!), (err: any) =>
+        assert.equal(req.success, true); // Protocol bounds shape; Node additionally allowlists presets.
+        if (!req.success) throw new Error('FYP protocol rejected a typed request unexpectedly.');
+        await assert.rejects(fypOperation(ws, req.data), (err: any) =>
             err.code === 'DRIVER_UNAVAILABLE');
         assert.equal(workspaceOperationSchemas.football_control.safeParse({
             workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11',
