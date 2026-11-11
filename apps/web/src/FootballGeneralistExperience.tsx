@@ -19,15 +19,19 @@ type Policy = { id: string; display_name?: string | null; featured?: boolean; so
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
 type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
+type Section = 'experiments' | 'evidence' | 'archive';
 
 const SHOWCASE_DRILL = 'dribbling_showcase_v1';
 const LEGACY_PREVIEW = 'legacy_preview_v1';
-const tabs: { id: Tab; label: string }[] = [
-    { id: 'home', label: 'Home' }, { id: 'drills', label: 'Drills' }, { id: 'train', label: 'Train' },
-    { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
-    { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' },
-    { id: 'checks', label: 'Contract' }, { id: 'archive', label: 'Legacy archive' },
+const sections: { id: Section; label: string; defaultTab: Tab; tabs: { id: Tab; label: string }[] }[] = [
+    { id: 'experiments', label: 'Experiments', defaultTab: 'home', tabs: [
+        { id: 'home', label: 'Overview' }, { id: 'drills', label: 'Choose scenario' }, { id: 'train', label: 'Set up training' }] },
+    { id: 'evidence', label: 'Evidence', defaultTab: 'runs', tabs: [
+        { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
+        { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' }, { id: 'checks', label: 'Contract' }] },
+    { id: 'archive', label: 'Archive', defaultTab: 'archive', tabs: [{ id: 'archive', label: 'Legacy specialists' }] },
 ];
+const sectionFor = (tab: Tab) => sections.find(section => section.tabs.some(item => item.id === tab))!;
 const shortHash = (value?: string) => value ? value.slice(0, 10) : '—';
 const when = (value?: string) => value ? new Date(value).toLocaleString() : '—';
 
@@ -230,8 +234,14 @@ export function FootballGeneralistExperience() {
          {error && <p className="fg-error" role="alert">{error}</p>}
         {assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
         {notice && <p className="fg-notice" role="status">{notice}</p>}
-        <nav className="fg-nav" aria-label="Football sections">{tabs.map(t =>
-            <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>
+        <nav className="fg-nav" aria-label="Football sections">{sections.map(section =>
+            <button type="button" key={section.id} className={sectionFor(tab).id === section.id ? 'active' : ''}
+                aria-current={sectionFor(tab).id === section.id ? 'page' : undefined}
+                onClick={() => { setDetail(null); setTab(section.defaultTab); setError(''); if (section.id === 'archive' && !legacy) void loadArchive(); }}>{section.label}</button>)}</nav>
+        {sectionFor(tab).tabs.length > 1 && <nav className="fg-subnav" aria-label={`${sectionFor(tab).label} steps`}>
+            {sectionFor(tab).tabs.map(item => <button type="button" key={item.id} aria-current={tab === item.id ? 'step' : undefined}
+                className={tab === item.id ? 'active' : ''} onClick={() => { setDetail(null); setTab(item.id); setError(''); }}>{item.label}</button>)}
+        </nav>}
         {tab === 'home' && (loading && !manifest && !error
             ? <FootballGeneralistContentLoading />
             : <div className="fg-stack">
@@ -245,6 +255,18 @@ export function FootballGeneralistExperience() {
                     <small>{item.scenario || 'Unknown drill'} · {item.status} · {progressLabel(item)} →</small></button>)}
                 {!activeRuns.length && !activeEvaluations.length &&
                     <p className="fg-muted">Nothing currently running. All training and evaluation history remains available below.</p>}
+            </section>
+            <section className="fg-panel" aria-label="Experiment workflow">
+                <h2>Current research workflow</h2>
+                <p className="fg-muted">Choose a versioned scenario, run a bounded experiment, then review measured outcomes and the original Unity player before making a research decision.</p>
+                <div className="fg-actions">
+                    <button type="button" className="fg-button primary" onClick={() => setTab('drills')}>Choose scenario</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('train')}>Set up training</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('runs')}>Review runs</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('evaluate')}>Evaluate policy</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('watch')}>Watch policy</button>
+                </div>
+                <p className="fg-muted">G0.5 FootV1 is experimental. Its 54/7 action contract is separate from the V2 54/5 baseline; a trained checkpoint still needs held-out evaluation and human visual review.</p>
             </section>
             <div className="fg-stats">
                 <div><small>Contract</small><strong>{manifest?.contract.contract_id ?? 'Unavailable'}</strong></div>
@@ -296,6 +318,12 @@ export function FootballGeneralistExperience() {
                 <label>Parallel environments<input type="number" value={workers} min={1} max={16} disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)} onChange={e => setWorkers(Number(e.target.value))}/></label>
                 <label>Base port<input type="number" value={basePort} min={1024} max={65519} onChange={e => setBasePort(Number(e.target.value))}/></label>
             </div>
+            <div className="fg-setup-summary" role="status">
+                <strong>Launch setup</strong>
+                <span>Scenario: {scenario}</span><span>Contract: {scenario === G05_FOOT_SCENARIO ? 'FootV1 · 54 observations / 7 actions' : scenario.startsWith('s3-pass-two-learners-') ? 'Cooperative · checked on launch' : manifest?.contract.contract_id ?? 'Unavailable'}</span>
+                <span>Preset: {preset === 'smoke' ? 'Engineering smoke' : preset === 'pilot_50k' ? '50k pilot' : '100k pilot'}</span>
+                <span>Initial weights: {initializeFromRunId || 'Random'}</span><span>Seed: {seed}</span><span>Environments: {workers}</span>
+            </div>
             {manifest?.scenarios.scenarios.find(s => s.id === scenario) && <div className="fg-drill-training-note">
                 <strong>{manifest.scenarios.scenarios.find(s => s.id === scenario)?.name}</strong>
                 <p>{manifest.drill_guide?.drills?.[scenario]?.summary || manifest.scenarios.scenarios.find(s => s.id === scenario)?.objective}</p>
@@ -325,7 +353,7 @@ export function FootballGeneralistExperience() {
                 <strong>{r.scenario ?? 'Generalist training'}</strong><small>{r.state} · {r.id} →</small></button>)}
             {filteredRuns.some(r => !isActive(r.state)) && <h3>History</h3>}
             {filteredRuns.filter(r => !isActive(r.state)).map(r => <div className="fg-run" key={r.id}><div className="fg-panel-title"><button className="fg-record-link" onClick={() => setDetail({ kind: 'run', id: r.id })}>{r.id} →</button><small>{r.state}</small></div>
-                <div className="fg-details"><span>Scenario: {r.scenario ?? '—'}</span><span>Seed: {r.seed ?? '—'}</span><span>Environments: {r.num_envs ?? '—'}</span><span>ONNX checkpoints: {r.checkpoints ?? 0}</span><span>Recorded: {when(r.started_at)}</span>{r.initialization?.source_run_id && <span>Initialised from: {r.initialization.source_run_id}</span>}</div>
+                <div className="fg-details"><span>Scenario: {r.scenario ?? '—'}</span><span>Contract: {r.scenario === G05_FOOT_SCENARIO ? 'FootV1 · 54/7' : r.contract_sha256 && r.contract_sha256 === manifest?.fingerprints.contract_sha256 ? 'V2 · 54/5' : 'See recorded contract SHA'}</span><span>Contract SHA: {shortHash(r.contract_sha256)}</span><span>Scenario SHA: {shortHash(r.scenario_sha256)}</span><span>Seed: {r.seed ?? '—'}</span><span>Environments: {r.num_envs ?? '—'}</span><span>ONNX checkpoints: {r.checkpoints ?? 0}</span><span>Recorded: {when(r.started_at)}</span>{r.initialization?.source_run_id && <span>Initialised from: {r.initialization.source_run_id}</span>}</div>
                 <div className="fg-actions">
                     <small className="fg-muted">Policy: {r.packaging?.status ?? 'not_registered'}{r.packaging?.policy_id ? ' · ' + r.packaging.policy_id : ''}</small>
                     {r.packaging?.status !== 'registered' && (r.checkpoint_files ?? []).some(file => file.endsWith('/FootballGeneralistV2.onnx')) &&
