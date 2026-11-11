@@ -189,9 +189,10 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
     await assert.rejects(apps.invoke('football_fyp_train', {
         preset: 'arbitrary', seed: 63, basePort: 5605,
     }));
-    await assert.rejects(apps.invoke('football_fyp_train', {
+    await apps.invoke('football_fyp_train', {
         preset: 'smoke', seed: 63, basePort: 5605, command: '/bin/sh',
-    }).then(() => Promise.reject(new Error('unexpected acceptance'))), /unexpected acceptance/);
+    });
+    assert.equal(Object.hasOwn(invocations.at(-1)[2], 'command'), false);
 });
 
 test('FYP operations refuse to silently fall back to the legacy Unity workspace', async () => {
