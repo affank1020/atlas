@@ -102,7 +102,7 @@ function historicalWatchRunner(workspace: Workspace, policy: any) {
         safeFile(workspace, policy.bundle_path);
         safeFile(workspace, policy.onnx_path);
         return { binary, scenario: policy.view_scenario,
-            scenarios: stamp.scenarios.scenarios.filter((s: any) =>
+            scenarios: foot ? [g05FootScenario] : stamp.scenarios.scenarios.filter((s: any) =>
                 typeof s?.id === 'string' && idPattern.test(s.id)).map((s: any) => s.id as string) };
     } catch { return null; }
 }
