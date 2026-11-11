@@ -24,7 +24,7 @@ export class FootballTrainingService {
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
         const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
         if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
+        const start = ['generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'generalist_review_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -60,6 +60,11 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_generalist_policy_update', 'Set a friendly policy name or feature a saved policy without modifying model identity or weights.',
                 { policyId: runId, displayName: z.string().min(1).max(64).optional(), featured: z.boolean().optional() }, 'generalist_policy_update'),
             action('football_generalist_activity', 'Read generalist evaluation, baseline and watch receipts.', {}, 'generalist_activity'),
+            action('football_generalist_reviews', 'Read recorded human experiment reviews and linked evidence.', {}, 'generalist_reviews'),
+            action('football_generalist_review_update', 'Record one human experiment verdict with existing run or inference evidence; does not promote a policy.',
+                { phase: z.enum(['g05','g1','g2','g3','g4','g5']), scenario: drill, variant: z.string().min(1).max(80), verdict: z.enum(['pending','keep','adopt','revise','stop']), note: z.string().min(1).max(2000), visualEvidence: z.string().min(1).max(300).optional(),
+                    policyId: runId.optional(), runId: runId.optional(), evaluationTicket: z.string().uuid().optional(), watchTicket: z.string().uuid().optional(),
+                    contractSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), scenarioSha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }, 'generalist_review_update'),
             action('football_generalist_status', 'Inspect a generalist operation receipt.', { runId: z.string().uuid() }, 'generalist_status'),
             action('football_generalist_package', 'Register a completed generalist ONNX run as a hashed Unity policy bundle without restarting training.', { runId }, 'generalist_package'),
             action('football_generalist_stop', 'Request a graceful interrupt of an Atlas-owned generalist training process group.', { runId: z.string().uuid() }, 'generalist_stop'),

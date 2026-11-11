@@ -11,6 +11,14 @@
 .fg-nav { display:flex; flex-wrap:wrap; gap:0; border-bottom:1px solid var(--border,#384152); margin-bottom:22px; }
 .fg-nav button { border:0; border-bottom:2px solid transparent; background:transparent; color:inherit; opacity:.7; padding:11px 14px; cursor:pointer; font:inherit; font-size:13px; }
 .fg-nav button.active { border-bottom-color:var(--accent,#8faaf2); opacity:1; font-weight:700; }
+.fg-subnav { display:flex; flex-wrap:wrap; gap:7px; margin:-10px 0 22px; }
+.fg-subnav button { color:inherit; background:var(--surface-secondary,#272f39); border:1px solid var(--border,#384152); border-radius:5px; padding:8px 11px; cursor:pointer; font:inherit; font-size:12px; }
+.fg-subnav button.active { border-color:var(--accent,#8faaf2); font-weight:700; }
+.fg-setup-summary { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; border:1px solid var(--border,#384152); border-radius:5px; padding:13px; font-size:12px; }
+.fg-setup-summary strong { width:100%; font-size:13px; }
+.fg-review-note { display:grid; gap:8px; font-size:12px; font-weight:600; margin:16px 0; }
+.fg-review-note textarea { min-height:110px; resize:vertical; color:inherit; font:inherit; font-size:14px; background:var(--surface-secondary,#272f39); border:1px solid var(--border,#5b6577); border-radius:4px; padding:10px; }
+.fg-review-note input { color:inherit; font:inherit; font-size:14px; background:var(--surface-secondary,#272f39); border:1px solid var(--border,#5b6577); border-radius:4px; padding:10px; }
 .fg-stack { display:grid; gap:16px; }
 .fg-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:10px; }
 .fg-stats > div, .fg-panel { border:1px solid var(--border,#384152); border-radius:5px; background:var(--surface,#1d222b); }

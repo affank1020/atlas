@@ -12,20 +12,27 @@ import './football-generalist-experience.css';
 import { SkeletonRows } from './Skeletons';
 import { FootballGeneralistContentLoading } from './FootballGeneralistLoading';
 
+const G05_FOOT_SCENARIO = 's1-dribble-foot-touch-g05-v1';
+const G05_FOOT_SOURCE = 'atlas-generalist-61a91798db31';
 type Run = { id: string; family: string; scenario?: string; state: string; started_at?: string; seed?: number; num_envs?: number; checkpoints?: number; checkpoint_files?: string[]; packaging?: { status: string; policy_id?: string; error?: string }; output_dir?: string; contract_sha256?: string; scenario_sha256?: string; initialization_available?: boolean; initialization?: { source_run_id?: string; checkpoint_sha256?: string } | null };
-type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; legacy_preview_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
+type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; historical_scenarios?: string[]; legacy_preview_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
-type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'checks' | 'archive';
+type Review = { phase: string; scenario: string; variant: string; verdict: string; note: string; visual_evidence?: string; policy_id?: string; run_id?: string; evaluation_ticket?: string; watch_ticket?: string; contract_sha256?: string; scenario_sha256?: string; updated_at: string };
+type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks' | 'archive';
+type Section = 'experiments' | 'evidence' | 'archive';
 
 const SHOWCASE_DRILL = 'dribbling_showcase_v1';
 const LEGACY_PREVIEW = 'legacy_preview_v1';
-const tabs: { id: Tab; label: string }[] = [
-    { id: 'home', label: 'Home' }, { id: 'drills', label: 'Drills' }, { id: 'train', label: 'Train' },
-    { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
-    { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' },
-    { id: 'checks', label: 'Contract' }, { id: 'archive', label: 'Legacy archive' },
+const sections: { id: Section; label: string; defaultTab: Tab; tabs: { id: Tab; label: string }[] }[] = [
+    { id: 'experiments', label: 'Experiments', defaultTab: 'home', tabs: [
+        { id: 'home', label: 'Overview' }, { id: 'drills', label: 'Choose scenario' }, { id: 'train', label: 'Set up training' }] },
+    { id: 'evidence', label: 'Evidence', defaultTab: 'runs', tabs: [
+        { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
+        { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' }, { id: 'review', label: 'Review decision' }, { id: 'checks', label: 'Contract' }] },
+    { id: 'archive', label: 'Archive', defaultTab: 'archive', tabs: [{ id: 'archive', label: 'Legacy specialists' }] },
 ];
+const sectionFor = (tab: Tab) => sections.find(section => section.tabs.some(item => item.id === tab))!;
 const shortHash = (value?: string) => value ? value.slice(0, 10) : '—';
 const when = (value?: string) => value ? new Date(value).toLocaleString() : '—';
 
@@ -46,6 +53,17 @@ export function FootballGeneralistExperience() {
     const [runsFilter, setRunsFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all');
     const [activity, setActivity] = useState<Receipt[]>(Array.isArray(activityResource.cached) ? activityResource.cached : []);
     const [legacy, setLegacy] = useState<Legacy | null>(null);
+    const [reviews, setReviews] = useState<Review[]>([]);
+    const [reviewPhase, setReviewPhase] = useState('g05');
+    const [reviewScenario, setReviewScenario] = useState(G05_FOOT_SCENARIO);
+    const [reviewVariant, setReviewVariant] = useState('FootV1');
+    const [reviewVerdict, setReviewVerdict] = useState('pending');
+    const [reviewNote, setReviewNote] = useState('');
+    const [reviewVisualEvidence, setReviewVisualEvidence] = useState('');
+    const [reviewRunId, setReviewRunId] = useState('');
+    const [reviewEvaluationTicket, setReviewEvaluationTicket] = useState('');
+    const [reviewWatchTicket, setReviewWatchTicket] = useState('');
+    const [reviewPolicyId, setReviewPolicyId] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [busy, setBusy] = useState('');
@@ -56,6 +74,7 @@ export function FootballGeneralistExperience() {
     const activeRefresh = useRef<Promise<void> | null>(null);
     const [scenario, setScenario] = useState('mix');
     const [watchScenario, setWatchScenario] = useState(SHOWCASE_DRILL);
+    const [historicalScenarioSelection, setHistoricalScenarioSelection] = useState('');
     const [selectedDrillScenario, setSelectedDrillScenario] = useState('');
     const [preset, setPreset] = useState<'smoke' | 'pilot_50k' | 'pilot_100k'>('smoke');
     const [initializeFromRunId, setInitializeFromRunId] = useState('');
@@ -129,7 +148,7 @@ export function FootballGeneralistExperience() {
 
     const scenarios = manifest?.scenarios.scenarios ?? [];
     const runnablePolicies = policies.filter(p => p.compatible_metadata && p.bundle_available && p.onnx_available);
-    const historicalWatchPolicies = policies.filter(p => p.featured && !p.compatible_metadata &&
+    const historicalWatchPolicies = policies.filter(p => !p.compatible_metadata &&
         p.historical_watch_available && p.bundle_available && p.onnx_available);
     const legacyPreviewPolicies = policies.filter(p => !p.compatible_metadata && !historicalWatchPolicies.includes(p) &&
         p.legacy_preview_available && p.bundle_available && p.onnx_available);
@@ -137,6 +156,8 @@ export function FootballGeneralistExperience() {
     const selectablePolicies = tab === 'watch' ? watchPolicies : runnablePolicies;
     const currentPolicy = policies.find(p => p.id === selectedPolicy);
     const historicalSelected = tab === 'watch' && currentPolicy && historicalWatchPolicies.some(p => p.id === currentPolicy.id);
+    const historicalScenario = currentPolicy?.historical_scenarios?.includes(historicalScenarioSelection)
+        ? historicalScenarioSelection : currentPolicy?.view_scenario || '';
     const previewSelected = tab === 'watch' && currentPolicy && legacyPreviewPolicies.some(p => p.id === currentPolicy.id);
     // Discovered receipts include evaluations started through ChatGPT or another Atlas client.
     const evaluations = activity.filter(item => ['generalist_evaluate', 'generalist_baseline'].includes(item.action));
@@ -151,6 +172,10 @@ export function FootballGeneralistExperience() {
     const preferredPolicy = (id: string) => policies.find(p => p.id === id)?.featured ? id :
         policies.find(p => p.featured && (p.source_policy_id === id || p.onnx_sha256 && p.onnx_sha256 === policies.find(x => x.id === id)?.onnx_sha256))?.id || id;
     const activeRuns = runs.filter(r => isActive(r.state));
+    const reviewRuns = runs.filter(r => r.scenario === reviewScenario);
+    const reviewEvaluations = activity.filter(item => item.action === 'generalist_evaluate' && item.scenario === reviewScenario);
+    const reviewWatches = activity.filter(item => item.action === 'generalist_watch' && item.scenario === reviewScenario);
+    const reviewScenarios = [...new Set([...scenarios.map(s => s.id), ...runs.map(r => r.scenario), ...activity.map(item => item.scenario), G05_FOOT_SCENARIO].filter((id): id is string => !!id))];
     const activeEvaluations = evaluations.filter(e => isActive(e.status));
     const filteredRuns = runs.filter(r => runsFilter === 'all' || (runsFilter === 'active' ? isActive(r.state) :
         runsFilter === 'completed' ? r.state === 'completed' : /fail|error|stopped/i.test(r.state)));
@@ -166,8 +191,9 @@ export function FootballGeneralistExperience() {
             await refresh();
         } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     };
-    const initializationRuns = runs.filter(r => r.initialization_available &&
-        r.contract_sha256 === manifest?.fingerprints?.contract_sha256);
+    const initializationRuns = runs.filter(r => scenario === G05_FOOT_SCENARIO
+        ? r.id === G05_FOOT_SOURCE && r.scenario === G05_FOOT_SCENARIO
+        : r.initialization_available && r.contract_sha256 === manifest?.fingerprints?.contract_sha256);
     const doAction = async (key: string, tool: string, input: Record<string, unknown>) => {
         setBusy(key); setError(''); setNotice('');
         try {
@@ -186,6 +212,26 @@ export function FootballGeneralistExperience() {
                 callTool<Legacy['jobs']>('football_list_jobs'),
             ]);
             setLegacy({ policies: p.filter(x => (x as { family?: string }).family !== 'generalist'), jobs: j.filter(x => (x as { family?: string }).family !== 'generalist') });
+        } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        finally { setBusy(''); }
+    };
+    const loadReviews = async () => {
+        try { setReviews(await callTool<Review[]>('football_generalist_reviews')); }
+        catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    };
+    const saveReview = async () => {
+        setBusy('review'); setError('');
+        try {
+            await callTool('football_generalist_review_update', {
+                phase: reviewPhase, scenario: reviewScenario, variant: reviewVariant.trim(), verdict: reviewVerdict, note: reviewNote.trim(),
+                ...(reviewVisualEvidence.trim() ? { visualEvidence: reviewVisualEvidence.trim() } : {}),
+                ...(reviewRunId ? { runId: reviewRunId } : {}), ...(reviewEvaluationTicket ? { evaluationTicket: reviewEvaluationTicket } : {}),
+                ...(reviewWatchTicket ? { watchTicket: reviewWatchTicket } : {}), ...(reviewPolicyId ? { policyId: reviewPolicyId } : {}),
+                ...(reviewRunId && /^[a-f0-9]{64}$/.test(reviewRuns.find(r => r.id === reviewRunId)?.contract_sha256 ?? '') ? { contractSha256: reviewRuns.find(r => r.id === reviewRunId)!.contract_sha256 } : {}),
+                ...(reviewRunId && /^[a-f0-9]{64}$/.test(reviewRuns.find(r => r.id === reviewRunId)?.scenario_sha256 ?? '') ? { scenarioSha256: reviewRuns.find(r => r.id === reviewRunId)!.scenario_sha256 } : {}),
+            });
+            setNotice('Review recorded. Training, policy status and roadmap phase are unchanged.');
+            await loadReviews();
         } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
         finally { setBusy(''); }
     };
@@ -224,8 +270,14 @@ export function FootballGeneralistExperience() {
          {error && <p className="fg-error" role="alert">{error}</p>}
         {assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
         {notice && <p className="fg-notice" role="status">{notice}</p>}
-        <nav className="fg-nav" aria-label="Football sections">{tabs.map(t =>
-            <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setDetail(null); setTab(t.id); setError(''); if (t.id === 'archive' && !legacy) void loadArchive(); }}>{t.label}</button>)}</nav>
+        <nav className="fg-nav" aria-label="Football sections">{sections.map(section =>
+            <button type="button" key={section.id} className={sectionFor(tab).id === section.id ? 'active' : ''}
+                aria-current={sectionFor(tab).id === section.id ? 'page' : undefined}
+                onClick={() => { setDetail(null); setTab(section.defaultTab); setError(''); if (section.id === 'archive' && !legacy) void loadArchive(); }}>{section.label}</button>)}</nav>
+        {sectionFor(tab).tabs.length > 1 && <nav className="fg-subnav" aria-label={`${sectionFor(tab).label} steps`}>
+            {sectionFor(tab).tabs.map(item => <button type="button" key={item.id} aria-current={tab === item.id ? 'step' : undefined}
+                className={tab === item.id ? 'active' : ''} onClick={() => { setDetail(null); setTab(item.id); setError(''); if (item.id === 'review') void loadReviews(); }}>{item.label}</button>)}
+        </nav>}
         {tab === 'home' && (loading && !manifest && !error
             ? <FootballGeneralistContentLoading />
             : <div className="fg-stack">
@@ -239,6 +291,19 @@ export function FootballGeneralistExperience() {
                     <small>{item.scenario || 'Unknown drill'} · {item.status} · {progressLabel(item)} →</small></button>)}
                 {!activeRuns.length && !activeEvaluations.length &&
                     <p className="fg-muted">Nothing currently running. All training and evaluation history remains available below.</p>}
+            </section>
+            <section className="fg-panel" aria-label="Experiment workflow">
+                <h2>Current research workflow</h2>
+                <p className="fg-muted">Choose a versioned scenario, run a bounded experiment, then review measured outcomes and the original Unity player before making a research decision.</p>
+                <div className="fg-actions">
+                    <button type="button" className="fg-button primary" onClick={() => setTab('drills')}>Choose scenario</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('train')}>Set up training</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('runs')}>Review runs</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('evaluate')}>Evaluate policy</button>
+                    <button type="button" className="fg-button" onClick={() => setTab('watch')}>Watch policy</button>
+                    <button type="button" className="fg-button" onClick={() => { setTab('review'); void loadReviews(); }}>Record review</button>
+                </div>
+                <p className="fg-muted">G0.5 FootV1 is experimental. Its 54/7 action contract is separate from the V2 54/5 baseline; a trained checkpoint still needs held-out evaluation and human visual review.</p>
             </section>
             <div className="fg-stats">
                 <div><small>Contract</small><strong>{manifest?.contract.contract_id ?? 'Unavailable'}</strong></div>
@@ -272,20 +337,29 @@ export function FootballGeneralistExperience() {
                 ? 'S3 V3 trains the separate shorter-start, physically shaped two-player curriculum with a fresh 8,192-step MA-POCA smoke. Atlas verifies the stamped Unity build and paired scripted/no-kick physical success across multiple seeds; it never promotes the model automatically.'
                 : scenario === 's3-pass-two-learners-v2'
                 ? 'S3 V2 launches the 8,192-step MA-POCA cooperative smoke on the connected Mac. Atlas rechecks the saved Unity build and runs paired scripted/no-kick physical probes before training. Scratch only; no automatic promotion.'
+                : scenario === G05_FOOT_SCENARIO
+                ? 'Experimental G0.5 FootV1 uses a separate 54/7 action contract. Its 50k pilot accepts only the saved 2k FootV1 source checkpoint, checks real foot contacts before training, and never promotes the model automatically.'
                 : 'Starts a new PPO learner. S1 rehearsal samples 75% dribbling and 25% S0 contact episodes; it requires a compatible recorded checkpoint as the initial weights, not a resume of the old run.'}</p>
             <div className="fg-form">
                 <GeneralistDrillPicker scenarios={scenarios} mode="train" value={scenario} onChange={id => {
                     setScenario(id);
                     if (['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(id)) { setPreset('smoke'); setWorkers(1); setInitializeFromRunId(''); }
+                    else if (id === G05_FOOT_SCENARIO) { setPreset('pilot_50k'); setWorkers(2); setInitializeFromRunId(G05_FOOT_SOURCE); }
                 }}/>
-                <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_50k' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_50k" disabled={scenario !== 's2-score-basic-v1'}>S2.2b pilot · 50k steps</option><option value="pilot_100k" disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)}>Pilot · 100k steps</option></select></label>
-                <label>Initial weights<select aria-label="Initial weights" value={initializeFromRunId} disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)} onChange={e => setInitializeFromRunId(e.target.value)}>
+                <label>Preset<select value={preset} onChange={e => setPreset(e.target.value as 'smoke' | 'pilot_50k' | 'pilot_100k')}><option value="smoke">Smoke</option><option value="pilot_50k" disabled={!['s2-score-basic-v1', G05_FOOT_SCENARIO].includes(scenario)}>Pilot · 50k steps</option><option value="pilot_100k" disabled={[G05_FOOT_SCENARIO, 's3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)}>Pilot · 100k steps</option></select></label>
+                <label>Initial weights<select aria-label="Initial weights" value={initializeFromRunId} disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario) || (scenario === G05_FOOT_SCENARIO && preset === 'smoke')} onChange={e => setInitializeFromRunId(e.target.value)}>
                     <option value="">Start with random weights</option>
                     {initializationRuns.map(r => <option key={r.id} value={r.id}>{r.id} · {r.scenario ?? 'Generalist'}</option>)}
                 </select></label>
                 <label>Training seed<input type="number" value={seed} min={0} onChange={e => setSeed(Number(e.target.value))}/></label>
                 <label>Parallel environments<input type="number" value={workers} min={1} max={16} disabled={['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)} onChange={e => setWorkers(Number(e.target.value))}/></label>
                 <label>Base port<input type="number" value={basePort} min={1024} max={65519} onChange={e => setBasePort(Number(e.target.value))}/></label>
+            </div>
+            <div className="fg-setup-summary" role="status">
+                <strong>Launch setup</strong>
+                <span>Scenario: {scenario}</span><span>Contract: {scenario === G05_FOOT_SCENARIO ? 'FootV1 · 54 observations / 7 actions' : scenario.startsWith('s3-pass-two-learners-') ? 'Cooperative · checked on launch' : manifest?.contract.contract_id ?? 'Unavailable'}</span>
+                <span>Preset: {preset === 'smoke' ? 'Engineering smoke' : preset === 'pilot_50k' ? '50k pilot' : '100k pilot'}</span>
+                <span>Initial weights: {initializeFromRunId || 'Random'}</span><span>Seed: {seed}</span><span>Environments: {workers}</span>
             </div>
             {manifest?.scenarios.scenarios.find(s => s.id === scenario) && <div className="fg-drill-training-note">
                 <strong>{manifest.scenarios.scenarios.find(s => s.id === scenario)?.name}</strong>
@@ -294,6 +368,8 @@ export function FootballGeneralistExperience() {
             </div>}
             <button className="fg-button primary" disabled={!!busy || !manifest || manifest.curriculum.held_out_seeds?.includes(seed) ||
                 (scenario === 's1_rehearsal' && !initializeFromRunId) ||
+                (scenario === G05_FOOT_SCENARIO && (preset === 'pilot_100k' ||
+                    (preset === 'pilot_50k' && initializeFromRunId !== G05_FOOT_SOURCE))) ||
                 (['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario) &&
                  (preset !== 'smoke' || workers !== 1 || !!initializeFromRunId))} onClick={() => {
                 if (window.confirm(['s3-pass-two-learners-v2', 's3-pass-two-learners-v3'].includes(scenario)
@@ -314,7 +390,7 @@ export function FootballGeneralistExperience() {
                 <strong>{r.scenario ?? 'Generalist training'}</strong><small>{r.state} · {r.id} →</small></button>)}
             {filteredRuns.some(r => !isActive(r.state)) && <h3>History</h3>}
             {filteredRuns.filter(r => !isActive(r.state)).map(r => <div className="fg-run" key={r.id}><div className="fg-panel-title"><button className="fg-record-link" onClick={() => setDetail({ kind: 'run', id: r.id })}>{r.id} →</button><small>{r.state}</small></div>
-                <div className="fg-details"><span>Scenario: {r.scenario ?? '—'}</span><span>Seed: {r.seed ?? '—'}</span><span>Environments: {r.num_envs ?? '—'}</span><span>ONNX checkpoints: {r.checkpoints ?? 0}</span><span>Recorded: {when(r.started_at)}</span>{r.initialization?.source_run_id && <span>Initialised from: {r.initialization.source_run_id}</span>}</div>
+                <div className="fg-details"><span>Scenario: {r.scenario ?? '—'}</span><span>Contract: {r.scenario === G05_FOOT_SCENARIO ? 'FootV1 · 54/7' : r.contract_sha256 && r.contract_sha256 === manifest?.fingerprints.contract_sha256 ? 'V2 · 54/5' : 'See recorded contract SHA'}</span><span>Contract SHA: {shortHash(r.contract_sha256)}</span><span>Scenario SHA: {shortHash(r.scenario_sha256)}</span><span>Seed: {r.seed ?? '—'}</span><span>Environments: {r.num_envs ?? '—'}</span><span>ONNX checkpoints: {r.checkpoints ?? 0}</span><span>Recorded: {when(r.started_at)}</span>{r.initialization?.source_run_id && <span>Initialised from: {r.initialization.source_run_id}</span>}</div>
                 <div className="fg-actions">
                     <small className="fg-muted">Policy: {r.packaging?.status ?? 'not_registered'}{r.packaging?.policy_id ? ' · ' + r.packaging.policy_id : ''}</small>
                     {r.packaging?.status !== 'registered' && (r.checkpoint_files ?? []).some(file => file.endsWith('/FootballGeneralistV2.onnx')) &&
@@ -376,13 +452,15 @@ export function FootballGeneralistExperience() {
                     <optgroup label="Featured players">{selectablePolicies.filter(p => p.featured).map(p =>
                         <option key={p.id} value={p.id}>{p.display_name || p.id}{historicalWatchPolicies.includes(p) ? ' · Historical' : legacyPreviewPolicies.includes(p) ? ' · Modern preview' : ''}</option>)}</optgroup>
                     <optgroup label="Research checkpoints and legacy previews">{selectablePolicies.filter(p => !p.featured).map(p =>
-                        <option key={p.id} value={p.id}>{p.display_name || p.id}{legacyPreviewPolicies.includes(p) ? ' · Modern preview' : ''}</option>)}</optgroup>
+                        <option key={p.id} value={p.id}>{p.display_name || p.id}{historicalWatchPolicies.includes(p) ? ' · Historical' : legacyPreviewPolicies.includes(p) ? ' · Modern preview' : ''}</option>)}</optgroup>
                 </select></label>
                 {historicalSelected ? <div className="fg-historical-watch-note" role="status">
                     <strong>Historical playback</strong>
-                    <p>Uses {currentPolicy!.display_name || currentPolicy!.id}'s original versioned Unity build and saved scenario
-                        ({currentPolicy!.view_scenario || 'not recorded'}). Current drills cannot be selected for this model.
-                        Its model and earlier training evidence remain unchanged.</p>
+                    <p>Uses the original source-pinned Unity build and exact saved model. Only scenarios recorded in that build are available; earlier training evidence remains unchanged.</p>
+                    <label>Historical scenario<select value={historicalScenario} onChange={e => setHistoricalScenarioSelection(e.target.value)}>
+                        {(currentPolicy!.historical_scenarios?.length ? currentPolicy!.historical_scenarios : [currentPolicy!.view_scenario || '']).filter(Boolean).map(id =>
+                            <option key={id} value={id}>{scenarios.find(s => s.id === id)?.name || id} ({id})</option>)}
+                    </select></label>
                 </div> : previewSelected ? <div className="fg-historical-watch-note" role="status">
                     <strong>Legacy model preview — modern environment</strong>
                     <p>The original ONNX weights and model bundle will be hash-verified and loaded into today's
@@ -398,7 +476,7 @@ export function FootballGeneralistExperience() {
             {currentPolicy && <button className="fg-record-link" onClick={() => setDetail({ kind: 'policy', id: currentPolicy.id })}>View {currentPolicy.id} profile →</button>}
             {currentPolicy && !selectablePolicies.some(p => p.id === currentPolicy.id) &&
                 <p role="alert">This policy cannot be played here. Original historical playback requires its archived Unity build; a preview requires a verified current player and unchanged model/ABI.</p>}
-            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !selectablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario: tab === 'watch' ? (previewSelected ? LEGACY_PREVIEW : historicalSelected ? currentPolicy!.view_scenario : watchScenario) : scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
+            <div className="fg-actions"><button type="button" className="fg-button primary" disabled={!!busy || !selectablePolicies.some(p => p.id === selectedPolicy)} onClick={() => void doAction(tab, tab === 'watch' ? 'football_generalist_watch' : 'football_generalist_evaluate', { policyId: selectedPolicy, scenario: tab === 'watch' ? (previewSelected ? LEGACY_PREVIEW : historicalSelected ? historicalScenario : watchScenario) : scenario, seed: evaluationSeed, ...(tab === 'evaluate' ? { episodes } : { arenas: 1 }) })}>{tab === 'watch' ? 'Open Unity player' : 'Run evaluation'}</button>
                 {tab === 'evaluate' && <button type="button" className="fg-button" disabled={!!busy} onClick={() => void doAction('baseline', 'football_generalist_baseline', { scenario, seed: evaluationSeed, episodes })}>Run baseline</button>}</div>
             {tab === 'evaluate' && <div className="fg-evaluation-history">
                 <div className="fg-panel-title"><h3>Evaluation history</h3><span>{activeEvaluations.length} active</span></div>
@@ -420,6 +498,40 @@ export function FootballGeneralistExperience() {
                 {!filteredEvaluations.length && <p className="fg-muted">No evaluation results match the selected filters.</p>}
             </div>}
             {!selectablePolicies.length && <p className="fg-muted">No suitable indexed policies are available for {tab === 'watch' ? 'playback' : 'evaluation'} yet.</p>}
+        </section>}
+        {tab === 'review' && <section className="fg-panel">
+            <h2>Experiment evidence and human decision</h2>
+            <p className="fg-muted">Link recorded receipts to one versioned experiment. A verdict records what the reviewer saw; it does not promote a policy or advance the FYP phase.</p>
+            <div className="fg-form">
+                <label>Phase<select value={reviewPhase} onChange={e => setReviewPhase(e.target.value)}>{['g05','g1','g2','g3','g4','g5'].map(id => <option key={id} value={id}>{id === 'g05' ? 'G0.5' : id.toUpperCase()}</option>)}</select></label>
+                <label>Scenario<select value={reviewScenario} onChange={e => { setReviewScenario(e.target.value); setReviewRunId(''); setReviewEvaluationTicket(''); }}>{reviewScenarios.map(id => <option key={id} value={id}>{id}</option>)}</select></label>
+                <label>Mechanics variant<input value={reviewVariant} maxLength={80} onChange={e => setReviewVariant(e.target.value)}/></label>
+                <label>Verdict<select value={reviewVerdict} onChange={e => setReviewVerdict(e.target.value)}>{['pending','keep','adopt','revise','stop'].map(id => <option key={id} value={id}>{id}</option>)}</select></label>
+                <label>Training run<select value={reviewRunId} onChange={e => setReviewRunId(e.target.value)}><option value="">No run linked</option>{reviewRuns.map(run => <option key={run.id} value={run.id}>{run.id} · {run.state}</option>)}</select></label>
+                <label>Evaluation receipt<select value={reviewEvaluationTicket} onChange={e => setReviewEvaluationTicket(e.target.value)}><option value="">No evaluation linked</option>{reviewEvaluations.map(item => <option key={item.ticket} value={item.ticket}>{item.ticket} · {item.status}</option>)}</select></label>
+                <label>Watch receipt<select value={reviewWatchTicket} onChange={e => setReviewWatchTicket(e.target.value)}><option value="">No Watch linked</option>{reviewWatches.map(item => <option key={item.ticket} value={item.ticket}>{item.ticket} · {item.status}</option>)}</select></label>
+                <label>Policy<select value={reviewPolicyId} onChange={e => setReviewPolicyId(e.target.value)}><option value="">No policy linked</option>{policies.map(policy => <option key={policy.id} value={policy.id}>{nameOfPolicy(policy)}</option>)}</select></label>
+            </div>
+            <label className="fg-review-note">What did the reviewer observe, and what should happen next?<textarea value={reviewNote} maxLength={2000} onChange={e => setReviewNote(e.target.value)} /></label>
+            <label className="fg-review-note">Visual evidence source (Watch ticket, seed/episode list, or external review packet)<input value={reviewVisualEvidence} maxLength={300} onChange={e => setReviewVisualEvidence(e.target.value)} /></label>
+            <div className="fg-setup-summary">
+                <strong>Recorded evidence for {reviewScenario}</strong>
+                <span>{reviewRuns.length} training runs</span><span>{reviewEvaluations.length} evaluation receipts</span>
+                <span>{reviewWatches.length} Watch receipts for this scenario</span>
+                {reviewRunId && <span>Run contract SHA: {shortHash(reviewRuns.find(run => run.id === reviewRunId)?.contract_sha256)}</span>}
+                {reviewRunId && <span>Run scenario SHA: {shortHash(reviewRuns.find(run => run.id === reviewRunId)?.scenario_sha256)}</span>}
+                {reviewEvaluations.find(item => item.ticket === reviewEvaluationTicket) && <span>Evaluation: {progressLabel(reviewEvaluations.find(item => item.ticket === reviewEvaluationTicket)!)}</span>}
+            </div>
+            <p className="fg-muted">Scripted physics, learned training, held-out evaluation and visual Watch are separate evidence. Compare scores only when scenario, controller, build and policy conditions match.</p>
+            <button type="button" className="fg-button primary" disabled={!!busy || !reviewVariant.trim() || !reviewNote.trim() || (reviewVerdict !== 'pending' && (!reviewVisualEvidence.trim() || (!reviewRunId && !reviewEvaluationTicket && !reviewWatchTicket)))} onClick={() => void saveReview()}>Save review</button>
+            <h3>Recorded decisions</h3>
+            {reviews.map(review => <div className="fg-run" key={`${review.phase}:${review.scenario}:${review.variant}`}>
+                <strong>{review.phase.toUpperCase()} · {review.scenario} · {review.variant}</strong>
+                <div className="fg-details"><span>Verdict: {review.verdict}</span><span>Updated: {when(review.updated_at)}</span><span>Run: {review.run_id ?? '—'}</span><span>Evaluation: {review.evaluation_ticket ?? '—'}</span><span>Watch: {review.watch_ticket ?? '—'}</span><span>Contract SHA: {shortHash(review.contract_sha256)}</span><span>Scenario SHA: {shortHash(review.scenario_sha256)}</span></div>
+                {review.visual_evidence && <p className="fg-muted">Visual source: {review.visual_evidence}</p>}
+                <p>{review.note}</p>
+            </div>)}
+            {!reviews.length && <p className="fg-muted">No human review recorded in Atlas yet.</p>}
         </section>}
         {tab === 'checks' && <section className="fg-panel"><h2>Generalist contract</h2>
             <div className="fg-details"><span>Contract: {manifest?.contract.contract_id ?? '—'}</span><span>Behavior: {manifest?.contract.behavior ?? '—'}</span><span>Observations: {manifest?.contract.observations.size ?? '—'}</span><span>Actions: {manifest?.contract.actions.continuous ?? '—'}</span><span>Contract SHA: {shortHash(manifest?.fingerprints.contract_sha256)}</span><span>Scenario SHA: {shortHash(manifest?.fingerprints.scenario_sha256)}</span></div>

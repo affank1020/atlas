@@ -148,3 +148,18 @@ test('assessment reads and policy curation pass both Application and Node protoc
         action: 'generalist_assessments', command: 'arbitrary',
     }).success, false);
 });
+
+test('experiment reviews are typed, audited on write and never invoke promotion', async () => {
+    const { apps, invocations, audits } = harness();
+    await apps.invoke('football_generalist_reviews', {});
+    await apps.invoke('football_generalist_review_update', {
+        phase: 'g05', scenario: 's1-dribble-foot-touch-g05-v1', variant: 'FootV1',
+        verdict: 'revise', note: 'The ball escaped on the left cut.', visualEvidence: 'Owner Watch seed 515 episode 2', runId: 'atlas-generalist-61a91798db31',
+    });
+    assert.deepEqual(invocations.map((item: any[]) => item[2].action), ['generalist_reviews', 'generalist_review_update']);
+    for (const invocation of invocations) assert.doesNotThrow(() => workspaceOperationSchemas.football_control.parse(invocation[2]));
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 1);
+    await assert.rejects(apps.invoke('football_generalist_review_update', {
+        phase: 'g05', scenario: '../escape', variant: 'FootV1', verdict: 'adopt', note: 'Invalid',
+    }));
+});

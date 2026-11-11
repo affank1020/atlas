@@ -49,7 +49,7 @@ export function FootballGeneralistApplicationLoading() {
             <Skeleton width={82} height={36} />
         </header>
         <nav className="fg-nav" aria-hidden="true">
-            {['Home', 'Drills', 'Train', 'Runs', 'Policies', 'Evaluate', 'Watch', 'Contract', 'Legacy archive'].map((name, index) =>
+            {['Experiments', 'Evidence', 'Archive'].map((name, index) =>
                 <span className={'fg-loading-tab' + (index === 0 ? ' active' : '')} key={name}>{name}</span>)}
         </nav>
         <FootballGeneralistContentLoading decorative />

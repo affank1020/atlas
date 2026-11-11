@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -7,9 +7,24 @@ import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
 import { generalistManifest } from './football-generalist.js';
 import { generalistRunDetail, listGeneralistRuns } from './football-generalist-runs.js';
+import { readExperimentReviews, writeExperimentReview } from './generalist-experiment-reviews.js';
 
-type Args = { displayName?: string; featured?: boolean; action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number };
+type Args = { displayName?: string; featured?: boolean; action: string; runId?: string; initializeFromRunId?: string; policyId?: string; scenario?: string; preset?: string; arenas?: number; basePort?: number; seed?: number; episodes?: number; offset?: number; limit?: number; phase?: string; variant?: string; verdict?: string; note?: string; visualEvidence?: string; evaluationTicket?: string; watchTicket?: string; contractSha256?: string; scenarioSha256?: string };
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+const g05FootScenario = 's1-dribble-foot-touch-g05-v1';
+const g05FootBehavior = 'FootballGeneralistFootV1';
+const g05ApprovedSource = 'atlas-generalist-61a91798db31';
+/** The experimental 54/7 actor has a separate versioned ABI, never V2's 54/5 contract. */
+function footContractSha256(workspace: Workspace): string {
+    const file = safeFile(workspace, path.join(workspace.rootPath,
+        'ml-agents/config/football_generalist_foot_v1_contract.json'));
+    const raw = readFileSync(file);
+    const contract = JSON.parse(raw.toString('utf8'));
+    if (contract?.behavior !== g05FootBehavior ||
+        contract?.observations?.size !== 54 || contract?.actions?.continuous !== 7)
+        throw new AtlasError('G0.5 FootV1 requires exactly 54 observations and 7 continuous actions.', 'INVALID_ARGUMENT');
+    return createHash('sha256').update(raw).digest('hex');
+}
 // Watch-only curated playlist; not a training/evaluation scenario or policy ABI change.
 const showcaseScenario = 'dribbling_showcase_v1';
 // Explicit Watch-only sentinel. The player instead receives a real current drill.
@@ -63,17 +78,32 @@ function historicalWatchRunner(workspace: Workspace, policy: any) {
     try {
         const binary = safeRunnerBinary(workspace, policy.runner_binary);
         const stamp = readJson(path.join(path.dirname(path.dirname(binary)), 'generalist-build.json'));
+        const standard = policy.behavior === stamp.contract?.behavior &&
+            ['contract_sha256','scenario_sha256','implementation_sha256'].every(key =>
+                typeof policy[key] === 'string' && policy[key] === stamp[key]);
+        let foot = false;
+        if (policy.behavior === g05FootBehavior &&
+            policy.experimental_foot_contract === true &&
+            policy.view_scenario === g05FootScenario) {
+            foot = policy.contract_sha256 === footContractSha256(workspace) &&
+                policy.runner_contract_sha256 === stamp.contract_sha256 &&
+                stamp.contract?.behavior === 'FootballGeneralistV2' &&
+                policy.scenario_sha256 === stamp.scenario_sha256 &&
+                policy.implementation_sha256 === stamp.implementation_sha256 &&
+                stamp.scenarios?.scenarios?.some((s: any) =>
+                    s?.id === g05FootScenario && s?.footTouchV1 === true);
+        }
         if (policy.family !== 'generalist' || stamp.family !== 'generalist' ||
-            policy.behavior !== stamp.contract?.behavior ||
-            !['contract_sha256','scenario_sha256','implementation_sha256'].every(key =>
-                typeof policy[key] === 'string' && policy[key] === stamp[key]) ||
+            !(standard || foot) ||
             typeof policy.view_scenario !== 'string' || !idPattern.test(policy.view_scenario) ||
             !Array.isArray(stamp.scenarios?.scenarios) ||
             !stamp.scenarios.scenarios.some((s: any) => s?.id === policy.view_scenario))
             return null;
         safeFile(workspace, policy.bundle_path);
         safeFile(workspace, policy.onnx_path);
-        return { binary, scenario: policy.view_scenario };
+        return { binary, scenario: policy.view_scenario,
+            scenarios: foot ? [g05FootScenario] : stamp.scenarios.scenarios.filter((s: any) =>
+                typeof s?.id === 'string' && idPattern.test(s.id)).map((s: any) => s.id as string) };
     } catch { return null; }
 }
 
@@ -121,7 +151,9 @@ export function generalistPolicies(workspace: Workspace) {
                 policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
                 policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
             const featured = curated[policy.id]?.featured === true;
-            const historicalRunner = featured && !compatibleMetadata ? historicalWatchRunner(workspace, policy) : null;
+            const historicalEligible = featured ||
+                (policy.behavior === g05FootBehavior && policy.experimental_foot_contract === true);
+            const historicalRunner = !compatibleMetadata && historicalEligible ? historicalWatchRunner(workspace, policy) : null;
             // Preview is explicitly a different environment. Same exact ABI,
             // original ONNX/bundle present, and a candidate stamped CURRENT
             // Unity player; Python rechecks all hashes before actual playback.
@@ -130,7 +162,7 @@ export function generalistPolicies(workspace: Workspace) {
                 typeof policy.onnx_path === 'string' && typeof policy.bundle_path === 'string' &&
                 existsSync(policy.onnx_path) && existsSync(policy.bundle_path);
             found.push({ id: policy.id, display_name: curated[policy.id]?.display_name ?? (typeof policy.display_name === 'string' && policy.display_name.trim() ? policy.display_name.trim().slice(0, 80) : null),
-                featured, historical_watch_available: !!historicalRunner, legacy_preview_available: previewAvailable, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
+                featured, historical_watch_available: !!historicalRunner, historical_scenarios: historicalRunner?.scenarios ?? [], legacy_preview_available: previewAvailable, source_policy_id: typeof policy.source_policy_id === 'string' ? policy.source_policy_id : null,
                 onnx_sha256: typeof policy.onnx_sha256 === 'string' ? policy.onnx_sha256 : null, family: 'generalist', behavior: policy.behavior, status: policy.status ?? 'unverified',
                 source: path.relative(workspace.rootPath, file), compatible_metadata: compatibleMetadata,
                 source_run_id: typeof (policy.source_run_id ?? policy.run_id) === 'string' && idPattern.test(policy.source_run_id ?? policy.run_id) ? (policy.source_run_id ?? policy.run_id) : null,
@@ -315,6 +347,28 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     if (x.action === 'generalist_runs') return listGeneralistRuns(workspace);
     if (x.action === 'generalist_run_detail') return generalistRunDetail(workspace, x.runId!);
     if (x.action === 'generalist_policies') return generalistPolicies(workspace);
+    if (x.action === 'generalist_reviews') return readExperimentReviews(workspace);
+    if (x.action === 'generalist_review_update') {
+        const knownRuns = listGeneralistRuns(workspace);
+        const knownActivity = reports(workspace);
+        const reviewRun = knownRuns.find(run => run.id === x.runId && run.scenario === x.scenario);
+        if (x.runId && !reviewRun)
+            throw new AtlasError('Review run must belong to the selected scenario.', 'INVALID_ARGUMENT');
+        if ((x.contractSha256 && x.contractSha256 !== reviewRun?.contract_sha256) ||
+            (x.scenarioSha256 && x.scenarioSha256 !== reviewRun?.scenario_sha256))
+            throw new AtlasError('Review fingerprints must match the linked run.', 'INVALID_ARGUMENT');
+        if (x.evaluationTicket && !knownActivity.some(item => item.ticket === x.evaluationTicket && item.action === 'generalist_evaluate' && item.scenario === x.scenario))
+            throw new AtlasError('Review evaluation must belong to the selected scenario.', 'INVALID_ARGUMENT');
+        if (x.watchTicket && !knownActivity.some(item => item.ticket === x.watchTicket && item.action === 'generalist_watch' && item.scenario === x.scenario))
+            throw new AtlasError('Review Watch ticket must belong to the selected scenario.', 'INVALID_ARGUMENT');
+        if (x.policyId && !generalistPolicies(workspace).some(policy => policy.id === x.policyId))
+            throw new AtlasError('Review policy was not found.', 'INVALID_ARGUMENT');
+        return writeExperimentReview(workspace, { phase: x.phase!, scenario: x.scenario!, variant: x.variant!, verdict: x.verdict!, note: x.note!,
+            ...(x.visualEvidence ? { visual_evidence: x.visualEvidence } : {}),
+            ...(x.policyId ? { policy_id: x.policyId } : {}), ...(x.runId ? { run_id: x.runId } : {}),
+            ...(x.evaluationTicket ? { evaluation_ticket: x.evaluationTicket } : {}), ...(x.watchTicket ? { watch_ticket: x.watchTicket } : {}),
+            ...(x.contractSha256 ? { contract_sha256: x.contractSha256 } : {}), ...(x.scenarioSha256 ? { scenario_sha256: x.scenarioSha256 } : {}) });
+    }
     if (x.action === 'generalist_policy_update') {
         if (typeof x.policyId !== 'string' || !idPattern.test(x.policyId))
             throw new AtlasError('Invalid policy identifier.', 'INVALID_ARGUMENT');
@@ -367,7 +421,10 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         const directory = realpathSync(path.join(root, String(run.output_dir)));
         if (!directory.startsWith(root + path.sep) || !statSync(directory).isDirectory())
             throw new AtlasError('Generalist training directory is outside the workspace.', 'INVALID_ARGUMENT');
-        if (!existsSync(path.join(directory, x.runId, 'FootballGeneralistV2.onnx')))
+        const exportedBehavior = run.scenario === g05FootScenario ? g05FootBehavior : 'FootballGeneralistV2';
+        if (exportedBehavior === g05FootBehavior && run.contract_sha256 !== footContractSha256(workspace))
+            throw new AtlasError('Experimental FootV1 model export contract changed.', 'INVALID_ARGUMENT');
+        if (!existsSync(path.join(directory, x.runId, exportedBehavior + '.onnx')))
             throw new AtlasError('The training run has no final exported ONNX model yet.', 'INVALID_ARGUMENT');
         const script = safeFile(workspace, path.join(root, 'football_generalist.py'));
         return launch(workspace, x.action, [script, 'package', '--output', directory],
@@ -396,8 +453,10 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         throw new AtlasError('Legacy preview requires an older saved generalist policy.', 'INVALID_ARGUMENT');
     const historicalWatch = !!pinnedWatch && !currentWatch && !legacyPreview;
     const archivedRunner = historicalWatch ? historicalWatchRunner(workspace, pinnedWatch.policy) : null;
-    if (historicalWatch && (!readCuration(workspace.rootPath)[pinnedWatch!.policy.id]?.featured || !archivedRunner))
-        throw new AtlasError('Historical playback requires a featured policy with its exact saved Unity build and model artifacts.', 'INVALID_ARGUMENT');
+    const historicalEligible = !!pinnedWatch && (readCuration(workspace.rootPath)[pinnedWatch.policy.id]?.featured === true ||
+        (pinnedWatch.policy.behavior === g05FootBehavior && pinnedWatch.policy.experimental_foot_contract === true));
+    if (historicalWatch && (!historicalEligible || !archivedRunner))
+        throw new AtlasError('Historical playback requires a featured policy or experimental FootV1 with its exact saved Unity build and model artifacts.', 'INVALID_ARGUMENT');
     const previewRunner = legacyPreview ? modernPreviewRunner(workspace, manifest) : null;
     if (legacyPreview && (!previewRunner ||
         pinnedWatch!.policy.family !== 'generalist' ||
@@ -407,9 +466,9 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
     // Historical Watch uses the original drill. Legacy preview is *not*
     // historical playback: restrict to one named CURRENT scene for inspection.
     const scenario = legacyPreview ? legacyPreviewDrill :
-        historicalWatch ? archivedRunner!.scenario : x.scenario ?? 'mix';
-    if (historicalWatch && x.scenario !== scenario)
-        throw new AtlasError('Historical Watch must use the scenario saved with this policy.', 'INVALID_ARGUMENT');
+        historicalWatch ? (x.scenario ?? archivedRunner!.scenario) : x.scenario ?? 'mix';
+    if (historicalWatch && !archivedRunner!.scenarios.includes(scenario))
+        throw new AtlasError('Historical Watch scenario must be present in the policy-pinned Unity runner.', 'INVALID_ARGUMENT');
     const scenarios = new Set(['mix', 's1_rehearsal', ...manifest.scenarios.scenarios.map((s: { id: string }) => s.id)]);
     // Training-only aliases must be present in the versioned curriculum. Never
     // permit phase aliases for evaluation/Watch, which require a real scenario.
@@ -434,18 +493,44 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
                 'INVALID_ARGUMENT');
         }
         if (manifest.curriculum.held_out_seeds?.includes(x.seed ?? 42)) throw new AtlasError('Held-out seeds are reserved for evaluation.', 'INVALID_ARGUMENT');
-        if (x.preset === 'pilot_50k' && !['s2-score-basic-v1', 's2_phase_shoot_retention_v2', 's2_phase_interception_rehearsal_v3', 's2_phase_balanced_rehearsal_v4', 's2_phase_early_intercept_reversal_v5', 's2_phase_early_intercept_balanced_v6', 's2_phase_near_reversal_retention_v7'].includes(scenario))
-            throw new AtlasError('50k pilot is reserved for the versioned S2.2 curricula.', 'INVALID_ARGUMENT');
+        const footPilot = scenario === g05FootScenario && x.preset === 'pilot_50k';
+        if (x.preset === 'pilot_50k' && !footPilot &&
+            !['s2-score-basic-v1', 's2_phase_shoot_retention_v2', 's2_phase_interception_rehearsal_v3', 's2_phase_balanced_rehearsal_v4', 's2_phase_early_intercept_reversal_v5', 's2_phase_early_intercept_balanced_v6', 's2_phase_near_reversal_retention_v7'].includes(scenario))
+            throw new AtlasError('50k pilot requires an approved S2.2 curriculum or the specific G0.5 FootV1 experiment.', 'INVALID_ARGUMENT');
+        if (scenario === g05FootScenario) {
+            if (x.preset === 'pilot_100k')
+                throw new AtlasError('G0.5 FootV1 100k training is not approved.', 'INVALID_ARGUMENT');
+            if (footPilot && (x.arenas ?? 1) > 2)
+                throw new AtlasError('G0.5 50k trial allows at most two Unity workers.', 'INVALID_ARGUMENT');
+            if (new Set([515,616,717,828,1211,1321,1431]).has(x.seed ?? 42))
+                throw new AtlasError('G0.5 evaluation seeds cannot be used for training.', 'INVALID_ARGUMENT');
+        }
         const sourceId = x.initializeFromRunId;
         if ((scenario === 's1_rehearsal' || phaseIds.has(scenario)) && !sourceId)
             throw new AtlasError('Versioned curriculum training requires an explicit source checkpoint.', 'INVALID_ARGUMENT');
+        if (footPilot && sourceId !== g05ApprovedSource)
+            throw new AtlasError('G0.5 50k can initialise only from the verified 54/7 FootV1 2k checkpoint.', 'INVALID_ARGUMENT');
+        if (scenario === g05FootScenario && !footPilot && sourceId)
+            throw new AtlasError('G0.5 smoke runs are scratch only; 100k training remains prohibited.', 'INVALID_ARGUMENT');
         if (sourceId) {
             if (!idPattern.test(sourceId)) throw new AtlasError('Invalid source run ID.', 'INVALID_ARGUMENT');
             const source = listGeneralistRuns(workspace).find(run => run.id === sourceId);
-            if (!source || source.contract_sha256 !== manifest.fingerprints.contract_sha256)
-                throw new AtlasError('Source run does not exist or has a different policy ABI.', 'INVALID_ARGUMENT');
+            const fromFoot = scenario === g05FootScenario;
+            if (!source || (fromFoot
+                ? (source.id !== g05ApprovedSource || source.scenario !== g05FootScenario ||
+                   source.state !== 'completed' || source.contract_sha256 !== footContractSha256(workspace))
+                : source.contract_sha256 !== manifest.fingerprints.contract_sha256))
+                throw new AtlasError('Source run missing or its observation/action ABI does not match.', 'INVALID_ARGUMENT');
+            if (fromFoot) {
+                const sourcePolicy = readJson(safeFile(workspace,
+                    path.join(workspace.rootPath, String(source.output_dir), 'policy.json')));
+                if (sourcePolicy.behavior !== g05FootBehavior ||
+                    sourcePolicy.experimental_foot_contract !== true ||
+                    sourcePolicy.source_run_id !== g05ApprovedSource)
+                    throw new AtlasError('G0.5 requires a registered, experimental FootV1 checkpoint.', 'INVALID_ARGUMENT');
+            }
             const checkpoint = path.join(workspace.rootPath, String(source.output_dir), sourceId,
-                manifest.contract.behavior, 'checkpoint.pt');
+                fromFoot ? g05FootBehavior : manifest.contract.behavior, 'checkpoint.pt');
             safeFile(workspace, checkpoint);
         }
         const script = safeFile(workspace, path.join(workspace.rootPath, 'atlas_generalist_launch.py'));
@@ -455,7 +540,8 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
             ...(sourceId ? ['--initialize-from-run', sourceId] : [])];
         return launch(workspace, x.action, cmd, { run_id: runId, scenario, preset: x.preset ?? 'smoke',
             trainer_type: cooperativeS3 ? 'poca' : 'ppo',
-            physical_proof_required: cooperativeS3,
+            physical_proof_required: cooperativeS3 || footPilot,
+            experimental_foot_v1: scenario === g05FootScenario,
             initialization_source_run_id: sourceId ?? null });
     }
     const ticket = randomUUID();

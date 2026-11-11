@@ -1,7 +1,7 @@
 import { Provider } from 'react-redux';
 import { createAtlasStore } from './store';
 import type { ReactElement, ReactNode } from 'react';
-import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { callTool } from './api';
 import { FootballGeneralistExperience } from './FootballGeneralistExperience';
@@ -29,6 +29,34 @@ beforeEach(() => {
     });
 });
 afterEach(cleanup);
+
+function openSectionTab(section: 'Experiments' | 'Evidence' | 'Archive', tab?: string) {
+    fireEvent.click(screen.getByRole('button', { name: section }));
+    if (tab) fireEvent.click(within(screen.getByRole('navigation', { name: `${section} steps` })).getByRole('button', { name: tab }));
+}
+
+test('records a human review against an existing run without promoting a policy', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'completed', scenario: 's0-contact-easy-v1' }] as never;
+        if (name === 'football_generalist_policies' || name === 'football_generalist_activity' || name === 'football_generalist_reviews') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_review_update') return { ok: true } as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />);
+    await screen.findByRole('button', { name: 'external-s0 →' });
+    openSectionTab('Evidence', 'Review decision');
+    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 's0-contact-easy-v1' } });
+    fireEvent.change(screen.getByLabelText('Training run'), { target: { value: 'external-s0' } });
+    fireEvent.change(screen.getByLabelText('Verdict'), { target: { value: 'revise' } });
+    fireEvent.change(screen.getByLabelText(/What did the reviewer observe/), { target: { value: 'The ball escaped after contact.' } });
+    fireEvent.change(screen.getByLabelText(/Visual evidence source/), { target: { value: 'Owner review: seed 515 episode 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save review' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_review_update',
+        expect.objectContaining({ scenario: 's0-contact-easy-v1', runId: 'external-s0', verdict: 'revise', visualEvidence: 'Owner review: seed 515 episode 2' })));
+    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_policy_update')).toBe(false);
+});
 
 test('failed optional assessments do not block the dashboard or subsequent refreshes', async () => {
     let runsRead = 0;
@@ -88,7 +116,7 @@ test('Generalist application defaults to new contract, not legacy driver', async
         'football_generalist_manifest', 'football_generalist_runs',
         'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
     ]);
-    fireEvent.click(screen.getByRole('button', { name: 'Train' }));
+    openSectionTab('Experiments', 'Set up training');
     expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_list_drills')).toBe(false);
 });
@@ -96,7 +124,7 @@ test('Generalist application defaults to new contract, not legacy driver', async
 test('Historical specialist data is fetched only when opening read-only archive', async () => {
     render(<FootballGeneralistExperience />);
     await screen.findByRole('button', { name: 'external-s0 →' });
-    fireEvent.click(screen.getByRole('button', { name: 'Legacy archive' }));
+    openSectionTab('Archive');
     expect(await screen.findByText('legacy-policy')).toBeInTheDocument();
     expect(screen.getByText('legacy-run')).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toContain('football_list_jobs');
@@ -202,7 +230,7 @@ test('policy profile links to recorded evaluations and preselects Watch', async 
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Policies' }));
+    openSectionTab('Evidence', 'Policies');
     fireEvent.click(await screen.findByRole('button', { name: 'policy_generalist-a →' }));
     expect(screen.getByText('POLICY PROFILE')).toBeInTheDocument();
     expect(screen.getByText('Saved evaluations')).toBeInTheDocument();
@@ -230,7 +258,7 @@ test('allows safe backfill packaging for exported generalist ONNX without anothe
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
+    openSectionTab('Evidence', 'Runs');
     fireEvent.click(await screen.findByRole('button', { name: 'Package policy' }));
     await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
         'football_generalist_package', { runId: 'finished-100k' }));
@@ -253,7 +281,7 @@ test('Musiala is selectable by name and mixed dribbling is a Watch-only drill', 
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    openSectionTab('Evidence', 'Watch');
     expect(await screen.findByRole('option', { name: 'Musiala' })).toHaveValue('generalist-musiala-v1');
     expect(screen.getByRole('button', { name: /Mixed dribbling showcase/ })).toBeInTheDocument();
     fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), { target: { value: 'generalist-musiala-v1' } });
@@ -264,7 +292,7 @@ test('Musiala is selectable by name and mixed dribbling is a Watch-only drill', 
             policyId: 'generalist-musiala-v1', scenario: 'dribbling_showcase_v1',
         }),
     ));
-    fireEvent.click(screen.getByRole('button', { name: 'Evaluate' }));
+    openSectionTab('Evidence', 'Evaluate');
     expect(screen.queryByRole('button', { name: /Mixed dribbling showcase/ })).not.toBeInTheDocument();
 });
 
@@ -290,7 +318,7 @@ test('Watch receipt shows player logging evidence without claiming a visible win
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    openSectionTab('Evidence', 'Watch');
     fireEvent.click(await screen.findByRole('button', { name: 'Open Unity player' }));
     expect(await screen.findByText('Viewer: Unity player is logging')).toBeInTheDocument();
     expect(screen.getByText(/does not prove a window is visible/)).toBeInTheDocument();
@@ -342,8 +370,8 @@ test('S1 continuation requires a checkpoint and forwards the exact source run', 
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<FootballGeneralistExperience />);
-    await screen.findByRole('button', { name: 'Train' });
-    fireEvent.click(screen.getByRole('button', { name: 'Train' }));
+    await screen.findByRole('button', { name: 'Experiments' });
+    openSectionTab('Experiments', 'Set up training');
     fireEvent.click(screen.getByRole('button', { name: /S0 mixed contact starts/ }));
     fireEvent.click(screen.getByRole('button', { name: /S1 with S0 rehearsal/ }));
     expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeDisabled();
@@ -377,7 +405,7 @@ test('featured historical policy remains selectable in Watch with its saved scen
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    openSectionTab('Evidence', 'Watch');
     const option = await screen.findByRole('option', { name: 'Musiala · Historical' });
     expect(option).toHaveValue('generalist-musiala-v1');
     fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
@@ -390,7 +418,7 @@ test('featured historical policy remains selectable in Watch with its saved scen
         expect.objectContaining({
             policyId: 'generalist-musiala-v1', scenario: 's1-dribble-moving-interception-v1',
         })));
-    fireEvent.click(screen.getByRole('button', { name: 'Evaluate' }));
+    openSectionTab('Evidence', 'Evaluate');
     expect(screen.queryByRole('option', { name: 'Musiala · Historical' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Unity player' })).not.toBeInTheDocument();
 });
@@ -414,7 +442,7 @@ test('missing original Unity app offers explicitly labelled legacy preview, neve
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+    openSectionTab('Evidence', 'Watch');
     const option = await screen.findByRole('option', { name: 'Musiala · Modern preview' });
     expect(option).toHaveValue('generalist-musiala-v1');
     fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
@@ -427,7 +455,7 @@ test('missing original Unity app offers explicitly labelled legacy preview, neve
         'football_generalist_watch',
         expect.objectContaining({ policyId: 'generalist-musiala-v1', scenario: 'legacy_preview_v1' }),
     ));
-    fireEvent.click(screen.getByRole('button', { name: 'Evaluate' }));
+    openSectionTab('Evidence', 'Evaluate');
     expect(screen.queryByRole('option', { name: 'Musiala · Modern preview' })).not.toBeInTheDocument();
 });
 
@@ -446,7 +474,7 @@ test('historical featured players lacking an original runner remain visible but 
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Policies' }));
+    openSectionTab('Evidence', 'Policies');
     const card = await screen.findByText('Musiala');
     expect(card).toBeInTheDocument();
     const cardWatch = screen.getAllByRole('button', { name: 'Watch' }).find(button => button.hasAttribute('disabled'));
@@ -462,7 +490,7 @@ test('a cached unavailable manifest does not break navigation on revisit', async
     const { store } = createAtlasStore();
     await store.dispatch(atlasApi.util.upsertQueryData('applicationRead', {name:'football_generalist_manifest',input:{}}, {available:false}));
     rtlRender(<Provider store={store}><FootballGeneralistExperience /></Provider>);
-    expect(screen.getByRole('button', { name:'Home' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name:'Experiments' })).toBeInTheDocument();
     await screen.findByText('football-generalist-v2');
 });
 
@@ -501,3 +529,70 @@ test.each(['unavailable', 'invalid contract'] as const)(
         ]);
     },
 );
+
+
+test('unfeatured FootV1 supports historical Watch and a gated 50k warm-start from the exact FootV1 2k source', async () => {
+    const footScenario = 's1-dribble-foot-touch-g05-v1';
+    const sourceId = 'atlas-generalist-61a91798db31';
+    const footId = 'generalist-atlas-generalist-61a91798db31';
+    const customContract = {
+        ...contract, scenarios: { ...contract.scenarios,
+            scenarios: [...contract.scenarios.scenarios, {
+                id: footScenario, name: 'G0.5 physical foot control',
+                stage: 1, objectiveType: 'controlled_dribble',
+            }],
+        },
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_generalist_manifest') return customContract as never;
+        if (name === 'football_generalist_runs') return [{
+            id: sourceId, scenario: footScenario, state: 'completed',
+            initialization_available: false, contract_sha256: 'separate-54-7-ABI',
+        }] as never;
+        if (name === 'football_generalist_policies') return [{
+            id: footId, display_name: 'FootV1 experimental', featured: false,
+            behavior: 'FootballGeneralistFootV1', status: 'experimental',
+            compatible_metadata: false, historical_watch_available: true,
+            historical_scenarios: [footScenario], view_scenario: footScenario,
+            onnx_available: true, bundle_available: true,
+        }] as never;
+        if (name === 'football_generalist_activity') return [] as never;
+        if (name === 'football_generalist_assessments') return { policies: [] } as never;
+        if (name === 'football_generalist_train') return {
+            accepted: true, action: 'generalist_train', status: 'launching',
+            ticket: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        } as never;
+        if (name === 'football_generalist_watch') return {
+            accepted: true, action: 'generalist_watch', status: 'launching',
+            ticket: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        } as never;
+        return [] as never;
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<FootballGeneralistExperience />);
+    await screen.findByRole('button', { name: 'Experiments' });
+    openSectionTab('Experiments', 'Set up training');
+    fireEvent.click(screen.getByRole('button', { name: 'S0 mixed contact starts' }));
+    fireEvent.click(screen.getByRole('button', { name: /G0.5 physical foot control/ }));
+    expect(screen.getByText('Contract: FootV1 · 54 observations / 7 actions')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Initial weights' })).toHaveValue(sourceId);
+    expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch generalist training' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_train',
+        expect.objectContaining({
+            scenario: footScenario, preset: 'pilot_50k', arenas: 2,
+            initializeFromRunId: sourceId,
+        })));
+    openSectionTab('Evidence', 'Watch');
+    expect(await screen.findByRole('option', { name: 'FootV1 experimental · Historical' }))
+        .toHaveValue(footId);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
+        target: { value: footId },
+    });
+    expect(screen.getByText('Historical playback')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Historical scenario' })).toHaveValue(footScenario);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
+    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_watch',
+        expect.objectContaining({ policyId: footId, scenario: footScenario })));
+    vi.mocked(window.confirm).mockRestore();
+});
