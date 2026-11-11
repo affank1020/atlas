@@ -58,7 +58,7 @@ test('football commands execute only on the bound Unity Node and audit intent', 
 });
 test('an unbound or unavailable Unity Workspace cannot be used for training', async () => {
     const absent = harness({ available: false });
-    await assert.rejects(absent.apps.invoke('football_list_jobs', {}), /Connect an active Unity Workspace/);
+    await assert.rejects(absent.apps.invoke('football_list_jobs', {}), /Connect the legacy AI Football Unity Workspace/);
     const failed = harness({ fail: true });
     await assert.rejects(failed.apps.invoke('football_launch_training', { drill: 'movement_v1' }), /Node unavailable/);
     assert.equal(failed.audits[failed.audits.length - 1][0], 'application.football.failed');
