@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstatSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
@@ -21,7 +21,28 @@ function fileFor(workspace: Workspace) {
     return path.join(workspace.rootPath, 'validation', 'generalist', 'atlas-experiment-reviews.json');
 }
 
+// Protect the entire storage path, not only the final JSON file. An existing
+// validation/ or generalist/ symlink must not redirect writes outside the workspace.
+function reviewDirectory(workspace: Workspace, create: boolean): boolean {
+    const root = realpathSync(workspace.rootPath);
+    let directory = workspace.rootPath;
+    for (const segment of ['validation', 'generalist']) {
+        directory = path.join(directory, segment);
+        if (create) mkdirSync(directory, { recursive: true });
+        let resolved;
+        try { resolved = realpathSync(directory); }
+        catch (error) {
+            if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+            throw error;
+        }
+        if (!resolved.startsWith(root + path.sep) || !statSync(resolved).isDirectory())
+            throw new AtlasError('Unsafe experiment review directory.', 'INVALID_ARGUMENT');
+    }
+    return true;
+}
+
 export function readExperimentReviews(workspace: Workspace): ExperimentReview[] {
+    if (!reviewDirectory(workspace, false)) return [];
     const file = fileFor(workspace);
     let info;
     try { info = lstatSync(file); }
@@ -55,6 +76,7 @@ export function writeExperimentReview(workspace: Workspace, input: Omit<Experime
     const existing = reviews.findIndex(review => review.phase === next.phase && review.scenario === next.scenario && review.variant === next.variant);
     if (existing < 0 && reviews.length >= 200) throw new AtlasError('Experiment review limit reached.', 'INVALID_ARGUMENT');
     if (existing < 0) reviews.push(next); else reviews[existing] = next;
+    reviewDirectory(workspace, true);
     const file = fileFor(workspace);
     try { if (lstatSync(file).isSymbolicLink()) throw new AtlasError('Unsafe experiment review file.', 'INVALID_ARGUMENT'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
