@@ -19,6 +19,15 @@ beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(callTool).mockImplementation(async (name) => {
         if (name === 'football_generalist_manifest') return contract as never;
+        if (name === 'football_fyp_manifest') return {
+            available: true, contract: { contract_id: 'fyp-football-v1',
+                behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 },
+                trainer_kind: 'poca', scene: 'Assets/Football/Scenes/OpenGoalClose.unity' },
+        } as never;
+        if (name === 'football_fyp_preflight') return { editor_available: true,
+            trainer_available: false, verified_build: false, ready_to_train: false,
+            source_sha256: 'abc123', note: 'Setup required' } as never;
+        if (name === 'football_fyp_runs') return [] as never;
         if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'unknown', scenario: 's0-contact-easy-v1' }] as never;
         if (name === 'football_generalist_policies') return [] as never;
         if (name === 'football_generalist_activity') return [] as never;
@@ -595,4 +604,15 @@ test('unfeatured FootV1 supports historical Watch and a gated 50k warm-start fro
     await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_watch',
         expect.objectContaining({ policyId: footId, scenario: footScenario })));
     vi.mocked(window.confirm).mockRestore();
+});
+
+test('FYP successor is explicitly separate and training stays blocked before preflight', async () => {
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open FYP v1 training' }));
+    expect(screen.getByText('FYP — new Unity football project')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('FootballV1')).toBeInTheDocument());
+    expect(screen.getByText(/Canonical successor to AI Football/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run 2,048-step smoke' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Run 50k pilot' })).toBeDisabled();
+    expect(vi.mocked(callTool)).not.toHaveBeenCalledWith('football_fyp_train', expect.anything());
 });
