@@ -11,6 +11,7 @@ import './football-training.css';
 import './football-generalist-experience.css';
 import { SkeletonRows } from './Skeletons';
 import { FootballGeneralistContentLoading } from './FootballGeneralistLoading';
+import { FypV1Experience } from './FypV1Experience';
 
 const G05_FOOT_SCENARIO = 's1-dribble-foot-touch-g05-v1';
 const G05_FOOT_SOURCE = 'atlas-generalist-61a91798db31';
@@ -19,14 +20,14 @@ type Policy = { id: string; display_name?: string | null; featured?: boolean; so
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Legacy = { policies: { id: string; drill: string }[]; jobs: { id: string; drill: string; state: string }[] };
 type Review = { phase: string; scenario: string; variant: string; verdict: string; note: string; visual_evidence?: string; policy_id?: string; run_id?: string; evaluation_ticket?: string; watch_ticket?: string; contract_sha256?: string; scenario_sha256?: string; updated_at: string };
-type Tab = 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks' | 'archive';
+type Tab = 'fyp' | 'home' | 'drills' | 'train' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks' | 'archive';
 type Section = 'experiments' | 'evidence' | 'archive';
 
 const SHOWCASE_DRILL = 'dribbling_showcase_v1';
 const LEGACY_PREVIEW = 'legacy_preview_v1';
 const sections: { id: Section; label: string; defaultTab: Tab; tabs: { id: Tab; label: string }[] }[] = [
-    { id: 'experiments', label: 'Experiments', defaultTab: 'home', tabs: [
-        { id: 'home', label: 'Overview' }, { id: 'drills', label: 'Choose scenario' }, { id: 'train', label: 'Set up training' }] },
+    { id: 'experiments', label: 'Experiments', defaultTab: 'fyp', tabs: [
+        { id: 'fyp', label: 'FYP v1 (new)' }, { id: 'home', label: 'Legacy overview' }, { id: 'drills', label: 'Choose scenario' }, { id: 'train', label: 'Set up training' }] },
     { id: 'evidence', label: 'Evidence', defaultTab: 'runs', tabs: [
         { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
         { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' }, { id: 'review', label: 'Review decision' }, { id: 'checks', label: 'Contract' }] },
@@ -278,9 +279,15 @@ export function FootballGeneralistExperience() {
             {sectionFor(tab).tabs.map(item => <button type="button" key={item.id} aria-current={tab === item.id ? 'step' : undefined}
                 className={tab === item.id ? 'active' : ''} onClick={() => { setDetail(null); setTab(item.id); setError(''); if (item.id === 'review') void loadReviews(); }}>{item.label}</button>)}
         </nav>}
+        {tab === 'fyp' && <FypV1Experience />}
         {tab === 'home' && (loading && !manifest && !error
             ? <FootballGeneralistContentLoading />
             : <div className="fg-stack">
+            <section className="fg-panel" aria-label="Current FYP successor">
+                <h2>FYP v1 — current Unity project</h2>
+                <p className="fg-muted">The new FYP repository is the canonical training environment. The Generalist history below belongs to the archived AI Football project and cannot share model weights with FootballV1.</p>
+                <button type="button" className="fg-button primary" onClick={() => setTab('fyp')}>Open FYP v1 training</button>
+            </section>
             <section className="fg-panel fg-active-panel" aria-label="Active training and evaluations">
                 <div className="fg-panel-title"><h2>Active activity</h2>
                     <span>{activeRuns.length + activeEvaluations.length} running or launching</span></div>

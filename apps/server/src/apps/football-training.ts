@@ -22,9 +22,15 @@ export class FootballTrainingService {
     async call(action: string, input: Record<string, unknown> = {}) {
         await this.catalog.getProject(FOOTBALL_PROJECT_ID);
         const available = await this.repository.list(FOOTBALL_PROJECT_ID);
-        const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active');
-        if (!workspace) throw new AtlasError('Connect an active Unity Workspace to the AI Football Project before using this Application.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'generalist_review_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
+        // FYP is the canonical successor, but legacy workflows must keep their old
+        // 54/5 and 54/7 workspace. Never select the first active Unity checkout.
+        const fyp = action.startsWith('fyp_');
+        const workspace = available.find((ws: Workspace) => ws.kind === 'unity' && ws.status === 'active' &&
+            (fyp ? ws.name === 'FYP' : ws.name !== 'FYP'));
+        if (!workspace) throw new AtlasError(fyp
+            ? 'Register the new FYP Unity checkout on the Mac before using FYP v1 tools.'
+            : 'Connect the legacy AI Football Unity Workspace to inspect historical results.', 'WORKSPACE_UNAVAILABLE');
+        const start = ['fyp_build', 'fyp_train', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'generalist_review_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -51,6 +57,15 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         type: 'football-training', slug: 'football-training', projectId: FOOTBALL_PROJECT_ID,
         name: 'Football Training', description: 'Run and inspect Unity ML-Agents training, logs and policies on your connected Mac.',
         tools: [
+            action('football_fyp_manifest', 'Read the new standalone FYP FootballV1 25/8 policy contract, separate from legacy models.', {}, 'fyp_manifest'),
+            action('football_fyp_preflight', 'Check the FYP trainer environment, build and source fingerprint before starting a learner.', {}, 'fyp_preflight'),
+            action('football_fyp_build', 'Request a fixed Unity 6000.3.6f1 headless FYP player build. Returns an asynchronous receipt.', {}, 'fyp_build'),
+            action('football_fyp_train', 'Start a bounded FYP v1 MA-POCA learner only after a verified build and trainer preflight.', {
+                preset: z.enum(['smoke','pilot_50k']), seed: integer.min(0).max(2147483647),
+                basePort: integer.min(1024).max(65519) }, 'fyp_train'),
+            action('football_fyp_runs', 'List durable FYP v1 training run receipts, never inferred as successful.', {}, 'fyp_runs'),
+            action('football_fyp_status', 'Read a FYP v1 training run receipt.', { runId }, 'fyp_status'),
+            action('football_fyp_task_status', 'Inspect a bounded FYP build or training operation receipt.', { runId: z.string().uuid() }, 'fyp_task_status'),
             action('football_generalist_manifest', 'Read versioned generalist policy contract, curriculum and scenario definitions from the connected Unity workspace. Read-only; no build or training.', {}, 'generalist_manifest'),
             action('football_generalist_runs', 'Discover canonical generalist training receipts, including runs launched outside Atlas. Unknown state is not treated as success.', {}, 'generalist_runs'),
             action('football_generalist_run_detail', 'Read bounded live trainer output, checkpoints and metadata for a discovered generalist run.', { runId }, 'generalist_run_detail'),
