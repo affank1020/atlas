@@ -5,12 +5,13 @@ import { ApplicationRegistry } from '../apps/server/src/apps/registry.js';
 import { workspaceSchemas } from '../apps/server/src/workspaces/contracts.js';
 import { workspaceOperationSchemas } from '../packages/protocol/src/workspace-operations.js';
 
-const workspace = { id: '861c6a57-2259-400a-9d03-20bc72942b11', projectId: FOOTBALL_PROJECT_ID, kind: 'unity', status: 'active', nodeId: '330f7fa0-2aba-47ed-b33f-2933c29a43ac' };
-function harness({ available = true, fail = false } = {}) {
+const workspace = { id: '861c6a57-2259-400a-9d03-20bc72942b11', projectId: FOOTBALL_PROJECT_ID, kind: 'unity', name: 'AI Football', status: 'active', nodeId: '330f7fa0-2aba-47ed-b33f-2933c29a43ac' };
+const fypWorkspace = { ...workspace, id: 'f9d524ce-f070-4ed1-8f03-6e372cb5fdcb', name: 'FYP' };
+function harness({ available = true, fail = false, includeFyp = false } = {}) {
     const invocations: any[] = [];
     const audits: any[] = [];
     const catalog = { getProject: async (id: string) => { assert.equal(id, FOOTBALL_PROJECT_ID); return { id }; } };
-    const repository = { list: async (id: string) => { assert.equal(id, FOOTBALL_PROJECT_ID); return available ? [workspace] : []; },
+    const repository = { list: async (id: string) => { assert.equal(id, FOOTBALL_PROJECT_ID); return available ? (includeFyp ? [workspace, fypWorkspace] : [workspace]) : []; },
         audit: async (_ws: unknown, action: string, _client: string, meta: unknown) => { audits.push([action, meta]); } };
     const router = { execute: async (...args: any[]) => { invocations.push(args); if (fail) throw new Error('Node unavailable'); return { ok: true }; } };
     const apps = new ApplicationRegistry([footballTrainingApplication(new FootballTrainingService(catalog as any, repository as any, router as any))]);
@@ -162,4 +163,39 @@ test('experiment reviews are typed, audited on write and never invoke promotion'
     await assert.rejects(apps.invoke('football_generalist_review_update', {
         phase: 'g05', scenario: '../escape', variant: 'FootV1', verdict: 'adopt', note: 'Invalid',
     }));
+});
+
+test('canonical FYP tools route to FYP, never the first legacy Unity checkout', async () => {
+    const { apps, invocations, audits } = harness({ includeFyp: true });
+    const fypActions = [
+        ['football_fyp_manifest', {}, 'fyp_manifest'],
+        ['football_fyp_preflight', {}, 'fyp_preflight'],
+        ['football_fyp_build', {}, 'fyp_build'],
+        ['football_fyp_runs', {}, 'fyp_runs'],
+        ['football_fyp_train', { preset: 'smoke', seed: 63, basePort: 5605 }, 'fyp_train'],
+    ] as const;
+    for (const [tool, input, action] of fypActions) {
+        assert.ok(apps.hasTool(tool));
+        await apps.invoke(tool, input);
+        const invocation = invocations.at(-1);
+        assert.equal(invocation[0].id, fypWorkspace.id);
+        assert.equal(invocation[2].workspaceId, fypWorkspace.id);
+        assert.equal(invocation[2].action, action);
+        assert.doesNotThrow(() => workspaceOperationSchemas.football_control.parse(invocation[2]));
+    }
+    await apps.invoke('football_generalist_manifest', {});
+    assert.equal(invocations.at(-1)[0].id, workspace.id);
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 2);
+    await assert.rejects(apps.invoke('football_fyp_train', {
+        preset: 'arbitrary', seed: 63, basePort: 5605,
+    }));
+    await assert.rejects(apps.invoke('football_fyp_train', {
+        preset: 'smoke', seed: 63, basePort: 5605, command: '/bin/sh',
+    }).then(() => Promise.reject(new Error('unexpected acceptance'))), /unexpected acceptance/);
+});
+
+test('FYP operations refuse to silently fall back to the legacy Unity workspace', async () => {
+    const { apps } = harness();
+    await assert.rejects(apps.invoke('football_fyp_manifest', {}), /Register the new FYP Unity checkout/);
+    await assert.rejects(apps.invoke('football_fyp_build', {}), /Register the new FYP Unity checkout/);
 });
