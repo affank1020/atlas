@@ -504,7 +504,7 @@ test('historical featured policy exposes versioned playback only with its pinned
             family: 'generalist', contract: { behavior: 'FootballGeneralistV2' },
             contract_sha256: 'old-contract', scenario_sha256: 'old-scenarios',
             implementation_sha256: 'old-implementation',
-            scenarios: { scenarios: [{ id: footScenario, footTouchV1: true }] },
+            scenarios: { scenarios: [{ id: footScenario, footTouchV1: true }, { id: oldScenario }] },
         }));
         await writeFile(path.join(dir, 'policy.json'), JSON.stringify({
             id: 'generalist-foot-v1', family: 'generalist', behavior: 'FootballGeneralistFootV1',
@@ -516,6 +516,12 @@ test('historical featured policy exposes versioned playback only with its pinned
         const [foot] = await footballControl(ws(root), { ...input, action: 'generalist_policies' }) as any[];
         assert.equal(foot.featured, false);
         assert.equal(foot.historical_watch_available, true);
+        // FootV1's 54/7 policy cannot be replayed in a different V2 scenario,
+        // even when that scenario exists in the pinned historical Unity runner.
+        assert.deepEqual(foot.historical_scenarios, [footScenario]);
+        await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: foot.id, scenario: oldScenario, seed: 515 }),
+            (error: any) => error.code === 'INVALID_ARGUMENT');
         const footLaunch = await footballControl(ws(root), { ...input, action: 'generalist_watch',
             policyId: foot.id, scenario: footScenario, seed: 515 }) as any;
         assert.equal(footLaunch.accepted, true);
