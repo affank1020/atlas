@@ -63,7 +63,7 @@ async function python(workspace: Workspace, argv: string[]): Promise<any> {
     const file = bridge(workspace);
     const { stdout } = await execFileAsync('python3', [file, ...argv], {
         cwd: workspace.rootPath, env: cleanEnv(), shell: false,
-        maxBuffer: 512 * 1024, timeout: 25_000,
+        maxBuffer: 512 * 1024, timeout: 90_000,
     });
     try { return JSON.parse(stdout); }
     catch { throw new AtlasError('FYP driver returned invalid JSON.', 'DRIVER_UNAVAILABLE'); }
@@ -135,7 +135,9 @@ function taskStatus(workspace: Workspace, id: string) {
         try { process.kill(info.pid, 0); alive = true; } catch {}
     }
     return { ticket: id, action: info.action, run_id: info.run_id, result,
-        status: result ? 'completed' : alive ? 'running' : 'failed_or_unknown',
+        status: result?.state === 'failed' ? 'failed' :
+            result?.completed === true || result?.state === 'completed' ? 'completed' :
+            alive ? 'running' : 'failed_or_unknown',
         output, error, note: result ? 'Completed command; assess resulting artifacts separately.' :
             'No completion receipt. Process status alone does not establish success.' };
 }
