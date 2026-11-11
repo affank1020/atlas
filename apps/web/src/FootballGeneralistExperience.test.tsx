@@ -608,7 +608,7 @@ test('unfeatured FootV1 supports historical Watch and a gated 50k warm-start fro
 
 test('FYP successor is explicitly separate and training stays blocked before preflight', async () => {
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open FYP v1 training' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open FYP v1 training' }));
     expect(screen.getByText('FYP — new Unity football project')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('FootballV1')).toBeInTheDocument());
     expect(screen.getByText(/Canonical successor to AI Football/)).toBeInTheDocument();
