@@ -493,6 +493,32 @@ test('historical featured policy exposes versioned playback only with its pinned
         await assert.rejects(footballControl(ws(root), { ...input, action: 'generalist_watch',
             policyId: 'generalist-musiala-v1', scenario: oldScenario, seed: 515 }),
             (error: any) => error.code === 'INVALID_ARGUMENT');
+        // The narrowly versioned G0.5 experiment remains watchable without
+        // featuring it; the ordinary historical V2 rule above still applies.
+        const footScenario = 's1-dribble-foot-touch-g05-v1';
+        const footContract = JSON.stringify({ behavior: 'FootballGeneralistFootV1',
+            observations: { size: 54 }, actions: { continuous: 7 } });
+        const footHash = createHash('sha256').update(footContract).digest('hex');
+        await writeFile(path.join(root, 'ml-agents/config/football_generalist_foot_v1_contract.json'), footContract);
+        await writeFile(path.join(app, 'Contents', 'generalist-build.json'), JSON.stringify({
+            family: 'generalist', contract: { behavior: 'FootballGeneralistV2' },
+            contract_sha256: 'old-contract', scenario_sha256: 'old-scenarios',
+            implementation_sha256: 'old-implementation',
+            scenarios: { scenarios: [{ id: footScenario, footTouchV1: true }] },
+        }));
+        await writeFile(path.join(dir, 'policy.json'), JSON.stringify({
+            id: 'generalist-foot-v1', family: 'generalist', behavior: 'FootballGeneralistFootV1',
+            experimental_foot_contract: true, runner_binary: binary, bundle_path: bundle, onnx_path: onnx,
+            contract_sha256: footHash, runner_contract_sha256: 'old-contract',
+            scenario_sha256: 'old-scenarios', implementation_sha256: 'old-implementation',
+            view_scenario: footScenario,
+        }));
+        const [foot] = await footballControl(ws(root), { ...input, action: 'generalist_policies' }) as any[];
+        assert.equal(foot.featured, false);
+        assert.equal(foot.historical_watch_available, true);
+        const footLaunch = await footballControl(ws(root), { ...input, action: 'generalist_watch',
+            policyId: foot.id, scenario: footScenario, seed: 515 }) as any;
+        assert.equal(footLaunch.accepted, true);
     } finally {
         await rm(root, { recursive: true, force: true });
         await rm(app, { recursive: true, force: true });

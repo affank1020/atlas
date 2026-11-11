@@ -151,7 +151,9 @@ export function generalistPolicies(workspace: Workspace) {
                 policy.contract_sha256 === manifest.fingerprints.contract_sha256 &&
                 policy.scenario_sha256 === manifest.fingerprints.scenario_sha256;
             const featured = curated[policy.id]?.featured === true;
-            const historicalRunner = !compatibleMetadata ? historicalWatchRunner(workspace, policy) : null;
+            const historicalEligible = featured ||
+                (policy.behavior === g05FootBehavior && policy.experimental_foot_contract === true);
+            const historicalRunner = !compatibleMetadata && historicalEligible ? historicalWatchRunner(workspace, policy) : null;
             // Preview is explicitly a different environment. Same exact ABI,
             // original ONNX/bundle present, and a candidate stamped CURRENT
             // Unity player; Python rechecks all hashes before actual playback.
@@ -419,7 +421,7 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         const directory = realpathSync(path.join(root, String(run.output_dir)));
         if (!directory.startsWith(root + path.sep) || !statSync(directory).isDirectory())
             throw new AtlasError('Generalist training directory is outside the workspace.', 'INVALID_ARGUMENT');
-        const exportedBehavior = run.scenario === g05FootScenario ? g05FootBehavior : generalistManifest(workspace).contract.behavior;
+        const exportedBehavior = run.scenario === g05FootScenario ? g05FootBehavior : 'FootballGeneralistV2';
         if (exportedBehavior === g05FootBehavior && run.contract_sha256 !== footContractSha256(workspace))
             throw new AtlasError('Experimental FootV1 model export contract changed.', 'INVALID_ARGUMENT');
         if (!existsSync(path.join(directory, x.runId, exportedBehavior + '.onnx')))
@@ -451,8 +453,10 @@ export function generalistOperation(workspace: Workspace, x: Args): unknown {
         throw new AtlasError('Legacy preview requires an older saved generalist policy.', 'INVALID_ARGUMENT');
     const historicalWatch = !!pinnedWatch && !currentWatch && !legacyPreview;
     const archivedRunner = historicalWatch ? historicalWatchRunner(workspace, pinnedWatch.policy) : null;
-    if (historicalWatch && !archivedRunner)
-        throw new AtlasError('Historical playback requires the policy’s exact saved Unity build and model artifacts.', 'INVALID_ARGUMENT');
+    const historicalEligible = !!pinnedWatch && (readCuration(workspace.rootPath)[pinnedWatch.policy.id]?.featured === true ||
+        (pinnedWatch.policy.behavior === g05FootBehavior && pinnedWatch.policy.experimental_foot_contract === true));
+    if (historicalWatch && (!historicalEligible || !archivedRunner))
+        throw new AtlasError('Historical playback requires a featured policy or experimental FootV1 with its exact saved Unity build and model artifacts.', 'INVALID_ARGUMENT');
     const previewRunner = legacyPreview ? modernPreviewRunner(workspace, manifest) : null;
     if (legacyPreview && (!previewRunner ||
         pinnedWatch!.policy.family !== 'generalist' ||
