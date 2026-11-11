@@ -283,6 +283,11 @@ export function FootballGeneralistExperience() {
         {tab === 'home' && (loading && !manifest && !error
             ? <FootballGeneralistContentLoading />
             : <div className="fg-stack">
+            <section className="fg-panel" aria-label="Current FYP successor">
+                <h2>FYP v1 — current Unity project</h2>
+                <p className="fg-muted">The new FYP repository is the canonical training environment. The Generalist history below belongs to the archived AI Football project and cannot share model weights with FootballV1.</p>
+                <button type="button" className="fg-button primary" onClick={() => setTab('fyp')}>Open FYP v1 training</button>
+            </section>
             <section className="fg-panel fg-active-panel" aria-label="Active training and evaluations">
                 <div className="fg-panel-title"><h2>Active activity</h2>
                     <span>{activeRuns.length + activeEvaluations.length} running or launching</span></div>
