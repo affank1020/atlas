@@ -110,14 +110,24 @@ function launch(workspace: Workspace, action: 'fyp_build' | 'fyp_train', argv: s
         note: 'Accepted locally; inspect FYP run or operation status. This does not prove training or build success.' };
 }
 
+function safeReceiptText(file: string): string {
+    if (!existsSync(file)) return '';
+    const stat = lstatSync(file);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1024 * 1024)
+        throw new AtlasError('Unsafe or oversized FYP operation receipt.', 'INVALID_ARGUMENT');
+    return readFileSync(file, 'utf8');
+}
+
 function taskStatus(workspace: Workspace, id: string) {
     if (!UUID.test(id)) throw new AtlasError('Invalid FYP ticket.', 'INVALID_ARGUMENT');
     const dir = operationsDir(workspace);
     const base = path.join(dir, id);
     if (!existsSync(base + '.json')) throw new AtlasError('FYP ticket not found.', 'NOT_FOUND');
-    const info = JSON.parse(readFileSync(base + '.json', 'utf8'));
-    const output = existsSync(base + '.out') ? readFileSync(base + '.out', 'utf8').slice(-4000) : '';
-    const error = existsSync(base + '.err') ? readFileSync(base + '.err', 'utf8').slice(-4000) : '';
+    const info = JSON.parse(safeReceiptText(base + '.json'));
+    if (info.ticket !== id || !['fyp_build','fyp_train'].includes(info.action))
+        throw new AtlasError('Invalid FYP operation receipt.', 'INVALID_ARGUMENT');
+    const output = safeReceiptText(base + '.out').slice(-4000);
+    const error = safeReceiptText(base + '.err').slice(-4000);
     let result: any = null;
     try { result = JSON.parse(output.trim().split('\n').at(-1) ?? ''); } catch {}
     let alive = false;
