@@ -218,58 +218,50 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
             </details>
         </section>
 
-        <div className="fyp-workflow-grid">
-            <section className="fg-panel fyp-runs-panel">
-                <div className="fg-panel-title"><h2>Recent training runs</h2><span>{runs.length} recorded</span></div>
-                {runs.length === 0 ? <p className="fg-muted">No training runs recorded yet.</p> :
-                    <ul className="fyp-run-list">{recentRuns.map(run => <li className="fyp-run-row" key={run.run_id}>
-                        <div className="fyp-run-summary">
-                            <strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong>
-                            <span className={`fyp-state fyp-state-${run.state.toLowerCase()}`}>{run.state}</span>
-                        </div>
-                        <p>{run.started_at ? new Date(run.started_at).toLocaleString() : 'Time not recorded'} · Seed {run.seed} · {run.steps.toLocaleString()} steps · {run.exported_model === true ? 'Checkpoint exported' : 'No export recorded'}</p>
-                        {run.error && <p className="fg-error">{run.error}</p>}
-                    </li>)}</ul>}
-                {onOpenEvidence && <button type="button" className="fg-link fyp-evidence-link" onClick={onOpenEvidence}>View all runs and evaluations →</button>}
-            </section>
-
-            <section className="fg-panel fyp-evaluation-panel">
-            <div className="fg-panel-title"><h2>Evals</h2><span>{completedRuns.length} eligible checkpoints</span></div>
-            <div className="fyp-evaluation-body">
-            <p className="fg-muted">Evals run the checkpoint in the open Unity Editor, so you can inspect its behavior while results are recorded.</p>
-            <div className="fyp-evaluation-settings">
-                <label className="fyp-field">Episodes
-                    <input aria-label="FYP evaluation episodes" type="number" min={1} max={100} step={1} value={evaluationEpisodes} onChange={event => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(Number(event.target.value) || 1))))} />
-                </label>
-                <label className="fyp-field">Seed
-                    <input aria-label="FYP evaluation seed" type="number" min={0} max={2147483647} step={1} value={evaluationSeed} onChange={event => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
-                </label>
+        <section className="fg-panel fyp-checkpoint-panel" aria-label="Recent checkpoints and evaluations">
+            <div className="fg-panel-title">
+                <div><h2>Recent checkpoints</h2><span>{recentRuns.filter(run => completedRuns.some(candidate => candidate.run_id === run.run_id)).length} ready to evaluate · {runs.length} runs recorded</span></div>
+                <div className="fyp-evaluation-settings">
+                    <label className="fyp-field">Episodes
+                        <input aria-label="FYP evaluation episodes" type="number" min={1} max={100} step={1} value={evaluationEpisodes} onChange={event => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(Number(event.target.value) || 1))))} />
+                    </label>
+                    <label className="fyp-field">Seed
+                        <input aria-label="FYP evaluation seed" type="number" min={0} max={2147483647} step={1} value={evaluationSeed} onChange={event => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
+                    </label>
+                </div>
             </div>
-            {completedRuns.length === 0 ? <p className="fg-muted">A completed run with an exported checkpoint is required.</p> :
-                <ul className="fyp-evaluation-list">{completedRuns.map(run => {
+            <p className="fg-muted">Choose a saved checkpoint to evaluate in the open Unity Editor. Each result stays with its training run.</p>
+            {recentRuns.length === 0 ? <p className="fg-muted">No training runs recorded yet.</p> :
+                <ul className="fyp-checkpoint-list">{recentRuns.map(run => {
                     const runEvaluations = evaluations.filter(evaluation => evaluation.training_run_id === run.run_id);
+                    const eligible = completedRuns.some(candidate => candidate.run_id === run.run_id);
                     const runIsActive = runEvaluations.some(evaluation => isActive(evaluation.state));
-                    return <li className="fyp-evaluation-run" key={run.run_id}>
-                        <div className="fyp-run-summary">
-                            <div><strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong><small>Training seed {run.seed}</small></div>
-                            <span className="fyp-state fyp-state-completed">Candidate checkpoint</span>
+                    return <li className="fyp-checkpoint-row" key={run.run_id}>
+                        <div className="fyp-checkpoint-summary">
+                            <div className="fyp-checkpoint-title">
+                                <strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong>
+                                <span className={`fyp-state fyp-state-${run.state.toLowerCase()}`}>{run.state}</span>
+                                {eligible && <span className="fyp-state fyp-state-completed">Checkpoint exported</span>}
+                            </div>
+                            <p>{run.started_at ? new Date(run.started_at).toLocaleString() : 'Time not recorded'} · Seed {run.seed} · {run.steps.toLocaleString()} steps</p>
+                            {run.error && <p className="fg-error">{run.error}</p>}
+                            {runEvaluations.length > 0 && <ul className="fyp-evaluation-receipts" aria-label={`Evaluations for ${run.run_id}`}>
+                                {runEvaluations.map(evaluation => <li key={evaluation.evaluation_id}>
+                                    <strong>{evaluation.state}</strong> · {evaluation.episodes_completed ?? 0}/{evaluation.requested_episodes} episodes
+                                    {evaluation.goals_scored != null ? ` · ${evaluation.goals_scored} goal${evaluation.goals_scored === 1 ? '' : 's'} (${Math.round((evaluation.goal_rate ?? 0) * 100)}%)` : ''}
+                                    {evaluation.seed != null ? ` · evaluation seed ${evaluation.seed}` : ''}
+                                    {evaluation.error ? ` · ${evaluation.error}` : ''}
+                                </li>)}
+                            </ul>}
                         </div>
-                        {runEvaluations.length > 0 && <ul className="fyp-evaluation-receipts" aria-label={`Evaluations for ${run.run_id}`}>
-                            {runEvaluations.map(evaluation => <li key={evaluation.evaluation_id}>
-                                <strong>{evaluation.state}</strong> · {evaluation.episodes_completed ?? 0}/{evaluation.requested_episodes} episodes
-                                {evaluation.goals_scored != null ? ` · ${evaluation.goals_scored} goal${evaluation.goals_scored === 1 ? '' : 's'} (${Math.round((evaluation.goal_rate ?? 0) * 100)}%)` : ''}
-                                {evaluation.seed != null ? ` · evaluation seed ${evaluation.seed}` : ''}
-                                {evaluation.error ? ` · ${evaluation.error}` : ''}
-                            </li>)}
-                        </ul>}
-                        <button className="fg-button" type="button" disabled={!canEvaluate || runIsActive} onClick={() => void evaluateRun(run.run_id)}>
+                        {eligible && <button className="fg-button" type="button" disabled={!canEvaluate || runIsActive} onClick={() => void evaluateRun(run.run_id)}>
                             {busy === `evaluate:${run.run_id}` ? 'Starting evaluation…' : `Evaluate ${evaluationEpisodes} episodes`}
-                        </button>
+                        </button>}
                     </li>;
                 })}</ul>}
-            </div>
-            </section>
-        </div>
+            {completedRuns.length > 0 && <p className="fg-muted fyp-candidate-note">Evaluation uses the selected run’s exported checkpoint; it does not start training.</p>}
+            {onOpenEvidence && <button type="button" className="fg-link fyp-evidence-link" onClick={onOpenEvidence}>View all runs and evaluations →</button>}
+        </section>
 
         <details className="fg-panel fyp-training-panel">
             <summary><h2>Start training</h2><span>Smoke or 50k pilot</span></summary>
