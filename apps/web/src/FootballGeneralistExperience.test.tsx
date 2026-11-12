@@ -122,6 +122,7 @@ test('FYP training is the primary Experiments view', async () => {
     expect(await screen.findByRole('button', { name: 'Run 2,048-step smoke' })).toBeInTheDocument();
     expect(screen.getByText('FootballV1')).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
+        'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations',
         'football_generalist_manifest', 'football_generalist_runs',
         'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
     ]);
@@ -181,7 +182,7 @@ test('live trainer summaries populate steps, graph and budget before checkpoint 
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    fireEvent.click(await screen.findByRole('button', { name: runId + ' →' }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(`s1_rehearsal.*${runId}`) }));
     expect(await screen.findByText('15,000 / 100,000')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Training step progress' }))
         .toHaveAttribute('aria-valuenow', '15000');
@@ -272,7 +273,7 @@ test('allows safe backfill packaging for exported generalist ONNX without anothe
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_train')).toBe(false);
 });
 
-test('Musiala is selectable by name and mixed dribbling is a Watch-only drill', async () => {
+test('Musiala is selectable by name without exposing the removed drill chooser', async () => {
     vi.mocked(callTool).mockImplementation(async (name) => {
         if (name === 'football_generalist_manifest') return contract as never;
         if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
@@ -290,17 +291,8 @@ test('Musiala is selectable by name and mixed dribbling is a Watch-only drill', 
     render(<FootballGeneralistExperience />);
     openSectionTab('Evidence', 'Watch');
     expect(await screen.findByRole('option', { name: 'Musiala' })).toHaveValue('generalist-musiala-v1');
-    expect(screen.getByRole('button', { name: /Mixed dribbling showcase/ })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), { target: { value: 'generalist-musiala-v1' } });
-    // The showcase is the default Watch drill; launch without a second selector.
-    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
-        'football_generalist_watch', expect.objectContaining({
-            policyId: 'generalist-musiala-v1', scenario: 'dribbling_showcase_v1',
-        }),
-    ));
-    openSectionTab('Evidence', 'Evaluate');
     expect(screen.queryByRole('button', { name: /Mixed dribbling showcase/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/drill/i)).not.toBeInTheDocument();
 });
 
 test('Watch receipt shows player logging evidence without claiming a visible window', async () => {
@@ -351,7 +343,8 @@ test('shows externally launched evaluation progress without a saved per-episode 
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    const activeEvaluation = await screen.findByRole('button', { name: /Evaluation · generalist-run.*25 \/ 100 episodes/ });
+    openSectionTab('Evidence', 'Evaluate');
+    const activeEvaluation = await screen.findByRole('button', { name: /generalist-run.*25 \/ 100 episodes/ });
     expect(activeEvaluation).toHaveTextContent('25 / 100 episodes · 25 physical contact');
     fireEvent.click(activeEvaluation);
     expect(await screen.findByRole('progressbar', { name: 'Evaluation episode progress' }))
@@ -500,9 +493,9 @@ test.each(['unavailable', 'invalid contract'] as const)(
         expect(screen.getByRole('alert')).toHaveTextContent('Refresh incomplete: contract could not be updated');
         expect(screen.getByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
         expect(screen.getAllByText('s0-contact-easy-v1').length).toBeGreaterThan(0);
-        expect(screen.getByText('Unavailable')).toBeInTheDocument();
         expect(screen.queryByRole('status', { name: 'Loading Football Generalist' })).not.toBeInTheDocument();
         expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
+            'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations',
             'football_generalist_manifest', 'football_generalist_runs',
             'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
         ]);
