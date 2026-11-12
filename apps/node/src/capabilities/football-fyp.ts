@@ -82,7 +82,7 @@ function operationsDir(workspace: Workspace) {
     return directory;
 }
 
-function launch(workspace: Workspace, action: 'fyp_build' | 'fyp_train', argv: string[], runId?: string) {
+function launch(workspace: Workspace, action: 'fyp_build' | 'fyp_train' | 'fyp_evaluate', argv: string[], runId?: string) {
     const file = bridge(workspace);
     const directory = operationsDir(workspace);
     const ticket = randomUUID();
@@ -124,7 +124,7 @@ function taskStatus(workspace: Workspace, id: string) {
     const base = path.join(dir, id);
     if (!existsSync(base + '.json')) throw new AtlasError('FYP ticket not found.', 'NOT_FOUND');
     const info = JSON.parse(safeReceiptText(base + '.json'));
-    if (info.ticket !== id || !['fyp_build','fyp_train'].includes(info.action))
+    if (info.ticket !== id || !['fyp_build','fyp_train','fyp_evaluate'].includes(info.action))
         throw new AtlasError('Invalid FYP operation receipt.', 'INVALID_ARGUMENT');
     const output = safeReceiptText(base + '.out').slice(-4000);
     const error = safeReceiptText(base + '.err').slice(-4000);
@@ -146,6 +146,7 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
     if (x.action === 'fyp_manifest') return fypManifest(workspace);
     if (x.action === 'fyp_preflight') return python(workspace, ['preflight']);
     if (x.action === 'fyp_runs') return python(workspace, ['runs']);
+    if (x.action === 'fyp_evaluations') return python(workspace, ['evaluations']);
     if (x.action === 'fyp_status') {
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId))
             throw new AtlasError('Valid FYP run ID required.', 'INVALID_ARGUMENT');
@@ -157,16 +158,27 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
     }
     if (x.action === 'fyp_build') return launch(workspace, 'fyp_build', ['build']);
     if (x.action === 'fyp_train') {
-        if (!['smoke','pilot_50k'].includes(x.preset ?? '') ||
-            x.seed === undefined || x.basePort === undefined)
-            throw new AtlasError('FYP training requires an approved preset, seed and base port.', 'INVALID_ARGUMENT');
+        if (!['smoke','pilot_50k'].includes(x.preset ?? '') || x.seed === undefined)
+            throw new AtlasError('FYP training requires an approved preset and seed.', 'INVALID_ARGUMENT');
         const readiness = await python(workspace, ['preflight']);
         if (readiness?.ready_to_train !== true)
-            throw new AtlasError('FYP preflight failed: configure the trainer environment and build a verified player first.', 'DRIVER_UNAVAILABLE');
+            throw new AtlasError('FYP preflight failed: configure the trainer and open the FYP FootballV1 scene in Edit Mode. Atlas will start the learner; then press Play to connect.', 'DRIVER_UNAVAILABLE');
         const runId = 'fyp-' + randomUUID();
         return launch(workspace, 'fyp_train',
             ['train', '--run-id', runId, '--preset', x.preset!,
-                '--seed', String(x.seed), '--base-port', String(x.basePort)], runId);
+                '--seed', String(x.seed)], runId);
+    }
+    if (x.action === 'fyp_evaluate') {
+        if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId) ||
+            x.episodes === undefined || x.episodes < 1 || x.episodes > 100 || x.seed === undefined)
+            throw new AtlasError('FYP evaluation requires a completed run ID, 1–100 episodes and seed.', 'INVALID_ARGUMENT');
+        const readiness = await python(workspace, ['preflight']);
+        if (readiness?.ready_to_train !== true)
+            throw new AtlasError('FYP preflight failed: open the FYP training scene in Unity Edit Mode; stop Play Mode before requesting evaluation.', 'DRIVER_UNAVAILABLE');
+        const evaluationId = 'fyp-eval-' + randomUUID();
+        return launch(workspace, 'fyp_evaluate',
+            ['evaluate', '--evaluation-id', evaluationId, '--run-id', x.runId,
+                '--episodes', String(x.episodes), '--seed', String(x.seed)], x.runId);
     }
     throw new AtlasError('Unsupported FYP operation.', 'INVALID_ARGUMENT');
 }
