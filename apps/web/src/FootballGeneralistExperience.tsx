@@ -67,7 +67,7 @@ export function FootballGeneralistExperience() {
     const [refreshStatus, setRefreshStatus] = useState('Not synced yet');
     const [assessmentWarning, setAssessmentWarning] = useState('');
     const activeRefresh = useRef<Promise<void> | null>(null);
-    const scenario = 'mix';
+    const [scenario, setScenario] = useState('mix');
     const watchScenario = SHOWCASE_DRILL;
     const [historicalScenarioSelection, setHistoricalScenarioSelection] = useState('');
     const [preset, setPreset] = useState<'smoke' | 'pilot_50k' | 'pilot_100k'>('smoke');
