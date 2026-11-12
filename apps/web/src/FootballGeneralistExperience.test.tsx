@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-function openSectionTab(section: 'Experiments' | 'Evidence' | 'Archive', tab?: string) {
+function openSectionTab(section: 'Experiments' | 'Evidence', tab?: string) {
     fireEvent.click(screen.getByRole('button', { name: section }));
     if (tab) fireEvent.click(within(screen.getByRole('navigation', { name: `${section} steps` })).getByRole('button', { name: tab }));
 }
@@ -117,29 +117,27 @@ test('manual refresh shows busy state and reports a completed data reload', asyn
     await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
 });
 
-test('Generalist application defaults to new contract, not legacy driver', async () => {
-    render(<FootballGeneralistExperience />);
-    expect(await screen.findByRole('button', { name: 'external-s0 →' })).toBeInTheDocument();
-    expect(screen.getByText('football-generalist-v2')).toBeInTheDocument();
+test('FYP training is the primary Experiments view', async () => {
+    render(<FootballGeneralistExperience />, 'Experiments');
+    expect(await screen.findByRole('button', { name: 'Run 2,048-step smoke' })).toBeInTheDocument();
+    expect(screen.getByText('FootballV1')).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
         'football_generalist_manifest', 'football_generalist_runs',
         'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
     ]);
-    openSectionTab('Experiments', 'Set up training');
-    expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_list_drills')).toBe(false);
 });
 
-test('Historical specialist data is fetched only when opening read-only archive', async () => {
+test('legacy specialist policies, runs, and drill catalogue are not exposed', async () => {
     render(<FootballGeneralistExperience />);
-    await screen.findByRole('button', { name: 'external-s0 →' });
-    openSectionTab('Archive');
-    expect(await screen.findByText('legacy-policy')).toBeInTheDocument();
-    expect(screen.getByText('legacy-run')).toBeInTheDocument();
-    expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toContain('football_list_jobs');
-    expect(screen.queryByRole('button', { name: /Launch specialist/ })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Legacy overview' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Legacy archive' })).not.toBeInTheDocument();
+    expect(vi.mocked(callTool).mock.calls.some(([name]) =>
+        ['football_list_jobs', 'football_list_policies', 'football_list_drills'].includes(name),
+    )).toBe(false);
 });
-
 
 test('opens generalist run inspection and keeps an honest no-log state', async () => {
     vi.mocked(callTool).mockImplementation(async (name) => {
@@ -363,38 +361,6 @@ test('shows externally launched evaluation progress without a saved per-episode 
     expect(screen.getByText(/Individual episode records are not available yet/)).toBeInTheDocument();
 });
 
-test('S1 continuation requires a checkpoint and forwards the exact source run', async () => {
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{
-            id: 'proven-s0', family: 'generalist', scenario: 'mix',
-            contract_sha256: 'a', initialization_available: true, state: 'completed',
-        }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_train') return {
-            accepted: true, ticket: 'f99de0da-adcc-4ec5-a8db-99539550aab9',
-            action: 'generalist_train', status: 'launching',
-        } as never;
-        return [] as never;
-    });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<FootballGeneralistExperience />);
-    await screen.findByRole('button', { name: 'Experiments' });
-    openSectionTab('Experiments', 'Set up training');
-    fireEvent.click(screen.getByRole('button', { name: /S0 mixed contact starts/ }));
-    fireEvent.click(screen.getByRole('button', { name: /S1 with S0 rehearsal/ }));
-    expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeDisabled();
-    expect(screen.getByText('Select a recorded S0 checkpoint before S1 continuation.')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Initial weights'), { target: { value: 'proven-s0' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Launch generalist training' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_train', {
-        scenario: 's1_rehearsal', preset: 'smoke', seed: 42, arenas: 1,
-        basePort: 5605, initializeFromRunId: 'proven-s0',
-    }));
-    vi.mocked(window.confirm).mockRestore();
-});
-
-
 test('featured historical policy remains selectable in Watch with its saved scenario but never Evaluate', async () => {
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'football_generalist_manifest') return contract as never;
@@ -492,7 +458,12 @@ test('historical featured players lacking an original runner remain visible but 
     expect(screen.getByRole('button', { name: /Watch in Unity/ })).toBeDisabled();
 });
 
-const render = (element: ReactElement) => { const { store } = createAtlasStore(); return rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> }); };
+const render = (element: ReactElement, section: 'Experiments' | 'Evidence' = 'Evidence') => {
+    const { store } = createAtlasStore();
+    const rendered = rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> });
+    fireEvent.click(screen.getByRole('button', { name: section }));
+    return rendered;
+};
 
 test('a cached unavailable manifest does not break navigation on revisit', async () => {
     const { atlasApi } = await import('./atlasApi');
@@ -500,7 +471,8 @@ test('a cached unavailable manifest does not break navigation on revisit', async
     await store.dispatch(atlasApi.util.upsertQueryData('applicationRead', {name:'football_generalist_manifest',input:{}}, {available:false}));
     rtlRender(<Provider store={store}><FootballGeneralistExperience /></Provider>);
     expect(screen.getByRole('button', { name:'Experiments' })).toBeInTheDocument();
-    await screen.findByText('football-generalist-v2');
+    fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
+    expect(await screen.findByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
 });
 
 
@@ -526,9 +498,7 @@ test.each(['unavailable', 'invalid contract'] as const)(
         render(<FootballGeneralistExperience />);
         expect(await screen.findByRole('button', { name: 'surviving-run →' })).toBeInTheDocument();
         expect(screen.getByRole('alert')).toHaveTextContent('Refresh incomplete: contract could not be updated');
-        expect(screen.getByRole('heading', { name: 'Active activity' })).toBeInTheDocument();
-        expect(screen.getByRole('heading', { name: 'Recent runs' })).toBeInTheDocument();
-        expect(screen.getByRole('heading', { name: 'Evaluations' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
         expect(screen.getAllByText('s0-contact-easy-v1').length).toBeGreaterThan(0);
         expect(screen.getByText('Unavailable')).toBeInTheDocument();
         expect(screen.queryByRole('status', { name: 'Loading Football Generalist' })).not.toBeInTheDocument();
@@ -540,78 +510,10 @@ test.each(['unavailable', 'invalid contract'] as const)(
 );
 
 
-test('unfeatured FootV1 supports historical Watch and a gated 50k warm-start from the exact FootV1 2k source', async () => {
-    const footScenario = 's1-dribble-foot-touch-g05-v1';
-    const sourceId = 'atlas-generalist-61a91798db31';
-    const footId = 'generalist-atlas-generalist-61a91798db31';
-    const customContract = {
-        ...contract, scenarios: { ...contract.scenarios,
-            scenarios: [...contract.scenarios.scenarios, {
-                id: footScenario, name: 'G0.5 physical foot control',
-                stage: 1, objectiveType: 'controlled_dribble',
-            }],
-        },
-    };
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return customContract as never;
-        if (name === 'football_generalist_runs') return [{
-            id: sourceId, scenario: footScenario, state: 'completed',
-            initialization_available: false, contract_sha256: 'separate-54-7-ABI',
-        }] as never;
-        if (name === 'football_generalist_policies') return [{
-            id: footId, display_name: 'FootV1 experimental', featured: false,
-            behavior: 'FootballGeneralistFootV1', status: 'experimental',
-            compatible_metadata: false, historical_watch_available: true,
-            historical_scenarios: [footScenario], view_scenario: footScenario,
-            onnx_available: true, bundle_available: true,
-        }] as never;
-        if (name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        if (name === 'football_generalist_train') return {
-            accepted: true, action: 'generalist_train', status: 'launching',
-            ticket: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        } as never;
-        if (name === 'football_generalist_watch') return {
-            accepted: true, action: 'generalist_watch', status: 'launching',
-            ticket: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-        } as never;
-        return [] as never;
-    });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<FootballGeneralistExperience />);
-    await screen.findByRole('button', { name: 'Experiments' });
-    openSectionTab('Experiments', 'Set up training');
-    fireEvent.click(screen.getByRole('button', { name: 'S0 mixed contact starts' }));
-    fireEvent.click(screen.getByRole('button', { name: /G0.5 physical foot control/ }));
-    expect(screen.getByText('Contract: FootV1 · 54 observations / 7 actions')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Initial weights' })).toHaveValue(sourceId);
-    expect(screen.getByRole('button', { name: 'Launch generalist training' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Launch generalist training' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_train',
-        expect.objectContaining({
-            scenario: footScenario, preset: 'pilot_50k', arenas: 2,
-            initializeFromRunId: sourceId,
-        })));
-    openSectionTab('Evidence', 'Watch');
-    expect(await screen.findByRole('option', { name: 'FootV1 experimental · Historical' }))
-        .toHaveValue(footId);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
-        target: { value: footId },
-    });
-    expect(screen.getByText('Historical playback')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Historical scenario' })).toHaveValue(footScenario);
-    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_watch',
-        expect.objectContaining({ policyId: footId, scenario: footScenario })));
-    vi.mocked(window.confirm).mockRestore();
-});
-
-test('FYP successor is explicitly separate and training stays blocked before preflight', async () => {
-    render(<FootballGeneralistExperience />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Open FYP v1 training' }));
+test('FYP training stays blocked before preflight', async () => {
+    render(<FootballGeneralistExperience />, 'Experiments');
     expect(screen.getByText('FYP — new Unity football project')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('FootballV1')).toBeInTheDocument());
-    expect(screen.getByText(/Canonical successor to AI Football/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Run 2,048-step smoke' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Run 50k pilot' })).toBeDisabled();
     expect(vi.mocked(callTool)).not.toHaveBeenCalledWith('football_fyp_train', expect.anything());
