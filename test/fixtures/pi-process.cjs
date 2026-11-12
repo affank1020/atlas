@@ -5,8 +5,9 @@ process.stdin.once('data', () => {
  if(mode==='eof') {process.stdout.write('{"type":'); process.exit(0);}
  if(mode==='malformed') {console.log('private raw diagnostic'); return;}
  if(mode==='flood') {process.stderr.write('x'.repeat(2*1024*1024)); return;}
+ if(mode==='hang') process.on('SIGTERM',()=>{});
  emit({type:'ready',version:'1.5.0'});
- if(mode==='hang') {process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); return;}
+ if(mode==='hang') {setInterval(()=>{},1000); return;}
  if(mode==='early') process.exit(0);
  emit({type:'agent_start'});
  emit({type:'tool_execution_start',tool:'read'});
