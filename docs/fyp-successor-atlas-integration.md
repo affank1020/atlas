@@ -1,6 +1,6 @@
 # FYP successor integration (FootballV1)
 
-Status: code-only integration pending local Mac registration and live Unity acceptance.
+Status: integration is deployed, and the Mac Node has the registered FYP checkout. Local Python trainer setup and Unity Editor compilation pass. The fixed headless player build currently fails during Unity Personal-license initialization; Atlas FYP UI operations also return `Invalid Workspace operation input`, so a smoke run is blocked.
 Companion Unity repository: [affank1020/FYP](https://github.com/affank1020/FYP).
 
 ## Ownership and compatibility
@@ -16,7 +16,7 @@ The Football app deliberately resolves `fyp_*` actions to an active Unity Worksp
 2. Register that exact directory as an active **Unity** checkout named `FYP` on the connected Mac Node and associate it with the existing **Final Year Project** Atlas Project.
 3. Verify `football_fyp_manifest` and `football_fyp_preflight` read only from FYP. Verify `football_generalist_manifest` still accesses the historical AI Football workspace. If either points at the wrong root, stop.
 
-The Mac Development Root Workspace currently reports `WORKSPACE_UNAVAILABLE`, and attempts to register guessed FYP paths failed Node-side verification. These are operational blockers, not proof that a given guessed local directory is correct or incorrect.
+Verified on 2026-11-12: project `ce09dbe0-0755-4bd8-9376-e4a3152d59f7` has an active FYP checkout at `/Users/affankhan/FYP` (workspace `3c60d835-e6f0-4c6a-b3cc-3c545773e131`) on Mac Node `fe7984f9-c7fb-42fd-ac89-4480bc9734a2`. The historical `/Users/affankhan/AI Football` checkout remains registered separately and was not changed.
 
 ## Bounded operator workflow
 
@@ -27,6 +27,16 @@ The Mac Development Root Workspace currently reports `WORKSPACE_UNAVAILABLE`, an
 - `football_fyp_runs`, `football_fyp_status`, `football_fyp_task_status`: receipts from the FYP checkout, not legacy run discovery.
 
 The FYP repository contains `Training/atlas_contract.json`, `Training/atlas_fyp.py` and the fixed `Assets/Football/Editor/AtlasFypBuild.cs`. Training artifacts, model exports, build stamps and logs live under ignored `.atlas-fyp/`. The bridge refuses stale source/bundle fingerprints and does not accept caller-supplied commands.
+
+## Verified deployment and current blockers (2026-11-12)
+
+- Atlas Server deploy run [43062358640](https://github.com/affank1020/atlas/actions/runs/43062358640) succeeded for `7ad2fffa87fe823fe7b0ca137d13a10803d476fb`. The deployed Football Training UI shows the **FYP v1 (new)** tab.
+- The running Mac Node is built from `/Users/affankhan/Developer/Atlas` at the integrated revision. Its compiled protocol and capability include the FYP operation names and the server routes `fyp_*` actions to the active FYP Unity checkout; legacy generalist routing remains separate.
+- The currently connected Atlas MCP catalog still exposes legacy Football tools without `football_fyp_*`. In the deployed browser UI, FYP manifest/preflight calls return `Invalid Workspace operation input`. The FYP client integration is therefore present but not usable end to end; do not submit a build or training request through legacy operations.
+- The fixed bridge Python environment passes dependency checks and the ML-Agents CLI. Unity Editor compilation succeeded after adding the missing `#endif` to `Assets/Football/Editor/AtlasFypBuild.cs`. The headless bridge build then timed out waiting for `LicenseClient-affankhan`, lost the Unity Licensing Client connection, and did not create `.atlas-fyp/build/FYPTraining.app`. The Personal license is active in Unity Hub, but this entitlement/service failure remains unresolved.
+- No smoke run has been launched. Preflight remains `ready_to_train: false` because the source-verified player does not exist and Atlas manifest/preflight are not operational.
+
+For the reproducible Apple Silicon trainer setup, see `Training/atlas_environment.md` in the FYP repository.
 
 ## Required live acceptance before a pilot
 
