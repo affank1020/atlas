@@ -172,7 +172,9 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
         ['football_fyp_preflight', {}, 'fyp_preflight'],
         ['football_fyp_build', {}, 'fyp_build'],
         ['football_fyp_runs', {}, 'fyp_runs'],
-        ['football_fyp_train', { preset: 'smoke', seed: 63, basePort: 5605 }, 'fyp_train'],
+        ['football_fyp_evaluations', {}, 'fyp_evaluations'],
+        ['football_fyp_train', { preset: 'smoke', seed: 63 }, 'fyp_train'],
+        ['football_fyp_evaluate', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', episodes: 10, seed: 64 }, 'fyp_evaluate'],
     ] as const;
     for (const [tool, input, action] of fypActions) {
         assert.ok(apps.hasTool(tool));
@@ -185,12 +187,12 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
     }
     await apps.invoke('football_generalist_manifest', {});
     assert.equal(invocations.at(-1)[0].id, workspace.id);
-    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 2);
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 3);
     await assert.rejects(apps.invoke('football_fyp_train', {
-        preset: 'arbitrary', seed: 63, basePort: 5605,
+        preset: 'arbitrary', seed: 63,
     }));
     await apps.invoke('football_fyp_train', {
-        preset: 'smoke', seed: 63, basePort: 5605, command: '/bin/sh',
+        preset: 'smoke', seed: 63, command: '/bin/sh',
     });
     assert.equal(Object.hasOwn(invocations.at(-1)[2], 'command'), false);
 });
