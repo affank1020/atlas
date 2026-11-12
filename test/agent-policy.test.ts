@@ -6,8 +6,19 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AgentNodeHost, agentPolicySchema, readAgentPolicy } from '../apps/node/src/capabilities/pi/agent-host.js';
 import { WorkspaceFiles } from '../apps/node/src/capabilities/workspace-files/files.js';
+import { LocalNodeRuntime } from '../apps/node/src/platforms/desktop/runtime.js';
 import type { AgentCommand } from '@atlas/protocol/agent-jobs';
 const profile={id:'local',provider:'ollama' as const,model:'test',contextWindow:8192,maxTokens:512};
+test('Pi Node capability is opt-in on Linux and macOS, not implicitly enabled on unsupported hosts', () => {
+    const mockHost={ close:async()=>{} } as unknown as AgentNodeHost;
+    const linux=new LocalNodeRuntime(['/tmp'],new Map(),'linux',undefined,false,undefined,undefined,mockHost);
+    const emptyLinux=new LocalNodeRuntime(['/tmp'],new Map(),'linux');
+    const darwin=new LocalNodeRuntime(['/tmp'],new Map(),'darwin',undefined,false,undefined,undefined,mockHost);
+    assert.ok(linux.getCapabilities().includes('agent.pi'));
+    assert.ok(darwin.getCapabilities().includes('agent.pi'));
+    assert.ok(!emptyLinux.getCapabilities().includes('agent.pi'));
+    assert.ok(!linux.getCapabilities().includes('workspace.dev'));
+});
 test('local policy is owner-private, Node-bound and rejects ambiguous or unsupported model authority',async t=>{
     const root=await mkdtemp(path.join(tmpdir(),'atlas-agent-policy-'));t.after(()=>rm(root,{recursive:true,force:true}));
     const policy={nodeId:randomUUID(),checkouts:[{id:randomUUID(),rootPath:root}],profiles:[profile]};

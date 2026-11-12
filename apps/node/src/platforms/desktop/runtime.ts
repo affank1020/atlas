@@ -42,7 +42,7 @@ export class LocalNodeRuntime implements NodeRuntime {
     }
     getCapabilities(): NodeCapability[] {
         const shared: NodeCapability[] = ["workspace.files", "workspace.git"];
-        if (this.platform === 'linux') return [...shared, 'node.logs'];
+        if (this.platform === 'linux') return [...shared, ...(this.agentHost ? ['agent.pi' as const] : []), 'node.logs'];
         return [...shared, ...(this.platform==='darwin'&&this.agentHost ? ["agent.pi" as const] : []), "workspace.dev", "football.training", "node.logs",
             ...(this.adapters.has("unity") ? ["unity" as const] : []),
             ...(this.shareReceiver ? ["device.share.receive" as const] : []),
