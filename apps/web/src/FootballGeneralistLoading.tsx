@@ -2,42 +2,19 @@ import { Skeleton } from './Skeletons';
 import './football-generalist-experience.css';
 import './FootballGeneralistLoading.css';
 
-/** AI Football owns its loading layout, including its real activity/curriculum panels. */
+/** Loading state for the current FYP training experience. */
 export function FootballGeneralistContentLoading({ decorative = false }: { decorative?: boolean }) {
     return <div className="fg-stack" role={decorative ? undefined : 'status'}
-        aria-label={decorative ? undefined : 'Loading Football Generalist'}
+        aria-label={decorative ? undefined : 'Loading FYP training'}
         aria-busy={decorative ? undefined : true} aria-hidden={decorative || undefined}>
-        <section className="fg-panel fg-active-panel">
-            <div className="fg-panel-title"><h2>Active activity</h2><Skeleton width={110} height={12} /></div>
+        <section className="fg-panel">
+            <div className="fg-panel-title"><h2>FYP training</h2><Skeleton width={110} height={12} /></div>
             <Skeleton width="68%" height={13} />
-        </section>
-        <div className="fg-stats">
-            {['Contract', 'Observations', 'Actions', 'Recorded runs', 'Registered policies'].map(label =>
-                <div key={label}><small>{label}</small><Skeleton width="67%" height={18} /></div>)}
-        </div>
-        <section className="fg-panel">
-            <div className="fg-panel-title"><h2>Curriculum</h2><Skeleton width={94} height={12} /></div>
-            <div className="fg-curriculum">
-                {Array.from({ length: 3 }, (_, index) =>
-                    <div className="fg-curriculum-row" key={index}>
-                        <Skeleton width={54} height={13} /><Skeleton width="70%" height={13} />
-                        <Skeleton width={76} height={12} />
-                    </div>)}
+            <div className="fg-form">
+                <Skeleton width="100%" height={38} />
+                <Skeleton width="100%" height={38} />
+                <Skeleton width="100%" height={38} />
             </div>
-        </section>
-        <section className="fg-panel">
-            <div className="fg-panel-title"><h2>Recent runs</h2><Skeleton width={66} height={12} /></div>
-            {Array.from({ length: 3 }, (_, index) => <div className="fg-list-row" key={index}>
-                <Skeleton width="80%" height={13} /><Skeleton width="65%" height={12} />
-                <Skeleton width={68} height={12} />
-            </div>)}
-        </section>
-        <section className="fg-panel">
-            <div className="fg-panel-title"><h2>Evaluations</h2><Skeleton width={66} height={12} /></div>
-            {Array.from({ length: 2 }, (_, index) => <div className="fg-list-row" key={index}>
-                <Skeleton width="78%" height={13} /><Skeleton width="60%" height={12} />
-                <Skeleton width={68} height={12} />
-            </div>)}
         </section>
     </div>;
 }
