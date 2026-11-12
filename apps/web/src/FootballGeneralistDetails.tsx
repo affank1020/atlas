@@ -74,8 +74,8 @@ function RewardHistory({ samples }: { samples: ReturnType<typeof samplesFromLog>
     </svg><div className="fg-details"><span>First {num(samples[0].reward, 3)}</span><span>Latest {num(samples[samples.length - 1].reward, 3)}</span>
         <span>{samples.length} logged samples</span></div></div>;
 }
-export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
-    runId: string; policies: GeneralistPolicy[]; onBack: () => void; onPolicy: (id: string) => void;
+export function GeneralistRunView({ runId, policies, onBack, onPolicy, backLabel }: {
+    runId: string; policies: GeneralistPolicy[]; onBack: () => void; onPolicy: (id: string) => void; backLabel?: string;
 }) {
     const [detail, setDetail] = useState<RunDetail | null>(null);
     const [error, setError] = useState('');
@@ -117,7 +117,7 @@ export function GeneralistRunView({ runId, policies, onBack, onPolicy }: {
             consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
     }, [logText, filter, section]);
     return <section className="fg-detail">
-        <button className="fg-link" onClick={onBack}>← Training runs</button>
+        <button className="fg-link" onClick={onBack}>{backLabel ?? '← Training runs'}</button>
         <div className="fg-detail-heading"><div><p className="fg-eyebrow">TRAINING RUN</p><h2>{runId}</h2></div><span>{run?.state ?? <Skeleton width={72} height={15} />}</span></div>
         {error && <p className="fg-error" role="alert">Could not refresh run detail: {error}. Last available data is retained.</p>}
         {!detail && !error && <SkeletonRows label="Loading training diagnostics" variant="metrics" rows={4} />}
@@ -247,12 +247,12 @@ export function GeneralistEvaluationView({ ticket, onBack, onPolicy, policyName 
         </>}
     </section>;
 }
-export function GeneralistPolicyView({ policy, runs, activity, assessment, onBack, onRun, onEvaluation, onWatch, onEvaluate, onEvaluateSkill, onRename, onFeature }: {
+export function GeneralistPolicyView({ policy, runs, activity, assessment, onBack, onRun, onEvaluation, onWatch, onEvaluate, onEvaluateSkill, onRename, onFeature, backLabel }: {
     policy: GeneralistPolicy; runs: GeneralistRun[]; activity: GeneralistActivity[]; assessment?: PolicyAssessment;
     onBack: () => void; onRun: (id: string) => void; onEvaluation: (id: string) => void;
-    onWatch: (id: string) => void; onEvaluate: (id: string) => void;
+    onWatch?: (id: string) => void; onEvaluate?: (id: string) => void;
     onEvaluateSkill?: (id: string, scenario: string) => void;
-    onRename?: (id: string, name: string) => Promise<void>; onFeature?: (id: string, featured: boolean) => Promise<void>;
+    onRename?: (id: string, name: string) => Promise<void>; onFeature?: (id: string, featured: boolean) => Promise<void>; backLabel?: string;
 }) {
     const linkedRuns = runs.filter(run => policy.source_run_id === run.id ||
         !!(run.output_dir && policy.source.startsWith(run.output_dir + '/')));
@@ -265,7 +265,7 @@ export function GeneralistPolicyView({ policy, runs, activity, assessment, onBac
         policy.onnx_available && policy.bundle_available;
     const watchable = runnable || !!historicalPlayback || !!legacyPreview;
     return <section className="fg-detail">
-        <button className="fg-link" onClick={onBack}>← Policies</button>
+        <button className="fg-link" onClick={onBack}>{backLabel ?? '← Policies'}</button>
         <div className="fg-detail-heading"><div><p className="fg-eyebrow">POLICY PROFILE</p><h2>{policy.display_name || policy.id}</h2></div><span>{policy.featured ? 'Featured' : 'Research checkpoint'}</span></div>
         <div className="fg-detail-metrics">
             {metric('Contract metadata', policy.compatible_metadata ? 'Matching' : 'Incompatible')}
@@ -273,11 +273,11 @@ export function GeneralistPolicyView({ policy, runs, activity, assessment, onBac
             {metric('Unity bundle', policy.bundle_available ? 'Present' : 'Missing')}
             {metric('Saved evaluations', String(linkedEvaluations.length))}
         </div>
-        <div className="fg-actions fg-profile-actions">
-            <button className="fg-button primary" disabled={!watchable} onClick={() => onWatch(policy.id)}>
-                {historicalPlayback ? 'Watch original Unity build →' : legacyPreview ? 'Preview in modern Unity →' : 'Watch in Unity →'}</button>
-            <button className="fg-button" disabled={!runnable} onClick={() => onEvaluate(policy.id)}>Evaluate →</button>
-        </div>
+        {(onWatch || onEvaluate) && <div className="fg-actions fg-profile-actions">
+            {onWatch && <button className="fg-button primary" disabled={!watchable} onClick={() => onWatch(policy.id)}>
+                {historicalPlayback ? 'Watch original Unity build →' : legacyPreview ? 'Preview in modern Unity →' : 'Watch in Unity →'}</button>}
+            {onEvaluate && <button className="fg-button" disabled={!runnable} onClick={() => onEvaluate(policy.id)}>Evaluate →</button>}
+        </div>}
         {onRename && <section className="fg-panel fg-policy-editor"><h3>Player identity</h3>
             <p className="fg-muted">Change the display name without changing policy IDs, weights or saved evaluations.</p>
             <div className="fg-actions"><input aria-label="Policy display name" value={newName} maxLength={64} onChange={e => setNewName(e.target.value)}/>

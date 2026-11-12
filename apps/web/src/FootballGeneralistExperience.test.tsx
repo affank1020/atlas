@@ -42,6 +42,7 @@ afterEach(cleanup);
 function openSectionTab(section: 'Experiments' | 'Evidence', tab?: string) {
     fireEvent.click(screen.getByRole('button', { name: section }));
     if (tab) fireEvent.click(within(screen.getByRole('navigation', { name: `${section} steps` })).getByRole('button', { name: tab }));
+    else if (section === 'Evidence') fireEvent.click(within(screen.getByRole('navigation', { name: 'Evidence steps' })).getByRole('button', { name: 'Generalist runs' }));
 }
 
 test('records a human review against an existing run without promoting a policy', async () => {
@@ -119,20 +120,19 @@ test('manual refresh shows busy state and reports a completed data reload', asyn
 
 test('FYP training is the primary Experiments view', async () => {
     render(<FootballGeneralistExperience />, 'Experiments');
-    expect(await screen.findByRole('button', { name: 'Run 2,048-step smoke' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Start smoke run · 2,048 steps' })).toBeInTheDocument();
     expect(screen.getByText('FootballV1')).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
         'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations',
-        'football_generalist_manifest', 'football_generalist_runs',
-        'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
     ]);
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_list_drills')).toBe(false);
 });
 
 test('legacy specialist policies, runs, and drill catalogue are not exposed', async () => {
-    render(<FootballGeneralistExperience />);
-    expect(await screen.findByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+    render(<FootballGeneralistExperience />, 'Experiments');
+    fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
+    expect(await screen.findByRole('heading', { name: 'FYP checkpoints and evaluations' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Legacy overview' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Legacy archive' })).not.toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.some(([name]) =>
@@ -266,7 +266,7 @@ test('allows safe backfill packaging for exported generalist ONNX without anothe
         return [] as never;
     });
     render(<FootballGeneralistExperience />);
-    openSectionTab('Evidence', 'Runs');
+    openSectionTab('Evidence', 'Generalist runs');
     fireEvent.click(await screen.findByRole('button', { name: 'Package policy' }));
     await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
         'football_generalist_package', { runId: 'finished-100k' }));
@@ -455,6 +455,7 @@ const render = (element: ReactElement, section: 'Experiments' | 'Evidence' = 'Ev
     const { store } = createAtlasStore();
     const rendered = rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> });
     fireEvent.click(screen.getByRole('button', { name: section }));
+    if (section === 'Evidence') fireEvent.click(within(screen.getByRole('navigation', { name: 'Evidence steps' })).getByRole('button', { name: 'Generalist runs' }));
     return rendered;
 };
 
@@ -465,6 +466,7 @@ test('a cached unavailable manifest does not break navigation on revisit', async
     rtlRender(<Provider store={store}><FootballGeneralistExperience /></Provider>);
     expect(screen.getByRole('button', { name:'Experiments' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Evidence steps' })).getByRole('button', { name: 'Generalist runs' }));
     expect(await screen.findByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
 });
 
@@ -494,20 +496,44 @@ test.each(['unavailable', 'invalid contract'] as const)(
         expect(screen.getByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
         expect(screen.getAllByText('s0-contact-easy-v1').length).toBeGreaterThan(0);
         expect(screen.queryByRole('status', { name: 'Loading Football Generalist' })).not.toBeInTheDocument();
-        expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
+        expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining([
             'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations',
             'football_generalist_manifest', 'football_generalist_runs',
             'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
-        ]);
+        ]));
     },
 );
 
 
 test('FYP training stays blocked before preflight', async () => {
     render(<FootballGeneralistExperience />, 'Experiments');
-    expect(screen.getByText('FYP — new Unity football project')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Train FootballV1' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('FootballV1')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Run 2,048-step smoke' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Run 50k pilot' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start smoke run · 2,048 steps' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start 50k pilot' })).toBeDisabled();
     expect(vi.mocked(callTool)).not.toHaveBeenCalledWith('football_fyp_train', expect.anything());
+});
+
+test('FYP evidence groups evaluations under their source checkpoint', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 } } } as never;
+        if (name === 'football_fyp_preflight') return { editor_available: true, trainer_available: false, ready_to_train: false } as never;
+        if (name === 'football_fyp_runs') return [{ run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed', source_sha256: 'abcdef0123456789', exported_model: true }] as never;
+        if (name === 'football_fyp_evaluations') return [{ evaluation_id: 'eval-1', training_run_id: 'run-smoke', state: 'completed', requested_episodes: 10, episodes_completed: 10, goals_scored: 1, goal_rate: 0.1, seed: 22 }] as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />, 'Experiments');
+    fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
+    expect(await screen.findByText('FYP checkpoints and evaluations')).toBeInTheDocument();
+    expect(await screen.findByText('run-smoke')).toBeInTheDocument();
+    expect(screen.getByText('eval-1')).toBeInTheDocument();
+    expect(screen.getByText('eval-1').closest('li')).toHaveTextContent('1 goals (10%)');
+});
+
+test('historical Generalist archive does not expose mutation or run controls', async () => {
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(await screen.findByRole('heading', { name: 'Historical Generalist evidence' })).toBeInTheDocument();
+    expect(screen.getByText(/cannot be used as FootballV1 checkpoints/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Launch generalist training' })).not.toBeInTheDocument();
 });

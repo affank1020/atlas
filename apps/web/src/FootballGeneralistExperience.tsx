@@ -9,6 +9,7 @@ import './football-training.css';
 import './football-generalist-experience.css';
 import { SkeletonRows } from './Skeletons';
 import { FypV1Experience } from './FypV1Experience';
+import { FypV1Evidence } from './FypV1Evidence';
 
 const G05_FOOT_SCENARIO = 's1-dribble-foot-touch-g05-v1';
 const G05_FOOT_SOURCE = 'atlas-generalist-61a91798db31';
@@ -16,17 +17,19 @@ type Run = { id: string; family: string; scenario?: string; state: string; start
 type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; historical_scenarios?: string[]; legacy_preview_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Review = { phase: string; scenario: string; variant: string; verdict: string; note: string; visual_evidence?: string; policy_id?: string; run_id?: string; evaluation_ticket?: string; watch_ticket?: string; contract_sha256?: string; scenario_sha256?: string; updated_at: string };
-type Tab = 'fyp' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks';
-type Section = 'experiments' | 'evidence';
+type Tab = 'fyp' | 'fyp_evidence' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks' | 'archive';
+type Section = 'experiments' | 'evidence' | 'archive';
 
 const SHOWCASE_DRILL = 'dribbling_showcase_v1';
 const LEGACY_PREVIEW = 'legacy_preview_v1';
 const sections: { id: Section; label: string; defaultTab: Tab; tabs: { id: Tab; label: string }[] }[] = [
     { id: 'experiments', label: 'Experiments', defaultTab: 'fyp', tabs: [
         { id: 'fyp', label: 'FYP training' }] },
-    { id: 'evidence', label: 'Evidence', defaultTab: 'runs', tabs: [
-        { id: 'runs', label: 'Runs' }, { id: 'policies', label: 'Policies' },
+    { id: 'evidence', label: 'Evidence', defaultTab: 'fyp_evidence', tabs: [
+        { id: 'fyp_evidence', label: 'FYP checkpoints' }, { id: 'runs', label: 'Generalist runs' }, { id: 'policies', label: 'Policies' },
         { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' }, { id: 'review', label: 'Review decision' }, { id: 'checks', label: 'Contract' }] },
+    { id: 'archive', label: 'Archive', defaultTab: 'archive', tabs: [
+        { id: 'archive', label: 'Historical Generalist evidence' }] },
 ];
 const sectionFor = (tab: Tab) => sections.find(section => section.tabs.some(item => item.id === tab))!;
 const shortHash = (value?: string) => value ? value.slice(0, 10) : '—';
@@ -125,11 +128,12 @@ export function FootballGeneralistExperience() {
         return request;
     }, [manifestResource.load, runsResource.load, policiesResource.load, activityResource.load, assessmentsResource.load]);
     useEffect(() => {
+        if (tab === 'fyp' || tab === 'fyp_evidence') return;
         let mounted = true;
         void refresh().catch(e => { if (mounted) setError(String(e)); }).finally(() => { if (mounted) setLoading(false); });
         const timer = window.setInterval(() => { void refresh().catch(e => { if (mounted) setError(String(e)); }); }, 10000);
         return () => { mounted = false; window.clearInterval(timer); };
-    }, [refresh]);
+    }, [refresh, tab]);
     useEffect(() => {
         if (!ticket?.ticket) return;
         let live = true;
@@ -216,40 +220,45 @@ export function FootballGeneralistExperience() {
         finally { setBusy(''); }
     };
     if (detail) return <main className="fg">
-        <header className="fg-heading"><div><p className="fg-eyebrow">AI FOOTBALL / GENERALIST</p><h1>Generalist</h1></div>
+        <header className="fg-heading"><div><p className="fg-eyebrow">AI FOOTBALL / {sectionFor(tab).label.toUpperCase()}</p><h1>{tab === 'archive' ? 'Historical Generalist evidence' : 'FYP Football'}</h1></div>
             <button className="fg-button" onClick={() => setDetail(null)}>Back to {tab}</button></header>
-        {detail.kind === 'run' && <GeneralistRunView runId={detail.id} policies={policies} onBack={() => setDetail(null)}
+        {detail.kind === 'run' && <GeneralistRunView runId={detail.id} policies={policies} backLabel={tab === 'archive' ? '← Archive' : undefined} onBack={() => setDetail(null)}
             onPolicy={id => setDetail({ kind: 'policy', id: preferredPolicy(id) })}/>}
         {detail.kind === 'evaluation' && <GeneralistEvaluationView ticket={detail.id} policyName={policyName} onBack={() => setDetail(null)}
             onPolicy={id => setDetail({ kind: 'policy', id: preferredPolicy(id) })}/>}
         {detail.kind === 'policy' && (policies.find(p => p.id === detail.id)
             ? <GeneralistPolicyView policy={policies.find(p => p.id === detail.id)!} runs={runs} activity={activity}
                 assessment={assessments.find(a => a.policy_id === detail.id)}
-                onRename={(id, displayName) => updatePolicy(id, { displayName })}
-                onFeature={(id, featured) => updatePolicy(id, { featured })}
+                {...(tab === 'archive' ? {} : {
+                    onRename: (id: string, displayName: string) => updatePolicy(id, { displayName }),
+                    onFeature: (id: string, featured: boolean) => updatePolicy(id, { featured }),
+                    onWatch: (id: string) => { setSelectedPolicy(id); setTab('watch'); setDetail(null); },
+                    onEvaluate: (id: string) => { setSelectedPolicy(id); setTab('evaluate'); setDetail(null); },
+                    onEvaluateSkill: (id: string, drill: string) => { setSelectedPolicy(id); setScenario(drill); setTab('evaluate'); setDetail(null); },
+                })}
+                backLabel={tab === 'archive' ? '← Archive' : undefined}
                 onBack={() => setDetail(null)}
                 onRun={id => setDetail({ kind: 'run', id })}
-                onEvaluation={id => setDetail({ kind: 'evaluation', id })}
-                onWatch={id => { setSelectedPolicy(id); setTab('watch'); setDetail(null); }}
-                onEvaluate={id => { setSelectedPolicy(id); setTab('evaluate'); setDetail(null); }}
-                onEvaluateSkill={(id, drill) => { setSelectedPolicy(id); setScenario(drill); setTab('evaluate'); setDetail(null); }}/>
+                onEvaluation={id => setDetail({ kind: 'evaluation', id })}/>
             : <section className="fg-panel"><p>Policy is no longer available in the generalist index.</p><button className="fg-button" onClick={() => setDetail(null)}>Back</button></section>)}
     </main>;
     return <main className="fg">
         <header className="fg-heading">
-            <div><p className="fg-eyebrow">AI FOOTBALL / FYP</p><h1>Generalist</h1><p className="fg-subtitle">Unity reinforcement learning · one policy, multiple scenarios</p></div>
-            <div className="fg-refresh-controls">
+            <div><p className="fg-eyebrow">AI FOOTBALL / FYP</p><h1>FYP Football</h1>
+                <p className="fg-subtitle">{tab === 'fyp' ? 'Editor-connected Unity training · FootballV1' : tab === 'fyp_evidence' ? 'Checkpoint and evaluation receipts · FootballV1' : tab === 'archive' ? 'Historical Generalist evidence · read only' : 'Football experiment evidence'}</p>
+            </div>
+            {tab !== 'fyp' && tab !== 'fyp_evidence' && <div className="fg-refresh-controls">
                 <span className="fg-refresh-status" role="status" aria-live="polite">{refreshing ? 'Fetching latest data…' : refreshStatus}</span>
                 <button type="button" className="fg-button" disabled={!!busy || refreshing}
                     onClick={() => {
                         setRefreshing(true);
                         void refresh().catch(e => setError(String(e))).finally(() => setRefreshing(false));
                     }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
-            </div>
+            </div>}
         </header>
-         {error && <p className="fg-error" role="alert">{error}</p>}
-        {assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
-        {notice && <p className="fg-notice" role="status">{notice}</p>}
+         {tab !== 'fyp' && tab !== 'fyp_evidence' && error && <p className="fg-error" role="alert">{error}</p>}
+        {tab !== 'fyp' && tab !== 'fyp_evidence' && assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
+        {tab !== 'fyp' && tab !== 'fyp_evidence' && notice && <p className="fg-notice" role="status">{notice}</p>}
         <nav className="fg-nav" aria-label="Football sections">{sections.map(section =>
             <button type="button" key={section.id} className={sectionFor(tab).id === section.id ? 'active' : ''}
                 aria-current={sectionFor(tab).id === section.id ? 'page' : undefined}
@@ -258,7 +267,8 @@ export function FootballGeneralistExperience() {
             {sectionFor(tab).tabs.map(item => <button type="button" key={item.id} aria-current={tab === item.id ? 'step' : undefined}
                 className={tab === item.id ? 'active' : ''} onClick={() => { setDetail(null); setTab(item.id); setError(''); if (item.id === 'review') void loadReviews(); }}>{item.label}</button>)}
         </nav>}
-        {tab === 'fyp' && <FypV1Experience />}
+        {tab === 'fyp' && <FypV1Experience onOpenEvidence={() => setTab('fyp_evidence')} />}
+        {tab === 'fyp_evidence' && <FypV1Evidence />}
         {tab === 'runs' && <section className="fg-panel"><div className="fg-panel-title"><h2>Training runs</h2><span>{activeRuns.length} active · {runs.length} discovered</span></div>
             <div className="fg-filter-bar" role="group" aria-label="Filter training runs">
                 {(['all','active','completed','failed'] as const).map(f => <button type="button" key={f}
@@ -416,6 +426,23 @@ export function FootballGeneralistExperience() {
             <div className="fg-details"><span>Contract: {manifest?.contract.contract_id ?? '—'}</span><span>Behavior: {manifest?.contract.behavior ?? '—'}</span><span>Observations: {manifest?.contract.observations.size ?? '—'}</span><span>Actions: {manifest?.contract.actions.continuous ?? '—'}</span><span>Contract SHA: {shortHash(manifest?.fingerprints.contract_sha256)}</span><span>Scenario SHA: {shortHash(manifest?.fingerprints.scenario_sha256)}</span></div>
             <h3>Actions</h3>{manifest?.contract.actions.channels.map(channel => <div className="fg-list-row" key={channel.index}><strong>{channel.index}</strong><span>{channel.name}</span><small>{channel.mapping || channel.activation || 'Continuous'}</small></div>)}
             <p className="fg-muted">Manifest inspection verifies metadata structure, not learned policy competence or Unity runtime acceptance.</p>
+        </section>}
+        {tab === 'archive' && <section className="fg-panel fg-archive-panel">
+            <p className="fg-eyebrow">READ ONLY</p>
+            <h2>Historical Generalist evidence</h2>
+            <p className="fg-muted">These runs and policies belong to earlier Generalist contracts and experiments. They remain available for inspection; they cannot be used as FootballV1 checkpoints or promoted through this archive.</p>
+            <h3>Historical training runs</h3>
+            {!runs.length ? <p className="fg-muted">No historical Generalist runs are available.</p> : runs.map(run =>
+                <div className="fg-run" key={run.id}>
+                    <div className="fg-panel-title"><button className="fg-record-link" onClick={() => setDetail({ kind: 'run', id: run.id })}>{run.scenario ?? 'Generalist run'} · {run.id} →</button><small>{run.state}</small></div>
+                    <div className="fg-details"><span>Seed: {run.seed ?? '—'}</span><span>Contract SHA: {shortHash(run.contract_sha256)}</span><span>Scenario SHA: {shortHash(run.scenario_sha256)}</span><span>Recorded: {when(run.started_at)}</span></div>
+                </div>)}
+            <h3>Historical policies</h3>
+            {!policies.length ? <p className="fg-muted">No historical Generalist policies are available.</p> : policies.map(policy =>
+                <div className="fg-list-row" key={policy.id}>
+                    <button className="fg-record-link" onClick={() => setDetail({ kind: 'policy', id: policy.id })}>{nameOfPolicy(policy)} →</button>
+                    <span>{policy.behavior} · {policy.status}</span><small>{policy.compatible_metadata ? 'Generalist contract' : 'Incompatible history'}</small>
+                </div>)}
         </section>}
         {!!ticket && <section className="fg-panel" aria-label="Latest operation"><div className="fg-panel-title"><h2>Latest operation</h2><small>{ticket.status}</small></div><strong>{ticket.action}</strong>
             {ticket.action === 'generalist_train' && ticket.status === 'running' && <button type="button" className="fg-button" onClick={() => {
