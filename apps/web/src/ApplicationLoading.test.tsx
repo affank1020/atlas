@@ -64,23 +64,24 @@ test('mounted Code Reviews list and its detail tabs use their own data skeletons
     expect(container.querySelectorAll('.cr-status-grid > div')).toHaveLength(3);
 });
 
-test('Football generalist placeholder uses activity, five stats and curriculum / history panels', () => {
+test('FYP loading placeholder has no legacy activity, curriculum, or archive surfaces', () => {
     const { container } = render(<FootballGeneralistApplicationLoading />);
     expect(screen.getByRole('status', { name: 'Loading Football Generalist application' })).toBeInTheDocument();
-    expect(container.querySelector('.fg-active-panel')).toBeInTheDocument();
-    expect(container.querySelectorAll('.fg-stats > div')).toHaveLength(5);
-    expect(container.querySelectorAll('.fg-curriculum-row')).toHaveLength(3);
-    expect(container.querySelectorAll('.fg-panel')).toHaveLength(4);
-    expect(container.querySelectorAll('.fg-nav .fg-loading-tab')).toHaveLength(3);
+    expect(container.querySelector('.fg-panel-title h2')).toHaveTextContent('FYP training');
+    expect(container.querySelector('.fg-active-panel, .fg-curriculum, .fg-stats')).toBeNull();
+    expect(container.querySelectorAll('.fg-panel')).toHaveLength(1);
+    expect(container.querySelectorAll('.fg-nav .fg-loading-tab')).toHaveLength(2);
+    expect(container.textContent).not.toMatch(/Active activity|Curriculum|Recent runs|Evaluations|Archive/);
     expect(container.querySelectorAll('button, a, input, textarea, select')).toHaveLength(0);
     expect(screen.getAllByRole('status')).toHaveLength(1);
 });
 
-test('mounted Football initial data skeleton has no duplicate application heading', () => {
+test('mounted FYP loading skeleton has no duplicate application heading', () => {
     const { container } = render(<FootballGeneralistContentLoading />);
-    expect(screen.getByRole('status', { name: 'Loading Football Generalist' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: 'Loading FYP training' })).toHaveAttribute('aria-busy', 'true');
     expect(container.querySelector('.fg-heading')).not.toBeInTheDocument();
-    expect(container.querySelectorAll('.fg-stats > div')).toHaveLength(5);
+    expect(container.querySelector('.fg-panel-title h2')).toHaveTextContent('FYP training');
+    expect(container.querySelector('.fg-active-panel, .fg-curriculum, .fg-stats')).toBeNull();
 });
 
 test('Portfolio Media skeleton matches the full-width asset manager, not the entry editor', () => {

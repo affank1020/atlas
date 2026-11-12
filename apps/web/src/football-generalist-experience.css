@@ -91,6 +91,78 @@
 .fg-profile-actions { margin:0; }
 @media(max-width:700px) { .fg-detail-columns{grid-template-columns:1fr} .fg-detail-list{grid-template-columns:120px minmax(0,1fr)} }
 
+/* Editor-first FYP experiment workflow. */
+.fyp-experience { gap:14px; }
+.fyp-experience > .fg-panel { margin:0; }
+.fyp-readiness { border-inline-start:3px solid var(--border-strong,#5b6577); }
+.fyp-readiness.fyp-ready { border-inline-start-color:var(--success,#7fc7a0); }
+.fyp-readiness.fyp-active { border-inline-start-color:var(--accent,#9cb5f3); }
+.fyp-readiness.fyp-warning { border-inline-start-color:var(--warning,#e7b86a); }
+.fyp-readiness-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:17px; }
+.fyp-readiness-header h2 { margin:4px 0 0; font-size:19px; }
+.fyp-readiness-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:8px; }
+.fyp-readiness-item { display:grid; gap:7px; min-width:0; padding:11px 12px; border:1px solid var(--border,#384152); border-radius:5px; background:var(--surface-secondary,#272f39); }
+.fyp-readiness-item>span { color:var(--text-muted,#9ba5b5); font-size:11px; }
+.fyp-readiness-item strong { min-width:0; font-size:13px; overflow-wrap:anywhere; }
+.fyp-indicator::before { content:""; display:inline-block; width:7px; height:7px; margin:0 7px 1px 0; border-radius:50%; background:currentColor; }
+.fyp-indicator-ready { color:var(--success,#7fc7a0); }
+.fyp-indicator-active { color:var(--accent,#9cb5f3); }
+.fyp-indicator-pending { color:var(--text-muted,#9ba5b5); }
+.fyp-indicator-warning { color:var(--warning,#e7b86a); }
+.fyp-live-summary { display:grid; gap:5px; margin-top:12px; padding:12px 14px; border:1px solid var(--border,#384152); border-radius:5px; background:var(--surface-secondary,#272f39); font-size:13px; }
+.fyp-live-summary>span,.fyp-ticket { color:var(--text-muted,#9ba5b5); overflow-wrap:anywhere; }
+.fyp-live-metrics { font-variant-numeric:tabular-nums; }
+.fyp-ticket { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px; }
+.fyp-contract-details { margin-top:13px; border-top:1px solid var(--border,#384152); padding-top:11px; }
+.fyp-contract-details summary { width:max-content; max-width:100%; color:var(--accent,#9cb5f3); font-size:12px; cursor:pointer; }
+.fyp-contract-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:8px 16px; margin:13px 0; font-size:12px; }
+.fyp-contract-grid span { color:var(--text-muted,#9ba5b5); overflow-wrap:anywhere; }
+.fyp-contract-grid strong { display:block; margin-top:4px; color:var(--text-primary,#dfe5f0); font-weight:600; }
+.fyp-workflow-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:start; }
+.fyp-workflow-grid>.fg-panel { margin:0; min-width:0; }
+.fyp-training-panel h2,.fyp-evaluation-panel h2 { margin:4px 0 10px; }
+.fyp-evaluation-panel>summary { display:flex; justify-content:space-between; align-items:center; gap:14px; list-style:none; cursor:pointer; }
+.fyp-evaluation-panel>summary::-webkit-details-marker { display:none; }
+.fyp-evaluation-panel>summary>span { color:var(--text-muted,#9ba5b5); font-size:12px; }
+.fyp-evaluation-panel[open]>summary { padding-bottom:12px; border-bottom:1px solid var(--border,#384152); margin-bottom:12px; }
+.fyp-evaluation-body { display:grid; gap:10px; }
+.fyp-field { display:grid; gap:7px; width:min(100%,240px); margin:16px 0; color:var(--text-secondary,#bac3d0); font-size:12px; font-weight:650; }
+.fyp-field input { width:100%; min-width:0; color:inherit; font:inherit; font-size:14px; border:1px solid var(--border,#5b6577); border-radius:4px; padding:9px 10px; background:var(--surface-secondary,#272f39); }
+.fyp-launch-actions { margin:14px 0 10px; }
+.fyp-pilot-button { background:var(--surface-secondary,#272f39); }
+.fyp-blocker { color:var(--warning,#e7b86a); font-size:12px; }
+.fyp-candidate-note { margin-bottom:0; }
+.fyp-runs-panel .fg-panel-title { align-items:flex-end; }
+.fyp-runs-panel .fg-panel-title h2 { margin:4px 0 0; }
+.fyp-run-list,.fyp-evaluation-list,.fyp-evaluation-receipts { list-style:none; margin:0; padding:0; }
+.fyp-run-row,.fyp-evaluation-run { padding:13px 0; border-top:1px solid var(--border,#384152); }
+.fyp-run-summary { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.fyp-run-summary>div { min-width:0; display:grid; gap:4px; }
+.fyp-run-summary strong { overflow-wrap:anywhere; }
+.fyp-run-summary small,.fyp-run-row p { color:var(--text-muted,#9ba5b5); font-size:12px; }
+.fyp-run-row p { margin:6px 0; }
+.fyp-run-row code { color:var(--text-muted,#9ba5b5); font-size:10px; overflow-wrap:anywhere; }
+.fyp-state { flex:none; border:1px solid var(--border,#5b6577); border-radius:20px; padding:4px 8px; color:var(--text-muted,#9ba5b5); font-size:10px; text-transform:capitalize; }
+.fyp-state-completed { color:var(--success,#7fc7a0); border-color:color-mix(in srgb,var(--success,#7fc7a0) 45%,transparent); }
+.fyp-state-running,.fyp-state-launching,.fyp-state-starting { color:var(--accent,#9cb5f3); border-color:color-mix(in srgb,var(--accent,#9cb5f3) 45%,transparent); }
+.fyp-state-failed,.fyp-state-error { color:var(--danger,#ff9797); border-color:color-mix(in srgb,var(--danger,#ff9797) 45%,transparent); }
+.fyp-evaluation-settings { display:flex; flex-wrap:wrap; gap:0 18px; }
+.fyp-evaluation-settings .fyp-field { margin:6px 0 14px; }
+.fyp-evaluation-run>.fg-button { margin-top:10px; }
+.fyp-evaluation-receipts { display:grid; gap:6px; margin-top:10px; font-size:12px; }
+.fyp-evaluation-receipts li { padding:9px 11px; border-inline-start:2px solid var(--border-strong,#5b6577); background:var(--surface-secondary,#272f39); overflow-wrap:anywhere; }
+.fyp-evidence-link { margin-top:12px; padding:4px 0; }
+.fyp-evidence-page { margin:0; }
+.fyp-evidence-page>.fg-panel-title { align-items:center; }
+.fyp-evidence-runs { display:grid; gap:12px; }
+.fyp-evidence-run { min-width:0; padding:15px; border:1px solid var(--border,#384152); border-radius:5px; background:var(--surface-secondary,#272f39); }
+.fyp-evidence-metadata { display:flex; flex-wrap:wrap; gap:7px 16px; margin:12px 0; color:var(--text-muted,#9ba5b5); font-size:12px; }
+.fyp-evidence-run h3 { margin:16px 0 7px; font-size:13px; }
+.fyp-evidence-run .fyp-evaluation-receipts li { background:var(--surface,#1d222b); }
+.fg-archive-panel>.fg-eyebrow { margin-top:0; }
+@media(max-width:850px) { .fyp-workflow-grid { grid-template-columns:1fr; } }
+@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-readiness-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fyp-run-summary { flex-direction:column; } }
+
 
 /* Football Training V2: active work, curated policies and evidence-backed assessments. */
 .fg-active-panel { border-inline-start:3px solid var(--accent,#9cb5f3); }
