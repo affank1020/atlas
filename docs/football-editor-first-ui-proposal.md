@@ -1,7 +1,7 @@
 # Football Training: editor-first UI proposal
 
-Date: 2026-11-12  
-Status: implemented locally; pending visual acceptance and deployment  
+Date: 2026-11-12
+Status: implemented locally; pending visual acceptance and deployment
 Scope: Atlas Web Football Training experience for the standalone FYP FootballV1 workflow
 
 ## Recommendation

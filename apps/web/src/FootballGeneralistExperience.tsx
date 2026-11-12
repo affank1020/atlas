@@ -26,7 +26,7 @@ const sections: { id: Section; label: string; defaultTab: Tab; tabs: { id: Tab; 
     { id: 'experiments', label: 'Experiments', defaultTab: 'fyp', tabs: [
         { id: 'fyp', label: 'FYP training' }] },
     { id: 'evidence', label: 'Evidence', defaultTab: 'fyp_evidence', tabs: [
-        { id: 'fyp_evidence', label: 'FYP checkpoints' }, { id: 'runs', label: 'Generalist runs' }, { id: 'policies', label: 'Policies' },
+        { id: 'fyp_evidence', label: 'Runs & evals' }, { id: 'runs', label: 'Generalist runs' }, { id: 'policies', label: 'Policies' },
         { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' }, { id: 'review', label: 'Review decision' }, { id: 'checks', label: 'Contract' }] },
     { id: 'archive', label: 'Archive', defaultTab: 'archive', tabs: [
         { id: 'archive', label: 'Historical Generalist evidence' }] },

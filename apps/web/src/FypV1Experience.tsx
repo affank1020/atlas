@@ -10,8 +10,8 @@ type FypPreflight = {
     heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean;
     source_sha256: string; note: string;
 };
-type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; error?: string };
-type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; error?: string };
+type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; started_at?: string; error?: string };
+type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; started_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
 
 const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'cancelling', 'unknown', 'incomplete']);
@@ -133,8 +133,8 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
         ? preflight?.trainer_connected ? 'Unity is connected to the active Atlas operation.'
             : preflight?.editor_playing ? 'The editor is running. Atlas is waiting for the ML-Agents connection.'
                 : 'In the FYP Unity Editor, press Play to connect the trainer.'
-        : activeRun ? `Run ${activeRun.run_id} · ${activeRun.preset} · seed ${activeRun.seed}`
-            : activeEvaluation ? `Evaluation for ${activeEvaluation.training_run_id} · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
+        : activeRun ? `${activeRun.preset === 'smoke' ? 'Smoke run' : activeRun.preset === 'pilot_50k' ? '50k pilot' : activeRun.preset} · seed ${activeRun.seed}`
+            : activeEvaluation ? `Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
                 : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
 
     const perform = async (operation: 'smoke' | 'pilot_50k') => {
@@ -171,7 +171,6 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
         <section className={`fg-panel fyp-readiness fyp-${readinessTone}`} aria-labelledby="fyp-readiness-title">
             <div className="fyp-readiness-header">
                 <div>
-                    <p className="fg-eyebrow">UNITY EDITOR</p>
                     <h2 id="fyp-readiness-title">{readinessMessage}</h2>
                 </div>
                 <button className="fg-button" type="button" onClick={() => void refreshNow()} disabled={!!busy}>
@@ -179,7 +178,7 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                 </button>
             </div>
             <div className="fyp-readiness-grid" aria-label="Unity readiness">
-                <ReadinessItem label="Editor" value={!preflight ? 'Checking…' : preflight.editor_open ? 'Open' : preflight.editor_available ? 'Installed' : 'Closed'} state={!preflight ? 'pending' : preflight.editor_open ? 'ready' : 'warning'} />
+                <ReadinessItem label="Editor" value={!preflight ? 'Checking…' : preflight.editor_open ? 'Open' : preflight.editor_available ? 'Closed' : 'Unavailable'} state={!preflight ? 'pending' : preflight.editor_open ? 'ready' : 'warning'} />
                 <ReadinessItem label="Scene" value={!preflight ? 'Checking…' : sceneMatches ? sceneName(preflight.active_scene) : preflight.active_scene ? 'Wrong scene' : 'Not loaded'} state={!preflight ? 'pending' : sceneMatches ? 'ready' : 'warning'} />
                 <ReadinessItem label="Mode" value={!preflight ? 'Checking…' : preflight.editor_playing ? 'Play Mode' : 'Edit Mode'} state={!preflight ? 'pending' : preflight.editor_playing ? 'active' : 'ready'} />
                 <ReadinessItem label="Compilation" value={!preflight ? 'Checking…' : preflight.editor_compiling ? 'Compiling' : 'Ready'} state={!preflight ? 'pending' : preflight.editor_compiling ? 'warning' : 'ready'} />
@@ -193,7 +192,7 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                 {preflight?.environment_present && <span className="fyp-live-metrics">
                     Episode {preflight.episode ?? '—'} · Completed {preflight.episodes_completed ?? '—'} · Goals {preflight.goals ?? '—'} · Last outcome {preflight.last_outcome ?? '—'}
                 </span>}
-                {activeTicket && <span className="fyp-ticket">{activeTicket.action} · {activeTicket.status} · ticket {activeTicket.ticket}</span>}
+                {activeTicket && <span className="fyp-ticket">{activeTicket.action === 'fyp_evaluate' ? 'Evaluation' : 'Training'} · {activeTicket.status}</span>}
                 {activeTicket?.error && <span className="fg-error">{activeTicket.error}</span>}
             </div>}
             {!operationActive && preflight?.environment_present && <div className="fyp-live-summary">
@@ -202,8 +201,7 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
             </div>}
             {ticket && !activeTicket && <div className="fyp-live-summary" aria-label="Latest operation receipt">
                 <strong>Latest operation · {ticket.status}</strong>
-                <span>{ticket.action === 'fyp_evaluate' ? 'Checkpoint evaluation' : 'Training'} · ticket {ticket.ticket}</span>
-                {ticket.run_id && <span>Run {ticket.run_id}</span>}
+                <span>{ticket.action === 'fyp_evaluate' ? 'Checkpoint evaluation' : 'Training'} operation</span>
                 {ticket.error && <span className="fg-error">{ticket.error}</span>}
             </div>}
             <details className="fyp-contract-details">
@@ -216,66 +214,44 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                     <span>Scene <strong>{manifest?.contract.scene ?? 'Workspace unavailable'}</strong></span>
                     <span>Source <strong>{preflight?.source_sha256?.slice(0, 14) ?? '—'}</strong></span>
                 </div>
-                <p className="fg-muted">Training creates a candidate checkpoint. Atlas does not automatically evaluate, approve, promote, or advance a research phase.</p>
+                <p className="fg-muted">Training creates a candidate checkpoint. Evaluation and review are separate.</p>
             </details>
         </section>
 
         <div className="fyp-workflow-grid">
-            <section className="fg-panel fyp-training-panel">
-                <p className="fg-eyebrow">EXPERIMENT</p>
-                <h2>Train FootballV1</h2>
-                <p className="fg-muted">Start the learner with the FYP scene open in Edit Mode. Then press Play in Unity to connect it.</p>
-                <label className="fyp-field">Training seed
-                    <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={seed} onChange={event => setSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
-                </label>
-                <div className="fg-actions fyp-launch-actions">
-                    <button className="fg-button primary" type="button" disabled={!canStartTraining} onClick={() => void perform('smoke')}>
-                        {busy === 'smoke' ? 'Starting smoke run…' : 'Start smoke run · 2,048 steps'}
-                    </button>
-                    <button className="fg-button fyp-pilot-button" type="button" disabled={!canStartTraining} onClick={() => void perform('pilot_50k')}>
-                        {busy === 'pilot_50k' ? 'Starting pilot…' : 'Start 50k pilot'}
-                    </button>
-                </div>
-                {!canStartTraining && <p className="fyp-blocker" role="status">{operationActive ? 'A FYP operation is already active. Wait for its receipt to finish before starting another.' : busy ? 'Atlas is refreshing the current operation status.' : readinessMessage}</p>}
-                <p className="fg-muted fyp-pilot-note">The 50k pilot is a longer run than the smoke and uses the same Unity Play Mode connection.</p>
-                <p className="fg-muted fyp-candidate-note">A run exports a candidate model. Evaluation and human review remain separate steps.</p>
-            </section>
-
             <section className="fg-panel fyp-runs-panel">
-                <div className="fg-panel-title"><div><p className="fg-eyebrow">CHECKPOINTS</p><h2>Recent FYP runs</h2></div><span>{runs.length} recorded</span></div>
-                {runs.length === 0 ? <p className="fg-muted">No FYP v1 training runs recorded yet.</p> :
+                <div className="fg-panel-title"><h2>Recent training runs</h2><span>{runs.length} recorded</span></div>
+                {runs.length === 0 ? <p className="fg-muted">No training runs recorded yet.</p> :
                     <ul className="fyp-run-list">{recentRuns.map(run => <li className="fyp-run-row" key={run.run_id}>
                         <div className="fyp-run-summary">
                             <strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong>
                             <span className={`fyp-state fyp-state-${run.state.toLowerCase()}`}>{run.state}</span>
                         </div>
-                        <p>Seed {run.seed} · {run.steps.toLocaleString()} steps · {run.exported_model === true ? 'ONNX exported' : 'No exported model recorded'}</p>
+                        <p>{run.started_at ? new Date(run.started_at).toLocaleString() : 'Time not recorded'} · Seed {run.seed} · {run.steps.toLocaleString()} steps · {run.exported_model === true ? 'Checkpoint exported' : 'No export recorded'}</p>
                         {run.error && <p className="fg-error">{run.error}</p>}
-                        <code>{run.run_id}</code>
                     </li>)}</ul>}
-                {onOpenEvidence && <button type="button" className="fg-link fyp-evidence-link" onClick={onOpenEvidence}>View all checkpoint evidence →</button>}
+                {onOpenEvidence && <button type="button" className="fg-link fyp-evidence-link" onClick={onOpenEvidence}>View all runs and evaluations →</button>}
             </section>
-        </div>
 
-        <details className="fg-panel fyp-evaluation-panel" open={!!activeEvaluation || activeTicket?.action === 'fyp_evaluate'}>
-            <summary><div><p className="fg-eyebrow">EVIDENCE</p><h2>Evaluate a checkpoint in Unity</h2></div><span>{completedRuns.length} eligible</span></summary>
+            <section className="fg-panel fyp-evaluation-panel">
+            <div className="fg-panel-title"><h2>Evals</h2><span>{completedRuns.length} eligible checkpoints</span></div>
             <div className="fyp-evaluation-body">
-            <p className="fg-muted">Evaluation runs against one completed checkpoint in the visible Unity Editor. Start from Edit Mode; Atlas starts the runner, then press Play when prompted.</p>
+            <p className="fg-muted">Evals run the checkpoint in the open Unity Editor, so you can inspect its behavior while results are recorded.</p>
             <div className="fyp-evaluation-settings">
-                <label className="fyp-field">Evaluation episodes
+                <label className="fyp-field">Episodes
                     <input aria-label="FYP evaluation episodes" type="number" min={1} max={100} step={1} value={evaluationEpisodes} onChange={event => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(Number(event.target.value) || 1))))} />
                 </label>
-                <label className="fyp-field">Evaluation seed
+                <label className="fyp-field">Seed
                     <input aria-label="FYP evaluation seed" type="number" min={0} max={2147483647} step={1} value={evaluationSeed} onChange={event => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
                 </label>
             </div>
-            {completedRuns.length === 0 ? <p className="fg-muted">A completed run with an exported ONNX checkpoint is required before evaluation.</p> :
+            {completedRuns.length === 0 ? <p className="fg-muted">A completed run with an exported checkpoint is required.</p> :
                 <ul className="fyp-evaluation-list">{completedRuns.map(run => {
                     const runEvaluations = evaluations.filter(evaluation => evaluation.training_run_id === run.run_id);
                     const runIsActive = runEvaluations.some(evaluation => isActive(evaluation.state));
                     return <li className="fyp-evaluation-run" key={run.run_id}>
                         <div className="fyp-run-summary">
-                            <div><strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong><small>Run {run.run_id} · training seed {run.seed}</small></div>
+                            <div><strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong><small>Training seed {run.seed}</small></div>
                             <span className="fyp-state fyp-state-completed">Candidate checkpoint</span>
                         </div>
                         {runEvaluations.length > 0 && <ul className="fyp-evaluation-receipts" aria-label={`Evaluations for ${run.run_id}`}>
@@ -292,6 +268,24 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                     </li>;
                 })}</ul>}
             </div>
+            </section>
+        </div>
+
+        <details className="fg-panel fyp-training-panel">
+            <summary><h2>Start training</h2><span>Smoke or 50k pilot</span></summary>
+            <p className="fg-muted">Start with the FYP scene open in Edit Mode, then press Play in Unity to connect the learner.</p>
+            <label className="fyp-field">Seed
+                <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={seed} onChange={event => setSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
+            </label>
+            <div className="fg-actions fyp-launch-actions">
+                <button className="fg-button" type="button" disabled={!canStartTraining} onClick={() => void perform('smoke')}>
+                    {busy === 'smoke' ? 'Starting smoke run…' : 'Start smoke run · 2,048 steps'}
+                </button>
+                <button className="fg-button" type="button" disabled={!canStartTraining} onClick={() => void perform('pilot_50k')}>
+                    {busy === 'pilot_50k' ? 'Starting pilot…' : 'Start 50k pilot'}
+                </button>
+            </div>
+            {!canStartTraining && <p className="fyp-blocker" role="status">{operationActive ? 'A FYP operation is already active.' : busy ? 'Refreshing current operation status.' : readinessMessage}</p>}
         </details>
     </div>;
 }
