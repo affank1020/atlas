@@ -131,7 +131,7 @@ test('FYP training is the primary Experiments view', async () => {
 test('legacy specialist policies, runs, and drill catalogue are not exposed', async () => {
     render(<FootballGeneralistExperience />, 'Experiments');
     fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
-    expect(await screen.findByRole('heading', { name: 'FYP checkpoints and evaluations' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Training runs and evaluations' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Legacy overview' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Legacy archive' })).not.toBeInTheDocument();
@@ -507,7 +507,8 @@ test.each(['unavailable', 'invalid contract'] as const)(
 
 test('FYP training stays blocked before preflight', async () => {
     render(<FootballGeneralistExperience />, 'Experiments');
-    expect(screen.getByRole('heading', { name: 'Train FootballV1' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Open the FYP project in Unity' })).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Start training'));
     await waitFor(() => expect(screen.getByText('FootballV1')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Start smoke run · 2,048 steps' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Start 50k pilot' })).toBeDisabled();
@@ -524,10 +525,12 @@ test('FYP evidence groups evaluations under their source checkpoint', async () =
     });
     render(<FootballGeneralistExperience />, 'Experiments');
     fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
-    expect(await screen.findByText('FYP checkpoints and evaluations')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Training runs and evaluations' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /Smoke run.*2,048 steps/ }));
     expect(await screen.findByText('run-smoke')).toBeInTheDocument();
-    expect(screen.getByText('eval-1')).toBeInTheDocument();
-    expect(screen.getByText('eval-1').closest('li')).toHaveTextContent('1 goals (10%)');
+    fireEvent.click(screen.getByRole('button', { name: /Evaluation.*10\/10 episodes/ }));
+    expect(await screen.findByText('eval-1')).toBeInTheDocument();
+    expect(screen.getByText('10.0%')).toBeInTheDocument();
 });
 
 test('historical Generalist archive does not expose mutation or run controls', async () => {
