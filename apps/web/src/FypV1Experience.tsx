@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
 import { FypV1Evidence } from './FypV1Evidence';
+import type { FypEnvironment } from './FypEnvironmentCatalog';
 
 type FypManifest = { available: boolean; contract: { contract_id: string; behavior: string; observations: { size: number }; actions: { continuous: number }; scene: string; trainer_kind: string } };
 type FypPreflight = {
     editor_available: boolean; editor_open: boolean; editor_playing: boolean; editor_compiling?: boolean;
-    trainer_connected: boolean; trainer_available: boolean; scene_ready: boolean; active_scene: string | null;
+    trainer_connected: boolean; trainer_available: boolean; editor_ready: boolean; scene_ready: boolean; active_scene: string | null;
+    active_environment?: FypEnvironment | null; selected_environment?: FypEnvironment | null;
     environment_present: boolean; episode: number | null; goals: number | null; last_outcome: string | null;
     episodes_completed: number | null; recent_episodes: { session_id: string; sequence: number; episode: number; seed: number; goals: number; elapsed_seconds: number; outcome: string; trainer_connected: boolean }[];
     heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean;
     source_sha256: string; note: string;
 };
-type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; model_sha256?: string | null; checkpoint_sha256?: string | null; started_at?: string; error?: string };
-type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; started_at?: string; error?: string };
+type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; error?: string };
+type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment; started_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
 
 const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'cancelling', 'unknown', 'incomplete']);
@@ -41,11 +43,14 @@ function readCheckpointReviews(): Record<string, 'keep' | 'discard'> {
     } catch { return {}; }
 }
 
-export function FypV1Experience() {
+export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (environmentId: string) => void }) {
     const [manifest, setManifest] = useState<FypManifest | null>(null);
     const [preflight, setPreflight] = useState<FypPreflight | null>(null);
     const [runs, setRuns] = useState<FypRun[]>([]);
     const [evaluations, setEvaluations] = useState<FypEvaluation[]>([]);
+    const [environments, setEnvironments] = useState<FypEnvironment[]>([]);
+    const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
+    const [evaluationEnvironmentId, setEvaluationEnvironmentId] = useState('');
     const [seed, setSeed] = useState(63);
     const [evaluationSeed, setEvaluationSeed] = useState(515);
     const [evaluationEpisodes, setEvaluationEpisodes] = useState(10);
@@ -58,16 +63,25 @@ export function FypV1Experience() {
 
     const refresh = useCallback(async () => {
         try {
-            const [m, p, r, e] = await Promise.all([
+            const [m, p, r, e, envs] = await Promise.all([
                 callTool<FypManifest>('football_fyp_manifest'),
+                // Preflight describes the scene that is open now. Training still checks
+                // its chosen environment separately, while evaluation may target a
+                // different scene from the one selected for the next training run.
                 callTool<FypPreflight>('football_fyp_preflight'),
                 callTool<FypRun[]>('football_fyp_runs'),
                 callTool<FypEvaluation[]>('football_fyp_evaluations'),
+                callTool<FypEnvironment[]>('football_fyp_environments'),
             ]);
-            setManifest(m); setPreflight(p); setRuns(r); setEvaluations(e); setError('');
+            setManifest(m); setPreflight(p); setRuns(r); setEvaluations(e); setEnvironments(envs); setError('');
+            const fallbackEnvironment = p.active_environment?.environment_id ?? envs[0]?.environment_id ?? '';
+            if (!selectedEnvironmentId || !envs.some(environment => environment.environment_id === selectedEnvironmentId))
+                setSelectedEnvironmentId(fallbackEnvironment);
+            if (!evaluationEnvironmentId || !envs.some(environment => environment.environment_id === evaluationEnvironmentId))
+                setEvaluationEnvironmentId(fallbackEnvironment);
         } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
         finally { setLoading(false); }
-    }, []);
+    }, [evaluationEnvironmentId, selectedEnvironmentId]);
     useEffect(() => {
         void refresh();
         const timer = window.setInterval(() => { void refresh(); }, 3000);
@@ -105,15 +119,16 @@ export function FypV1Experience() {
     const activeEvaluation = useMemo(() => evaluations.find(evaluation => isActive(evaluation.state)), [evaluations]);
     const activeTicket = isActive(ticket?.status) ? ticket : null;
     const requestedAction = activeTicket?.action ?? (activeRun ? 'fyp_train' : activeEvaluation ? 'fyp_evaluate' : null);
-    const manifestScene = manifest?.contract.scene;
-    const sceneMatches = manifest?.available === true && !!preflight?.scene_ready &&
-        !!manifestScene && preflight?.active_scene === manifestScene;
+    const selectedEnvironment = environments.find(environment => environment.environment_id === selectedEnvironmentId);
+    const selectedEvaluationEnvironment = environments.find(environment => environment.environment_id === evaluationEnvironmentId);
+    const sceneMatches = !!selectedEnvironment && preflight?.active_environment?.environment_id === selectedEnvironment.environment_id && !!preflight?.scene_ready;
+    const evaluationSceneMatches = !!selectedEvaluationEnvironment && preflight?.active_environment?.environment_id === selectedEvaluationEnvironment.environment_id;
     const heartbeatFresh = preflight?.heartbeat_age_seconds != null && preflight.heartbeat_age_seconds <= HEARTBEAT_MAX_AGE_SECONDS;
-    const editorReady = !!preflight?.ready_to_train && !!preflight.editor_open && sceneMatches &&
+    const editorReady = !!preflight?.editor_ready && !!preflight.editor_open &&
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || !!activeRun || !!activeEvaluation;
-    const canStartTraining = editorReady && !operationActive && !busy;
-    const canEvaluate = editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
+    const canStartTraining = editorReady && sceneMatches && !operationActive && !busy;
+    const canEvaluate = editorReady && evaluationSceneMatches && !activeTicket && !activeRun && !activeEvaluation && !busy;
     const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
 
     let readinessMessage = 'Checking Unity status…';
@@ -128,9 +143,10 @@ export function FypV1Experience() {
         else if (preflight.editor_playing) readinessMessage = 'Play Mode · waiting for trainer connection';
         else readinessMessage = `${requestedAction === 'fyp_evaluate' ? 'Evaluation' : 'Training'} requested · press Play`;
     } else if (!manifest?.available) { readinessMessage = 'FYP Football contract unavailable'; readinessTone = 'warning'; }
+    else if (environments.length === 0) { readinessMessage = 'No Unity environments in the catalogue'; readinessTone = 'warning'; }
     else if (!preflight.editor_open) { readinessMessage = 'Unity closed · idle'; readinessTone = 'pending'; }
     else if (preflight.editor_playing && preflight.environment_present) { readinessMessage = 'Manual Play · keyboard controlled'; readinessTone = 'active'; }
-    else if (!sceneMatches) { readinessMessage = `Open ${sceneName(manifest?.contract.scene)} in Unity`; readinessTone = 'warning'; }
+    else if (!sceneMatches) { readinessMessage = selectedEnvironment ? `Open ${selectedEnvironment.name} in Unity` : 'Select a training environment'; readinessTone = 'warning'; }
     else if (preflight.editor_compiling) { readinessMessage = 'Wait for Unity compilation to finish'; readinessTone = 'warning'; }
     else if (!preflight.trainer_available) { readinessMessage = 'ML-Agents trainer is unavailable'; readinessTone = 'warning'; }
     else if (!heartbeatFresh) { readinessMessage = 'Waiting for a fresh Unity heartbeat'; readinessTone = 'warning'; }
@@ -144,13 +160,13 @@ export function FypV1Experience() {
                 : 'In the FYP Unity Editor, press Play to connect the trainer.'
         : activeRun ? `${activeRun.preset === 'smoke' ? 'Smoke run' : activeRun.preset === 'pilot_50k' ? '50k pilot' : activeRun.preset} · seed ${activeRun.seed}`
             : activeEvaluation ? `Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
-                : preflight?.editor_playing ? 'The FYP scene is running without a requested Atlas operation. Keyboard controls remain active.'
-                    : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
+                : preflight?.editor_playing ? 'The Unity scene is running without a requested Atlas operation. Keyboard controls remain active.'
+                    : `${selectedEnvironment?.name ?? 'A catalogued environment'} is selected. Atlas starts the learner; Unity connects when you press Play.`;
 
     const perform = async (operation: 'smoke' | 'pilot_50k') => {
         setBusy(operation); setError(''); setNotice('');
         try {
-            const response = await callTool<FypTicket>('football_fyp_train', { preset: operation, seed });
+            const response = await callTool<FypTicket>('football_fyp_train', { preset: operation, seed, environmentId: selectedEnvironmentId });
             setTicket(response);
             setNotice('Learner request accepted. Press Play in the FYP Unity Editor to connect it.');
             await refresh();
@@ -160,7 +176,7 @@ export function FypV1Experience() {
     const evaluateRun = async (runId: string) => {
         setBusy(`evaluate:${runId}`); setError(''); setNotice('');
         try {
-            const response = await callTool<FypTicket>('football_fyp_evaluate', { runId, episodes: evaluationEpisodes, seed: evaluationSeed });
+            const response = await callTool<FypTicket>('football_fyp_evaluate', { runId, episodes: evaluationEpisodes, seed: evaluationSeed, environmentId: evaluationEnvironmentId });
             setTicket(response);
             setNotice('Evaluation request accepted. Press Play in the FYP Unity Editor when Atlas reports that the checkpoint runner is ready.');
             await refresh();
@@ -241,6 +257,11 @@ export function FypV1Experience() {
                     <div className="fyp-checkpoint-heading"><h2>Policy checkpoints</h2><span>{completedRuns.length} available · {runs.length} training runs recorded</span></div>
                 </div>
                 <div className="fyp-evaluation-settings">
+                    <label className="fyp-field">Environment
+                        <select aria-label="FYP evaluation environment" value={evaluationEnvironmentId} onChange={event => setEvaluationEnvironmentId(event.target.value)}>
+                            {environments.map(environment => <option key={environment.environment_id} value={environment.environment_id}>{environment.name}</option>)}
+                        </select>
+                    </label>
                     <label className="fyp-field">Episodes
                         <input aria-label="FYP evaluation episodes" type="number" min={1} max={100} step={1} value={evaluationEpisodes} onChange={event => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(Number(event.target.value) || 1))))} />
                     </label>
@@ -249,7 +270,7 @@ export function FypV1Experience() {
                     </label>
                 </div>
             </div>
-            <p className="fg-muted">Each card is an exported policy checkpoint. Evaluation uses that checkpoint in the open Unity Editor.</p>
+            <p className="fg-muted">Each card is an exported policy checkpoint. Choose the target environment for evaluation.</p>
             {completedRuns.length === 0 ? <p className="fg-muted">Completed training runs with an exported checkpoint will appear here.</p> :
                 <ul className="fyp-checkpoint-list">{completedRuns.map(run => {
                     const runEvaluations = evaluations.filter(evaluation => evaluation.training_run_id === run.run_id);
@@ -264,7 +285,8 @@ export function FypV1Experience() {
                                 <span className={`fyp-review-tag fyp-review-${review ?? 'unreviewed'}`}>{reviewLabel}</span>
                             </div>
                             <p>{run.started_at ? new Date(run.started_at).toLocaleString() : 'Time not recorded'} · Seed {run.seed} · {run.steps.toLocaleString()} steps</p>
-                            <p>Checkpoint {run.model_sha256?.slice(0, 12) ?? run.checkpoint_sha256?.slice(0, 12) ?? run.run_id.slice(0, 13)}</p>
+                            {run.environment && <p>Trained in {run.environment.name} · {run.environment.snapshot_recorded === false ? 'historical settings not recorded' : `version ${run.environment.version}`}</p>}
+                            {run.environment && <button className="fg-link" type="button" onClick={() => onOpenEnvironment?.(run.environment!.environment_id)}>{run.environment.snapshot_recorded === false ? 'View current environment →' : 'View environment →'}</button>}
                             {runEvaluations.length > 0 && <p>{runEvaluations.length} evaluation{runEvaluations.length === 1 ? '' : 's'} recorded</p>}
                             {run.error && <p className="fg-error">{run.error}</p>}
                             <div className="fyp-checkpoint-review" role="group" aria-label={`Review checkpoint from ${run.preset} run`}>
@@ -280,11 +302,16 @@ export function FypV1Experience() {
             {completedRuns.length > 0 && <p className="fg-muted fyp-candidate-note">Keep and Discard are saved in this browser. They record your review and do not delete or alter checkpoint files.</p>}
         </section>
 
-        <FypV1Evidence runs={runs} evaluations={evaluations} />
+        <FypV1Evidence runs={runs} evaluations={evaluations} onOpenEnvironment={onOpenEnvironment} />
 
         <details className="fg-panel fyp-training-panel">
             <summary><h2>New training run</h2><span>Smoke or 50k pilot</span></summary>
             <p className="fg-muted">Start with the FYP scene open in Edit Mode, then press Play in Unity to connect the learner.</p>
+            <label className="fyp-field">Training environment
+                <select aria-label="FYP training environment" value={selectedEnvironmentId} onChange={event => setSelectedEnvironmentId(event.target.value)}>
+                    {environments.map(environment => <option key={environment.environment_id} value={environment.environment_id}>{environment.name}</option>)}
+                </select>
+            </label>
             <label className="fyp-field">Seed
                 <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={seed} onChange={event => setSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
             </label>
