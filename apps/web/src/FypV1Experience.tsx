@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
+import { FypV1Evidence } from './FypV1Evidence';
 
 type FypManifest = { available: boolean; contract: { contract_id: string; behavior: string; observations: { size: number }; actions: { continuous: number }; scene: string; trainer_kind: string } };
 type FypPreflight = {
@@ -10,13 +11,14 @@ type FypPreflight = {
     heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean;
     source_sha256: string; note: string;
 };
-type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; started_at?: string; error?: string };
+type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; model_sha256?: string | null; checkpoint_sha256?: string | null; started_at?: string; error?: string };
 type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; started_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
 
 const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'cancelling', 'unknown', 'incomplete']);
 const HEARTBEAT_MAX_AGE_SECONDS = 15;
 const OPERATION_STORAGE_KEY = 'atlas.football.fyp.operation';
+const CHECKPOINT_REVIEW_KEY = 'atlas.football.fyp.checkpoint-reviews';
 const isActive = (state?: string) => !!state && ACTIVE_STATES.has(state.toLowerCase());
 const sceneName = (path?: string | null) => path?.split('/').pop()?.replace(/\.unity$/i, '') || 'FYP scene';
 
@@ -29,7 +31,17 @@ function readSavedTicket(): FypTicket | null {
     } catch { return null; }
 }
 
-export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => void }) {
+function readCheckpointReviews(): Record<string, 'keep' | 'discard'> {
+    try {
+        const saved = window.localStorage.getItem(CHECKPOINT_REVIEW_KEY);
+        const parsed = saved ? JSON.parse(saved) : {};
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, 'keep' | 'discard'] =>
+            entry[1] === 'keep' || entry[1] === 'discard'));
+    } catch { return {}; }
+}
+
+export function FypV1Experience() {
     const [manifest, setManifest] = useState<FypManifest | null>(null);
     const [preflight, setPreflight] = useState<FypPreflight | null>(null);
     const [runs, setRuns] = useState<FypRun[]>([]);
@@ -42,6 +54,7 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
     const [notice, setNotice] = useState('');
     const [ticket, setTicket] = useState<FypTicket | null>(readSavedTicket);
     const [loading, setLoading] = useState(true);
+    const [checkpointReviews, setCheckpointReviews] = useState<Record<string, 'keep' | 'discard'>>(readCheckpointReviews);
 
     const refresh = useCallback(async () => {
         try {
@@ -91,6 +104,7 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
     const activeRun = useMemo(() => runs.find(run => isActive(run.state)), [runs]);
     const activeEvaluation = useMemo(() => evaluations.find(evaluation => isActive(evaluation.state)), [evaluations]);
     const activeTicket = isActive(ticket?.status) ? ticket : null;
+    const requestedAction = activeTicket?.action ?? (activeRun ? 'fyp_train' : activeEvaluation ? 'fyp_evaluate' : null);
     const manifestScene = manifest?.contract.scene;
     const sceneMatches = manifest?.available === true && !!preflight?.scene_ready &&
         !!manifestScene && preflight?.active_scene === manifestScene;
@@ -101,33 +115,28 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
     const canStartTraining = editorReady && !operationActive && !busy;
     const canEvaluate = editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
     const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
-    const recentRuns = runs.slice(0, 3);
 
-    let readinessMessage = 'Checking Unity readiness…';
+    let readinessMessage = 'Checking Unity status…';
     let readinessTone = 'pending';
-    if (loading && !preflight) readinessMessage = 'Checking Unity readiness…';
+    if (loading && !preflight) readinessMessage = 'Checking Unity status…';
     else if (!preflight) { readinessMessage = 'Unity status unavailable'; readinessTone = 'warning'; }
-    else if (activeTicket) {
+    else if (requestedAction) {
         readinessTone = 'active';
-        if (preflight.trainer_connected && activeTicket.action === 'fyp_train') readinessMessage = 'Training in Unity';
-        else if (preflight.trainer_connected && activeTicket.action === 'fyp_evaluate') readinessMessage = 'Evaluating checkpoint in Unity';
-        else if (preflight.editor_playing) readinessMessage = 'Unity is in Play Mode — waiting for trainer connection';
-        else readinessMessage = activeTicket.action === 'fyp_evaluate'
-            ? 'Evaluation runner started — press Play in the FYP Editor'
-            : 'Learner started — press Play in the FYP Editor';
-    } else if (activeRun) {
-        readinessTone = 'active'; readinessMessage = 'FYP training run is active';
-    } else if (activeEvaluation) {
-        readinessTone = 'active'; readinessMessage = 'Checkpoint evaluation is active';
+        if (preflight.trainer_connected && requestedAction === 'fyp_train') readinessMessage = 'Training in Unity';
+        else if (preflight.trainer_connected && requestedAction === 'fyp_evaluate') readinessMessage = 'Evaluating checkpoint in Unity';
+        else if (!preflight.editor_open) readinessMessage = `${requestedAction === 'fyp_evaluate' ? 'Evaluation' : 'Training'} requested · Unity closed`;
+        else if (preflight.editor_playing) readinessMessage = 'Play Mode · waiting for trainer connection';
+        else readinessMessage = `${requestedAction === 'fyp_evaluate' ? 'Evaluation' : 'Training'} requested · press Play`;
     } else if (!manifest?.available) { readinessMessage = 'FYP Football contract unavailable'; readinessTone = 'warning'; }
-    else if (!preflight.editor_open) { readinessMessage = 'Open the FYP project in Unity'; readinessTone = 'warning'; }
+    else if (!preflight.editor_open) { readinessMessage = 'Unity closed · idle'; readinessTone = 'pending'; }
+    else if (preflight.editor_playing && preflight.environment_present) { readinessMessage = 'Manual Play · keyboard controlled'; readinessTone = 'active'; }
     else if (!sceneMatches) { readinessMessage = `Open ${sceneName(manifest?.contract.scene)} in Unity`; readinessTone = 'warning'; }
     else if (preflight.editor_compiling) { readinessMessage = 'Wait for Unity compilation to finish'; readinessTone = 'warning'; }
     else if (!preflight.trainer_available) { readinessMessage = 'ML-Agents trainer is unavailable'; readinessTone = 'warning'; }
     else if (!heartbeatFresh) { readinessMessage = 'Waiting for a fresh Unity heartbeat'; readinessTone = 'warning'; }
-    else if (preflight.editor_playing) { readinessMessage = 'Stop Play Mode before starting an operation'; readinessTone = 'warning'; }
+    else if (preflight.editor_playing) { readinessMessage = 'Manual Play · no model attached'; readinessTone = 'active'; }
     else if (!preflight.ready_to_train) { readinessMessage = preflight.note || 'Atlas preflight has not approved this operation'; readinessTone = 'warning'; }
-    else { readinessMessage = 'Ready to start from Unity Edit Mode'; readinessTone = 'ready'; }
+    else { readinessMessage = 'Unity open · idle · ready to run'; readinessTone = 'ready'; }
 
     const operationDescription = activeTicket
         ? preflight?.trainer_connected ? 'Unity is connected to the active Atlas operation.'
@@ -135,7 +144,8 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                 : 'In the FYP Unity Editor, press Play to connect the trainer.'
         : activeRun ? `${activeRun.preset === 'smoke' ? 'Smoke run' : activeRun.preset === 'pilot_50k' ? '50k pilot' : activeRun.preset} · seed ${activeRun.seed}`
             : activeEvaluation ? `Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
-                : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
+                : preflight?.editor_playing ? 'The FYP scene is running without a requested Atlas operation. Keyboard controls remain active.'
+                    : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
 
     const perform = async (operation: 'smoke' | 'pilot_50k') => {
         setBusy(operation); setError(''); setNotice('');
@@ -158,6 +168,15 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
         finally { setBusy(''); }
     };
 
+    const updateCheckpointReview = (runId: string, value: 'keep' | 'discard' | null) => {
+        const next = { ...checkpointReviews };
+        if (value) next[runId] = value;
+        else delete next[runId];
+        try { window.localStorage.setItem(CHECKPOINT_REVIEW_KEY, JSON.stringify(next)); }
+        catch { setError('Checkpoint review could not be saved in this browser.'); return; }
+        setCheckpointReviews(next);
+    };
+
     const refreshNow = async () => {
         setBusy('refresh');
         try { await refresh(); }
@@ -177,15 +196,9 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                     {busy === 'refresh' ? 'Refreshing…' : 'Refresh status'}
                 </button>
             </div>
-            <div className="fyp-readiness-grid" aria-label="Unity readiness">
-                <ReadinessItem label="Editor" value={!preflight ? 'Checking…' : preflight.editor_open ? 'Open' : preflight.editor_available ? 'Closed' : 'Unavailable'} state={!preflight ? 'pending' : preflight.editor_open ? 'ready' : 'warning'} />
-                <ReadinessItem label="Scene" value={!preflight ? 'Checking…' : sceneMatches ? sceneName(preflight.active_scene) : preflight.active_scene ? 'Wrong scene' : 'Not loaded'} state={!preflight ? 'pending' : sceneMatches ? 'ready' : 'warning'} />
-                <ReadinessItem label="Mode" value={!preflight ? 'Checking…' : preflight.editor_playing ? 'Play Mode' : 'Edit Mode'} state={!preflight ? 'pending' : preflight.editor_playing ? 'active' : 'ready'} />
-                <ReadinessItem label="Compilation" value={!preflight ? 'Checking…' : preflight.editor_compiling ? 'Compiling' : 'Ready'} state={!preflight ? 'pending' : preflight.editor_compiling ? 'warning' : 'ready'} />
-                <ReadinessItem label="Trainer" value={!preflight ? 'Checking…' : preflight.trainer_available ? 'Ready' : 'Unavailable'} state={!preflight ? 'pending' : preflight.trainer_available ? 'ready' : 'warning'} />
-                <ReadinessItem label="Connection" value={preflight?.trainer_connected ? 'Connected' : activeTicket ? preflight?.editor_playing ? 'Connecting' : 'Waiting for Play' : 'Waiting'} state={preflight?.trainer_connected ? 'active' : 'pending'} />
-                <ReadinessItem label="Heartbeat" value={!preflight ? 'Checking…' : preflight.heartbeat_age_seconds == null ? 'Unknown' : heartbeatFresh ? `${Math.round(preflight.heartbeat_age_seconds)}s ago` : 'Stale'} state={!preflight ? 'pending' : heartbeatFresh ? 'ready' : 'warning'} />
-            </div>
+            <p className="fyp-status-context">{!preflight ? 'Reading the FYP Editor connection.' : preflight.editor_open
+                ? `${sceneMatches ? sceneName(preflight.active_scene) : preflight.active_scene ? 'Wrong Unity scene' : 'Scene not loaded'} · ${preflight.editor_playing ? 'Play Mode' : 'Edit Mode'}${preflight.trainer_connected ? ' · trainer connected' : ''}`
+                : preflight.editor_available ? 'FYP Editor is installed but closed.' : 'FYP Editor is unavailable.'}</p>
             {operationActive && <div className="fyp-live-summary" role="status">
                 <strong>{activeTicket ? 'Current operation' : activeRun ? 'Active training run' : 'Active evaluation'}</strong>
                 <span>{operationDescription}</span>
@@ -205,8 +218,12 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                 {ticket.error && <span className="fg-error">{ticket.error}</span>}
             </div>}
             <details className="fyp-contract-details">
-                <summary>Experiment details</summary>
+                <summary>Unity diagnostics and experiment details</summary>
                 <div className="fyp-contract-grid">
+                    <span>Compilation <strong>{!preflight ? 'Checking' : preflight.editor_compiling ? 'In progress' : 'Ready'}</strong></span>
+                    <span>Trainer <strong>{!preflight ? 'Checking' : preflight.trainer_available ? 'Available' : 'Unavailable'}</strong></span>
+                    <span>Connection <strong>{preflight?.trainer_connected ? 'Connected' : activeTicket ? preflight?.editor_playing ? 'Connecting' : 'Waiting for Play' : 'Not requested'}</strong></span>
+                    <span>Heartbeat <strong>{!preflight ? 'Checking' : preflight.heartbeat_age_seconds == null ? 'Unknown' : heartbeatFresh ? `${Math.round(preflight.heartbeat_age_seconds)}s ago` : 'Stale'}</strong></span>
                     <span>Behavior <strong>{manifest?.contract.behavior ?? 'Loading'}</strong></span>
                     <span>Observations <strong>{manifest?.contract.observations.size ?? '—'}</strong></span>
                     <span>Continuous actions <strong>{manifest?.contract.actions.continuous ?? '—'}</strong></span>
@@ -218,10 +235,10 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
             </details>
         </section>
 
-        <section className="fg-panel fyp-checkpoint-panel" aria-label="Recent checkpoints and evaluations">
+        <section className="fg-panel fyp-checkpoint-panel" aria-label="Policy checkpoints">
             <div className="fyp-checkpoint-header">
                 <div className="fg-panel-title">
-                    <div className="fyp-checkpoint-heading"><h2>Recent checkpoints</h2><span>{recentRuns.filter(run => completedRuns.some(candidate => candidate.run_id === run.run_id)).length} ready to evaluate · {runs.length} runs recorded</span></div>
+                    <div className="fyp-checkpoint-heading"><h2>Policy checkpoints</h2><span>{completedRuns.length} available · {runs.length} training runs recorded</span></div>
                 </div>
                 <div className="fyp-evaluation-settings">
                     <label className="fyp-field">Episodes
@@ -232,41 +249,41 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
                     </label>
                 </div>
             </div>
-            <p className="fg-muted">Choose a saved checkpoint to evaluate in the open Unity Editor. Each result stays with its training run.</p>
-            {recentRuns.length === 0 ? <p className="fg-muted">No training runs recorded yet.</p> :
-                <ul className="fyp-checkpoint-list">{recentRuns.map(run => {
+            <p className="fg-muted">Each card is an exported policy checkpoint. Evaluation uses that checkpoint in the open Unity Editor.</p>
+            {completedRuns.length === 0 ? <p className="fg-muted">Completed training runs with an exported checkpoint will appear here.</p> :
+                <ul className="fyp-checkpoint-list">{completedRuns.map(run => {
                     const runEvaluations = evaluations.filter(evaluation => evaluation.training_run_id === run.run_id);
-                    const eligible = completedRuns.some(candidate => candidate.run_id === run.run_id);
                     const runIsActive = runEvaluations.some(evaluation => isActive(evaluation.state));
+                    const review = checkpointReviews[run.run_id];
+                    const reviewLabel = review === 'keep' ? 'Keep' : review === 'discard' ? 'Discard' : 'Unreviewed';
                     return <li className="fyp-checkpoint-row" key={run.run_id}>
                         <div className="fyp-checkpoint-summary">
                             <div className="fyp-checkpoint-title">
-                                <strong>{run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong>
-                                <span className={`fyp-state fyp-state-${run.state.toLowerCase()}`}>{run.state}</span>
-                                {eligible && <span className="fyp-state fyp-state-completed">Checkpoint exported</span>}
+                                <strong>Policy checkpoint · {run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong>
+                                <span className="fyp-state fyp-state-completed">Available</span>
+                                <span className={`fyp-review-tag fyp-review-${review ?? 'unreviewed'}`}>{reviewLabel}</span>
                             </div>
                             <p>{run.started_at ? new Date(run.started_at).toLocaleString() : 'Time not recorded'} · Seed {run.seed} · {run.steps.toLocaleString()} steps</p>
+                            <p>Checkpoint {run.model_sha256?.slice(0, 12) ?? run.checkpoint_sha256?.slice(0, 12) ?? run.run_id.slice(0, 13)}</p>
+                            {runEvaluations.length > 0 && <p>{runEvaluations.length} evaluation{runEvaluations.length === 1 ? '' : 's'} recorded</p>}
                             {run.error && <p className="fg-error">{run.error}</p>}
-                            {runEvaluations.length > 0 && <ul className="fyp-evaluation-receipts" aria-label={`Evaluations for ${run.run_id}`}>
-                                {runEvaluations.map(evaluation => <li key={evaluation.evaluation_id}>
-                                    <strong>{evaluation.state}</strong> · {evaluation.episodes_completed ?? 0}/{evaluation.requested_episodes} episodes
-                                    {evaluation.goals_scored != null ? ` · ${evaluation.goals_scored} goal${evaluation.goals_scored === 1 ? '' : 's'} (${Math.round((evaluation.goal_rate ?? 0) * 100)}%)` : ''}
-                                    {evaluation.seed != null ? ` · evaluation seed ${evaluation.seed}` : ''}
-                                    {evaluation.error ? ` · ${evaluation.error}` : ''}
-                                </li>)}
-                            </ul>}
+                            <div className="fyp-checkpoint-review" role="group" aria-label={`Review checkpoint from ${run.preset} run`}>
+                                <button className="fg-button" type="button" aria-pressed={review === 'keep'} onClick={() => updateCheckpointReview(run.run_id, review === 'keep' ? null : 'keep')}>{review === 'keep' ? 'Kept' : 'Keep'}</button>
+                                <button className="fg-button" type="button" aria-pressed={review === 'discard'} onClick={() => updateCheckpointReview(run.run_id, review === 'discard' ? null : 'discard')}>{review === 'discard' ? 'Discarded' : 'Discard'}</button>
+                            </div>
                         </div>
-                        {eligible && <button className="fg-button" type="button" disabled={!canEvaluate || runIsActive} onClick={() => void evaluateRun(run.run_id)}>
+                        <button className="fg-button primary" type="button" disabled={!canEvaluate || runIsActive} onClick={() => void evaluateRun(run.run_id)}>
                             {busy === `evaluate:${run.run_id}` ? 'Starting evaluation…' : `Evaluate ${evaluationEpisodes} episodes`}
-                        </button>}
+                        </button>
                     </li>;
                 })}</ul>}
-            {completedRuns.length > 0 && <p className="fg-muted fyp-candidate-note">Evaluation uses the selected run’s exported checkpoint; it does not start training.</p>}
-            {onOpenEvidence && <button type="button" className="fg-link fyp-evidence-link" onClick={onOpenEvidence}>View all runs and evaluations →</button>}
+            {completedRuns.length > 0 && <p className="fg-muted fyp-candidate-note">Keep and Discard are saved in this browser. They record your review and do not delete or alter checkpoint files.</p>}
         </section>
 
+        <FypV1Evidence runs={runs} evaluations={evaluations} />
+
         <details className="fg-panel fyp-training-panel">
-            <summary><h2>Start training</h2><span>Smoke or 50k pilot</span></summary>
+            <summary><h2>New training run</h2><span>Smoke or 50k pilot</span></summary>
             <p className="fg-muted">Start with the FYP scene open in Edit Mode, then press Play in Unity to connect the learner.</p>
             <label className="fyp-field">Seed
                 <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={seed} onChange={event => setSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
@@ -281,12 +298,5 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
             </div>
             {!canStartTraining && <p className="fyp-blocker" role="status">{operationActive ? 'A FYP operation is already active.' : busy ? 'Refreshing current operation status.' : readinessMessage}</p>}
         </details>
-    </div>;
-}
-
-function ReadinessItem({ label, value, state }: { label: string; value: string; state: string }) {
-    return <div className="fyp-readiness-item">
-        <span>{label}</span>
-        <strong className={`fyp-indicator fyp-indicator-${state}`}>{value}</strong>
     </div>;
 }

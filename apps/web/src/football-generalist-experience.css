@@ -100,15 +100,7 @@
 .fyp-readiness.fyp-warning { border-inline-start-color:var(--warning,#e7b86a); }
 .fyp-readiness-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:17px; }
 .fyp-readiness-header h2 { margin:4px 0 0; font-size:19px; }
-.fyp-readiness-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:8px; }
-.fyp-readiness-item { display:grid; gap:7px; min-width:0; padding:11px 12px; border:1px solid var(--border,#384152); border-radius:5px; background:var(--surface-secondary,#272f39); }
-.fyp-readiness-item>span { color:var(--text-muted,#9ba5b5); font-size:11px; }
-.fyp-readiness-item strong { min-width:0; font-size:13px; overflow-wrap:anywhere; }
-.fyp-indicator::before { content:""; display:inline-block; width:7px; height:7px; margin:0 7px 1px 0; border-radius:50%; background:currentColor; }
-.fyp-indicator-ready { color:var(--success,#7fc7a0); }
-.fyp-indicator-active { color:var(--accent,#9cb5f3); }
-.fyp-indicator-pending { color:var(--text-muted,#9ba5b5); }
-.fyp-indicator-warning { color:var(--warning,#e7b86a); }
+.fyp-status-context { margin:-7px 0 0; color:var(--text-muted,#9ba5b5); font-size:12px; }
 .fyp-live-summary { display:grid; gap:5px; margin-top:12px; padding:12px 14px; border:1px solid var(--border,#384152); border-radius:5px; background:var(--surface-secondary,#272f39); font-size:13px; }
 .fyp-live-summary>span,.fyp-ticket { color:var(--text-muted,#9ba5b5); overflow-wrap:anywhere; }
 .fyp-live-metrics { font-variant-numeric:tabular-nums; }
@@ -141,6 +133,14 @@
 .fyp-state-completed { color:var(--success,#7fc7a0); border-color:color-mix(in srgb,var(--success,#7fc7a0) 45%,transparent); }
 .fyp-state-running,.fyp-state-launching,.fyp-state-starting { color:var(--accent,#9cb5f3); border-color:color-mix(in srgb,var(--accent,#9cb5f3) 45%,transparent); }
 .fyp-state-failed,.fyp-state-error { color:var(--danger,#ff9797); border-color:color-mix(in srgb,var(--danger,#ff9797) 45%,transparent); }
+.fyp-review-tag { border:1px solid var(--border,#5b6577); border-radius:20px; padding:4px 8px; color:var(--text-muted,#9ba5b5); font-size:10px; }
+.fyp-review-keep { color:var(--success,#7fc7a0); border-color:color-mix(in srgb,var(--success,#7fc7a0) 45%,transparent); }
+.fyp-review-discard { color:var(--warning,#e7b86a); border-color:color-mix(in srgb,var(--warning,#e7b86a) 45%,transparent); }
+.fyp-checkpoint-review { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.fyp-checkpoint-review .fg-button { padding:5px 9px; font-size:11px; }
+.fyp-checkpoint-review .fg-button[aria-pressed="true"] { border-color:var(--accent,#9cb5f3); }
+.fg-more-select { display:grid; gap:6px; width:min(100%,280px); margin:-8px 0 18px; color:var(--text-muted,#9ba5b5); font-size:11px; }
+.fg-more-select select { min-width:0; padding:9px 11px; border:1px solid var(--border,#384152); border-radius:5px; color:inherit; background:var(--surface-secondary,#272f39); font:inherit; font-size:13px; }
 .fyp-evaluation-settings { display:grid; grid-template-columns:repeat(2,minmax(0,190px)); gap:12px; }
 .fyp-evaluation-settings .fyp-field { width:100%; margin:0; }
 .fyp-evaluation-receipts { display:grid; gap:6px; margin-top:10px; font-size:12px; }
@@ -179,7 +179,7 @@
 .fyp-evidence-run h3 { margin:16px 0 7px; font-size:13px; }
 .fyp-evidence-run .fyp-evaluation-receipts li { background:var(--surface,#1d222b); }
 .fg-archive-panel>.fg-eyebrow { margin-top:0; }
-@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-readiness-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fyp-checkpoint-row { align-items:flex-start; flex-direction:column; } .fyp-evaluation-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-checkpoint-row { align-items:flex-start; flex-direction:column; } .fyp-evaluation-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
 
 /* Football Training V2: active work, curated policies and evidence-backed assessments. */

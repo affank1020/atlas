@@ -24,9 +24,11 @@ const duration = (start?: string, end?: string) => {
 const iso = (value?: string) => value && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : undefined;
 const format = (value: unknown) => value == null ? '—' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
 
-export function FypV1Evidence() {
-    const [runs, setRuns] = useState<FypRun[]>([]);
-    const [evaluations, setEvaluations] = useState<FypEvaluation[]>([]);
+export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluations }: {
+    runs?: FypRun[]; evaluations?: FypEvaluation[];
+} = {}) {
+    const [runs, setRuns] = useState<FypRun[]>(providedRuns ?? []);
+    const [evaluations, setEvaluations] = useState<FypEvaluation[]>(providedEvaluations ?? []);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [updatedAt, setUpdatedAt] = useState('');
@@ -43,15 +45,19 @@ export function FypV1Evidence() {
         finally { setLoading(false); }
     }, []);
     useEffect(() => {
+        if (providedRuns && providedEvaluations) {
+            setRuns(providedRuns); setEvaluations(providedEvaluations); setLoading(false);
+            return;
+        }
         void refresh();
         const timer = window.setInterval(() => { void refresh(); }, 3000);
         return () => window.clearInterval(timer);
-    }, [refresh]);
+    }, [refresh, providedRuns, providedEvaluations]);
 
     const selectedRun = detail?.kind === 'run' ? runs.find(run => run.run_id === detail.id) : undefined;
     const selectedEvaluation = detail?.kind === 'evaluation' ? evaluations.find(item => item.evaluation_id === detail.id) : undefined;
     if (detail?.kind === 'run') return <section className="fg-panel fyp-evidence-page fyp-record-detail" aria-label="Training run details">
-        <button type="button" className="fg-link" onClick={() => setDetail(null)}>← All runs and evaluations</button>
+        <button type="button" className="fg-link" onClick={() => setDetail(null)}>← Recent activity</button>
         {!selectedRun ? <p className="fg-muted">This training receipt is no longer available.</p> : <>
             <div className="fg-panel-title"><div><h2>{labelForRun(selectedRun)}</h2><span className={`fyp-state fyp-state-${selectedRun.state.toLowerCase()}`}>{selectedRun.state}</span></div></div>
             <div className="fyp-record-grid">
@@ -78,7 +84,7 @@ export function FypV1Evidence() {
         </>}
     </section>;
     if (detail?.kind === 'evaluation') return <section className="fg-panel fyp-evidence-page fyp-record-detail" aria-label="Evaluation details">
-        <button type="button" className="fg-link" onClick={() => setDetail(null)}>← All runs and evaluations</button>
+        <button type="button" className="fg-link" onClick={() => setDetail(null)}>← Recent activity</button>
         {!selectedEvaluation ? <p className="fg-muted">This evaluation receipt is no longer available.</p> : <>
             <div className="fg-panel-title"><div><h2>Checkpoint evaluation</h2><span className={`fyp-state fyp-state-${selectedEvaluation.state.toLowerCase()}`}>{selectedEvaluation.state}</span></div></div>
             <div className="fyp-record-grid">
@@ -107,10 +113,12 @@ export function FypV1Evidence() {
         </>}
     </section>;
 
-    return <section className="fg-panel fyp-evidence-page" aria-label="FYP checkpoint evidence">
-        <div className="fg-panel-title"><h2>Training runs and evaluations</h2>
-            <div className="fg-refresh-controls"><span className="fg-refresh-status" role="status">{loading ? 'Loading…' : `Updated ${updatedAt || '—'}`}</span>
-                <button className="fg-button" type="button" onClick={() => void refresh()}>Refresh</button></div>
+    return <section className="fg-panel fyp-evidence-page" aria-label="Recent training and evaluation activity">
+        <div className="fg-panel-title"><h2>Recent activity</h2>
+            {providedRuns && providedEvaluations
+                ? <span>{runs.length} training · {evaluations.length} evaluations</span>
+                : <div className="fg-refresh-controls"><span className="fg-refresh-status" role="status">{loading ? 'Loading…' : `Updated ${updatedAt || '—'}`}</span>
+                    <button className="fg-button" type="button" onClick={() => void refresh()}>Refresh</button></div>}
         </div>
         {error && <p className="fg-error" role="alert">{error}</p>}
         {!loading && !runs.length && !evaluations.length && <p className="fg-muted">No training or evaluation receipts yet.</p>}
