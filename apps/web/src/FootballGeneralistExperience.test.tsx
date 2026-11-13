@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { callTool } from './api';
 import { FootballGeneralistExperience } from './FootballGeneralistExperience';
+import { FypEnvironmentCatalog } from './FypEnvironmentCatalog';
 
 vi.mock('./api', () => ({ callTool: vi.fn(), onToolMutation: () => () => {} }));
 const contract = {
@@ -14,6 +15,11 @@ const contract = {
     scenarios: { sceneVersion: 's2', physicsVersion: 'p2', scenarios: [{ id: 's0-contact-easy-v1', name: 'Easy contact', stage: 0, objective: 'Touch ball' }] },
     curriculum: { stages: [{ id: 'S0', name: 'Contact', implemented: true }], held_out_seeds: [515] },
     fingerprints: { contract_sha256: 'a', scenario_sha256: 'b' },
+};
+const fypEnvironment = {
+    environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
+    purpose: 'Score from close range.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
+    policy_contract_id: 'fyp-football-v1', definition_sha256: 'a'.repeat(64), settings: [], modifiers: [],
 };
 beforeEach(() => {
     vi.clearAllMocks();
@@ -30,6 +36,7 @@ beforeEach(() => {
             trainer_available: false, verified_build: false, ready_to_train: false,
             source_sha256: 'abc123', note: 'Setup required' } as never;
         if (name === 'football_fyp_runs') return [] as never;
+        if (name === 'football_fyp_environments') return [fypEnvironment] as never;
         if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'unknown', scenario: 's0-contact-easy-v1' }] as never;
         if (name === 'football_generalist_policies') return [] as never;
         if (name === 'football_generalist_activity') return [] as never;
@@ -128,7 +135,7 @@ test('FYP training is the primary Home view', async () => {
     expect(await screen.findByRole('button', { name: 'Start smoke run · 2,048 steps' })).toBeInTheDocument();
     expect(screen.getByText('FootballV1')).toBeInTheDocument();
     expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
-        'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations',
+        'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations', 'football_fyp_environments',
     ]);
     expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_list_drills')).toBe(false);
 });
@@ -538,7 +545,9 @@ test.each([
         if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 }, trainer_kind: 'poca', scene: 'Assets/Football/Scenes/OpenGoalClose.unity' } } as never;
         if (name === 'football_fyp_preflight') return { editor_available: true, trainer_available: true, ready_to_train: true,
             scene_ready: true, active_scene: 'Assets/Football/Scenes/OpenGoalClose.unity', heartbeat_age_seconds: 1,
+            active_environment: fypEnvironment,
             ...preflight } as never;
+        if (name === 'football_fyp_environments') return [fypEnvironment] as never;
         return [] as never;
     });
     render(<FootballGeneralistExperience />, 'Home');
@@ -549,14 +558,17 @@ test('Home shows a distinct checkpoint card and recent evaluation activity', asy
     vi.mocked(callTool).mockImplementation(async name => {
         if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 } } } as never;
         if (name === 'football_fyp_preflight') return { editor_available: true, trainer_available: false, ready_to_train: false } as never;
-        if (name === 'football_fyp_runs') return [{ run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed', source_sha256: 'abcdef0123456789', exported_model: true }] as never;
+        if (name === 'football_fyp_runs') return [{ run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed', source_sha256: 'abcdef0123456789', exported_model: true,
+            environment: { ...fypEnvironment, version: 'Not recorded', snapshot_recorded: false } }] as never;
         if (name === 'football_fyp_evaluations') return [{ evaluation_id: 'eval-1', training_run_id: 'run-smoke', state: 'completed', requested_episodes: 10, episodes_completed: 10, goals_scored: 1, goal_rate: 0.1, seed: 22 }] as never;
         return [] as never;
     });
     render(<FootballGeneralistExperience />, 'Home');
     expect(await screen.findByRole('heading', { name: 'Policy checkpoints' })).toBeInTheDocument();
     expect(screen.getByText('Policy checkpoint · Smoke run')).toBeInTheDocument();
-    expect(screen.getByText('Checkpoint run-smoke')).toBeInTheDocument();
+    expect(screen.queryByText('run-smoke')).not.toBeInTheDocument();
+    expect(screen.getByText('Trained in Open Goal — Close · historical settings not recorded')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /View current environment/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Evaluate 10 episodes' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
     expect(screen.getByRole('button', { name: 'Kept' })).toHaveAttribute('aria-pressed', 'true');
@@ -567,6 +579,60 @@ test('Home shows a distinct checkpoint card and recent evaluation activity', asy
     fireEvent.click(evaluationCard);
     expect(screen.getByRole('heading', { name: 'Checkpoint evaluation' })).toBeInTheDocument();
     expect(screen.getByText('10.0%')).toBeInTheDocument();
+});
+
+test('checkpoint evaluation follows the open environment when another environment is selected for training', async () => {
+    const openGoal = {
+        environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
+        purpose: 'Score from close range.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
+        policy_contract_id: 'fyp-football-v1', definition_sha256: 'a'.repeat(64), settings: [], modifiers: [],
+    };
+    const longRange = {
+        ...openGoal, environment_id: 'long-range', name: 'Long Range',
+        scene_path: 'Assets/Football/Scenes/TrainingArenaBase.unity',
+    };
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 } } } as never;
+        if (name === 'football_fyp_preflight') return {
+            editor_available: true, editor_open: true, editor_playing: false, editor_compiling: false,
+            trainer_connected: false, trainer_available: true, editor_ready: true, scene_ready: true,
+            active_scene: longRange.scene_path, active_environment: longRange, selected_environment: longRange,
+            environment_present: false, heartbeat_age_seconds: 1, verified_build: false, ready_to_train: true,
+        } as never;
+        if (name === 'football_fyp_runs') return [{ run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed', source_sha256: 'abcdef', exported_model: true }] as never;
+        if (name === 'football_fyp_evaluations') return [] as never;
+        if (name === 'football_fyp_environments') return [openGoal, longRange] as never;
+        return [] as never;
+    });
+    render(<FootballGeneralistExperience />, 'Home');
+    const evaluate = await screen.findByRole('button', { name: 'Evaluate 10 episodes' });
+    fireEvent.click(screen.getByText('New training run'));
+    fireEvent.change(await screen.findByLabelText('FYP training environment'), { target: { value: 'open-goal-close' } });
+    await waitFor(() => expect(evaluate).toBeEnabled());
+    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'football_fyp_preflight')
+        .every(([, input]) => input === undefined)).toBe(true);
+});
+
+test('environment library opens complete settings without putting IDs on the cards', async () => {
+    const environment = {
+        environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
+        purpose: 'Score from close range.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
+        policy_contract_id: 'fyp-football-v1', definition_sha256: 'a'.repeat(64),
+        settings: [{ key: 'Environment.FootballEnvironment.goalReward', component: 'FootballEnvironment',
+            category: 'Rewards', label: 'Goal reward', value: '2', unit: '' }],
+        modifiers: [{ name: 'Training wall', shape: 'BoxCollider', position: '(0, 0, 4)', size: '(2, 1, 1)', is_trigger: false }],
+    };
+    vi.mocked(callTool).mockImplementation(async name => name === 'football_fyp_environments' ? [environment] as never : [] as never);
+    rtlRender(<FypEnvironmentCatalog />);
+    const card = await screen.findByRole('button', { name: /Open Goal — Close/ });
+    expect(card).toHaveTextContent('Introductory');
+    expect(card).not.toHaveTextContent('open-goal-close');
+    fireEvent.click(card);
+    expect(await screen.findByRole('region', { name: 'Open Goal — Close environment details' })).toBeInTheDocument();
+    expect(screen.getByText('Goal reward')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('Training wall')).toBeInTheDocument();
+    expect(screen.getByText('open-goal-close')).toBeInTheDocument();
 });
 
 test('historical Generalist archive does not expose mutation or run controls', async () => {

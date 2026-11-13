@@ -9,6 +9,7 @@ import './football-training.css';
 import './football-generalist-experience.css';
 import { SkeletonRows } from './Skeletons';
 import { FypV1Experience } from './FypV1Experience';
+import { FypEnvironmentCatalog } from './FypEnvironmentCatalog';
 
 const G05_FOOT_SCENARIO = 's1-dribble-foot-touch-g05-v1';
 const G05_FOOT_SOURCE = 'atlas-generalist-61a91798db31';
@@ -16,14 +17,16 @@ type Run = { id: string; family: string; scenario?: string; state: string; start
 type Policy = { id: string; display_name?: string | null; featured?: boolean; source_policy_id?: string | null; onnx_sha256?: string | null; behavior: string; status: string; source: string; compatible_metadata: boolean; historical_watch_available?: boolean; historical_scenarios?: string[]; legacy_preview_available?: boolean; executable_verified: boolean; view_scenario?: string; onnx_available: boolean; bundle_available: boolean };
 type Receipt = { accepted?: boolean; ticket: string; action: string; status: string; scenario?: string; policy_id?: string; seed?: number; started_at?: string; output?: string; error?: string; note?: string; requested_episodes?: number; result?: { run_id?: string; episodes?: number; outcomes?: Record<string, number>; success_rate?: number | null }; viewer?: { state: string; launch_method: string; launcher_alive: boolean; player_log_detected: boolean; log_tail?: string; note?: string } };
 type Review = { phase: string; scenario: string; variant: string; verdict: string; note: string; visual_evidence?: string; policy_id?: string; run_id?: string; evaluation_ticket?: string; watch_ticket?: string; contract_sha256?: string; scenario_sha256?: string; updated_at: string };
-type Tab = 'fyp' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks' | 'archive';
-type Section = 'home' | 'more' | 'archive';
+type Tab = 'fyp' | 'environments' | 'runs' | 'policies' | 'evaluate' | 'watch' | 'review' | 'checks' | 'archive';
+type Section = 'home' | 'environments' | 'more' | 'archive';
 
 const SHOWCASE_DRILL = 'dribbling_showcase_v1';
 const LEGACY_PREVIEW = 'legacy_preview_v1';
 const sections: { id: Section; label: string; defaultTab: Tab; tabs: { id: Tab; label: string }[] }[] = [
     { id: 'home', label: 'Home', defaultTab: 'fyp', tabs: [
         { id: 'fyp', label: 'Home' }] },
+    { id: 'environments', label: 'Environments', defaultTab: 'environments', tabs: [
+        { id: 'environments', label: 'Environments' }] },
     { id: 'more', label: 'More', defaultTab: 'runs', tabs: [
         { id: 'runs', label: 'Generalist runs' }, { id: 'policies', label: 'Policies' },
         { id: 'evaluate', label: 'Evaluate' }, { id: 'watch', label: 'Watch' }, { id: 'review', label: 'Review decision' }, { id: 'checks', label: 'Contract' }] },
@@ -42,6 +45,7 @@ export function FootballGeneralistExperience() {
     const assessmentsResource = useLiveApplicationResource<{ policies: PolicyAssessment[] }>('football_generalist_assessments');
     const cachedManifest = manifestResource.cached?.available && manifestResource.cached.contract?.contract_id === 'football-generalist-v2' ? manifestResource.cached : null;
     const [tab, setTab] = useState<Tab>('fyp');
+    const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | undefined>();
     const [manifest, setManifest] = useState<GeneralistManifest | null>(cachedManifest);
     const [runs, setRuns] = useState<Run[]>(Array.isArray(runsResource.cached) ? runsResource.cached : []);
     const [policies, setPolicies] = useState<Policy[]>(Array.isArray(policiesResource.cached) ? policiesResource.cached : []);
@@ -127,7 +131,7 @@ export function FootballGeneralistExperience() {
         return request;
     }, [manifestResource.load, runsResource.load, policiesResource.load, activityResource.load, assessmentsResource.load]);
     useEffect(() => {
-        if (tab === 'fyp') return;
+        if (tab === 'fyp' || tab === 'environments') return;
         let mounted = true;
         void refresh().catch(e => { if (mounted) setError(String(e)); }).finally(() => { if (mounted) setLoading(false); });
         const timer = window.setInterval(() => { void refresh().catch(e => { if (mounted) setError(String(e)); }); }, 10000);
@@ -219,7 +223,7 @@ export function FootballGeneralistExperience() {
         finally { setBusy(''); }
     };
     if (detail) return <main className="fg">
-        <header className="fg-heading"><div><p className="fg-eyebrow">AI FOOTBALL / {sectionFor(tab).label.toUpperCase()}</p><h1>{tab === 'archive' ? 'Historical Generalist evidence' : tab === 'fyp' ? 'FYP Football' : 'Generalist tools'}</h1></div>
+        <header className="fg-heading"><div><p className="fg-eyebrow">AI FOOTBALL / {sectionFor(tab).label.toUpperCase()}</p><h1>{tab === 'archive' ? 'Historical Generalist evidence' : tab === 'fyp' ? 'FYP Football' : tab === 'environments' ? 'Environments' : 'Generalist tools'}</h1></div>
             <button className="fg-button" onClick={() => setDetail(null)}>Back to {tab}</button></header>
         {detail.kind === 'run' && <GeneralistRunView runId={detail.id} policies={policies} backLabel={tab === 'archive' ? '← Archive' : undefined} onBack={() => setDetail(null)}
             onPolicy={id => setDetail({ kind: 'policy', id: preferredPolicy(id) })}/>}
@@ -243,10 +247,10 @@ export function FootballGeneralistExperience() {
     </main>;
     return <main className="fg">
         <header className="fg-heading">
-            <div><p className="fg-eyebrow">AI FOOTBALL / {sectionFor(tab).label.toUpperCase()}</p><h1>{tab === 'archive' ? 'Historical Generalist evidence' : tab === 'fyp' ? 'FYP Football' : 'Generalist tools'}</h1>
-                <p className="fg-subtitle">{tab === 'fyp' ? 'Unity status, policy checkpoints, and recent activity' : tab === 'archive' ? 'Historical Generalist evidence · read only' : 'Optional legacy experiment tools'}</p>
+            <div><p className="fg-eyebrow">AI FOOTBALL / {sectionFor(tab).label.toUpperCase()}</p><h1>{tab === 'archive' ? 'Historical Generalist evidence' : tab === 'fyp' ? 'FYP Football' : tab === 'environments' ? 'Environments' : 'Generalist tools'}</h1>
+                <p className="fg-subtitle">{tab === 'fyp' ? 'Unity status, policy checkpoints, and recent activity' : tab === 'environments' ? 'Unity-authored drills, episode rules, rewards, and scene modifiers' : tab === 'archive' ? 'Historical Generalist evidence · read only' : 'Optional legacy experiment tools'}</p>
             </div>
-            {tab !== 'fyp' && <div className="fg-refresh-controls">
+            {tab !== 'fyp' && tab !== 'environments' && <div className="fg-refresh-controls">
                 <span className="fg-refresh-status" role="status" aria-live="polite">{refreshing ? 'Fetching latest data…' : refreshStatus}</span>
                 <button type="button" className="fg-button" disabled={!!busy || refreshing}
                     onClick={() => {
@@ -255,9 +259,9 @@ export function FootballGeneralistExperience() {
                     }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
             </div>}
         </header>
-         {tab !== 'fyp' && error && <p className="fg-error" role="alert">{error}</p>}
-        {tab !== 'fyp' && assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
-        {tab !== 'fyp' && notice && <p className="fg-notice" role="status">{notice}</p>}
+         {tab !== 'fyp' && tab !== 'environments' && error && <p className="fg-error" role="alert">{error}</p>}
+        {tab !== 'fyp' && tab !== 'environments' && assessmentWarning && <p className="fg-muted" role="status">{assessmentWarning}</p>}
+        {tab !== 'fyp' && tab !== 'environments' && notice && <p className="fg-notice" role="status">{notice}</p>}
         <nav className="fg-nav" aria-label="Football sections">{sections.map(section =>
             <button type="button" key={section.id} className={sectionFor(tab).id === section.id ? 'active' : ''}
                 aria-current={sectionFor(tab).id === section.id ? 'page' : undefined}
@@ -267,7 +271,8 @@ export function FootballGeneralistExperience() {
                 {sectionFor(tab).tabs.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
         </label>}
-        {tab === 'fyp' && <FypV1Experience />}
+        {tab === 'fyp' && <FypV1Experience onOpenEnvironment={environmentId => { setSelectedEnvironmentId(environmentId); setTab('environments'); }} />}
+        {tab === 'environments' && <FypEnvironmentCatalog initialEnvironmentId={selectedEnvironmentId} onSelectEnvironment={setSelectedEnvironmentId} />}
         {tab === 'runs' && <section className="fg-panel"><div className="fg-panel-title"><h2>Training runs</h2><span>{activeRuns.length} active · {runs.length} discovered</span></div>
             <div className="fg-filter-bar" role="group" aria-label="Filter training runs">
                 {(['all','active','completed','failed'] as const).map(f => <button type="button" key={f}

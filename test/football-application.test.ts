@@ -169,12 +169,13 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
     const { apps, invocations, audits } = harness({ includeFyp: true });
     const fypActions = [
         ['football_fyp_manifest', {}, 'fyp_manifest'],
-        ['football_fyp_preflight', {}, 'fyp_preflight'],
+        ['football_fyp_preflight', { environmentId: 'open-goal-close' }, 'fyp_preflight'],
         ['football_fyp_build', {}, 'fyp_build'],
         ['football_fyp_runs', {}, 'fyp_runs'],
+        ['football_fyp_environments', {}, 'fyp_environments'],
         ['football_fyp_evaluations', {}, 'fyp_evaluations'],
-        ['football_fyp_train', { preset: 'smoke', seed: 63 }, 'fyp_train'],
-        ['football_fyp_evaluate', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', episodes: 10, seed: 64 }, 'fyp_evaluate'],
+        ['football_fyp_train', { preset: 'smoke', seed: 63, environmentId: 'open-goal-close' }, 'fyp_train'],
+        ['football_fyp_evaluate', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', episodes: 10, seed: 64, environmentId: 'open-goal-close' }, 'fyp_evaluate'],
     ] as const;
     for (const [tool, input, action] of fypActions) {
         assert.ok(apps.hasTool(tool));

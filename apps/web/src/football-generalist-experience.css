@@ -165,6 +165,29 @@
 .fyp-record-field small { color:var(--text-muted,#9ba5b5); font-size:11px; }
 .fyp-record-field strong,.fyp-record-field code { font-size:12px; overflow-wrap:anywhere; }
 .fyp-record-field code { color:var(--text-muted,#9ba5b5); }
+.fyp-environment-page>.fg-link { margin-bottom:16px; }
+.fyp-environment-detail-title { align-items:flex-start; }
+.fyp-environment-detail-title h2 { margin-bottom:5px; }
+.fyp-environment-detail-title p { margin:6px 0 0; color:var(--text-muted,#9ba5b5); }
+.fyp-environment-badges { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.fyp-environment-badges span { border:1px solid var(--border,#384152); border-radius:999px; padding:5px 10px; color:var(--text-muted,#b9c1cf); font-size:12px; }
+.fyp-environment-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+.fyp-environment-card { display:grid; gap:10px; width:100%; min-width:0; padding:17px; text-align:left; color:inherit; background:var(--panel-alt,#202126); border:1px solid var(--border,#384152); border-radius:8px; cursor:pointer; font:inherit; }
+.fyp-environment-card:hover,.fyp-environment-card:focus-visible { border-color:var(--accent,#9cb5f3); outline:none; }
+.fyp-environment-card-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.fyp-environment-card-heading strong { font-size:16px; overflow-wrap:anywhere; }
+.fyp-environment-card-heading>span { flex:0 0 auto; color:var(--text-muted,#b9c1cf); font-size:12px; }
+.fyp-environment-purpose { color:var(--text-muted,#b9c1cf); font-size:13px; line-height:1.5; }
+.fyp-environment-card-meta { color:var(--text-muted,#9ba5b5); font-size:12px; }
+.fyp-environment-settings>section { margin-top:20px; }
+.fyp-environment-settings h4 { margin:0 0 4px; font-size:13px; }
+.fyp-environment-modifiers { overflow-x:auto; border-top:1px solid var(--border,#384152); }
+.fyp-environment-modifiers>[role=row] { display:grid; grid-template-columns:minmax(140px,1fr) minmax(120px,.8fr) minmax(130px,1fr) minmax(130px,1fr) 70px; gap:14px; min-width:680px; padding:11px 4px; border-bottom:1px solid var(--border,#384152); font-size:12px; }
+.fyp-environment-modifiers>[role=row]:first-child { color:var(--text-muted,#b9c1cf); }
+.fyp-environment-modifiers span { overflow-wrap:anywhere; }
+.fyp-environment-link-label { display:block; margin:8px 0; padding:0; border:0; background:none; color:var(--accent,#ad91ef); cursor:pointer; font:inherit; font-size:12px; text-align:left; }
+.fyp-environment-link-label:hover { text-decoration:underline; }
+.fyp-evaluation-settings .fyp-field select,.fyp-training-panel .fyp-field select { width:100%; }
 .fyp-episode-table { overflow:auto; border:1px solid var(--border,#384152); border-radius:5px; }
 .fyp-episode-table>div { display:grid; grid-template-columns:repeat(5,minmax(90px,1fr)); gap:10px; padding:10px 12px; border-bottom:1px solid var(--border,#384152); font-size:12px; }
 .fyp-episode-table>div:last-child { border-bottom:0; }
@@ -179,7 +202,8 @@
 .fyp-evidence-run h3 { margin:16px 0 7px; font-size:13px; }
 .fyp-evidence-run .fyp-evaluation-receipts li { background:var(--surface,#1d222b); }
 .fg-archive-panel>.fg-eyebrow { margin-top:0; }
-@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-checkpoint-row { align-items:flex-start; flex-direction:column; } .fyp-evaluation-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:760px) { .fyp-evaluation-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-checkpoint-row { align-items:flex-start; flex-direction:column; } .fyp-environment-detail-title { flex-direction:column; } .fyp-environment-badges { justify-content:flex-start; } }
 
 
 /* Football Training V2: active work, curated policies and evidence-backed assessments. */

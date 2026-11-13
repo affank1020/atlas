@@ -1,0 +1,113 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { callTool } from './api';
+
+export type FypEnvironmentSetting = {
+    key: string; component: string; category: string; label: string; value: string; unit: string;
+};
+export type FypEnvironmentModifier = {
+    name: string; shape: string; position: string; size: string; is_trigger: boolean;
+};
+export type FypEnvironment = {
+    environment_id: string; name: string; version: string; difficulty: string; purpose: string;
+    scene_path: string; policy_contract_id: string; definition_sha256: string;
+    snapshot_recorded?: boolean;
+    settings: FypEnvironmentSetting[]; modifiers: FypEnvironmentModifier[];
+};
+
+export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironment }: {
+    initialEnvironmentId?: string; onSelectEnvironment?: (environmentId?: string) => void;
+}) {
+    const [environments, setEnvironments] = useState<FypEnvironment[]>([]);
+    const [selectedId, setSelectedId] = useState<string | null>(initialEnvironmentId ?? null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+
+    const refresh = useCallback(async () => {
+        try {
+            const records = await callTool<FypEnvironment[]>('football_fyp_environments');
+            setEnvironments(records);
+            setError('');
+        } catch (failure) {
+            setError(failure instanceof Error ? failure.message : String(failure));
+        } finally { setLoading(false); }
+    }, []);
+
+    useEffect(() => {
+        if (initialEnvironmentId !== undefined) setSelectedId(initialEnvironmentId);
+    }, [initialEnvironmentId]);
+    useEffect(() => {
+        void refresh();
+        const timer = window.setInterval(() => { void refresh(); }, 15000);
+        return () => window.clearInterval(timer);
+    }, [refresh]);
+
+    const selected = environments.find(environment => environment.environment_id === selectedId);
+    const groupedSettings = useMemo(() => {
+        const groups = new Map<string, FypEnvironmentSetting[]>();
+        for (const setting of selected?.settings ?? []) {
+            const group = groups.get(setting.category) ?? [];
+            group.push(setting);
+            groups.set(setting.category, group);
+        }
+        return [...groups.entries()];
+    }, [selected]);
+
+    const open = (environmentId: string) => {
+        setSelectedId(environmentId);
+        onSelectEnvironment?.(environmentId);
+    };
+    const back = () => {
+        setSelectedId(null);
+        onSelectEnvironment?.();
+    };
+
+    if (selected) return <section className="fg-panel fyp-environment-page" aria-label={`${selected.name} environment details`}>
+        <button type="button" className="fg-link" onClick={back}>← Environments</button>
+        <div className="fg-panel-title fyp-environment-detail-title">
+            <div><h2>{selected.name}</h2><p>{selected.purpose || 'No purpose recorded.'}</p></div>
+            <div className="fyp-environment-badges"><span>{selected.difficulty}</span><span>Version {selected.version}</span></div>
+        </div>
+        <div className="fyp-record-grid">
+            <Record label="Scene" value={selected.scene_path} />
+            <Record label="Policy contract" value={selected.policy_contract_id} />
+            <Record label="Environment ID" value={selected.environment_id} />
+            <Record label="Definition SHA-256" value={selected.definition_sha256} />
+        </div>
+        <h3>Environment settings</h3>
+        {groupedSettings.length === 0 ? <p className="fg-muted">No annotated environment settings are recorded.</p> :
+            <div className="fyp-environment-settings">{groupedSettings.map(([category, settings]) => <section key={category} aria-label={category}>
+                <h4>{category}</h4>
+                <div className="fyp-record-grid">{settings.map(setting => <Record key={setting.key} label={setting.label}
+                    value={setting.unit ? `${setting.value} ${setting.unit}` : setting.value} detail={`${setting.component} · ${setting.key}`} />)}</div>
+            </section>)}</div>}
+        <h3>Scene modifiers</h3>
+        {!selected.modifiers.length ? <p className="fg-muted">No additional collider modifiers are recorded.</p> :
+            <div className="fyp-environment-modifiers" role="table" aria-label="Scene collider modifiers">
+                <div role="row"><strong>Name</strong><strong>Shape</strong><strong>Position</strong><strong>Size</strong><strong>Trigger</strong></div>
+                {selected.modifiers.map((modifier, index) => <div role="row" key={`${modifier.name}-${modifier.shape}-${index}`}>
+                    <span>{modifier.name}</span><span>{modifier.shape}</span><span>{modifier.position}</span>
+                    <span>{modifier.size}</span><span>{modifier.is_trigger ? 'Yes' : 'No'}</span>
+                </div>)}
+            </div>}
+    </section>;
+
+    return <section className="fg-panel fyp-environment-page" aria-label="FYP environment library">
+        <div className="fg-panel-title"><h2>Environments</h2><div className="fg-refresh-controls">
+            <span className="fg-refresh-status" role="status">{loading ? 'Loading…' : `${environments.length} environment${environments.length === 1 ? '' : 's'}`}</span>
+            <button type="button" className="fg-button" onClick={() => void refresh()} disabled={loading}>Refresh</button>
+        </div></div>
+        {error && <p className="fg-error" role="alert">{error}</p>}
+        {!loading && !error && environments.length === 0 && <p className="fg-muted">No scenes are currently included in the Unity environment catalogue.</p>}
+        <div className="fyp-environment-cards">{environments.map(environment => <button className="fyp-environment-card" type="button"
+            key={environment.environment_id} onClick={() => open(environment.environment_id)}>
+            <span className="fyp-environment-card-heading"><strong>{environment.name}</strong><span>{environment.difficulty}</span></span>
+            <span className="fyp-environment-purpose">{environment.purpose || 'No purpose recorded.'}</span>
+            <span className="fyp-environment-card-meta">Version {environment.version} · {environment.settings.length} settings · {environment.modifiers.length} modifiers</span>
+            <span className="fg-link">Open details →</span>
+        </button>)}</div>
+    </section>;
+}
+
+function Record({ label, value, detail }: { label: string; value: string; detail?: string }) {
+    return <div className="fyp-record-field"><small>{label}</small><strong title={detail}>{value}</strong>{detail && <code>{detail}</code>}</div>;
+}

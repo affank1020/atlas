@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { callTool } from './api';
+import type { FypEnvironment } from './FypEnvironmentCatalog';
 
 type Episode = { index?: number; episode?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string; trainer_connected?: boolean };
 type FypRun = {
     run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string;
     exported_model?: boolean; model_sha256?: string | null; checkpoint_sha256?: string | null;
+    environment?: FypEnvironment;
     exit_code?: number | null; started_at?: string; finished_at?: string; error?: string;
 };
 type FypEvaluation = {
     evaluation_id: string; training_run_id: string; state: string; requested_episodes: number;
     episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number;
+    training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment;
     started_at?: string; finished_at?: string; exit_code?: number | null; error?: string; episodes?: Episode[];
 };
 type Detail = { kind: 'run'; id: string } | { kind: 'evaluation'; id: string };
@@ -24,8 +27,8 @@ const duration = (start?: string, end?: string) => {
 const iso = (value?: string) => value && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : undefined;
 const format = (value: unknown) => value == null ? '—' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
 
-export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluations }: {
-    runs?: FypRun[]; evaluations?: FypEvaluation[];
+export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluations, onOpenEnvironment }: {
+    runs?: FypRun[]; evaluations?: FypEvaluation[]; onOpenEnvironment?: (environmentId: string) => void;
 } = {}) {
     const [runs, setRuns] = useState<FypRun[]>(providedRuns ?? []);
     const [evaluations, setEvaluations] = useState<FypEvaluation[]>(providedEvaluations ?? []);
@@ -73,6 +76,7 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Checkpoint SHA-256" value={selectedRun.checkpoint_sha256} />
                 <Record label="Run ID" value={selectedRun.run_id} />
             </div>
+            {selectedRun.environment && <EnvironmentButton environment={selectedRun.environment} onOpen={onOpenEnvironment} label="Training environment" />}
             {selectedRun.error && <p className="fg-error">{selectedRun.error}</p>}
             <h3>Evaluations for this checkpoint</h3>
             {evaluations.filter(item => item.training_run_id === selectedRun.run_id).length === 0
@@ -100,6 +104,8 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Evaluation ID" value={selectedEvaluation.evaluation_id} />
                 <Record label="Exit code" value={selectedEvaluation.exit_code} />
             </div>
+            {selectedEvaluation.training_environment && <EnvironmentButton environment={selectedEvaluation.training_environment} onOpen={onOpenEnvironment} label="Training environment" />}
+            {selectedEvaluation.evaluation_environment && <EnvironmentButton environment={selectedEvaluation.evaluation_environment} onOpen={onOpenEnvironment} label="Evaluation environment" />}
             <p className="fg-muted">This evaluation runs the checkpoint in the open Unity Editor, so you can inspect the policy while episodes are played.</p>
             {selectedEvaluation.error && <p className="fg-error">{selectedEvaluation.error}</p>}
             <h3>Recorded episodes</h3>
@@ -131,12 +137,15 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                     <span>{run.steps.toLocaleString()} steps · seed {run.seed} · {run.exported_model === true ? 'Checkpoint exported' : 'No export recorded'}</span>
                     <span>{runEvaluations.length} evaluation{runEvaluations.length === 1 ? '' : 's'} · Open details →</span>
                 </button>
+                {run.environment && <EnvironmentButton environment={run.environment} onOpen={onOpenEnvironment} label="Training environment" />}
                 {runEvaluations.map(evaluation => <button className="fyp-evidence-card fyp-evidence-child" type="button" key={evaluation.evaluation_id} onClick={() => setDetail({ kind: 'evaluation', id: evaluation.evaluation_id })}>
                     <span><strong>Evaluation</strong><small>{dateTime(evaluation.started_at)}</small></span>
                     <span className={`fyp-state fyp-state-${evaluation.state.toLowerCase()}`}>{evaluation.state}</span>
                     <span>{evaluation.episodes_completed ?? 0}/{evaluation.requested_episodes} episodes · {evaluation.goals_scored ?? '—'} goals · seed {evaluation.seed ?? '—'}</span>
                     <span>Open details →</span>
                 </button>)}
+                {runEvaluations.map(evaluation => evaluation.evaluation_environment && <EnvironmentButton key={evaluation.evaluation_id}
+                    environment={evaluation.evaluation_environment} onOpen={onOpenEnvironment} label={`Evaluation · ${dateTime(evaluation.started_at)}`} />)}
             </article>;
         })}</div>
     </section>;
@@ -144,4 +153,15 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
 
 function Record({ label, value, exact }: { label: string; value: unknown; exact?: string }) {
     return <div className="fyp-record-field"><small>{label}</small><strong title={exact}>{format(value)}</strong>{exact && <code>{exact}</code>}</div>;
+}
+
+function EnvironmentButton({ environment, onOpen, label }: {
+    environment: FypEnvironment; onOpen?: (environmentId: string) => void; label: string;
+}) {
+    const version = environment.snapshot_recorded === false ? 'historical settings not recorded' : `v${environment.version}`;
+    const destination = environment.snapshot_recorded === false ? 'View current environment' : 'View environment';
+    if (!onOpen) return <p className="fyp-environment-link-label">{label}: {environment.name} · {version}</p>;
+    return <button className="fyp-environment-link-label" type="button" onClick={() => onOpen(environment.environment_id)}>
+        {label}: {environment.name} · {version} · {destination} →
+    </button>;
 }
