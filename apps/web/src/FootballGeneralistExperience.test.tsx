@@ -30,6 +30,7 @@ const successorPolicy = {
     ...policy,
     policy_id: 'football-v2', display_name: 'FYP Football v2 · cooperative',
     purpose: 'Cooperative football with explicit opponent observations.',
+    notes: 'Policy successor to Football v1. Adds opponent presence, relative position and velocity observations.',
     contract: {
         ...policy.contract, contract_id: 'fyp-football-v2', behavior_name: 'FootballV2',
         observations: {
@@ -43,7 +44,7 @@ const successorPolicy = {
     },
     trainer: { ...policy.trainer, config_path: 'Training/football_v2.yaml' },
     artifacts: { ...policy.artifacts, model_filename: 'FootballV2.onnx', behavior_name: 'FootballV2' },
-    curriculum: [{ stage: 1, environment_id: 'cooperative-scrimmage', environment_version: '1.0.0', scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity', purpose: 'Cooperative scrimmage.' }],
+    curriculum: [{ stage: 1, environment_id: 'cooperative-scrimmage', environment_version: '1.0.0', definition_sha256: 'a83e1c6f4b920d75e2a6f3108c4d7b591f06a3e8c2d47b915a6f0c3e8d214759', scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity', purpose: 'Cooperative scrimmage.' }],
 };
 const policies = [policy, successorPolicy];
 const manifest = {
@@ -177,6 +178,9 @@ test('settings switches policy and shows one Settings breadcrumb with no redunda
     expect(await screen.findByRole('heading', { name: 'FYP Football v2 · cooperative' })).toBeInTheDocument();
     expect(screen.getByText('30 vector values · 1 stack')).toBeInTheDocument();
     expect(screen.getByText('Opponent Present')).toBeInTheDocument();
+    expect(screen.getByText(successorPolicy.notes)).toBeInTheDocument();
+    expect(screen.getByText('Reference frame: player-local')).toBeInTheDocument();
+    expect(screen.getByText('a83e1c6f4b920d75e2a6f3108c4d7b591f06a3e8c2d47b915a6f0c3e8d214759')).toBeInTheDocument();
 });
 
 test('starting an evaluation from a checkpoint returns to Home', async () => {

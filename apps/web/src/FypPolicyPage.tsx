@@ -52,18 +52,22 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                 <div><h2>{policy.display_name}</h2></div>
                 <span className={`fyp-policy-status fyp-policy-status-${policy.status}`}>{policy.status}</span>
             </div>
+            <p className="fyp-policy-context">{policy.purpose}</p>
             {!policy.execution_supported && <p className="fyp-policy-documentation-note">Documentation only · no compatible trainer is registered for this policy.</p>}
             <div className="fyp-record-grid">
                 <Record label="Policy ID" value={policy.policy_id} />
                 <Record label="Policy contract" value={policy.contract.contract_id} />
                 <Record label="Behavior name" value={policy.contract.behavior_name} />
                 <Record label="Actor sharing" value={policy.actor.sharing} />
+                <Record label="Actor memory" value={policy.actor.memory} />
                 <Record label="Decision cadence" value={`${policy.actor.decision_period_physics_steps} physics steps`} />
             </div>
+            {policy.notes && <p className="fyp-policy-notes">{policy.notes}</p>}
         </section>
 
         <section className="fyp-policy-section">
             <div className="fg-panel-title"><h2>Observations</h2><span>{observations.size} vector values · {observations.stacked_vectors} stack</span></div>
+            <p className="fyp-policy-context">Reference frame: {observations.reference_frame}</p>
             {observations.entity_capacity && <div className="fyp-record-grid fyp-policy-capacity">
                 {Object.entries(observations.entity_capacity).map(([key, value]) => <Record key={key} label={humanize(key)} value={value} />)}
             </div>}
@@ -73,7 +77,9 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                     <span>{channel.start}–{channel.start + channel.size - 1}</span>
                     <strong>{humanize(channel.name)}</strong>
                     <span>{channel.components.join(', ')}</span>
-                    <span>{channel.encoding}{channel.frame ? ` · ${channel.frame}` : ''}{channel.scale_divisor ? ` · ÷${channel.scale_divisor}` : ''}</span>
+                    <span>{channel.encoding}{channel.frame ? ` · ${channel.frame}` : ''}{channel.scale_divisor ? ` · ÷${channel.scale_divisor}` : ''}
+                        {channel.missing_value !== undefined ? ` · missing value: ${JSON.stringify(channel.missing_value)}` : ''}
+                        {channel.details ? ` · ${Object.entries(channel.details).map(([key, value]) => `${humanize(key)}: ${String(value)}`).join(' · ')}` : ''}</span>
                 </div>)}
             </div>
         </section>
@@ -112,6 +118,7 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                 <Record label="Behavior name" value={policy.artifacts.behavior_name} />
                 <Record label="Trainer checkpoint" value={policy.artifacts.checkpoint_format} />
             </div>
+            {policy.artifacts.notes && <p className="fyp-policy-notes">{policy.artifacts.notes}</p>}
         </section>
 
         <section className="fyp-policy-section">
@@ -124,19 +131,51 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                     const stageEnvironment: FypEnvironment = {
                         environment_id: stage.environment_id,
                         name: current?.name ?? stage.environment_id,
-                        version: stage.environment_version,
+                        version: current?.version ?? stage.environment_version,
                         difficulty: `Stage ${stage.stage}`,
                         purpose: stage.purpose,
                         scene_path: stage.scene_path,
-                        definition_sha256: stage.definition_sha256 ?? '',
-                        settings: matches && current ? current.settings : [],
-                        modifiers: matches && current ? current.modifiers : [],
+                        definition_sha256: current?.definition_sha256 ?? stage.definition_sha256 ?? '',
+                        settings: current?.settings ?? [],
+                        modifiers: current?.modifiers ?? [],
                     };
-                    const cardMeta = matches
-                        ? `Version ${stage.environment_version} · ${current?.settings.length ?? 0} settings · ${current?.modifiers.length ?? 0} modifiers`
-                        : `Version ${stage.environment_version}`;
+                    const cardMeta = current
+                        ? `Plan v${stage.environment_version} · Unity v${current.version} · ${matches ? 'matched' : 'current snapshot differs'}`
+                        : `Plan v${stage.environment_version} · no current Unity scene`;
                     return <article className="fyp-curriculum-stage" key={`${stage.stage}-${stage.environment_id}`}>
                         <FypEnvironmentCard environment={stageEnvironment} meta={`Stage ${stage.stage} · ${cardMeta}`} />
+                        <div className="fyp-record-grid">
+                            <Record label="Environment ID" value={stage.environment_id} />
+                            <Record label="Scene" value={stage.scene_path} />
+                            <Record label="Pinned definition SHA-256" value={stage.definition_sha256} />
+                        </div>
+                        {stage.sampling && <pre>{JSON.stringify(stage.sampling, null, 2)}</pre>}
+                        {current ? <details className="fyp-policy-environment-snapshot">
+                            <summary>View current Unity environment settings and scene schema · {current.settings.length} settings · {current.modifiers.length} modifiers</summary>
+                            {!matches && <p className="fyp-policy-context">Showing the latest Unity snapshot (version {current.version}). The plan refers to version {stage.environment_version}; its version and/or definition hash differs, so these current values are not an archived copy of that plan.</p>}
+                            {current.settings.length > 0 && <section>
+                                <h3>Environment settings</h3>
+                                <div className="fyp-policy-snapshot-settings" role="table" aria-label={`Stage ${stage.stage} environment settings`}>
+                                    <div role="row"><strong>Category</strong><strong>Setting</strong><strong>Unity value</strong></div>
+                                    {current.settings.map(setting => <div role="row" key={setting.key}>
+                                        <span>{setting.category}</span>
+                                        <span title={`${setting.key} · ${setting.component}`}>{setting.label}</span>
+                                        <span>{setting.unit ? `${setting.value} ${setting.unit}` : setting.value}</span>
+                                    </div>)}
+                                </div>
+                            </section>}
+                            <section>
+                                <h3>Scene modifiers</h3>
+                                {current.modifiers.length > 0 ? <div className="fyp-policy-snapshot-modifiers" role="table" aria-label={`Stage ${stage.stage} scene modifiers`}>
+                                    <div role="row"><strong>Name</strong><strong>Shape</strong><strong>Position</strong><strong>Size</strong><strong>Trigger</strong></div>
+                                    {current.modifiers.map((modifier, index) => <div role="row" key={`${modifier.name}-${modifier.shape}-${index}`}>
+                                        <span>{modifier.name}</span><span>{modifier.shape}</span><span>{modifier.position}</span>
+                                        <span>{modifier.size}</span><span>{modifier.is_trigger ? 'Yes' : 'No'}</span>
+                                    </div>)}
+                                </div> : <p className="fg-muted">No additional collider modifiers are recorded in this Unity snapshot.</p>}
+                            </section>
+                            <p className="fg-muted">These details are read from the current Unity snapshot. The curriculum entry documents the plan; it does not apply settings to the scene.</p>
+                        </details> : <p className="fyp-policy-context">No current Unity snapshot has this environment ID. This stage is shown as a documented plan reference.</p>}
                     </article>;
                 })}
             </div>}
