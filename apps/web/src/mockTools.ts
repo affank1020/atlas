@@ -132,6 +132,141 @@ const applications = [
     { type: 'football-training', slug: 'football-training', name: 'Football Training', description: 'Explore sample training runs and policies.', projectId: mockProjects[2].id },
     { type: 'code-reviews', slug: 'code-reviews', name: 'Code Reviews', description: 'Explore simulated review rounds, findings and PR timelines. Local demo data only.', projectId: mockProjects[0].id },
 ];
+const fypSourceHash = '6b1d97e80a4c6325f09e3a71b8c52640d3e9f14a72c85b6019e4d3a7f2c81650';
+const fypModelHash = '4c7a2f9180de5631b4c8a6079e2d51f3a8604c7d1e9b3256f08a4d2c7b915e63';
+const fypCheckpointHash = 'a83e1c6f4b920d75e2a6f3108c4d7b591f06a3e8c2d47b915a6f0c3e8d214759';
+const fypEnvironment = {
+    environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: '1 — introductory',
+    purpose: 'Score in a close-range open goal using the shared FootballV1 policy.',
+    scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity', policy_contract_id: 'fyp-football-v1',
+    definition_sha256: '5a286a2bc03108d012f3e91829977b3a972ea60efbe26a223db17852907e5d75', snapshot_recorded: true,
+    settings: [
+        { key: 'SpawnRegion.size', component: 'SpawnRegion', category: 'Starting setup', label: 'Randomized spawn area', value: '(0, 0)', unit: 'm' },
+        { key: 'SpawnRegion.yawVariation', component: 'SpawnRegion', category: 'Starting setup', label: 'Yaw variation', value: '0', unit: 'degrees' },
+        { key: 'FootballEnvironment.ballStart', component: 'FootballEnvironment', category: 'Starting setup', label: 'Ball spawn', value: '(0, 0.230000004, 8.60000038)', unit: '' },
+        { key: 'FootballEnvironment.goal', component: 'FootballEnvironment', category: 'Goal', label: 'Goal object', value: '(0, 0, 13)', unit: '' },
+        { key: 'FootballEnvironment.goalReward', component: 'FootballEnvironment', category: 'Rewards', label: 'Goal reward', value: '1', unit: '' },
+        { key: 'FootballEnvironment.initialBallVelocity', component: 'FootballEnvironment', category: 'Starting setup', label: 'Initial ball velocity', value: '(0, 0, 0)', unit: 'm/s' },
+        { key: 'FootballEnvironment.playableHalfExtents', component: 'FootballEnvironment', category: 'Episode', label: 'Playable half extents', value: '(9.5, 15)', unit: 'm' },
+        { key: 'FootballEnvironment.playerStart', component: 'FootballEnvironment', category: 'Starting setup', label: 'Player spawn', value: '(0, 0, 8)', unit: '' },
+        { key: 'FootballEnvironment.resetAfterGoal', component: 'FootballEnvironment', category: 'Episode', label: 'Reset after goal', value: 'True', unit: '' },
+        { key: 'FootballEnvironment.resetDelay', component: 'FootballEnvironment', category: 'Episode', label: 'Reset delay', value: '1', unit: 's' },
+        { key: 'FootballEnvironment.seed', component: 'FootballEnvironment', category: 'Starting setup', label: 'Environment seed', value: '104', unit: '' },
+        { key: 'FootballEnvironment.timeCostPerSecond', component: 'FootballEnvironment', category: 'Rewards', label: 'Time cost per second', value: '-0.00100000005', unit: 'reward/s' },
+        { key: 'FootballEnvironment.timeLimit', component: 'FootballEnvironment', category: 'Episode', label: 'Time limit', value: '12', unit: 's' },
+        { key: 'FootballEnvironment.timeoutReward', component: 'FootballEnvironment', category: 'Rewards', label: 'Timeout reward', value: '0', unit: '' },
+        { key: 'FootballGoal.SuccessCondition', component: 'FootballGoal', category: 'Goal', label: 'Success condition', value: 'Ball fully crosses the goal plane inside the opening.', unit: '' },
+        { key: 'FootballGoal.openingHeight', component: 'FootballGoal', category: 'Goal', label: 'Opening height', value: '2.20000005', unit: 'm' },
+        { key: 'FootballGoal.openingWidth', component: 'FootballGoal', category: 'Goal', label: 'Opening width', value: '4', unit: 'm' },
+        { key: 'SpawnRegion.size', component: 'SpawnRegion', category: 'Starting setup', label: 'Randomized spawn area', value: '(0, 0)', unit: 'm' },
+        { key: 'SpawnRegion.yawVariation', component: 'SpawnRegion', category: 'Starting setup', label: 'Yaw variation', value: '0', unit: 'degrees' },
+    ],
+    modifiers: [
+        { name: 'Backstop', shape: 'BoxCollider', position: '(0, 1.10000002, 14.6499996)', size: '(4.25, 2.20000005, 0.100000381)', is_trigger: false },
+        { name: 'Crossbar', shape: 'BoxCollider', position: '(0, 2.27999997, 13)', size: '(4.32000017, 0.159999847, 0.159999847)', is_trigger: false },
+        { name: 'Goal floor', shape: 'BoxCollider', position: '(0, -0.150000006, 13.8500004)', size: '(4.30000019, 0.300000012, 1.70000076)', is_trigger: false },
+        { name: 'Left post', shape: 'BoxCollider', position: '(-2.07999992, 1.10000002, 13)', size: '(0.159999967, 2.20000005, 0.159999847)', is_trigger: false },
+        { name: 'Left return', shape: 'BoxCollider', position: '(-2.07999992, 1.10000002, 13.8500004)', size: '(0.0999999046, 2.20000005, 1.70000076)', is_trigger: false },
+        { name: 'Playing surface — 18 x 26 m', shape: 'BoxCollider', position: '(0, -0.150000006, 0)', size: '(18, 0.300000012, 26)', is_trigger: false },
+        { name: 'Right post', shape: 'BoxCollider', position: '(2.07999992, 1.10000002, 13)', size: '(0.159999967, 2.20000005, 0.159999847)', is_trigger: false },
+        { name: 'Right return', shape: 'BoxCollider', position: '(2.07999992, 1.10000002, 13.8500004)', size: '(0.0999999046, 2.20000005, 1.70000076)', is_trigger: false },
+        { name: 'Wall', shape: 'BoxCollider', position: '(-9.10000038, 0.425000012, 0)', size: '(0.200000763, 1, 26.3999996)', is_trigger: false },
+        { name: 'Wall', shape: 'BoxCollider', position: '(9.10000038, 0.425000012, 0)', size: '(0.200000763, 1, 26.3999996)', is_trigger: false },
+        { name: 'Wall', shape: 'BoxCollider', position: '(0, 0.425000012, -13.1000004)', size: '(18.3999996, 1, 1)', is_trigger: false },
+        { name: 'Wall', shape: 'BoxCollider', position: '(-5.60000038, 0.425000012, 13.1000004)', size: '(7.00000048, 1, 1)', is_trigger: false },
+        { name: 'Wall', shape: 'BoxCollider', position: '(5.60000038, 0.425000012, 13.1000004)', size: '(7.00000048, 1, 1)', is_trigger: false },
+    ],
+};
+const fypRuns = [
+    {
+        run_id: 'demo_fyp_smoke_006', preset: 'smoke', steps: 2048, seed: 88, state: 'completed',
+        source_sha256: fypSourceHash, exported_model: true, training_number: 7, checkpoint_number: 6,
+        model_sha256: fypModelHash, checkpoint_sha256: fypCheckpointHash, environment: fypEnvironment,
+        started_at: '2026-11-13T08:42:00.000Z', finished_at: '2026-11-13T08:46:32.000Z', exit_code: 0,
+    },
+    {
+        run_id: 'demo_fyp_pilot_005', preset: 'pilot_50k', steps: 50000, seed: 707, state: 'completed',
+        source_sha256: fypSourceHash, exported_model: true, training_number: 6, checkpoint_number: 5,
+        model_sha256: fypModelHash, checkpoint_sha256: fypCheckpointHash, environment: fypEnvironment,
+        started_at: '2026-11-12T19:10:00.000Z', finished_at: '2026-11-12T20:03:47.000Z', exit_code: 0,
+    },
+    {
+        run_id: 'demo_fyp_smoke_004', preset: 'smoke', steps: 2048, seed: 146, state: 'completed',
+        source_sha256: fypSourceHash, exported_model: true, training_number: 5, checkpoint_number: 4,
+        model_sha256: fypModelHash, checkpoint_sha256: fypCheckpointHash, environment: fypEnvironment,
+        started_at: '2026-11-12T11:24:00.000Z', finished_at: '2026-11-12T11:29:19.000Z', exit_code: 0,
+    },
+    {
+        run_id: 'demo_fyp_pilot_003', preset: 'pilot_50k', steps: 50000, seed: 321, state: 'completed',
+        source_sha256: fypSourceHash, exported_model: true, training_number: 4, checkpoint_number: 3,
+        model_sha256: fypModelHash, checkpoint_sha256: fypCheckpointHash, environment: fypEnvironment,
+        started_at: '2026-11-11T16:05:00.000Z', finished_at: '2026-11-11T16:51:08.000Z', exit_code: 0,
+    },
+    {
+        run_id: 'demo_fyp_smoke_002', preset: 'smoke', steps: 2048, seed: 105, state: 'completed',
+        source_sha256: fypSourceHash, exported_model: true, training_number: 3, checkpoint_number: 2,
+        model_sha256: fypModelHash, checkpoint_sha256: fypCheckpointHash, environment: fypEnvironment,
+        started_at: '2026-11-11T08:12:00.000Z', finished_at: '2026-11-11T08:16:51.000Z', exit_code: 0,
+    },
+    {
+        run_id: 'demo_fyp_smoke_001', preset: 'smoke', steps: 2048, seed: 63, state: 'completed',
+        source_sha256: fypSourceHash, exported_model: true, training_number: 2, checkpoint_number: 1, model_sha256: fypModelHash,
+        checkpoint_sha256: fypCheckpointHash, environment: fypEnvironment, started_at: '2026-11-10T10:20:00.000Z',
+        finished_at: '2026-11-10T10:24:18.000Z', exit_code: 0,
+    },
+    {
+        run_id: 'demo_fyp_pilot_001', preset: 'pilot_50k', steps: 50000, seed: 202, state: 'failed',
+        source_sha256: fypSourceHash, exported_model: false, training_number: 1, model_sha256: null,
+        checkpoint_sha256: '7e2a9c14b6035d81f4e7a206c9b3158d0f62e4a7c1935b80d6f21a4e9c738502',
+        started_at: '2026-11-08T14:00:00.000Z', finished_at: '2026-11-08T14:42:11.000Z',
+        exit_code: 1, error: 'Demo receipt: pilot ended before a checkpoint could be exported.',
+    },
+];
+const fypEvaluations = [{
+    evaluation_id: 'eval_demo_fyp_smoke_001', training_run_id: 'demo_fyp_smoke_001', state: 'completed',
+    evaluation_number: 1,
+    requested_episodes: 10, episodes_completed: 10, goals_scored: 3, goal_rate: 0.3, seed: 515,
+    started_at: '2026-11-10T11:00:00.000Z', finished_at: '2026-11-10T11:08:42.000Z', exit_code: 0,
+    training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
+    episodes: [
+        { episode: 1, seed: 515, goals: 0, elapsed_seconds: 32.4, outcome: 'timeout' },
+        { episode: 2, seed: 516, goals: 1, elapsed_seconds: 18.7, outcome: 'goal' },
+        { episode: 3, seed: 517, goals: 0, elapsed_seconds: 32.1, outcome: 'timeout' },
+        { episode: 4, seed: 518, goals: 0, elapsed_seconds: 31.9, outcome: 'timeout' },
+        { episode: 5, seed: 519, goals: 1, elapsed_seconds: 21.3, outcome: 'goal' },
+        { episode: 6, seed: 520, goals: 0, elapsed_seconds: 32.0, outcome: 'timeout' },
+        { episode: 7, seed: 521, goals: 0, elapsed_seconds: 32.2, outcome: 'timeout' },
+        { episode: 8, seed: 522, goals: 1, elapsed_seconds: 24.6, outcome: 'goal' },
+        { episode: 9, seed: 523, goals: 0, elapsed_seconds: 32.3, outcome: 'timeout' },
+        { episode: 10, seed: 524, goals: 0, elapsed_seconds: 32.1, outcome: 'timeout' },
+    ],
+}, {
+    evaluation_id: 'eval_demo_fyp_smoke_006', training_run_id: 'demo_fyp_smoke_006', state: 'completed',
+    evaluation_number: 3, requested_episodes: 20, episodes_completed: 20, goals_scored: 12, goal_rate: 0.6, seed: 900,
+    started_at: '2026-11-13T10:05:00.000Z', finished_at: '2026-11-13T10:18:26.000Z', exit_code: 0,
+    training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
+}, {
+    evaluation_id: 'eval_demo_fyp_pilot_005', training_run_id: 'demo_fyp_pilot_005', state: 'completed',
+    evaluation_number: 2, requested_episodes: 10, episodes_completed: 10, goals_scored: 7, goal_rate: 0.7, seed: 805,
+    started_at: '2026-11-12T20:20:00.000Z', finished_at: '2026-11-12T20:27:31.000Z', exit_code: 0,
+    training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
+}, {
+    evaluation_id: 'eval_demo_fyp_pilot_003', training_run_id: 'demo_fyp_pilot_003', state: 'failed',
+    evaluation_number: 1, requested_episodes: 10, episodes_completed: 3, goals_scored: 0, goal_rate: 0, seed: 331,
+    started_at: '2026-11-11T17:10:00.000Z', finished_at: '2026-11-11T17:13:42.000Z', exit_code: 1,
+    error: 'Demo receipt: evaluator stopped after a short Unity disconnect.',
+    training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
+}, {
+    evaluation_id: 'eval_demo_fyp_smoke_002_first', training_run_id: 'demo_fyp_smoke_002', state: 'completed',
+    evaluation_number: 1, requested_episodes: 10, episodes_completed: 10, goals_scored: 4, goal_rate: 0.4, seed: 610,
+    started_at: '2026-11-11T09:00:00.000Z', finished_at: '2026-11-11T09:07:54.000Z', exit_code: 0,
+    training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
+}, {
+    evaluation_id: 'eval_demo_fyp_smoke_002_retry', training_run_id: 'demo_fyp_smoke_002', state: 'completed',
+    evaluation_number: 2, requested_episodes: 10, episodes_completed: 10, goals_scored: 6, goal_rate: 0.6, seed: 740,
+    started_at: '2026-11-11T10:20:00.000Z', finished_at: '2026-11-11T10:27:18.000Z', exit_code: 0,
+    training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
+}];
 const status: AtlasStatus = { product: 'Atlas Demo', version: '2.0.0-demo', storage: 'In-memory mock', schemaVersion: 1, projects: mockProjects.length, stores: stores.length, records: records.length };
 const str = (value: unknown) => typeof value === 'string' ? value : '';
 
@@ -153,6 +288,25 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
     let result: unknown;
     switch (name) {
         case 'get_atlas_status': result = status; break;
+        case 'football_fyp_manifest': result = {
+            available: true,
+            contract: {
+                contract_id: 'fyp-football-v1', behavior: 'FootballV1',
+                observations: { size: 25 }, actions: { continuous: 8 },
+                trainer_kind: 'poca', scene: 'Assets/Football/Scenes/OpenGoalClose.unity',
+            },
+        }; break;
+        case 'football_fyp_preflight': result = {
+            editor_available: false, editor_open: false, editor_playing: false, editor_compiling: false,
+            trainer_connected: false, trainer_available: false, scene_ready: false, active_scene: null,
+            environment_present: false, episode: null, goals: null, last_outcome: null,
+            episodes_completed: null, recent_episodes: [], heartbeat_age_seconds: null,
+            verified_build: false, ready_to_train: false, source_sha256: fypSourceHash,
+            note: 'Demo status only. Mock mode does not inspect the FYP Unity Editor or trainer.',
+        }; break;
+        case 'football_fyp_environments': result = [fypEnvironment]; break;
+        case 'football_fyp_runs': result = fypRuns; break;
+        case 'football_fyp_evaluations': result = fypEvaluations; break;
         case 'get_storage_usage': result = {
             postgres: {
                 state: 'ready', measuredAt: stamp, databaseBytes: 32_000_000, tableBytes: 19_000_000, indexBytes: 6_000_000,

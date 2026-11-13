@@ -90,7 +90,7 @@ test('known Application routes use owned placeholders while their Server manifes
     for (const [slug, label, marker] of [
         ['portfolio', 'Loading Portfolio', '.portfolio-workspace .portfolio-editor'],
         ['code-reviews', 'Loading Code Reviews', '.cr-metrics'],
-        ['football-training', 'Loading Football Generalist application', '.fg-panel-title h2'],
+        ['football-training', 'Loading FYP Football application', '.fg-panel-title h2'],
     ]) {
         const view = render(<ApplicationWindow slug={slug} />);
         expect(screen.getByRole('status', { name: label })).toHaveAttribute('aria-busy', 'true');

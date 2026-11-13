@@ -29,6 +29,24 @@ test('successor FYP contract is a separate 25/8 ABI and not a legacy generalist'
         assert.equal((fypManifest(ws) as any).contract.behavior, 'FootballV1');
         assert.equal((fypManifest(ws) as any).contract.observations.size, 25);
         assert.equal((fypManifest(ws) as any).contract.actions.continuous, 8);
+        await write('Training/atlas_fyp.py', 'import json, sys\nprint(json.dumps({"args": sys.argv[1:]}))\n');
+        const noteRunId = 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        const noteRequest = workspaceOperationSchemas.football_control.parse({
+            workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11', action: 'fyp_checkpoint_note',
+            runId: noteRunId, notes: 'note with spaces; echo should stay data',
+        });
+        assert.deepEqual(await fypOperation(ws, noteRequest), {
+            args: ['checkpoint-note', '--run-id', noteRunId, '--notes=note with spaces; echo should stay data'],
+        });
+        const environmentsRequest = workspaceOperationSchemas.football_control.parse({
+            workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11', action: 'fyp_environments',
+        });
+        assert.deepEqual(await fypOperation(ws, environmentsRequest), { args: ['environments'] });
+        const invalidNoteRequest = workspaceOperationSchemas.football_control.parse({
+            workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11', action: 'fyp_checkpoint_note',
+            runId: 'not-an-fyp-run', notes: 'no write expected',
+        });
+        await assert.rejects(fypOperation(ws, invalidNoteRequest), (err: any) => err.code === 'INVALID_ARGUMENT');
         await write('Training/atlas_contract.json', JSON.stringify({
             contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2',
             observations: { size: 54 }, actions: { continuous: 5 },

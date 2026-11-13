@@ -14,8 +14,24 @@ export type FypEnvironment = {
     settings: FypEnvironmentSetting[]; modifiers: FypEnvironmentModifier[];
 };
 
-export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironment }: {
+export function FypEnvironmentCard({ environment, onOpen }: {
+    environment: FypEnvironment; onOpen?: (environmentId: string) => void;
+}) {
+    const content = <>
+        <span className="fyp-environment-card-heading"><strong>{environment.name}</strong></span>
+        <span className="fyp-environment-difficulty">{environment.difficulty}</span>
+        <span className="fyp-environment-purpose">{environment.purpose || 'No purpose recorded.'}</span>
+        <span className="fyp-environment-card-meta">Version {environment.version} · {environment.settings.length} settings · {environment.modifiers.length} modifiers</span>
+    </>;
+    return onOpen
+        ? <button className="fyp-environment-card" type="button" onClick={() => onOpen(environment.environment_id)}>{content}</button>
+        : <article className="fyp-environment-card fyp-environment-card-static">{content}</article>;
+}
+
+export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironment, onEnvironmentCount, onEnvironmentName }: {
     initialEnvironmentId?: string; onSelectEnvironment?: (environmentId?: string) => void;
+    onEnvironmentCount?: (count: number | null) => void;
+    onEnvironmentName?: (name?: string) => void;
 }) {
     const [environments, setEnvironments] = useState<FypEnvironment[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(initialEnvironmentId ?? null);
@@ -26,14 +42,16 @@ export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironmen
         try {
             const records = await callTool<FypEnvironment[]>('football_fyp_environments');
             setEnvironments(records);
+            onEnvironmentCount?.(records.length);
             setError('');
         } catch (failure) {
+            onEnvironmentCount?.(null);
             setError(failure instanceof Error ? failure.message : String(failure));
         } finally { setLoading(false); }
-    }, []);
+    }, [onEnvironmentCount]);
 
     useEffect(() => {
-        if (initialEnvironmentId !== undefined) setSelectedId(initialEnvironmentId);
+        setSelectedId(initialEnvironmentId ?? null);
     }, [initialEnvironmentId]);
     useEffect(() => {
         void refresh();
@@ -42,6 +60,7 @@ export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironmen
     }, [refresh]);
 
     const selected = environments.find(environment => environment.environment_id === selectedId);
+    useEffect(() => { onEnvironmentName?.(selected?.name); }, [selected?.name, onEnvironmentName]);
     const groupedSettings = useMemo(() => {
         const groups = new Map<string, FypEnvironmentSetting[]>();
         for (const setting of selected?.settings ?? []) {
@@ -56,15 +75,9 @@ export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironmen
         setSelectedId(environmentId);
         onSelectEnvironment?.(environmentId);
     };
-    const back = () => {
-        setSelectedId(null);
-        onSelectEnvironment?.();
-    };
-
-    if (selected) return <section className="fg-panel fyp-environment-page" aria-label={`${selected.name} environment details`}>
-        <button type="button" className="fg-link" onClick={back}>← Environments</button>
+    if (selected) return <section className="fyp-environment-page" aria-label={`${selected.name} environment details`}>
         <div className="fg-panel-title fyp-environment-detail-title">
-            <div><h2>{selected.name}</h2><p>{selected.purpose || 'No purpose recorded.'}</p></div>
+            <p>{selected.purpose || 'No purpose recorded.'}</p>
             <div className="fyp-environment-badges"><span>{selected.difficulty}</span><span>Version {selected.version}</span></div>
         </div>
         <div className="fyp-record-grid">
@@ -78,7 +91,7 @@ export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironmen
             <div className="fyp-environment-settings">{groupedSettings.map(([category, settings]) => <section key={category} aria-label={category}>
                 <h4>{category}</h4>
                 <div className="fyp-record-grid">{settings.map(setting => <Record key={setting.key} label={setting.label}
-                    value={setting.unit ? `${setting.value} ${setting.unit}` : setting.value} detail={`${setting.component} · ${setting.key}`} />)}</div>
+                    value={setting.unit ? `${setting.value} ${setting.unit}` : setting.value} detail={setting.key} />)}</div>
             </section>)}</div>}
         <h3>Scene modifiers</h3>
         {!selected.modifiers.length ? <p className="fg-muted">No additional collider modifiers are recorded.</p> :
@@ -91,20 +104,14 @@ export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironmen
             </div>}
     </section>;
 
-    return <section className="fg-panel fyp-environment-page" aria-label="FYP environment library">
-        <div className="fg-panel-title"><h2>Environments</h2><div className="fg-refresh-controls">
-            <span className="fg-refresh-status" role="status">{loading ? 'Loading…' : `${environments.length} environment${environments.length === 1 ? '' : 's'}`}</span>
+    return <section className="fyp-environment-page" aria-label="FYP environment library">
+        <div className="fyp-environment-toolbar">
+            {error && <p className="fg-error" role="alert">{error}</p>}
             <button type="button" className="fg-button" onClick={() => void refresh()} disabled={loading}>Refresh</button>
-        </div></div>
-        {error && <p className="fg-error" role="alert">{error}</p>}
+        </div>
         {!loading && !error && environments.length === 0 && <p className="fg-muted">No scenes are currently included in the Unity environment catalogue.</p>}
-        <div className="fyp-environment-cards">{environments.map(environment => <button className="fyp-environment-card" type="button"
-            key={environment.environment_id} onClick={() => open(environment.environment_id)}>
-            <span className="fyp-environment-card-heading"><strong>{environment.name}</strong><span>{environment.difficulty}</span></span>
-            <span className="fyp-environment-purpose">{environment.purpose || 'No purpose recorded.'}</span>
-            <span className="fyp-environment-card-meta">Version {environment.version} · {environment.settings.length} settings · {environment.modifiers.length} modifiers</span>
-            <span className="fg-link">Open details →</span>
-        </button>)}</div>
+        <div className="fyp-environment-cards">{environments.map(environment => <FypEnvironmentCard key={environment.environment_id}
+            environment={environment} onOpen={open} />)}</div>
     </section>;
 }
 

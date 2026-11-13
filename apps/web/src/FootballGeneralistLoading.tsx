@@ -20,15 +20,10 @@ export function FootballGeneralistContentLoading({ decorative = false }: { decor
 }
 
 export function FootballGeneralistApplicationLoading() {
-    return <main className="fg" role="status" aria-label="Loading Football Generalist application" aria-busy="true">
+    return <main className="fg" role="status" aria-label="Loading FYP Football application" aria-busy="true">
         <header className="fg-heading" aria-hidden="true">
-            <div><h1>Generalist</h1><Skeleton width={275} height={12} /></div>
-            <Skeleton width={82} height={36} />
+            <h1>FYP Football</h1>
         </header>
-        <nav className="fg-nav" aria-hidden="true">
-            {['Experiments', 'Evidence'].map((name, index) =>
-                <span className={'fg-loading-tab' + (index === 0 ? ' active' : '')} key={name}>{name}</span>)}
-        </nav>
         <FootballGeneralistContentLoading decorative />
     </main>;
 }

@@ -1,644 +1,141 @@
-import { Provider } from 'react-redux';
-import { createAtlasStore } from './store';
-import type { ReactElement, ReactNode } from 'react';
-import { cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { callTool } from './api';
 import { FootballGeneralistExperience } from './FootballGeneralistExperience';
-import { FypEnvironmentCatalog } from './FypEnvironmentCatalog';
 
 vi.mock('./api', () => ({ callTool: vi.fn(), onToolMutation: () => () => {} }));
-const contract = {
+
+const manifest = {
     available: true,
-    contract: { contract_id: 'football-generalist-v2', behavior: 'FootballGeneralistV2',
-        observations: { size: 54, fields: [] }, actions: { continuous: 5, channels: [{ index: 0, name: 'throttle' }] } },
-    scenarios: { sceneVersion: 's2', physicsVersion: 'p2', scenarios: [{ id: 's0-contact-easy-v1', name: 'Easy contact', stage: 0, objective: 'Touch ball' }] },
-    curriculum: { stages: [{ id: 'S0', name: 'Contact', implemented: true }], held_out_seeds: [515] },
-    fingerprints: { contract_sha256: 'a', scenario_sha256: 'b' },
+    contract: {
+        contract_id: 'fyp-football-v1', behavior: 'FootballV1',
+        observations: { size: 25 }, actions: { continuous: 8 }, trainer_kind: 'poca',
+        scene: 'Assets/Football/Scenes/OpenGoalClose.unity',
+    },
 };
-const fypEnvironment = {
-    environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
-    purpose: 'Score from close range.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
-    policy_contract_id: 'fyp-football-v1', definition_sha256: 'a'.repeat(64), settings: [], modifiers: [],
+const readyPreflight = {
+    editor_available: true, editor_open: true, editor_playing: false, editor_compiling: false,
+    trainer_connected: false, trainer_available: true, scene_ready: true,
+    active_scene: 'Assets/Football/Scenes/OpenGoalClose.unity', environment_present: false,
+    episode: null, goals: null, last_outcome: null, episodes_completed: null, recent_episodes: [],
+    heartbeat_age_seconds: 1, verified_build: false, ready_to_train: true,
+    source_sha256: 'abc123', note: '',
 };
+const runs = [{
+    run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed',
+    source_sha256: 'abcdef0123456789', exported_model: true, checkpoint_number: 1, training_number: 1,
+    started_at: '2026-11-10T10:20:00.000Z',
+}];
+const evaluations = [{
+    evaluation_id: 'eval-1', training_run_id: 'run-smoke', state: 'completed',
+    requested_episodes: 10, episodes_completed: 10, goals_scored: 1, goal_rate: 0.1, seed: 22,
+}];
+const environments = [{
+    environment_id: 'open-goal-close-v1', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
+    purpose: 'Score in a close-range open goal.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
+    policy_contract_id: 'fyp-football-v1', definition_sha256: 'abcdef0123456789',
+    settings: [], modifiers: [],
+}];
+
 beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
     window.localStorage.clear();
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_fyp_manifest') return {
-            available: true, contract: { contract_id: 'fyp-football-v1',
-                behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 },
-                trainer_kind: 'poca', scene: 'Assets/Football/Scenes/OpenGoalClose.unity' },
-        } as never;
-        if (name === 'football_fyp_preflight') return { editor_available: true,
-            trainer_available: false, verified_build: false, ready_to_train: false,
-            source_sha256: 'abc123', note: 'Setup required' } as never;
-        if (name === 'football_fyp_runs') return [] as never;
-        if (name === 'football_fyp_environments') return [fypEnvironment] as never;
-        if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'unknown', scenario: 's0-contact-easy-v1' }] as never;
-        if (name === 'football_generalist_policies') return [] as never;
-        if (name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        if (name === 'football_list_policies') return [{ id: 'legacy-policy', drill: 'shooting_v1' }] as never;
-        if (name === 'football_list_jobs') return [{ id: 'legacy-run', drill: 'shooting_v1', state: 'completed' }] as never;
-        return [] as never;
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_fyp_manifest') return manifest as never;
+        if (name === 'football_fyp_preflight') return { ...readyPreflight, editor_open: false, ready_to_train: false } as never;
+        if (name === 'football_fyp_runs') return runs as never;
+        if (name === 'football_fyp_evaluations') return evaluations as never;
+        if (name === 'football_fyp_environments') return environments as never;
+        throw new Error('Unexpected tool: ' + name);
     });
 });
 afterEach(cleanup);
 
-function openSectionTab(section: 'Home' | 'More', tab?: string) {
-    fireEvent.click(screen.getByRole('button', { name: section }));
-    if (tab) {
-        const picker = screen.getByRole('combobox', { name: 'More football tools' });
-        const option = within(picker).getByRole('option', { name: tab }) as HTMLOptionElement;
-        fireEvent.change(picker, { target: { value: option.value } });
-    }
-}
-
-test('records a human review against an existing run without promoting a policy', async () => {
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'completed', scenario: 's0-contact-easy-v1' }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity' || name === 'football_generalist_reviews') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        if (name === 'football_generalist_review_update') return { ok: true } as never;
-        return [] as never;
-    });
+test('FYP opens on Home with Unity status and the three inner destinations', async () => {
     render(<FootballGeneralistExperience />);
-    await screen.findByRole('button', { name: 'external-s0 →' });
-    openSectionTab('More', 'Review decision');
-    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 's0-contact-easy-v1' } });
-    fireEvent.change(screen.getByLabelText('Training run'), { target: { value: 'external-s0' } });
-    fireEvent.change(screen.getByLabelText('Verdict'), { target: { value: 'revise' } });
-    fireEvent.change(screen.getByLabelText(/What did the reviewer observe/), { target: { value: 'The ball escaped after contact.' } });
-    fireEvent.change(screen.getByLabelText(/Visual evidence source/), { target: { value: 'Owner review: seed 515 episode 2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save review' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_review_update',
-        expect.objectContaining({ scenario: 's0-contact-easy-v1', runId: 'external-s0', verdict: 'revise', visualEvidence: 'Owner review: seed 515 episode 2' })));
-    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_policy_update')).toBe(false);
-});
-
-test('failed optional assessments do not block the dashboard or subsequent refreshes', async () => {
-    let runsRead = 0;
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{
-            id: ++runsRead === 1 ? 'before-refresh' : 'after-refresh',
-            family: 'generalist', state: 'unknown',
-        }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') throw new Error('Invalid Workspace operation input.');
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    expect(await screen.findByRole('button', { name: 'before-refresh →' })).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByText(/Skill assessments unavailable/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(await screen.findByRole('button', { name: 'after-refresh →' })).toBeInTheDocument();
-    expect(screen.getByText(/Partially updated at/)).toBeInTheDocument();
-    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'football_generalist_runs')).toHaveLength(2);
-});
-
-test('manual refresh shows busy state and reports a completed data reload', async () => {
-    let reads = 0;
-    let finishRefresh: ((runs: { id: string; family: string; state: string }[]) => void) | undefined;
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') {
-            if (++reads === 1) return [{ id: 'initial-run', family: 'generalist', state: 'unknown' }] as never;
-            return new Promise<{ id: string; family: string; state: string }[]>(resolve => {
-                finishRefresh = resolve;
-            }) as never;
-        }
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    expect(await screen.findByRole('button', { name: 'initial-run →' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled();
-    expect(screen.getByText('Fetching latest data…')).toBeInTheDocument();
-    await waitFor(() => expect(finishRefresh).toBeDefined());
-    finishRefresh!([{ id: 'updated-run', family: 'generalist', state: 'unknown' }]);
-    expect(await screen.findByRole('button', { name: 'updated-run →' })).toBeInTheDocument();
-    expect(screen.getByText(/Updated at/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
-});
-
-test('FYP training is the primary Home view', async () => {
-    render(<FootballGeneralistExperience />, 'Home');
-    expect(await screen.findByRole('button', { name: 'Start smoke run · 2,048 steps' })).toBeInTheDocument();
-    expect(screen.getByText('FootballV1')).toBeInTheDocument();
-    expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual([
-        'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations', 'football_fyp_environments',
-    ]);
-    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_list_drills')).toBe(false);
-});
-
-test('legacy tools stay out of Home and are grouped under More', async () => {
-    render(<FootballGeneralistExperience />, 'Home');
-    expect(await screen.findByRole('heading', { name: 'Policy checkpoints' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Evidence' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'More' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Legacy overview' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Legacy archive' })).not.toBeInTheDocument();
-    expect(vi.mocked(callTool).mock.calls.some(([name]) =>
-        ['football_list_jobs', 'football_list_policies', 'football_list_drills'].includes(name),
-    )).toBe(false);
-});
-
-test('opens generalist run inspection and keeps an honest no-log state', async () => {
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{ id: 'external-s0', family: 'generalist', state: 'unknown', output_dir: 'training-driver-runs/external-s0', checkpoints: 0 }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_run_detail') return { run: { id: 'external-s0', family: 'generalist', state: 'unknown', output_dir: 'training-driver-runs/external-s0' },
-            logs: '', errors: '', log_source: null, log_note: 'No saved trainer log', training_status: null, ticket: null } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    fireEvent.click(await screen.findByRole('button', { name: 'external-s0 →' }));
-    expect(await screen.findByText(/No saved trainer log/)).toBeInTheDocument();
-    expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_run_detail', { runId: 'external-s0' });
-    fireEvent.click(screen.getByRole('button', { name: '← Training runs' }));
-    expect(screen.queryByRole('button', { name: 'Launch generalist training' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'external-s0 →' })).toBeInTheDocument();
-});
-
-
-test('live trainer summaries populate steps, graph and budget before checkpoint status is saved', async () => {
-    const runId = 'atlas-generalist-fecb1e8442a2';
-    const logs = [
-        '[INFO] Hyperparameters for behavior name FootballGeneralistV2:',
-        '\tmax_steps:\t100000',
-        '[INFO] FootballGeneralistV2. Step: 5000. Time Elapsed: 12.557 s. Mean Reward: 0.062. Std of Reward: 0.882. Training.',
-        '[INFO] FootballGeneralistV2. Step: 10000. Time Elapsed: 21.838 s. Mean Reward: -0.015. Std of Reward: 0.883. Training.',
-        '[INFO] FootballGeneralistV2. Step: 15000. Time Elapsed: 31.011 s. Mean Reward: 0.302. Std of Reward: 0.913. Training.',
-    ].join('\n');
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{
-            id: runId, family: 'generalist', state: 'running', scenario: 's1_rehearsal',
-        }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_run_detail') return {
-            run: { id: runId, family: 'generalist', state: 'running', checkpoints: 0 },
-            logs, errors: '', log_source: 'Atlas training launch', log_note: 'Live output',
-            checkpoint_steps: null, checkpoint_samples: [], training_status: null, training_budget_steps: null,
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp(`s1_rehearsal.*${runId}`) }));
-    expect(await screen.findByText('15,000 / 100,000')).toBeInTheDocument();
-    expect(screen.getByRole('progressbar', { name: 'Training step progress' }))
-        .toHaveAttribute('aria-valuenow', '15000');
-    expect(screen.getByText('Latest mean reward')).toBeInTheDocument();
-    expect(screen.getAllByText('0.302').length).toBeGreaterThan(0);
-    expect(screen.getByRole('img', { name: 'Recorded mean training reward history' })).toBeInTheDocument();
-    expect(screen.getByText('3 logged samples')).toBeInTheDocument();
-});
-
-test('older generalist run recovers progress and rewards from saved ML-Agents checkpoints', async () => {
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{ id: 'older-run', family: 'generalist', state: 'unknown',
-            checkpoints: 2 }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_run_detail') return {
-            run: { id: 'older-run', family: 'generalist', state: 'unknown', checkpoints: 2,
-                checkpoint_files: ['checkpoint-1.onnx', 'checkpoint-2.onnx'] },
-            logs: '', errors: '', log_source: null, log_note: 'No trainer console available',
-            ticket: null, training_status: {}, training_budget_steps: 100000,
-            checkpoint_steps: 100003, checkpoint_samples: [
-                { step: 39994, reward: 1.08 }, { step: 99997, reward: 1.17 },
-                { step: 100003, reward: 1.1695 },
-            ],
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    fireEvent.click(await screen.findByRole('button', { name: 'older-run →' }));
-    expect(await screen.findByText('100,003 / 100,000')).toBeInTheDocument();
-    expect(screen.getByText('Checkpoint reward')).toBeInTheDocument();
-    expect(screen.getByText(/Saved ML-Agents checkpoint rewards/)).toBeInTheDocument();
-    expect(screen.getByRole('progressbar', { name: 'Training step progress' })).toHaveAttribute('aria-valuenow', '100000');
-    fireEvent.click(screen.getByRole('button', { name: 'Checkpoints (2)' }));
-    expect(screen.getByText('checkpoint-1.onnx')).toBeInTheDocument();
-});
-
-test('policy profile links to recorded evaluations and preselects Watch', async () => {
-    const ticket = '75ed74ef-a004-4299-8f2f-ad47389cd39a';
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{ id: 'source-1', family: 'generalist', state: 'completed', output_dir: 'training-driver-runs/source-1' }] as never;
-        if (name === 'football_generalist_policies') return [{ id: 'policy_generalist-a', behavior: 'FootballGeneralistV2', status: 'indexed',
-            source: 'training-driver-runs/source-1/policy.json', source_run_id: 'source-1', compatible_metadata: true,
-            executable_verified: false, onnx_available: true, bundle_available: true }] as never;
-        if (name === 'football_generalist_activity') return [{ action: 'generalist_evaluate', ticket, status: 'completed',
-            scenario: 's0-contact-easy-v1', policy_id: 'policy_generalist-a', result: { episodes: 2 } }] as never;
-        if (name === 'football_generalist_evaluation_detail') return { operation: { action: 'generalist_evaluate', ticket,
-            status: 'completed', policy_id: 'policy_generalist-a', scenario: 's0-contact-easy-v1' },
-            summary: { total: 2, outcomes: { success: 2 }, success_rate: 1, measured_success_episodes: 2 },
-            episodes: [{ index: 0, outcome: 'success', success: true }], pagination: { offset: 0, total: 2, has_more: false },
-            note: 'Measured' } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Policies');
-    fireEvent.click(await screen.findByRole('button', { name: 'policy_generalist-a →' }));
-    expect(screen.getByText('POLICY PROFILE')).toBeInTheDocument();
-    expect(screen.getByText('Saved evaluations')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /s0-contact-easy-v1.*completed/ }));
-    expect(await screen.findByText('100%')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'policy_generalist-a →' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Watch in Unity →' }));
-    expect(screen.getByRole('heading', { name: 'Watch a generalist policy' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Policy' })).toHaveValue('policy_generalist-a');
-});
-
-test('allows safe backfill packaging for exported generalist ONNX without another PPO launch', async () => {
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs') return [{
-            id: 'finished-100k', family: 'generalist', state: 'unknown',
-            checkpoint_files: ['training-driver-runs/finished-100k/finished-100k/FootballGeneralistV2.onnx'],
-            packaging: { status: 'not_registered' },
-        }] as never;
-        if (name === 'football_generalist_policies' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_package') return {
-            accepted: true, ticket: 'a561b3cc-a8bf-4331-a4f8-e497219bbb92',
-            action: 'generalist_package', status: 'launching',
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Generalist runs');
-    fireEvent.click(await screen.findByRole('button', { name: 'Package policy' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
-        'football_generalist_package', { runId: 'finished-100k' }));
-    expect(vi.mocked(callTool).mock.calls.some(([name]) => name === 'football_generalist_train')).toBe(false);
-});
-
-test('Musiala is selectable by name without exposing the removed drill chooser', async () => {
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_policies') return [{
-            id: 'generalist-musiala-v1', display_name: 'Musiala',
-            behavior: 'FootballGeneralistV2', status: 'indexed',
-            compatible_metadata: true, onnx_available: true, bundle_available: true,
-        }] as never;
-        if (name === 'football_generalist_watch') return {
-            accepted: true, status: 'launching', ticket: '1a423a0a-f18f-4d4a-81d4-c7d6f1a8458f',
-            action: 'generalist_watch',
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Watch');
-    expect(await screen.findByRole('option', { name: 'Musiala' })).toHaveValue('generalist-musiala-v1');
-    expect(screen.queryByRole('button', { name: /Mixed dribbling showcase/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/drill/i)).not.toBeInTheDocument();
-});
-
-test('Watch receipt shows player logging evidence without claiming a visible window', async () => {
-    const ticket = 'ef456628-8eed-4579-af11-bc7248c745d8';
-    vi.mocked(callTool).mockImplementation(async (name) => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_policies') return [{
-            id: 'generalist-check', status: 'unevaluated', behavior: 'FootballGeneralistV2',
-            compatible_metadata: true, onnx_available: true, bundle_available: true,
-        }] as never;
-        if (name === 'football_generalist_watch') return {
-            ticket, action: 'generalist_watch', status: 'launching', accepted: true,
-        } as never;
-        if (name === 'football_generalist_status') return {
-            ticket, action: 'generalist_watch', status: 'running',
-            viewer: { state: 'player_logging', launch_method: 'launchservices',
-                launcher_alive: true, player_log_detected: true,
-                note: 'Unity wrote a player log; this does not prove a window is visible.',
-                log_tail: '[UnityMemory] Player startup' },
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Watch');
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Unity player' }));
-    expect(await screen.findByText('Viewer: Unity player is logging')).toBeInTheDocument();
-    expect(screen.getByText(/does not prove a window is visible/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Unity player log (last 4 KB)'));
-    expect(screen.getByText('[UnityMemory] Player startup')).toBeInTheDocument();
-});
-
-test('shows externally launched evaluation progress without a saved per-episode report', async () => {
-    const ticket = 'da35acfe-5c55-4ed7-b86c-5052c779faa7';
-    const operation = {
-        ticket, action: 'generalist_evaluate', status: 'running', scenario: 's0-contact-easy-v1',
-        policy_id: 'generalist-run', requested_episodes: 100,
-        result: { episodes: 25, outcomes: { physical_contact: 25 }, success_rate: null },
-    };
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs' || name === 'football_generalist_policies') return [] as never;
-        if (name === 'football_generalist_activity') return [operation] as never;
-        if (name === 'football_generalist_evaluation_detail') return {
-            operation, summary: null, episodes: [], pagination: { offset: 0, total: 0, has_more: false },
-            note: 'Report is not yet saved.',
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Evaluate');
-    const activeEvaluation = await screen.findByRole('button', { name: /generalist-run.*25 \/ 100 episodes/ });
-    expect(activeEvaluation).toHaveTextContent('25 / 100 episodes · 25 physical contact');
-    fireEvent.click(activeEvaluation);
-    expect(await screen.findByRole('progressbar', { name: 'Evaluation episode progress' }))
-        .toHaveAttribute('aria-valuenow', '25');
-    expect(screen.getByText('25 / 100 episodes observed')).toBeInTheDocument();
-    expect(screen.getByText('physical_contact')).toBeInTheDocument();
-    expect(screen.getByText(/Individual episode records are not available yet/)).toBeInTheDocument();
-});
-
-test('featured historical policy remains selectable in Watch with its saved scenario but never Evaluate', async () => {
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        if (name === 'football_generalist_policies') return [{
-            id: 'generalist-musiala-v1', display_name: 'Musiala', featured: true,
-            status: 'unevaluated', behavior: 'FootballGeneralistV2',
-            compatible_metadata: false, historical_watch_available: true,
-            view_scenario: 's1-dribble-moving-interception-v1',
-            onnx_available: true, bundle_available: true,
-        }] as never;
-        if (name === 'football_generalist_watch') return {
-            accepted: true, status: 'launching',
-            ticket: 'fead3242-aaba-4ef3-8d37-c88a6c077d17', action: 'generalist_watch',
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Watch');
-    const option = await screen.findByRole('option', { name: 'Musiala · Historical' });
-    expect(option).toHaveValue('generalist-musiala-v1');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
-        target: { value: 'generalist-musiala-v1' },
-    });
-    expect(screen.getByText('Historical playback')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Mixed dribbling showcase/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_generalist_watch',
-        expect.objectContaining({
-            policyId: 'generalist-musiala-v1', scenario: 's1-dribble-moving-interception-v1',
-        })));
-    openSectionTab('More', 'Evaluate');
-    expect(screen.queryByRole('option', { name: 'Musiala · Historical' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Open Unity player' })).not.toBeInTheDocument();
-});
-
-test('missing original Unity app offers explicitly labelled legacy preview, never Evaluate', async () => {
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        if (name === 'football_generalist_policies') return [{
-            id: 'generalist-musiala-v1', display_name: 'Musiala', featured: true,
-            status: 'unevaluated', behavior: 'FootballGeneralistV2',
-            compatible_metadata: false, historical_watch_available: false, legacy_preview_available: true,
-            view_scenario: 's1-dribble-moving-interception-v1',
-            onnx_available: true, bundle_available: true,
-        }] as never;
-        if (name === 'football_generalist_watch') return {
-            accepted: true, status: 'launching', action: 'generalist_watch',
-            ticket: '09c1e4d6-0080-4ba5-9d37-e1ecdc975aba',
-        } as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Watch');
-    const option = await screen.findByRole('option', { name: 'Musiala · Modern preview' });
-    expect(option).toHaveValue('generalist-musiala-v1');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Policy' }), {
-        target: { value: 'generalist-musiala-v1' },
-    });
-    expect(screen.getByText('Legacy model preview — modern environment')).toBeInTheDocument();
-    expect(screen.getByText(/not.*authentic historical playback/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Unity player' }));
-    await waitFor(() => expect(vi.mocked(callTool)).toHaveBeenCalledWith(
-        'football_generalist_watch',
-        expect.objectContaining({ policyId: 'generalist-musiala-v1', scenario: 'legacy_preview_v1' }),
-    ));
-    openSectionTab('More', 'Evaluate');
-    expect(screen.queryByRole('option', { name: 'Musiala · Modern preview' })).not.toBeInTheDocument();
-});
-
-test('historical featured players lacking an original runner remain visible but unwatchable', async () => {
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_generalist_manifest') return contract as never;
-        if (name === 'football_generalist_runs' || name === 'football_generalist_activity') return [] as never;
-        if (name === 'football_generalist_assessments') return { policies: [] } as never;
-        if (name === 'football_generalist_policies') return [{
-            id: 'generalist-musiala-v1', display_name: 'Musiala', featured: true,
-            compatible_metadata: false, historical_watch_available: false,
-            status: 'unevaluated', behavior: 'FootballGeneralistV2',
-            view_scenario: 's1-dribble-moving-interception-v1',
-            onnx_available: true, bundle_available: true,
-        }] as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />);
-    openSectionTab('More', 'Policies');
-    const card = await screen.findByText('Musiala');
-    expect(card).toBeInTheDocument();
-    const cardWatch = screen.getAllByRole('button', { name: 'Watch' }).find(button => button.hasAttribute('disabled'));
-    expect(cardWatch).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Player profile' }));
-    expect(screen.getByRole('button', { name: /Watch in Unity/ })).toBeDisabled();
-});
-
-const render = (element: ReactElement, section: 'Home' | 'More' = 'More') => {
-    const { store } = createAtlasStore();
-    const rendered = rtlRender(element, { wrapper: ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider> });
-    fireEvent.click(screen.getByRole('button', { name: section }));
-    if (section === 'More') openSectionTab('More', 'Generalist runs');
-    return rendered;
-};
-
-test('a cached unavailable manifest does not break navigation on revisit', async () => {
-    const { atlasApi } = await import('./atlasApi');
-    const { store } = createAtlasStore();
-    await store.dispatch(atlasApi.util.upsertQueryData('applicationRead', {name:'football_generalist_manifest',input:{}}, {available:false}));
-    rtlRender(<Provider store={store}><FootballGeneralistExperience /></Provider>);
-    expect(screen.getByRole('button', { name:'Home' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    openSectionTab('More', 'Generalist runs');
-    expect(await screen.findByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
-});
-
-
-test.each(['unavailable', 'invalid contract'] as const)(
-    'keeps successful Football runs and evaluation activity visible when the manifest is %s',
-    async failure => {
-        vi.mocked(callTool).mockImplementation(async name => {
-            if (name === 'football_generalist_manifest') {
-                if (failure === 'unavailable') throw new Error('Manifest service offline');
-                return { available: true, contract: { contract_id: 'unsupported-contract' } } as never;
-            }
-            if (name === 'football_generalist_runs') return [{
-                id: 'surviving-run', family: 'generalist', state: 'completed',
-            }] as never;
-            if (name === 'football_generalist_activity') return [{
-                action: 'generalist_evaluate', ticket: 'surviving-evaluation', status: 'completed',
-                policy_id: 'saved-policy', scenario: 's0-contact-easy-v1', result: { episodes: 2 },
-            }] as never;
-            if (name === 'football_generalist_policies') return [] as never;
-            if (name === 'football_generalist_assessments') return { policies: [] } as never;
-            throw new Error('Unexpected tool: ' + name);
-        });
-        render(<FootballGeneralistExperience />);
-        expect(await screen.findByRole('button', { name: 'surviving-run →' })).toBeInTheDocument();
-        expect(screen.getByRole('alert')).toHaveTextContent('Refresh incomplete: contract could not be updated');
-        expect(screen.getByRole('heading', { name: 'Training runs' })).toBeInTheDocument();
-        expect(screen.getAllByText('s0-contact-easy-v1').length).toBeGreaterThan(0);
-        expect(screen.queryByRole('status', { name: 'Loading Football Generalist' })).not.toBeInTheDocument();
-        expect(vi.mocked(callTool).mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining([
-            'football_fyp_manifest', 'football_fyp_preflight', 'football_fyp_runs', 'football_fyp_evaluations',
-            'football_generalist_manifest', 'football_generalist_runs',
-            'football_generalist_policies', 'football_generalist_activity', 'football_generalist_assessments',
-        ]));
-    },
-);
-
-
-test('FYP training stays blocked before preflight', async () => {
-    render(<FootballGeneralistExperience />, 'Home');
     expect(await screen.findByRole('heading', { name: 'Unity closed · idle' })).toBeInTheDocument();
-    fireEvent.click(screen.getByText('New training run'));
-    await waitFor(() => expect(screen.getByText('FootballV1')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Start smoke run · 2,048 steps' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start 50k pilot' })).toBeDisabled();
-    expect(vi.mocked(callTool)).not.toHaveBeenCalledWith('football_fyp_train', expect.anything());
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Policy Checkpoints/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Recent Runs/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Environments/ })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Football sections' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+});
+
+test('checkpoint, run history, and environment pages use their current layouts', async () => {
+    render(<FootballGeneralistExperience />);
+    await screen.findByRole('heading', { name: 'Unity closed · idle' });
+
+    fireEvent.click(screen.getByRole('button', { name: /Policy Checkpoints/ }));
+    expect(await screen.findByRole('heading', { name: 'Policy Checkpoints' })).toBeInTheDocument();
+    expect(document.querySelector('time[datetime="2026-11-10T10:20:00.000Z"]')).toHaveTextContent(/2026/);
+    fireEvent.click(screen.getByRole('button', { name: /Open checkpoint C1/ }));
+    expect(await screen.findByRole('heading', { name: /C1/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Training run' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start evaluation' })).toBeDisabled();
+    expect(screen.getByLabelText('FYP evaluation episodes')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /T1Smoke run/ }));
+    expect(await screen.findByRole('heading', { name: /Smoke run/ })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toHaveTextContent('Policy Checkpoints');
+    fireEvent.click(screen.getByRole('button', { name: 'C1' }));
+    expect(await screen.findByRole('heading', { name: 'Training run' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Recent Runs/ }));
+    expect(await screen.findByRole('heading', { name: 'Recent Runs' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Evaluation.*10\/10 episodes/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    fireEvent.click(screen.getByRole('button', { name: /Environments/ }));
+    expect(await screen.findByRole('button', { name: /Open Goal — Close/ })).toBeInTheDocument();
+});
+
+test('a legacy Control Room URL redirects to Home', async () => {
+    const previousHash = window.location.hash;
+    window.history.replaceState(null, '', '/#/projects/demo/applications/football-training?fypPage=control-room');
+    render(<FootballGeneralistExperience />);
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(window.location.hash).not.toContain('control-room');
+    window.history.replaceState(null, '', previousHash || '/');
+});
+
+test('starting an evaluation from a checkpoint returns to Home', async () => {
+    vi.mocked(callTool).mockImplementation(async name => {
+        if (name === 'football_fyp_manifest') return manifest as never;
+        if (name === 'football_fyp_preflight') return readyPreflight as never;
+        if (name === 'football_fyp_runs') return runs as never;
+        if (name === 'football_fyp_evaluations') return evaluations as never;
+        if (name === 'football_fyp_evaluate') return { ticket: 'ticket-eval-1', action: 'fyp_evaluate', status: 'accepted' } as never;
+        throw new Error('Unexpected tool: ' + name);
+    });
+    render(<FootballGeneralistExperience />);
+    await screen.findByRole('heading', { name: 'Unity open · idle · ready to run' });
+    fireEvent.click(screen.getByRole('button', { name: /Policy Checkpoints/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Open checkpoint C1/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start evaluation' }));
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(await screen.findByText('Evaluation request accepted. Home will show the operation status while Unity connects.')).toBeInTheDocument();
+    expect(screen.getByText(/Checkpoint evaluation.*accepted/)).toBeInTheDocument();
+    expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_fyp_evaluate', { runId: 'run-smoke', episodes: 10, seed: 515 });
 });
 
 test.each([
-    { name: 'closed and idle', preflight: { editor_open: false, editor_available: true }, action: undefined, expected: 'Unity closed · idle' },
-    { name: 'closed with training requested', preflight: { editor_open: false }, action: 'fyp_train', expected: 'Training requested · Unity closed' },
-    { name: 'open and ready', preflight: { editor_open: true, editor_playing: false }, action: undefined, expected: 'Unity open · idle · ready to run' },
-    { name: 'open with operation requested', preflight: { editor_open: true, editor_playing: false }, action: 'fyp_train', expected: 'Training requested · press Play' },
-    { name: 'manual Play Mode', preflight: { editor_open: true, editor_playing: true, environment_present: true }, action: undefined, expected: 'Manual Play · keyboard controlled' },
-    { name: 'Play Mode waiting for connection', preflight: { editor_open: true, editor_playing: true, trainer_connected: false }, action: 'fyp_evaluate', expected: 'Play Mode · waiting for trainer connection' },
-    { name: 'connected training', preflight: { editor_open: true, editor_playing: true, trainer_connected: true }, action: 'fyp_train', expected: 'Training in Unity' },
-])('Unity status names the $name state directly', async ({ preflight, action, expected }) => {
-    window.sessionStorage.removeItem('atlas.football.fyp.operation');
-    if (action) window.sessionStorage.setItem('atlas.football.fyp.operation', JSON.stringify({
-        ticket: 'ticket-test', action, status: 'running',
-    }));
+    { name: 'Unity closed', preflight: { editor_open: false }, expected: 'Unity closed · idle' },
+    { name: 'ready to run', preflight: readyPreflight, expected: 'Unity open · idle · ready to run' },
+    { name: 'manual Play Mode', preflight: { ...readyPreflight, editor_playing: true, environment_present: true }, expected: 'Manual Play · keyboard controlled' },
+])('Unity status clearly reports $name', async ({ preflight, expected }) => {
     vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 }, trainer_kind: 'poca', scene: 'Assets/Football/Scenes/OpenGoalClose.unity' } } as never;
-        if (name === 'football_fyp_preflight') return { editor_available: true, trainer_available: true, ready_to_train: true,
-            scene_ready: true, active_scene: 'Assets/Football/Scenes/OpenGoalClose.unity', heartbeat_age_seconds: 1,
-            active_environment: fypEnvironment,
-            ...preflight } as never;
-        if (name === 'football_fyp_environments') return [fypEnvironment] as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />, 'Home');
-    expect(await screen.findByRole('heading', { name: expected })).toBeInTheDocument();
-});
-
-test('Home shows a distinct checkpoint card and recent evaluation activity', async () => {
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 } } } as never;
-        if (name === 'football_fyp_preflight') return { editor_available: true, trainer_available: false, ready_to_train: false } as never;
-        if (name === 'football_fyp_runs') return [{ run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed', source_sha256: 'abcdef0123456789', exported_model: true,
-            environment: { ...fypEnvironment, version: 'Not recorded', snapshot_recorded: false } }] as never;
-        if (name === 'football_fyp_evaluations') return [{ evaluation_id: 'eval-1', training_run_id: 'run-smoke', state: 'completed', requested_episodes: 10, episodes_completed: 10, goals_scored: 1, goal_rate: 0.1, seed: 22 }] as never;
-        return [] as never;
-    });
-    render(<FootballGeneralistExperience />, 'Home');
-    expect(await screen.findByRole('heading', { name: 'Policy checkpoints' })).toBeInTheDocument();
-    expect(screen.getByText('Policy checkpoint · Smoke run')).toBeInTheDocument();
-    expect(screen.queryByText('run-smoke')).not.toBeInTheDocument();
-    expect(screen.getByText('Trained in Open Goal — Close · historical settings not recorded')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /View current environment/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Evaluate 10 episodes' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
-    expect(screen.getByRole('button', { name: 'Kept' })).toHaveAttribute('aria-pressed', 'true');
-    expect(JSON.parse(window.localStorage.getItem('atlas.football.fyp.checkpoint-reviews') || '{}')).toEqual({ 'run-smoke': 'keep' });
-    expect(screen.getByRole('heading', { name: 'Recent activity' })).toBeInTheDocument();
-    const evaluationCard = screen.getByRole('button', { name: /Evaluation.*10\/10 episodes · 1 goals · seed 22/ });
-    expect(evaluationCard).toBeInTheDocument();
-    fireEvent.click(evaluationCard);
-    expect(screen.getByRole('heading', { name: 'Checkpoint evaluation' })).toBeInTheDocument();
-    expect(screen.getByText('10.0%')).toBeInTheDocument();
-});
-
-test('checkpoint evaluation follows the open environment when another environment is selected for training', async () => {
-    const openGoal = {
-        environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
-        purpose: 'Score from close range.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
-        policy_contract_id: 'fyp-football-v1', definition_sha256: 'a'.repeat(64), settings: [], modifiers: [],
-    };
-    const longRange = {
-        ...openGoal, environment_id: 'long-range', name: 'Long Range',
-        scene_path: 'Assets/Football/Scenes/TrainingArenaBase.unity',
-    };
-    vi.mocked(callTool).mockImplementation(async name => {
-        if (name === 'football_fyp_manifest') return { available: true, contract: { contract_id: 'fyp-football-v1', behavior: 'FootballV1', observations: { size: 25 }, actions: { continuous: 8 } } } as never;
-        if (name === 'football_fyp_preflight') return {
-            editor_available: true, editor_open: true, editor_playing: false, editor_compiling: false,
-            trainer_connected: false, trainer_available: true, editor_ready: true, scene_ready: true,
-            active_scene: longRange.scene_path, active_environment: longRange, selected_environment: longRange,
-            environment_present: false, heartbeat_age_seconds: 1, verified_build: false, ready_to_train: true,
-        } as never;
-        if (name === 'football_fyp_runs') return [{ run_id: 'run-smoke', preset: 'smoke', steps: 2048, seed: 11, state: 'completed', source_sha256: 'abcdef', exported_model: true }] as never;
+        if (name === 'football_fyp_manifest') return manifest as never;
+        if (name === 'football_fyp_preflight') return preflight as never;
+        if (name === 'football_fyp_runs') return [] as never;
         if (name === 'football_fyp_evaluations') return [] as never;
-        if (name === 'football_fyp_environments') return [openGoal, longRange] as never;
-        return [] as never;
+        throw new Error('Unexpected tool: ' + name);
     });
-    render(<FootballGeneralistExperience />, 'Home');
-    const evaluate = await screen.findByRole('button', { name: 'Evaluate 10 episodes' });
-    fireEvent.click(screen.getByText('New training run'));
-    fireEvent.change(await screen.findByLabelText('FYP training environment'), { target: { value: 'open-goal-close' } });
-    await waitFor(() => expect(evaluate).toBeEnabled());
-    expect(vi.mocked(callTool).mock.calls.filter(([name]) => name === 'football_fyp_preflight')
-        .every(([, input]) => input === undefined)).toBe(true);
-});
-
-test('environment library opens complete settings without putting IDs on the cards', async () => {
-    const environment = {
-        environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: 'Introductory',
-        purpose: 'Score from close range.', scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
-        policy_contract_id: 'fyp-football-v1', definition_sha256: 'a'.repeat(64),
-        settings: [{ key: 'Environment.FootballEnvironment.goalReward', component: 'FootballEnvironment',
-            category: 'Rewards', label: 'Goal reward', value: '2', unit: '' }],
-        modifiers: [{ name: 'Training wall', shape: 'BoxCollider', position: '(0, 0, 4)', size: '(2, 1, 1)', is_trigger: false }],
-    };
-    vi.mocked(callTool).mockImplementation(async name => name === 'football_fyp_environments' ? [environment] as never : [] as never);
-    rtlRender(<FypEnvironmentCatalog />);
-    const card = await screen.findByRole('button', { name: /Open Goal — Close/ });
-    expect(card).toHaveTextContent('Introductory');
-    expect(card).not.toHaveTextContent('open-goal-close');
-    fireEvent.click(card);
-    expect(await screen.findByRole('region', { name: 'Open Goal — Close environment details' })).toBeInTheDocument();
-    expect(screen.getByText('Goal reward')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
-    expect(screen.getByText('Training wall')).toBeInTheDocument();
-    expect(screen.getByText('open-goal-close')).toBeInTheDocument();
-});
-
-test('historical Generalist archive does not expose mutation or run controls', async () => {
     render(<FootballGeneralistExperience />);
-    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
-    expect((await screen.findAllByRole('heading', { name: 'Historical Generalist evidence' })).length).toBeGreaterThan(0);
-    expect(screen.getByText(/cannot be used as FootballV1 checkpoints/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Launch generalist training' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: expected })).toBeInTheDocument();
 });

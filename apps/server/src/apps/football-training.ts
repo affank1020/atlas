@@ -30,7 +30,7 @@ export class FootballTrainingService {
         if (!workspace) throw new AtlasError(fyp
             ? 'Register the new FYP Unity checkout on the Mac before using FYP v1 tools.'
             : 'Connect the legacy AI Football Unity Workspace to inspect historical results.', 'WORKSPACE_UNAVAILABLE');
-        const start = ['fyp_build', 'fyp_train', 'fyp_evaluate', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'generalist_review_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
+        const start = ['fyp_build', 'fyp_train', 'fyp_evaluate', 'fyp_checkpoint_note', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'generalist_policy_update', 'generalist_review_update', 'prebuild_training', 'recover_queue', 'resume_training', 'launch_headless', 'evaluate', 'evaluate_baseline', 'watch_policy', 'watch_live', 'validation_python', 'validation_editor', 'validation_physics'].includes(action);
         const stop = action === 'stop_job';
         const metadata = { action, activityKind: start || stop || action === 'index_policy' ? 'mutation' : 'inspection',
             ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
@@ -58,14 +58,16 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         name: 'Football Training', description: 'Run and inspect Unity ML-Agents training, logs and policies on your connected Mac.',
         tools: [
             action('football_fyp_manifest', 'Read the new standalone FYP FootballV1 25/8 policy contract, separate from legacy models.', {}, 'fyp_manifest'),
-            action('football_fyp_preflight', 'Check the FYP trainer, selected catalogued environment, live Unity Editor scene, Play Mode and ML-Agents connection before starting a learner.', { environmentId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional() }, 'fyp_preflight'),
+            action('football_fyp_preflight', 'Check the FYP trainer and live Unity Editor heartbeat, Play Mode, scene and ML-Agents connection before starting a learner.', {}, 'fyp_preflight'),
             action('football_fyp_build', 'Optional legacy operation: build a source-stamped FYP player. Editor training does not require this.', {}, 'fyp_build'),
             action('football_fyp_train', 'Start a bounded FYP v1 MA-POCA learner connected to the open Unity Editor in Play Mode; no player build is required.', {
-                preset: z.enum(['smoke','pilot_50k']), seed: integer.min(0).max(2147483647), environmentId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional() }, 'fyp_train'),
+                preset: z.enum(['smoke','pilot_50k']), seed: integer.min(0).max(2147483647) }, 'fyp_train'),
             action('football_fyp_runs', 'List durable FYP v1 training run receipts, never inferred as successful.', {}, 'fyp_runs'),
+            action('football_fyp_checkpoint_note', 'Save freeform notes on one completed FYP checkpoint export.', {
+                runId, notes: z.string().max(20_000) }, 'fyp_checkpoint_note'),
             action('football_fyp_environments', 'Read the Unity-authored, versioned FYP environment catalogue with setup, episode rules, rewards and scene modifiers.', {}, 'fyp_environments'),
-            action('football_fyp_evaluate', 'Run a bounded seeded checkpoint evaluation inside the selected catalogued Unity environment. Open that scene in Edit Mode, then press Play; no player build is required.', {
-                runId, episodes: integer.min(1).max(100), seed: integer.min(0).max(2147483647), environmentId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional() }, 'fyp_evaluate'),
+            action('football_fyp_evaluate', 'Run a bounded seeded checkpoint evaluation inside the open FYP Unity Editor. Start it with the FYP scene in Edit Mode, then press Play; no player build is required.', {
+                runId, episodes: integer.min(1).max(100), seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
             action('football_fyp_evaluations', 'List source-pinned FYP checkpoint evaluations and their observed Unity episode outcomes.', {}, 'fyp_evaluations'),
             action('football_fyp_status', 'Read a FYP v1 training run receipt.', { runId }, 'fyp_status'),
             action('football_fyp_task_status', 'Inspect a bounded FYP build or training operation receipt.', { runId: z.string().uuid() }, 'fyp_task_status'),

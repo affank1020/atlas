@@ -1,28 +1,90 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
-import { FypV1Evidence } from './FypV1Evidence';
-import type { FypEnvironment } from './FypEnvironmentCatalog';
+import { FypV1Evidence, TrainingEvidenceCard } from './FypV1Evidence';
+import { FypEnvironmentCatalog, type FypEnvironment } from './FypEnvironmentCatalog';
 
 type FypManifest = { available: boolean; contract: { contract_id: string; behavior: string; observations: { size: number }; actions: { continuous: number }; scene: string; trainer_kind: string } };
 type FypPreflight = {
     editor_available: boolean; editor_open: boolean; editor_playing: boolean; editor_compiling?: boolean;
-    trainer_connected: boolean; trainer_available: boolean; editor_ready: boolean; scene_ready: boolean; active_scene: string | null;
-    active_environment?: FypEnvironment | null; selected_environment?: FypEnvironment | null;
+    trainer_connected: boolean; trainer_available: boolean; scene_ready: boolean; active_scene: string | null;
     environment_present: boolean; episode: number | null; goals: number | null; last_outcome: string | null;
     episodes_completed: number | null; recent_episodes: { session_id: string; sequence: number; episode: number; seed: number; goals: number; elapsed_seconds: number; outcome: string; trainer_connected: boolean }[];
+    environment_session_id?: string | null;
     heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean;
     source_sha256: string; note: string;
 };
-type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; error?: string };
-type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment; started_at?: string; error?: string };
+type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; checkpoint_number?: number; training_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string; notes?: string };
+type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; evaluation_number?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; episodes?: { episode?: number; index?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string }[]; training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
+type FypPage = 'home' | 'checkpoints' | 'checkpoint' | 'runs' | 'run' | 'evaluations' | 'evaluation' | 'environments' | 'environment';
+type FypRoute = { page: FypPage; checkpointId: string | null; runId?: string | null; evaluationId?: string | null; environmentId?: string | null; returnPage?: 'runs' | 'run' | 'evaluations' | 'checkpoints' | 'checkpoint' | 'checkpoint-evaluations' | null };
+type FypHistoryEntry = { path: string; page: FypPage; checkpointId: string | null; depth: number };
+const FYP_HISTORY_KEY = '__atlasFypRoute';
 
-const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'cancelling', 'unknown', 'incomplete']);
+function readFypRoute(): FypRoute {
+    const [path, query = ''] = window.location.hash.split('?');
+    const params = new URLSearchParams(query);
+    const requested = params.get('fypPage');
+    const legacyCheckpointEvaluations = requested === 'evaluations' && params.get('from') === 'checkpoint';
+    const page: FypPage = legacyCheckpointEvaluations || requested === 'checkpoint' || (requested === 'checkpoints' && params.has('checkpoint')) ? 'checkpoint'
+        : requested === 'environment' || (requested === 'environments' && params.has('environment')) ? 'environment'
+        : ['checkpoints', 'runs', 'run', 'evaluations', 'evaluation', 'environments', 'environment'].includes(requested ?? '') ? requested as FypPage : 'home';
+    const runId = page === 'run' || page === 'evaluations' || page === 'evaluation' ? params.get('run') : null;
+    const checkpointId = page === 'checkpoint' ? params.get('checkpoint') ?? (legacyCheckpointEvaluations ? params.get('run') : null) : null;
+    const evaluationId = page === 'evaluation' ? params.get('evaluation') : null;
+    const environmentId = page === 'environments' || page === 'environment' ? params.get('environment') : null;
+    const source = params.get('from');
+    const returnPage = source === 'run' || source === 'evaluations' || source === 'runs' || source === 'checkpoints' || source === 'checkpoint' || source === 'checkpoint-evaluations' ? source : null;
+    if (page === 'evaluation' && (!evaluationId || !runId)) return runId ? { page: 'evaluations', checkpointId: null, runId } : { page: 'runs', checkpointId: null };
+    if (page === 'environment' && !environmentId) return { page: 'environments', checkpointId: null };
+    if (page === 'checkpoint' && !checkpointId) return { page: 'checkpoints', checkpointId: null };
+    return (page === 'run' || page === 'evaluations') && !runId
+        ? { page: 'runs', checkpointId: null } : { page, checkpointId, runId, evaluationId, environmentId, returnPage };
+}
+
+function writeFypRoute(route: FypRoute, method: 'pushState' | 'replaceState', depth: number) {
+    const [path, query = ''] = window.location.hash.split('?');
+    const params = new URLSearchParams(query);
+    if (route.page === 'home') params.delete('fypPage');
+    else params.set('fypPage', route.page);
+    if (route.page === 'checkpoint' && route.checkpointId) params.set('checkpoint', route.checkpointId);
+    else params.delete('checkpoint');
+    if ((route.page === 'run' || route.page === 'evaluations' || route.page === 'evaluation') && route.runId) params.set('run', route.runId);
+    else params.delete('run');
+    if (route.page === 'evaluation' && route.evaluationId) params.set('evaluation', route.evaluationId);
+    else params.delete('evaluation');
+    if ((route.page === 'environments' || route.page === 'environment') && route.environmentId) params.set('environment', route.environmentId);
+    else params.delete('environment');
+    if ((route.page === 'evaluation' || route.page === 'run' || route.page === 'evaluations') && route.returnPage) params.set('from', route.returnPage);
+    else params.delete('from');
+    const search = params.toString();
+    const hash = `${path}${search ? `?${search}` : ''}`;
+    const previous = window.history.state;
+    const base = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {};
+    window.history[method]({ ...base, [FYP_HISTORY_KEY]: { path, page: route.page, checkpointId: route.checkpointId, depth } satisfies FypHistoryEntry }, '', `${window.location.pathname}${window.location.search}${hash}`);
+}
+
+function fypHistoryEntry(): FypHistoryEntry | undefined {
+    const value = window.history.state?.[FYP_HISTORY_KEY] as FypHistoryEntry | undefined;
+    return value?.path === window.location.hash.split('?')[0] && Number.isInteger(value.depth) ? value : undefined;
+}
+
+const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'waiting_for_play', 'waiting_for_trainer_connection', 'stopping_after_requested_episodes', 'cancelling', 'unknown', 'incomplete']);
 const HEARTBEAT_MAX_AGE_SECONDS = 15;
 const OPERATION_STORAGE_KEY = 'atlas.football.fyp.operation';
 const CHECKPOINT_REVIEW_KEY = 'atlas.football.fyp.checkpoint-reviews';
 const isActive = (state?: string) => !!state && ACTIVE_STATES.has(state.toLowerCase());
 const sceneName = (path?: string | null) => path?.split('/').pop()?.replace(/\.unity$/i, '') || 'FYP scene';
+const runName = (preset: string, number?: number) => `${number ? `T${number} · ` : ''}${preset === 'smoke' ? 'Smoke run' : preset === 'pilot_50k' ? '50k pilot' : preset}`;
+const runDate = (value?: string) => value && !Number.isNaN(Date.parse(value))
+    ? new Date(value).toLocaleDateString(undefined, { dateStyle: 'medium' }) : 'Date not recorded';
+const runTime = (value?: string) => value && !Number.isNaN(Date.parse(value))
+    ? new Date(value).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+const checkpointRecordedAt = (run: FypRun) => run.finished_at ?? run.started_at;
+const checkpointLabel = (run: FypRun) => run.checkpoint_number ? `C${run.checkpoint_number}` : run.run_id;
+const latestEvaluationFor = (items: FypEvaluation[]) => [...items].sort((a, b) =>
+    Date.parse(b.started_at ?? b.finished_at ?? '') - Date.parse(a.started_at ?? a.finished_at ?? ''))[0];
+const evaluationRecordedAt = (evaluation?: FypEvaluation) => evaluation?.started_at ?? evaluation?.finished_at;
 
 function readSavedTicket(): FypTicket | null {
     try {
@@ -43,15 +105,13 @@ function readCheckpointReviews(): Record<string, 'keep' | 'discard'> {
     } catch { return {}; }
 }
 
-export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (environmentId: string) => void }) {
+export function FypV1Experience() {
+    const [route, setRoute] = useState<FypRoute>(readFypRoute);
+    const { page, runId: selectedRunId, checkpointId: selectedCheckpointId, evaluationId: selectedEvaluationId, returnPage } = route;
     const [manifest, setManifest] = useState<FypManifest | null>(null);
     const [preflight, setPreflight] = useState<FypPreflight | null>(null);
     const [runs, setRuns] = useState<FypRun[]>([]);
     const [evaluations, setEvaluations] = useState<FypEvaluation[]>([]);
-    const [environments, setEnvironments] = useState<FypEnvironment[]>([]);
-    const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
-    const [evaluationEnvironmentId, setEvaluationEnvironmentId] = useState('');
-    const [seed, setSeed] = useState(63);
     const [evaluationSeed, setEvaluationSeed] = useState(515);
     const [evaluationEpisodes, setEvaluationEpisodes] = useState(10);
     const [busy, setBusy] = useState('');
@@ -59,29 +119,63 @@ export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (en
     const [notice, setNotice] = useState('');
     const [ticket, setTicket] = useState<FypTicket | null>(readSavedTicket);
     const [loading, setLoading] = useState(true);
+    const [environmentCount, setEnvironmentCount] = useState<number | null | undefined>(undefined);
+    const [environmentName, setEnvironmentName] = useState<string | undefined>();
     const [checkpointReviews, setCheckpointReviews] = useState<Record<string, 'keep' | 'discard'>>(readCheckpointReviews);
+    const [savingCheckpointNote, setSavingCheckpointNote] = useState(false);
 
+    useEffect(() => {
+        const requestedPage = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('fypPage');
+        if (requestedPage === 'control-room' || !fypHistoryEntry()) {
+            writeFypRoute(readFypRoute(), 'replaceState', fypHistoryEntry()?.depth ?? 0);
+        }
+        const syncRoute = () => setRoute(readFypRoute());
+        window.addEventListener('popstate', syncRoute);
+        window.addEventListener('hashchange', syncRoute);
+        return () => {
+            window.removeEventListener('popstate', syncRoute);
+            window.removeEventListener('hashchange', syncRoute);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (page !== 'evaluations' || returnPage !== 'checkpoint' || !selectedRunId) return;
+        const next = { page: 'checkpoint' as const, checkpointId: selectedRunId };
+        writeFypRoute(next, 'replaceState', fypHistoryEntry()?.depth ?? 0);
+        setRoute(next);
+    }, [page, returnPage, selectedRunId]);
+
+    const navigate = (next: FypRoute) => {
+        const depth = (fypHistoryEntry()?.depth ?? 0) + 1;
+        writeFypRoute(next, 'pushState', depth);
+        setRoute(next);
+    };
+    const openEnvironment = (environmentId: string) => navigate({ page: 'environments', checkpointId: null, environmentId });
+    const openEvaluation = (evaluationId: string, source: 'runs' | 'run' | 'evaluations' | 'checkpoints') => {
+        const evaluation = evaluations.find(item => item.evaluation_id === evaluationId);
+        const evaluationReturnPage = source === 'evaluations' && returnPage === 'checkpoint' ? 'checkpoint-evaluations' : source;
+        navigate({ page: 'evaluation', checkpointId: null, evaluationId, runId: evaluation?.training_run_id ?? selectedRunId, returnPage: evaluationReturnPage });
+    };
+    const backFromEvaluation = () => {
+        if (returnPage === 'run') navigate({ page: 'run', checkpointId: null, runId: selectedRunId });
+        else if (returnPage === 'evaluations') navigate({ page: 'evaluations', checkpointId: null, runId: selectedRunId });
+        else if (returnPage === 'checkpoint-evaluations') navigate({ page: 'evaluations', checkpointId: null, runId: selectedRunId, returnPage: 'checkpoint' });
+        else if (returnPage === 'checkpoint') navigate({ page: 'checkpoint', checkpointId: selectedRunId ?? selectedCheckpointId });
+        else if (returnPage === 'checkpoints') navigate({ page: 'evaluations', checkpointId: null, runId: selectedRunId });
+        else navigate({ page: 'runs', checkpointId: null });
+    };
     const refresh = useCallback(async () => {
         try {
-            const [m, p, r, e, envs] = await Promise.all([
+            const [m, p, r, e] = await Promise.all([
                 callTool<FypManifest>('football_fyp_manifest'),
-                // Preflight describes the scene that is open now. Training still checks
-                // its chosen environment separately, while evaluation may target a
-                // different scene from the one selected for the next training run.
                 callTool<FypPreflight>('football_fyp_preflight'),
                 callTool<FypRun[]>('football_fyp_runs'),
                 callTool<FypEvaluation[]>('football_fyp_evaluations'),
-                callTool<FypEnvironment[]>('football_fyp_environments'),
             ]);
-            setManifest(m); setPreflight(p); setRuns(r); setEvaluations(e); setEnvironments(envs); setError('');
-            const fallbackEnvironment = p.active_environment?.environment_id ?? envs[0]?.environment_id ?? '';
-            if (!selectedEnvironmentId || !envs.some(environment => environment.environment_id === selectedEnvironmentId))
-                setSelectedEnvironmentId(fallbackEnvironment);
-            if (!evaluationEnvironmentId || !envs.some(environment => environment.environment_id === evaluationEnvironmentId))
-                setEvaluationEnvironmentId(fallbackEnvironment);
+            setManifest(m); setPreflight(p); setRuns(r); setEvaluations(e); setError('');
         } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
         finally { setLoading(false); }
-    }, [evaluationEnvironmentId, selectedEnvironmentId]);
+    }, []);
     useEffect(() => {
         void refresh();
         const timer = window.setInterval(() => { void refresh(); }, 3000);
@@ -119,17 +213,19 @@ export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (en
     const activeEvaluation = useMemo(() => evaluations.find(evaluation => isActive(evaluation.state)), [evaluations]);
     const activeTicket = isActive(ticket?.status) ? ticket : null;
     const requestedAction = activeTicket?.action ?? (activeRun ? 'fyp_train' : activeEvaluation ? 'fyp_evaluate' : null);
-    const selectedEnvironment = environments.find(environment => environment.environment_id === selectedEnvironmentId);
-    const selectedEvaluationEnvironment = environments.find(environment => environment.environment_id === evaluationEnvironmentId);
-    const sceneMatches = !!selectedEnvironment && preflight?.active_environment?.environment_id === selectedEnvironment.environment_id && !!preflight?.scene_ready;
-    const evaluationSceneMatches = !!selectedEvaluationEnvironment && preflight?.active_environment?.environment_id === selectedEvaluationEnvironment.environment_id;
+    const manifestScene = manifest?.contract.scene;
+    const sceneMatches = manifest?.available === true && !!preflight?.scene_ready &&
+        !!manifestScene && preflight?.active_scene === manifestScene;
     const heartbeatFresh = preflight?.heartbeat_age_seconds != null && preflight.heartbeat_age_seconds <= HEARTBEAT_MAX_AGE_SECONDS;
-    const editorReady = !!preflight?.editor_ready && !!preflight.editor_open &&
+    const editorReady = !!preflight?.ready_to_train && !!preflight.editor_open && sceneMatches &&
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || !!activeRun || !!activeEvaluation;
-    const canStartTraining = editorReady && sceneMatches && !operationActive && !busy;
-    const canEvaluate = editorReady && evaluationSceneMatches && !activeTicket && !activeRun && !activeEvaluation && !busy;
+    const canEvaluate = editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
     const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
+    const focusedRun = runs.find(run => run.run_id === (page === 'checkpoint' ? selectedCheckpointId : selectedRunId));
+    const focusedEvaluation = evaluations.find(evaluation => evaluation.evaluation_id === selectedEvaluationId);
+    const focusedRunEvaluations = focusedRun ? evaluations.filter(evaluation => evaluation.training_run_id === focusedRun.run_id) : [];
+    const latestFocusedEvaluation = latestEvaluationFor(focusedRunEvaluations);
 
     let readinessMessage = 'Checking Unity status…';
     let readinessTone = 'pending';
@@ -143,10 +239,9 @@ export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (en
         else if (preflight.editor_playing) readinessMessage = 'Play Mode · waiting for trainer connection';
         else readinessMessage = `${requestedAction === 'fyp_evaluate' ? 'Evaluation' : 'Training'} requested · press Play`;
     } else if (!manifest?.available) { readinessMessage = 'FYP Football contract unavailable'; readinessTone = 'warning'; }
-    else if (environments.length === 0) { readinessMessage = 'No Unity environments in the catalogue'; readinessTone = 'warning'; }
     else if (!preflight.editor_open) { readinessMessage = 'Unity closed · idle'; readinessTone = 'pending'; }
     else if (preflight.editor_playing && preflight.environment_present) { readinessMessage = 'Manual Play · keyboard controlled'; readinessTone = 'active'; }
-    else if (!sceneMatches) { readinessMessage = selectedEnvironment ? `Open ${selectedEnvironment.name} in Unity` : 'Select a training environment'; readinessTone = 'warning'; }
+    else if (!sceneMatches) { readinessMessage = `Open ${sceneName(manifest?.contract.scene)} in Unity`; readinessTone = 'warning'; }
     else if (preflight.editor_compiling) { readinessMessage = 'Wait for Unity compilation to finish'; readinessTone = 'warning'; }
     else if (!preflight.trainer_available) { readinessMessage = 'ML-Agents trainer is unavailable'; readinessTone = 'warning'; }
     else if (!heartbeatFresh) { readinessMessage = 'Waiting for a fresh Unity heartbeat'; readinessTone = 'warning'; }
@@ -158,27 +253,21 @@ export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (en
         ? preflight?.trainer_connected ? 'Unity is connected to the active Atlas operation.'
             : preflight?.editor_playing ? 'The editor is running. Atlas is waiting for the ML-Agents connection.'
                 : 'In the FYP Unity Editor, press Play to connect the trainer.'
-        : activeRun ? `${activeRun.preset === 'smoke' ? 'Smoke run' : activeRun.preset === 'pilot_50k' ? '50k pilot' : activeRun.preset} · seed ${activeRun.seed}`
-            : activeEvaluation ? `Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
-                : preflight?.editor_playing ? 'The Unity scene is running without a requested Atlas operation. Keyboard controls remain active.'
-                    : `${selectedEnvironment?.name ?? 'A catalogued environment'} is selected. Atlas starts the learner; Unity connects when you press Play.`;
-
-    const perform = async (operation: 'smoke' | 'pilot_50k') => {
-        setBusy(operation); setError(''); setNotice('');
-        try {
-            const response = await callTool<FypTicket>('football_fyp_train', { preset: operation, seed, environmentId: selectedEnvironmentId });
-            setTicket(response);
-            setNotice('Learner request accepted. Press Play in the FYP Unity Editor to connect it.');
-            await refresh();
-        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-        finally { setBusy(''); }
-    };
+        : activeRun ? `${runName(activeRun.preset, activeRun.training_number)} · seed ${activeRun.seed}`
+            : activeEvaluation ? `${activeEvaluation.evaluation_number ? `E${activeEvaluation.evaluation_number} · ` : ''}Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
+                : preflight?.editor_playing ? 'The FYP scene is running without a requested Atlas operation. Keyboard controls remain active.'
+                    : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
+    const activeOperationName = activeRun ? 'Training run' : activeEvaluation ? 'Checkpoint evaluation'
+        : activeTicket?.action === 'fyp_evaluate' ? 'Checkpoint evaluation'
+            : activeTicket?.action === 'fyp_train' ? 'Training run' : activeTicket ? 'Editor operation' : '';
+    const activeOperationState = activeRun?.state ?? activeEvaluation?.state ?? activeTicket?.status ?? 'requested';
     const evaluateRun = async (runId: string) => {
         setBusy(`evaluate:${runId}`); setError(''); setNotice('');
         try {
-            const response = await callTool<FypTicket>('football_fyp_evaluate', { runId, episodes: evaluationEpisodes, seed: evaluationSeed, environmentId: evaluationEnvironmentId });
+            const response = await callTool<FypTicket>('football_fyp_evaluate', { runId, episodes: evaluationEpisodes, seed: evaluationSeed });
             setTicket(response);
-            setNotice('Evaluation request accepted. Press Play in the FYP Unity Editor when Atlas reports that the checkpoint runner is ready.');
+            setNotice('Evaluation request accepted. Home will show the operation status while Unity connects.');
+            navigate({ page: 'home', checkpointId: null });
             await refresh();
         } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
         finally { setBusy(''); }
@@ -193,137 +282,284 @@ export function FypV1Experience({ onOpenEnvironment }: { onOpenEnvironment?: (en
         setCheckpointReviews(next);
     };
 
+    const saveCheckpointNote = async (runId: string, notes: string) => {
+        setSavingCheckpointNote(true); setError(''); setNotice('');
+        try {
+            const result = await callTool<{ run_id: string; notes: string }>('football_fyp_checkpoint_note', { runId, notes });
+            setRuns(current => current.map(run => run.run_id === runId ? { ...run, notes: result.notes } : run));
+            setNotice('Checkpoint notes saved.');
+        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { setSavingCheckpointNote(false); }
+    };
+
     const refreshNow = async () => {
         setBusy('refresh');
         try { await refresh(); }
         finally { setBusy(''); }
     };
+    const trainingBreadcrumb = focusedRun ? focusedRun.training_number ? `T${focusedRun.training_number}` : focusedRun.run_id : 'Training run';
+    const evaluationBreadcrumb = focusedEvaluation ? focusedEvaluation.evaluation_number ? `E${focusedEvaluation.evaluation_number}` : focusedEvaluation.evaluation_id : 'Evaluation';
+    const pageTitle = page === 'home' ? 'Home' : page === 'checkpoints' ? 'Policy Checkpoints' : page === 'checkpoint' ? 'Checkpoint'
+            : page === 'run' ? trainingBreadcrumb : page === 'evaluations' ? 'Evaluations'
+            : page === 'evaluation' ? evaluationBreadcrumb
+                : page === 'runs' ? 'Recent Runs'
+                    : page === 'environment' ? environmentName ?? 'Environment details' : 'Environments';
+    const checkpointBreadcrumb = focusedRun ? checkpointLabel(focusedRun) : 'Checkpoint';
+    const breadcrumbTitle = pageTitle;
 
     return <div className="fg-stack fyp-experience" aria-label="FYP Football editor-first training">
         {error && <p className="fg-error" role="alert">{error}</p>}
         {notice && <p className="fg-notice" role="status">{notice}</p>}
 
-        <section className={`fg-panel fyp-readiness fyp-${readinessTone}`} aria-labelledby="fyp-readiness-title">
+        <header className="fyp-page-heading">
+            {page !== 'home' && <nav className="fyp-breadcrumbs" aria-label="Breadcrumb">
+                <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'home', checkpointId: null })}>Home</button>
+                {page === 'run' && (returnPage === 'checkpoints' || returnPage === 'checkpoint') && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                    {returnPage === 'checkpoint' && <>
+                        <span aria-hidden="true">/</span>
+                        <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoint', checkpointId: selectedRunId ?? null })}>
+                            {checkpointBreadcrumb}
+                        </button>
+                    </>}
+                </>}
+                {page === 'run' && returnPage !== 'checkpoints' && returnPage !== 'checkpoint' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'runs', checkpointId: null })}>Recent Runs</button>
+                </>}
+                {page === 'checkpoint' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                </>}
+                {page === 'environment' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'environments', checkpointId: null })}>Environments</button>
+                </>}
+                {page === 'evaluations' && <>
+                    <span aria-hidden="true">/</span>
+                    {returnPage === 'checkpoint' ? <>
+                        <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                        <span aria-hidden="true">/</span>
+                        <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoint', checkpointId: selectedRunId ?? null })}>{checkpointBreadcrumb}</button>
+                    </> : <>
+                        <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                        <span aria-hidden="true">/</span>
+                        <span>{checkpointBreadcrumb}</span>
+                    </>}
+                </>}
+                {page === 'evaluation' && returnPage === 'runs' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'runs', checkpointId: null })}>Recent Runs</button>
+                </>}
+                {page === 'evaluation' && returnPage === 'checkpoint' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoint', checkpointId: selectedRunId ?? null })}>{checkpointBreadcrumb}</button>
+                </>}
+                {page === 'evaluation' && returnPage === 'run' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'runs', checkpointId: null })}>Recent Runs</button>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'run', runId: selectedRunId, checkpointId: null })}>{trainingBreadcrumb}</button>
+                </>}
+                {page === 'evaluation' && returnPage === 'evaluations' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'evaluations', runId: selectedRunId, checkpointId: null })}>{checkpointBreadcrumb}</button>
+                    <span aria-hidden="true">/</span>
+                    <span>Evaluations</span>
+                </>}
+                {page === 'evaluation' && returnPage === 'checkpoint-evaluations' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoint', checkpointId: selectedRunId ?? null })}>{checkpointBreadcrumb}</button>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'evaluations', runId: selectedRunId, checkpointId: null, returnPage: 'checkpoint' })}>Evaluations</button>
+                </>}
+                {page === 'evaluation' && returnPage === 'checkpoints' && <>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>Policy Checkpoints</button>
+                    <span aria-hidden="true">/</span>
+                    <button className="fyp-breadcrumb-link" type="button" onClick={() => navigate({ page: 'evaluations', runId: selectedRunId, checkpointId: null })}>{checkpointBreadcrumb}</button>
+                    <span aria-hidden="true">/</span>
+                    <span>Evaluations</span>
+                </>}
+                <span aria-hidden="true">/</span>
+                <span aria-current="page">{page === 'checkpoint' && focusedRun ? checkpointLabel(focusedRun) : breadcrumbTitle}</span>
+            </nav>}
+            <div className="fyp-page-title-row">
+                {page === 'run' && focusedRun ? <h1 className="fyp-record-page-headline">
+                    {focusedRun.training_number && <span className="fyp-index-pill fyp-training-pill">T{focusedRun.training_number}</span>}
+                    <span>{runName(focusedRun.preset)}</span>
+                </h1> : page === 'evaluation' && focusedEvaluation ? <h1 className="fyp-record-page-headline">
+                    {focusedEvaluation.evaluation_number && <span className="fyp-index-pill fyp-evaluation-pill">E{focusedEvaluation.evaluation_number}</span>}
+                    <span>Evaluation</span>
+                </h1> : page === 'checkpoint' && focusedRun ? <>
+                    <h1 className="fyp-checkpoint-page-headline">
+                        <span className="fyp-checkpoint-number fyp-checkpoint-headline-pill">{checkpointLabel(focusedRun)}</span>
+                        {latestFocusedEvaluation ? <>
+                            <span className="fyp-checkpoint-headline-date">{runDate(evaluationRecordedAt(latestFocusedEvaluation))}</span>
+                            {runTime(evaluationRecordedAt(latestFocusedEvaluation)) && <time className="fyp-checkpoint-headline-time" dateTime={evaluationRecordedAt(latestFocusedEvaluation)}>{runTime(evaluationRecordedAt(latestFocusedEvaluation))}</time>}
+                        </> : <span className="fyp-checkpoint-headline-date">No evaluation recorded yet</span>}
+                    </h1>
+                </> : <h1>{pageTitle}</h1>}
+                {page === 'checkpoints' && <p className="fyp-checkpoint-count">{completedRuns.length} checkpoint{completedRuns.length === 1 ? '' : 's'}</p>}
+                {page === 'runs' && <p className="fyp-checkpoint-count">{runs.length} run{runs.length === 1 ? '' : 's'}</p>}
+                {page === 'environments' && <p className="fyp-checkpoint-count">{environmentCount === undefined ? 'Loading…' : environmentCount === null ? 'Unavailable' : `${environmentCount} environment${environmentCount === 1 ? '' : 's'}`}</p>}
+            </div>
+        </header>
+
+        {operationActive && page !== 'home' &&
+            <button className="fyp-operation-banner" type="button" onClick={() => navigate({ page: 'home', checkpointId: null })}>
+                <span className="fyp-operation-indicator" aria-hidden="true" />
+                <span><strong>{activeOperationName}</strong> · {activeOperationState}</span>
+                <span>View on Home →</span>
+            </button>}
+
+        {page === 'home' && <section className={`fg-panel fyp-readiness fyp-${readinessTone}`} aria-labelledby="fyp-readiness-title">
             <div className="fyp-readiness-header">
                 <div>
                     <h2 id="fyp-readiness-title">{readinessMessage}</h2>
                 </div>
-                <button className="fg-button" type="button" onClick={() => void refreshNow()} disabled={!!busy}>
-                    {busy === 'refresh' ? 'Refreshing…' : 'Refresh status'}
-                </button>
+                <div className="fg-actions">
+                    <button className="fg-button" type="button" onClick={() => void refreshNow()} disabled={!!busy}>
+                        {busy === 'refresh' ? 'Refreshing…' : 'Refresh status'}
+                    </button>
+                </div>
             </div>
             <p className="fyp-status-context">{!preflight ? 'Reading the FYP Editor connection.' : preflight.editor_open
                 ? `${sceneMatches ? sceneName(preflight.active_scene) : preflight.active_scene ? 'Wrong Unity scene' : 'Scene not loaded'} · ${preflight.editor_playing ? 'Play Mode' : 'Edit Mode'}${preflight.trainer_connected ? ' · trainer connected' : ''}`
                 : preflight.editor_available ? 'FYP Editor is installed but closed.' : 'FYP Editor is unavailable.'}</p>
             {operationActive && <div className="fyp-live-summary" role="status">
-                <strong>{activeTicket ? 'Current operation' : activeRun ? 'Active training run' : 'Active evaluation'}</strong>
+                <strong>{activeOperationName} · {activeOperationState}</strong>
                 <span>{operationDescription}</span>
-                {preflight?.environment_present && <span className="fyp-live-metrics">
-                    Episode {preflight.episode ?? '—'} · Completed {preflight.episodes_completed ?? '—'} · Goals {preflight.goals ?? '—'} · Last outcome {preflight.last_outcome ?? '—'}
-                </span>}
-                {activeTicket && <span className="fyp-ticket">{activeTicket.action === 'fyp_evaluate' ? 'Evaluation' : 'Training'} · {activeTicket.status}</span>}
-                {activeTicket?.error && <span className="fg-error">{activeTicket.error}</span>}
             </div>}
-            {!operationActive && preflight?.environment_present && <div className="fyp-live-summary">
-                <strong>Latest Unity activity</strong>
-                <span>Episode {preflight.episode ?? '—'} · {preflight.episodes_completed ?? 0} completed · {preflight.goals ?? 0} goals · {preflight.last_outcome ?? 'No recent outcome'}</span>
-            </div>}
-            {ticket && !activeTicket && <div className="fyp-live-summary" aria-label="Latest operation receipt">
-                <strong>Latest operation · {ticket.status}</strong>
-                <span>{ticket.action === 'fyp_evaluate' ? 'Checkpoint evaluation' : 'Training'} operation</span>
-                {ticket.error && <span className="fg-error">{ticket.error}</span>}
-            </div>}
-            <details className="fyp-contract-details">
-                <summary>Unity diagnostics and experiment details</summary>
-                <div className="fyp-contract-grid">
-                    <span>Compilation <strong>{!preflight ? 'Checking' : preflight.editor_compiling ? 'In progress' : 'Ready'}</strong></span>
-                    <span>Trainer <strong>{!preflight ? 'Checking' : preflight.trainer_available ? 'Available' : 'Unavailable'}</strong></span>
-                    <span>Connection <strong>{preflight?.trainer_connected ? 'Connected' : activeTicket ? preflight?.editor_playing ? 'Connecting' : 'Waiting for Play' : 'Not requested'}</strong></span>
-                    <span>Heartbeat <strong>{!preflight ? 'Checking' : preflight.heartbeat_age_seconds == null ? 'Unknown' : heartbeatFresh ? `${Math.round(preflight.heartbeat_age_seconds)}s ago` : 'Stale'}</strong></span>
-                    <span>Behavior <strong>{manifest?.contract.behavior ?? 'Loading'}</strong></span>
-                    <span>Observations <strong>{manifest?.contract.observations.size ?? '—'}</strong></span>
-                    <span>Continuous actions <strong>{manifest?.contract.actions.continuous ?? '—'}</strong></span>
-                    <span>Trainer <strong>{manifest?.contract.trainer_kind ?? '—'}</strong></span>
-                    <span>Scene <strong>{manifest?.contract.scene ?? 'Workspace unavailable'}</strong></span>
-                    <span>Source <strong>{preflight?.source_sha256?.slice(0, 14) ?? '—'}</strong></span>
-                </div>
-                <p className="fg-muted">Training creates a candidate checkpoint. Evaluation and review are separate.</p>
-            </details>
-        </section>
+        </section>}
 
-        <section className="fg-panel fyp-checkpoint-panel" aria-label="Policy checkpoints">
-            <div className="fyp-checkpoint-header">
-                <div className="fg-panel-title">
-                    <div className="fyp-checkpoint-heading"><h2>Policy checkpoints</h2><span>{completedRuns.length} available · {runs.length} training runs recorded</span></div>
-                </div>
-                <div className="fyp-evaluation-settings">
-                    <label className="fyp-field">Environment
-                        <select aria-label="FYP evaluation environment" value={evaluationEnvironmentId} onChange={event => setEvaluationEnvironmentId(event.target.value)}>
-                            {environments.map(environment => <option key={environment.environment_id} value={environment.environment_id}>{environment.name}</option>)}
-                        </select>
-                    </label>
-                    <label className="fyp-field">Episodes
-                        <input aria-label="FYP evaluation episodes" type="number" min={1} max={100} step={1} value={evaluationEpisodes} onChange={event => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(Number(event.target.value) || 1))))} />
-                    </label>
-                    <label className="fyp-field">Seed
-                        <input aria-label="FYP evaluation seed" type="number" min={0} max={2147483647} step={1} value={evaluationSeed} onChange={event => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
-                    </label>
-                </div>
-            </div>
-            <p className="fg-muted">Each card is an exported policy checkpoint. Choose the target environment for evaluation.</p>
+        {page === 'home' && <section className="fyp-home-grid" aria-label="FYP sections">
+            <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>
+                <span className="fyp-home-card-heading"><strong>Policy Checkpoints</strong><span aria-hidden="true">→</span></span>
+                <span>{completedRuns.length} available</span>
+            </button>
+            <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'runs', checkpointId: null })}>
+                <span className="fyp-home-card-heading"><strong>Recent Runs</strong><span aria-hidden="true">→</span></span>
+                <span>{runs.length} training runs · {evaluations.length} evaluations</span>
+            </button>
+            <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'environments', checkpointId: null })}>
+                <span className="fyp-home-card-heading"><strong>Environments</strong><span aria-hidden="true">→</span></span>
+                <span>Browse Unity scenes, settings, and modifiers</span>
+            </button>
+        </section>}
+
+        {page === 'checkpoints' && <section className="fyp-checkpoint-page" aria-label="Policy checkpoints">
             {completedRuns.length === 0 ? <p className="fg-muted">Completed training runs with an exported checkpoint will appear here.</p> :
-                <ul className="fyp-checkpoint-list">{completedRuns.map(run => {
-                    const runEvaluations = evaluations.filter(evaluation => evaluation.training_run_id === run.run_id);
-                    const runIsActive = runEvaluations.some(evaluation => isActive(evaluation.state));
+                <div className="fyp-checkpoint-grid">{completedRuns.map(run => {
                     const review = checkpointReviews[run.run_id];
-                    const reviewLabel = review === 'keep' ? 'Keep' : review === 'discard' ? 'Discard' : 'Unreviewed';
-                    return <li className="fyp-checkpoint-row" key={run.run_id}>
-                        <div className="fyp-checkpoint-summary">
-                            <div className="fyp-checkpoint-title">
-                                <strong>Policy checkpoint · {run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset}</strong>
-                                <span className="fyp-state fyp-state-completed">Available</span>
-                                <span className={`fyp-review-tag fyp-review-${review ?? 'unreviewed'}`}>{reviewLabel}</span>
+                    const checkpointDate = checkpointRecordedAt(run);
+                    const reviewLabel = review === 'keep' ? 'Kept' : review === 'discard' ? 'Discarded' : 'Unreviewed';
+                    return <button className="fyp-checkpoint-card" key={run.run_id} type="button"
+                        aria-label={`Open checkpoint ${run.checkpoint_number ? `C${run.checkpoint_number}` : ''}, ${runName(run.preset, run.training_number)}`}
+                        onClick={() => navigate({ page: 'checkpoint', checkpointId: run.run_id })}>
+                        <div className="fyp-checkpoint-card-header">
+                            <div className="fyp-checkpoint-card-title-row">
+                                <span className="fyp-checkpoint-number">{checkpointLabel(run)}</span>
+                                <div className="fyp-checkpoint-datetime">
+                                    <time className="fyp-checkpoint-date" dateTime={checkpointDate}>{runDate(checkpointDate)}</time>
+                                    {runTime(checkpointDate) && <time className="fyp-checkpoint-time" dateTime={checkpointDate}>{runTime(checkpointDate)}</time>}
+                                </div>
                             </div>
-                            <p>{run.started_at ? new Date(run.started_at).toLocaleString() : 'Time not recorded'} · Seed {run.seed} · {run.steps.toLocaleString()} steps</p>
-                            {run.environment && <p>Trained in {run.environment.name} · {run.environment.snapshot_recorded === false ? 'historical settings not recorded' : `version ${run.environment.version}`}</p>}
-                            {run.environment && <button className="fg-link" type="button" onClick={() => onOpenEnvironment?.(run.environment!.environment_id)}>{run.environment.snapshot_recorded === false ? 'View current environment →' : 'View environment →'}</button>}
-                            {runEvaluations.length > 0 && <p>{runEvaluations.length} evaluation{runEvaluations.length === 1 ? '' : 's'} recorded</p>}
-                            {run.error && <p className="fg-error">{run.error}</p>}
-                            <div className="fyp-checkpoint-review" role="group" aria-label={`Review checkpoint from ${run.preset} run`}>
-                                <button className="fg-button" type="button" aria-pressed={review === 'keep'} onClick={() => updateCheckpointReview(run.run_id, review === 'keep' ? null : 'keep')}>{review === 'keep' ? 'Kept' : 'Keep'}</button>
-                                <button className="fg-button" type="button" aria-pressed={review === 'discard'} onClick={() => updateCheckpointReview(run.run_id, review === 'discard' ? null : 'discard')}>{review === 'discard' ? 'Discarded' : 'Discard'}</button>
-                            </div>
+                            <span className={`fyp-review-tag fyp-review-${review ?? 'unreviewed'}`}>{reviewLabel}</span>
                         </div>
-                        <button className="fg-button primary" type="button" disabled={!canEvaluate || runIsActive} onClick={() => void evaluateRun(run.run_id)}>
-                            {busy === `evaluate:${run.run_id}` ? 'Starting evaluation…' : `Evaluate ${evaluationEpisodes} episodes`}
-                        </button>
-                    </li>;
-                })}</ul>}
-            {completedRuns.length > 0 && <p className="fg-muted fyp-candidate-note">Keep and Discard are saved in this browser. They record your review and do not delete or alter checkpoint files.</p>}
-        </section>
+                        <span className={`fyp-checkpoint-card-notes${run.notes?.trim() ? '' : ' fyp-checkpoint-card-notes-empty'}`}>
+                            {run.notes?.trim() ? run.notes : 'No notes yet'}
+                        </span>
+                        <span className="fyp-checkpoint-card-arrow" aria-hidden="true">→</span>
+                    </button>;
+                })}</div>}
+        </section>}
 
-        <FypV1Evidence runs={runs} evaluations={evaluations} onOpenEnvironment={onOpenEnvironment} />
+        {page === 'checkpoint' && focusedRun && <>
+            <CheckpointNotesEditor key={focusedRun.run_id} run={focusedRun} saving={savingCheckpointNote}
+                onSave={notes => void saveCheckpointNote(focusedRun.run_id, notes)} />
+            <section className="fg-panel fyp-checkpoint-status-panel" aria-label="Checkpoint status">
+                <fieldset className="fyp-checkpoint-status" aria-label={`Checkpoint status for ${runName(focusedRun.preset, focusedRun.training_number)}`}>
+                    <legend>Checkpoint status</legend>
+                    {(['', 'keep', 'discard'] as const).map(value => <label key={value || 'unreviewed'}>
+                        <input type="radio" name={`checkpoint-status-${focusedRun.run_id}`} value={value} checked={(checkpointReviews[focusedRun.run_id] ?? '') === value}
+                            onChange={() => updateCheckpointReview(focusedRun.run_id, value || null)} />
+                        <span>{value ? value === 'keep' ? 'Keep' : 'Discard' : 'Unreviewed'}</span>
+                    </label>)}
+                </fieldset>
+            </section>
+            <section className="fyp-checkpoint-run-summary" aria-labelledby="fyp-checkpoint-training-title">
+                <h2 id="fyp-checkpoint-training-title" className="fyp-checkpoint-section-title">Training run</h2>
+                <TrainingEvidenceCard run={focusedRun}
+                    onOpen={() => navigate({ page: 'run', checkpointId: null, runId: focusedRun.run_id, returnPage: 'checkpoint' })} />
+            </section>
+            <FypV1Evidence key={`checkpoint-evaluations:${focusedRun.run_id}`} runs={runs} evaluations={evaluations}
+                focus={{ kind: 'evaluations', runId: focusedRun.run_id }}
+                onOpenEvaluation={evaluationId => navigate({ page: 'evaluation', checkpointId: null, evaluationId,
+                    runId: focusedRun.run_id, returnPage: 'checkpoint' })}
+                onOpenEnvironment={openEnvironment}
+                evaluationControls={{ episodes: evaluationEpisodes, seed: evaluationSeed,
+                    onEpisodesChange: value => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(value || 1)))),
+                    onSeedChange: value => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(value || 0)))),
+                    canStart: canEvaluate, starting: busy === `evaluate:${focusedRun.run_id}`,
+                    blocker: operationActive ? `${activeOperationName} is using the Unity Editor slot.` : readinessMessage,
+                    operationActive, onViewHome: () => navigate({ page: 'home', checkpointId: null }),
+                    onStart: () => void evaluateRun(focusedRun.run_id) }} />
+        </>}
 
-        <details className="fg-panel fyp-training-panel">
-            <summary><h2>New training run</h2><span>Smoke or 50k pilot</span></summary>
-            <p className="fg-muted">Start with the FYP scene open in Edit Mode, then press Play in Unity to connect the learner.</p>
-            <label className="fyp-field">Training environment
-                <select aria-label="FYP training environment" value={selectedEnvironmentId} onChange={event => setSelectedEnvironmentId(event.target.value)}>
-                    {environments.map(environment => <option key={environment.environment_id} value={environment.environment_id}>{environment.name}</option>)}
-                </select>
-            </label>
-            <label className="fyp-field">Seed
-                <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={seed} onChange={event => setSeed(Math.max(0, Math.min(2147483647, Math.floor(Number(event.target.value) || 0))))} />
-            </label>
-            <div className="fg-actions fyp-launch-actions">
-                <button className="fg-button" type="button" disabled={!canStartTraining} onClick={() => void perform('smoke')}>
-                    {busy === 'smoke' ? 'Starting smoke run…' : 'Start smoke run · 2,048 steps'}
-                </button>
-                <button className="fg-button" type="button" disabled={!canStartTraining} onClick={() => void perform('pilot_50k')}>
-                    {busy === 'pilot_50k' ? 'Starting pilot…' : 'Start 50k pilot'}
-                </button>
-            </div>
-            {!canStartTraining && <p className="fyp-blocker" role="status">{operationActive ? 'A FYP operation is already active.' : busy ? 'Refreshing current operation status.' : readinessMessage}</p>}
-        </details>
+        {page === 'runs' && <>
+            <FypV1Evidence runs={runs} evaluations={evaluations}
+                flat
+                onOpenRun={runId => navigate({ page: 'run', checkpointId: null, runId, returnPage: 'runs' })}
+                onOpenEvaluation={(evaluationId, source) => openEvaluation(evaluationId, source)} onOpenEnvironment={openEnvironment} />
+        </>}
+
+        {page === 'run' && <FypV1Evidence key={`run:${selectedRunId}`} runs={runs} evaluations={evaluations}
+            focus={{ kind: 'run', runId: selectedRunId ?? '' }} onBack={() => navigate({ page: 'runs', checkpointId: null })}
+            onOpenEvaluation={(evaluationId, source) => openEvaluation(evaluationId, source)} onOpenEnvironment={openEnvironment}
+            onOpenCheckpoint={runId => navigate({ page: 'checkpoint', checkpointId: runId })} />}
+        {page === 'evaluations' && <FypV1Evidence key={`evaluations:${selectedRunId}`} runs={runs} evaluations={evaluations}
+            focus={{ kind: 'evaluations', runId: selectedRunId ?? '' }} onBack={() => navigate({ page: 'checkpoints', checkpointId: null })}
+            onOpenEvaluation={(evaluationId, source) => openEvaluation(evaluationId, source)}
+            onOpenEnvironment={openEnvironment}
+            evaluationControls={{ episodes: evaluationEpisodes, seed: evaluationSeed,
+                onEpisodesChange: value => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(value || 1)))),
+                onSeedChange: value => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(value || 0)))),
+                canStart: canEvaluate, starting: busy === `evaluate:${selectedRunId}`,
+                blocker: operationActive ? `${activeOperationName} is using the Unity Editor slot.` : readinessMessage,
+                operationActive, onViewHome: () => navigate({ page: 'home', checkpointId: null }),
+                onStart: () => selectedRunId && void evaluateRun(selectedRunId) }} />}
+        {page === 'evaluation' && <FypV1Evidence key={`evaluation:${selectedEvaluationId}`} runs={runs} evaluations={evaluations}
+            focus={{ kind: 'evaluation', runId: selectedRunId ?? '', evaluationId: selectedEvaluationId ?? '', returnPage: returnPage ?? 'runs' }}
+            onBack={backFromEvaluation} onOpenEnvironment={openEnvironment}
+            onOpenCheckpoint={runId => navigate({ page: 'checkpoint', checkpointId: runId })} />}
+
+        {(page === 'environments' || page === 'environment') && <FypEnvironmentCatalog initialEnvironmentId={route.environmentId ?? undefined}
+            onSelectEnvironment={environmentId => navigate({ page: environmentId ? 'environment' : 'environments', checkpointId: null, environmentId })}
+            onEnvironmentCount={setEnvironmentCount} onEnvironmentName={setEnvironmentName} />}
     </div>;
+}
+
+function CheckpointNotesEditor({ run, saving, onSave }: { run: FypRun; saving: boolean; onSave: (notes: string) => void }) {
+    const [draft, setDraft] = useState(run.notes ?? '');
+    useEffect(() => setDraft(run.notes ?? ''), [run.run_id, run.notes]);
+    const saved = run.notes ?? '';
+    return <section className="fg-panel fyp-checkpoint-notes" aria-label="Checkpoint notes">
+        <label htmlFor={`checkpoint-notes-${run.run_id}`}>Notes</label>
+        <textarea id={`checkpoint-notes-${run.run_id}`} value={draft} maxLength={20_000}
+            placeholder="Add any notes about this checkpoint…" onChange={event => setDraft(event.target.value)} />
+        <div className="fyp-checkpoint-notes-footer">
+            <span>{draft.length.toLocaleString()} / 20,000 characters</span>
+            <button className="fg-button" type="button" disabled={saving || draft === saved} onClick={() => onSave(draft)}>
+                {saving ? 'Saving…' : 'Save notes'}
+            </button>
+        </div>
+    </section>;
 }
