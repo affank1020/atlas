@@ -219,8 +219,10 @@ export function FypV1Experience({ onOpenEvidence }: { onOpenEvidence?: () => voi
         </section>
 
         <section className="fg-panel fyp-checkpoint-panel" aria-label="Recent checkpoints and evaluations">
-            <div className="fg-panel-title">
-                <div><h2>Recent checkpoints</h2><span>{recentRuns.filter(run => completedRuns.some(candidate => candidate.run_id === run.run_id)).length} ready to evaluate · {runs.length} runs recorded</span></div>
+            <div className="fyp-checkpoint-header">
+                <div className="fg-panel-title">
+                    <div className="fyp-checkpoint-heading"><h2>Recent checkpoints</h2><span>{recentRuns.filter(run => completedRuns.some(candidate => candidate.run_id === run.run_id)).length} ready to evaluate · {runs.length} runs recorded</span></div>
+                </div>
                 <div className="fyp-evaluation-settings">
                     <label className="fyp-field">Episodes
                         <input aria-label="FYP evaluation episodes" type="number" min={1} max={100} step={1} value={evaluationEpisodes} onChange={event => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(Number(event.target.value) || 1))))} />

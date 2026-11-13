@@ -119,10 +119,11 @@
 .fyp-contract-grid span { color:var(--text-muted,#9ba5b5); overflow-wrap:anywhere; }
 .fyp-contract-grid strong { display:block; margin-top:4px; color:var(--text-primary,#dfe5f0); font-weight:600; }
 .fyp-checkpoint-panel { min-width:0; }
-.fyp-checkpoint-panel>.fg-panel-title { align-items:flex-end; gap:18px; }
-.fyp-checkpoint-panel>.fg-panel-title>div:first-child { display:grid; gap:4px; min-width:0; }
-.fyp-checkpoint-panel>.fg-panel-title>div:first-child h2 { margin:4px 0 0; }
-.fyp-checkpoint-panel>.fg-panel-title>div:first-child>span { color:var(--text-muted,#9ba5b5); font-size:12px; }
+.fyp-checkpoint-header { display:grid; gap:14px; margin-bottom:16px; }
+.fyp-checkpoint-header>.fg-panel-title { justify-content:flex-start; margin:0; }
+.fyp-checkpoint-heading { display:grid; gap:4px; min-width:0; }
+.fyp-checkpoint-heading h2 { margin:4px 0 0; }
+.fyp-checkpoint-heading>span { color:var(--text-muted,#9ba5b5); font-size:12px; }
 .fyp-checkpoint-panel>.fg-muted { margin:4px 0 12px; }
 .fyp-field { display:grid; gap:7px; width:min(100%,240px); margin:16px 0; color:var(--text-secondary,#bac3d0); font-size:12px; font-weight:650; }
 .fyp-field input { width:100%; min-width:0; color:inherit; font:inherit; font-size:14px; border:1px solid var(--border,#5b6577); border-radius:4px; padding:9px 10px; background:var(--surface-secondary,#272f39); }
@@ -140,8 +141,8 @@
 .fyp-state-completed { color:var(--success,#7fc7a0); border-color:color-mix(in srgb,var(--success,#7fc7a0) 45%,transparent); }
 .fyp-state-running,.fyp-state-launching,.fyp-state-starting { color:var(--accent,#9cb5f3); border-color:color-mix(in srgb,var(--accent,#9cb5f3) 45%,transparent); }
 .fyp-state-failed,.fyp-state-error { color:var(--danger,#ff9797); border-color:color-mix(in srgb,var(--danger,#ff9797) 45%,transparent); }
-.fyp-evaluation-settings { display:flex; flex-wrap:wrap; gap:0 12px; }
-.fyp-evaluation-settings .fyp-field { width:min(100%,150px); margin:0; }
+.fyp-evaluation-settings { display:grid; grid-template-columns:repeat(2,minmax(0,190px)); gap:12px; }
+.fyp-evaluation-settings .fyp-field { width:100%; margin:0; }
 .fyp-evaluation-receipts { display:grid; gap:6px; margin-top:10px; font-size:12px; }
 .fyp-evaluation-receipts li { padding:9px 11px; border-inline-start:2px solid var(--border-strong,#5b6577); background:var(--surface-secondary,#272f39); overflow-wrap:anywhere; }
 .fyp-evidence-link { margin-top:12px; padding:4px 0; }
@@ -178,8 +179,7 @@
 .fyp-evidence-run h3 { margin:16px 0 7px; font-size:13px; }
 .fyp-evidence-run .fyp-evaluation-receipts li { background:var(--surface,#1d222b); }
 .fg-archive-panel>.fg-eyebrow { margin-top:0; }
-@media(max-width:850px) { .fyp-checkpoint-panel>.fg-panel-title { align-items:flex-start; flex-direction:column; } }
-@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-readiness-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fyp-checkpoint-row { align-items:flex-start; flex-direction:column; } }
+@media(max-width:560px) { .fyp-readiness-header { align-items:flex-start; flex-direction:column; } .fyp-readiness-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fyp-checkpoint-row { align-items:flex-start; flex-direction:column; } .fyp-evaluation-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
 
 /* Football Training V2: active work, curated policies and evidence-backed assessments. */
