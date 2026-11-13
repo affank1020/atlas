@@ -17,7 +17,8 @@ export type FypPolicy = {
     trainer: { algorithm: string; config_path: string; python_package_version: string; settings: Record<string, unknown> };
     runtime: { unity_version: string; ml_agents_unity_version: string; player_build_required: boolean; build_requirements?: string[] };
     artifacts: { model_format: string; model_filename: string; behavior_name: string; checkpoint_format: string; notes?: string };
-    curriculum: { stage: number; environment_id: string; environment_version: string; definition_sha256?: string; scene_path: string; purpose: string; sampling?: Record<string, unknown> }[];
+    curriculum: { stage: number; environment_id: string; environment_version: string; definition_sha256?: string; player_settings_sha256?: string; scene_path: string; purpose: string; sampling?: Record<string, unknown> }[];
+    player_settings?: { source_prefab: string; snapshot_sha256: string; settings: Record<string, unknown> };
     notes?: string;
 };
 
@@ -121,6 +122,15 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
             {policy.artifacts.notes && <p className="fyp-policy-notes">{policy.artifacts.notes}</p>}
         </section>
 
+        {policy.player_settings && <section className="fyp-policy-section">
+            <div className="fg-panel-title"><h2>Player settings</h2><span>Policy baseline</span></div>
+            <p className="fyp-policy-context">Serialized movement and touch tuning from {policy.player_settings.source_prefab}.</p>
+            <div className="fyp-record-grid">
+                {Object.entries(policy.player_settings.settings).map(([key, value]) => <Record key={key} label={humanize(key)} value={value} />)}
+                <Record label="Snapshot SHA-256" value={policy.player_settings.snapshot_sha256} />
+            </div>
+        </section>}
+
         <section className="fyp-policy-section">
             <div className="fg-panel-title"><h2>Environment curriculum</h2><span>{policy.curriculum.length} stage{policy.curriculum.length === 1 ? '' : 's'}</span></div>
             {!policy.curriculum.length ? <p className="fg-muted">No environment stages are defined yet.</p> : <div className="fyp-curriculum-list">
@@ -136,23 +146,37 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                         purpose: stage.purpose,
                         scene_path: stage.scene_path,
                         definition_sha256: current?.definition_sha256 ?? stage.definition_sha256 ?? '',
+                        player_settings_sha256: current?.player_settings_sha256,
+                        player_settings: current?.player_settings ?? [],
                         settings: current?.settings ?? [],
                         modifiers: current?.modifiers ?? [],
                     };
                     const cardMeta = current
                         ? `Plan v${stage.environment_version} · Unity v${current.version} · ${matches ? 'matched' : 'current snapshot differs'}`
                         : `Plan v${stage.environment_version} · no current Unity scene`;
-                    return <article className="fyp-curriculum-stage" key={`${stage.stage}-${stage.environment_id}`}>
-                        <FypEnvironmentCard environment={stageEnvironment} meta={`Stage ${stage.stage} · ${cardMeta}`} />
-                        <div className="fyp-record-grid">
+                    return <FypEnvironmentCard key={`${stage.stage}-${stage.environment_id}`}
+                        environment={stageEnvironment} meta={`Stage ${stage.stage} · ${cardMeta}`}>
+                        <div className="fyp-record-grid fyp-policy-environment-reference">
                             <Record label="Environment ID" value={stage.environment_id} />
                             <Record label="Scene" value={stage.scene_path} />
                             <Record label="Pinned definition SHA-256" value={stage.definition_sha256} />
                         </div>
                         {stage.sampling && <pre>{JSON.stringify(stage.sampling, null, 2)}</pre>}
                         {current ? <details className="fyp-policy-environment-snapshot">
-                            <summary>View current Unity environment settings and scene schema · {current.settings.length} settings · {current.modifiers.length} modifiers</summary>
+                            <summary>View current Unity settings and scene schema · {current.settings.length} environment settings · {(current.player_settings ?? []).length} player settings · {current.modifiers.length} modifiers</summary>
                             {!matches && <p className="fyp-policy-context">Showing the latest Unity snapshot (version {current.version}). The plan refers to version {stage.environment_version}; its version and/or definition hash differs, so these current values are not an archived copy of that plan.</p>}
+                            {current.player_settings?.length ? <section>
+                                <h3>Player movement and touch settings</h3>
+                                <p className="fyp-policy-context">Player settings SHA-256: {current.player_settings_sha256 ?? 'not recorded'}</p>
+                                <div className="fyp-policy-snapshot-settings" role="table" aria-label={`Stage ${stage.stage} player settings`}>
+                                    <div role="row"><strong>Category</strong><strong>Setting</strong><strong>Unity value</strong></div>
+                                    {current.player_settings.map(setting => <div role="row" key={setting.key}>
+                                        <span>{setting.category}</span>
+                                        <span title={`${setting.key} · ${setting.component}`}>{setting.label}</span>
+                                        <span>{setting.unit ? `${setting.value} ${setting.unit}` : setting.value}</span>
+                                    </div>)}
+                                </div>
+                            </section> : null}
                             {current.settings.length > 0 && <section>
                                 <h3>Environment settings</h3>
                                 <div className="fyp-policy-snapshot-settings" role="table" aria-label={`Stage ${stage.stage} environment settings`}>
@@ -176,7 +200,7 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                             </section>
                             <p className="fg-muted">These details are read from the current Unity snapshot. The curriculum entry documents the plan; it does not apply settings to the scene.</p>
                         </details> : <p className="fyp-policy-context">No current Unity snapshot has this environment ID. This stage is shown as a documented plan reference.</p>}
-                    </article>;
+                    </FypEnvironmentCard>;
                 })}
             </div>}
         </section>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { callTool } from './api';
 
 export type FypEnvironmentSetting = {
@@ -11,11 +11,12 @@ export type FypEnvironment = {
     environment_id: string; name: string; version: string; difficulty: string; purpose: string;
     scene_path: string; definition_sha256: string;
     snapshot_recorded?: boolean;
+    player_settings_sha256?: string; player_settings?: FypEnvironmentSetting[];
     settings: FypEnvironmentSetting[]; modifiers: FypEnvironmentModifier[];
 };
 
-export function FypEnvironmentCard({ environment, onOpen, meta }: {
-    environment: FypEnvironment; onOpen?: (environmentId: string) => void; meta?: string;
+export function FypEnvironmentCard({ environment, onOpen, meta, children }: {
+    environment: FypEnvironment; onOpen?: (environmentId: string) => void; meta?: string; children?: ReactNode;
 }) {
     const content = <>
         <span className="fyp-environment-card-heading"><strong>{environment.name}</strong></span>
@@ -25,7 +26,7 @@ export function FypEnvironmentCard({ environment, onOpen, meta }: {
     </>;
     return onOpen
         ? <button className="fyp-environment-card" type="button" onClick={() => onOpen(environment.environment_id)}>{content}</button>
-        : <article className="fyp-environment-card fyp-environment-card-static">{content}</article>;
+        : <article className="fyp-environment-card fyp-environment-card-static">{content}{children}</article>;
 }
 
 export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironment, onEnvironmentCount, onEnvironmentName }: {

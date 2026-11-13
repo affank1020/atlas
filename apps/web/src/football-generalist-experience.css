@@ -67,6 +67,8 @@
 .fyp-curriculum-stage pre { overflow:auto; margin:0; padding:8px 0; background:transparent; font-size:11px; }
 .fyp-policy-environment-snapshot { display:grid; gap:10px; }
 .fyp-policy-environment-snapshot summary { cursor:pointer; color:var(--text-secondary,#bac3d0); font-size:12px; }
+.fyp-environment-card-static .fyp-policy-environment-reference { width:100%; margin:2px 0 0; }
+.fyp-environment-card-static .fyp-policy-environment-snapshot { width:100%; margin-top:2px; padding-top:10px; border-top:1px solid var(--border,#384152); }
 .fyp-policy-snapshot-settings,.fyp-policy-snapshot-modifiers { display:grid; overflow-x:auto; }
 .fyp-policy-snapshot-settings>div { display:grid; grid-template-columns:minmax(120px,.8fr) minmax(150px,1fr) minmax(180px,1.2fr); gap:10px; min-width:540px; padding:7px 6px; border-bottom:1px solid var(--border,#384152); font-size:11px; line-height:1.4; }
 .fyp-policy-snapshot-modifiers>div { display:grid; grid-template-columns:minmax(100px,1fr) minmax(90px,.8fr) minmax(150px,1fr) minmax(130px,1fr) 60px; gap:10px; min-width:650px; padding:7px 6px; border-bottom:1px solid var(--border,#384152); font-size:11px; line-height:1.4; }
