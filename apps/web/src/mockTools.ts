@@ -135,10 +135,95 @@ const applications = [
 const fypSourceHash = '6b1d97e80a4c6325f09e3a71b8c52640d3e9f14a72c85b6019e4d3a7f2c81650';
 const fypModelHash = '4c7a2f9180de5631b4c8a6079e2d51f3a8604c7d1e9b3256f08a4d2c7b915e63';
 const fypCheckpointHash = 'a83e1c6f4b920d75e2a6f3108c4d7b591f06a3e8c2d47b915a6f0c3e8d214759';
+const fypPolicy = {
+    record_schema_version: 1, policy_id: 'football-v1', display_name: 'FYP Football v1', status: 'supported', revision: 1,
+    purpose: 'Solo open-goal football with a fixed policy interface that reserves one teammate slot.', execution_supported: true,
+    contract: {
+        contract_id: 'fyp-football-v1', behavior_name: 'FootballV1',
+        observations: { kind: 'vector', size: 25, stacked_vectors: 1, reference_frame: 'player-local; horizontal axes are local X/Z',
+            entity_capacity: { teammates_max: 1, opponents_max: 0, slot_ordering: 'first active teammate in teamAgents' },
+            channels: [
+                { name: 'ball_relative_position', start: 0, size: 3, components: ['x', 'y', 'z'], encoding: 'Relative position divided by 20', frame: 'player-local', scale_divisor: 20 },
+                { name: 'ball_velocity', start: 3, size: 3, components: ['x', 'y', 'z'], encoding: 'Relative velocity divided by 10', frame: 'player-local', scale_divisor: 10 },
+                { name: 'player_velocity', start: 6, size: 2, components: ['x', 'z'], encoding: 'Horizontal velocity divided by 5', frame: 'player-local', scale_divisor: 5 },
+                { name: 'goal_relative_position', start: 8, size: 2, components: ['x', 'z'], encoding: 'Relative goal position divided by 20', frame: 'player-local', scale_divisor: 20, missing_value: 0 },
+                { name: 'remaining_time_fraction', start: 10, size: 1, components: ['fraction'], encoding: 'One minus elapsed fraction, clamped' },
+                { name: 'can_touch_ball', start: 11, size: 1, components: ['available'], encoding: 'Boolean as 0 or 1' },
+                { name: 'teammate_present', start: 12, size: 1, components: ['present'], encoding: 'Boolean as 0 or 1' },
+                { name: 'teammate_relative_position', start: 13, size: 2, components: ['x', 'z'], encoding: 'Relative position divided by 20', frame: 'player-local', scale_divisor: 20, missing_value: 0 },
+                { name: 'teammate_velocity', start: 15, size: 2, components: ['x', 'z'], encoding: 'Velocity divided by 5', frame: 'player-local', scale_divisor: 5, missing_value: 0 },
+                { name: 'proximity_rays', start: 17, size: 8, components: ['forward', '45deg', '90deg', '135deg', '180deg', '225deg', '270deg', '315deg'], encoding: 'One minus nearest distance divided by 18', frame: 'player-facing horizontal', details: { range: 18 } },
+            ],
+        },
+        actions: { continuous_count: 8, discrete_branches: [], channels: [
+            { name: 'strafe', index: 0, range: [-1, 1], meaning: 'Local sideways movement' },
+            { name: 'forward_back', index: 1, range: [-1, 1], meaning: 'Local forward/back movement' },
+            { name: 'desired_facing_x', index: 2, range: [-1, 1], meaning: 'Local X desired facing' },
+            { name: 'desired_facing_z', index: 3, range: [-1, 1], meaning: 'Local Z desired facing' },
+            { name: 'touch_direction_x', index: 4, range: [-1, 1], meaning: 'Local X touch direction' },
+            { name: 'touch_direction_z', index: 5, range: [-1, 1], meaning: 'Local Z touch direction' },
+            { name: 'touch_power', index: 6, range: [-1, 1], meaning: 'Mapped to power fraction (value + 1) / 2' },
+            { name: 'touch_trigger', index: 7, range: [-1, 1], meaning: 'Request touch when value exceeds 0.5' },
+        ] },
+    },
+    actor: { sharing: 'shared', memory: 'feed_forward', decision_period_physics_steps: 5, network: { normalize: false, hidden_units: 128, layers: 2 } },
+    trainer: { algorithm: 'poca', config_path: 'Training/football_v1.yaml', python_package_version: '1.1.0', settings: {
+        batch_size: 1024, buffer_size: 10240, learning_rate: 0.0003, beta: 0.005, epsilon: 0.2,
+        lambda: 0.95, num_epoch: 3, learning_rate_schedule: 'linear', extrinsic_gamma: 0.99,
+        extrinsic_strength: 1, keep_checkpoints: 5, checkpoint_interval: 50000, max_steps: 500000,
+        time_horizon: 64, summary_freq: 5000,
+    } },
+    runtime: { unity_version: '6000.3.6f1', ml_agents_unity_version: '4.1.0', player_build_required: false, build_requirements: [] },
+    artifacts: { model_format: 'ONNX', model_filename: 'FootballV1.onnx', behavior_name: 'FootballV1',
+        checkpoint_format: 'ML-Agents trainer checkpoint.pt',
+        notes: 'Weights are specific to each training run; Atlas records model and checkpoint hashes in run receipts. Network dimensions describe architecture, not a fixed weight file size.' },
+    curriculum: [{ stage: 1, environment_id: 'open-goal-close', environment_version: '1.0.0',
+        definition_sha256: '5a286a2bc03108d012f3e91829977b3a972ea60efbe26a223db17852907e5d75',
+        scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity', purpose: 'Solo open-goal scoring in the primary training scene.' }],
+    notes: 'The teammate slot is selected by teamAgents order. This record documents the existing policy and does not imply compatibility with an expanded contract.',
+};
+const fypCooperativePolicy = {
+    ...fypPolicy,
+    policy_id: 'football-v2',
+    display_name: 'FYP Football v2 · cooperative',
+    status: 'supported' as const,
+    revision: 1,
+    purpose: 'Cooperative two-player football with the Football v1 action interface and an explicit nearest-opponent observation slot.',
+    execution_supported: true,
+    contract: {
+        ...fypPolicy.contract,
+        contract_id: 'fyp-football-v2',
+        behavior_name: 'FootballV2',
+        observations: {
+            ...fypPolicy.contract.observations,
+            size: 30,
+            entity_capacity: { teammates_max: 1, opponents_max: 1, slot_ordering: 'first active teammate; nearest active opponent' },
+            channels: [
+                ...fypPolicy.contract.observations.channels,
+                { name: 'opponent_present', start: 25, size: 1, components: ['present'], encoding: 'Boolean as 0 or 1' },
+                { name: 'opponent_relative_position', start: 26, size: 2, components: ['x', 'z'], encoding: 'Nearest opponent position divided by 20', frame: 'player-local', scale_divisor: 20, missing_value: 0 },
+                { name: 'opponent_velocity', start: 28, size: 2, components: ['x', 'z'], encoding: 'Nearest opponent velocity divided by 5', frame: 'player-local', scale_divisor: 5, missing_value: 0 },
+            ],
+        },
+    },
+    trainer: { ...fypPolicy.trainer, config_path: 'Training/football_v2.yaml' },
+    artifacts: {
+        ...fypPolicy.artifacts,
+        model_filename: 'FootballV2.onnx',
+        behavior_name: 'FootballV2',
+        notes: 'This successor has its own model weights and checkpoint history, separate from Football v1.',
+    },
+    curriculum: [{ stage: 1, environment_id: 'cooperative-scrimmage', environment_version: '1.0.0',
+        definition_sha256: fypCheckpointHash,
+        scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity',
+        purpose: 'Two-player cooperative play against one opponent in a shared scrimmage environment.' }],
+    notes: 'Policy successor to Football v1. Adds opponent presence, relative position and velocity observations for cooperative play. Its run, evaluation and checkpoint history is separate from v1.',
+};
+const fypPolicies = [fypPolicy, fypCooperativePolicy];
 const fypEnvironment = {
     environment_id: 'open-goal-close', name: 'Open Goal — Close', version: '1.0.0', difficulty: '1 — introductory',
     purpose: 'Score in a close-range open goal using the shared FootballV1 policy.',
-    scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity', policy_contract_id: 'fyp-football-v1',
+    scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
     definition_sha256: '5a286a2bc03108d012f3e91829977b3a972ea60efbe26a223db17852907e5d75', snapshot_recorded: true,
     settings: [
         { key: 'SpawnRegion.size', component: 'SpawnRegion', category: 'Starting setup', label: 'Randomized spawn area', value: '(0, 0)', unit: 'm' },
@@ -175,6 +260,25 @@ const fypEnvironment = {
         { name: 'Wall', shape: 'BoxCollider', position: '(0, 0.425000012, -13.1000004)', size: '(18.3999996, 1, 1)', is_trigger: false },
         { name: 'Wall', shape: 'BoxCollider', position: '(-5.60000038, 0.425000012, 13.1000004)', size: '(7.00000048, 1, 1)', is_trigger: false },
         { name: 'Wall', shape: 'BoxCollider', position: '(5.60000038, 0.425000012, 13.1000004)', size: '(7.00000048, 1, 1)', is_trigger: false },
+    ],
+};
+const fypCooperativeEnvironment = {
+    environment_id: 'cooperative-scrimmage', name: 'Cooperative Scrimmage', version: '1.0.0', difficulty: '2 — intermediate',
+    purpose: 'Two teammates coordinate to score against one scripted opponent.',
+    scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity',
+    definition_sha256: fypCheckpointHash, snapshot_recorded: true,
+    settings: [
+        { key: 'TeamSettings.playerCount', component: 'TeamSettings', category: 'Teams', label: 'Players per team', value: '2', unit: 'players' },
+        { key: 'OpponentSettings.opponentCount', component: 'OpponentSettings', category: 'Teams', label: 'Opponents', value: '1', unit: 'player' },
+        { key: 'FootballEnvironment.timeLimit', component: 'FootballEnvironment', category: 'Episode', label: 'Time limit', value: '30', unit: 's' },
+        { key: 'FootballEnvironment.goalReward', component: 'FootballEnvironment', category: 'Rewards', label: 'Goal reward', value: '1', unit: 'team reward' },
+        { key: 'FootballEnvironment.timeCostPerSecond', component: 'FootballEnvironment', category: 'Rewards', label: 'Time cost per second', value: '-0.001', unit: 'reward/s' },
+        { key: 'SpawnRegion.teamFormation', component: 'SpawnRegion', category: 'Starting setup', label: 'Team formation', value: 'side by side', unit: '' },
+        { key: 'OpponentSettings.spawnDistance', component: 'OpponentSettings', category: 'Starting setup', label: 'Opponent distance', value: '6', unit: 'm' },
+    ],
+    modifiers: [
+        { name: 'Opponent spawn zone', shape: 'BoxCollider', position: '(0, 0.5, -5)', size: '(4, 1, 2)', is_trigger: true },
+        { name: 'Team spawn zone', shape: 'BoxCollider', position: '(0, 0.5, 5)', size: '(6, 1, 2)', is_trigger: true },
     ],
 };
 const fypRuns = [
@@ -222,6 +326,16 @@ const fypRuns = [
         exit_code: 1, error: 'Demo receipt: pilot ended before a checkpoint could be exported.',
     },
 ];
+const fypV2PolicySnapshot = { ...fypCooperativePolicy };
+delete (fypV2PolicySnapshot as Partial<typeof fypCooperativePolicy>).execution_supported;
+const fypCooperativeRuns = [{
+    run_id: 'demo_fyp_v2_pilot_001', policy_id: 'football-v2', policy_revision: 1,
+    policy_record_sha256: fypModelHash, policy_snapshot: fypV2PolicySnapshot,
+    preset: 'pilot_50k', steps: 50000, seed: 921, state: 'completed',
+    source_sha256: fypSourceHash, exported_model: true, training_number: 8, checkpoint_number: 7,
+    model_sha256: fypCheckpointHash, checkpoint_sha256: fypModelHash, environment: fypCooperativeEnvironment,
+    started_at: '2026-11-13T12:05:00.000Z', finished_at: '2026-11-13T12:47:18.000Z', exit_code: 0,
+}];
 const fypEvaluations = [{
     evaluation_id: 'eval_demo_fyp_smoke_001', training_run_id: 'demo_fyp_smoke_001', state: 'completed',
     evaluation_number: 1,
@@ -267,6 +381,22 @@ const fypEvaluations = [{
     started_at: '2026-11-11T10:20:00.000Z', finished_at: '2026-11-11T10:27:18.000Z', exit_code: 0,
     training_environment: fypEnvironment, evaluation_environment: fypEnvironment,
 }];
+const fypCooperativeEvaluations = [{
+    evaluation_id: 'eval_demo_fyp_v2_pilot_001', training_run_id: 'demo_fyp_v2_pilot_001',
+    policy_id: 'football-v2', policy_revision: 1, policy_record_sha256: fypModelHash,
+    policy_snapshot: fypV2PolicySnapshot,
+    state: 'completed', evaluation_number: 4, requested_episodes: 20, episodes_completed: 20,
+    goals_scored: 13, goal_rate: 0.65, seed: 1201,
+    started_at: '2026-11-13T13:10:00.000Z', finished_at: '2026-11-13T13:23:36.000Z', exit_code: 0,
+    training_environment: fypCooperativeEnvironment, evaluation_environment: fypCooperativeEnvironment,
+    episodes: [
+        { episode: 1, seed: 1201, goals: 1, elapsed_seconds: 22.6, outcome: 'goal' },
+        { episode: 2, seed: 1202, goals: 0, elapsed_seconds: 30.0, outcome: 'timeout' },
+        { episode: 3, seed: 1203, goals: 1, elapsed_seconds: 18.4, outcome: 'goal' },
+        { episode: 4, seed: 1204, goals: 1, elapsed_seconds: 24.1, outcome: 'goal' },
+        { episode: 5, seed: 1205, goals: 0, elapsed_seconds: 30.0, outcome: 'timeout' },
+    ],
+}];
 const status: AtlasStatus = { product: 'Atlas Demo', version: '2.0.0-demo', storage: 'In-memory mock', schemaVersion: 1, projects: mockProjects.length, stores: stores.length, records: records.length };
 const str = (value: unknown) => typeof value === 'string' ? value : '';
 
@@ -282,18 +412,26 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
     const storeId = str(input.storeId);
     const nodeId = str(input.nodeId);
     const workspaceId = str(input.workspaceId);
+    const policyId = str(input.policyId) || 'football-v1';
     // Mirror the public server alias for checkout-oriented reads; audit APIs
     // keep using their existing workspaceId filter.
     const checkoutId = str(input.checkoutId ?? input.workspaceId);
     let result: unknown;
     switch (name) {
         case 'get_atlas_status': result = status; break;
+        case 'football_fyp_policies': result = fypPolicies; break;
         case 'football_fyp_manifest': result = {
             available: true,
+            policy: fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy,
+            policies: fypPolicies,
+            execution_supported: fypPolicies.find(policy => policy.policy_id === policyId)?.execution_supported === true,
             contract: {
-                contract_id: 'fyp-football-v1', behavior: 'FootballV1',
-                observations: { size: 25 }, actions: { continuous: 8 },
-                trainer_kind: 'poca', scene: 'Assets/Football/Scenes/OpenGoalClose.unity',
+                contract_id: (fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy).contract.contract_id,
+                behavior: (fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy).contract.behavior_name,
+                observations: { size: (fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy).contract.observations.size },
+                actions: { continuous: (fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy).contract.actions.continuous_count },
+                trainer_kind: (fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy).trainer.algorithm,
+                scene: ((fypPolicies.find(policy => policy.policy_id === policyId) ?? fypPolicy).curriculum[0]?.scene_path),
             },
         }; break;
         case 'football_fyp_preflight': result = {
@@ -301,12 +439,16 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
             trainer_connected: false, trainer_available: false, scene_ready: false, active_scene: null,
             environment_present: false, episode: null, goals: null, last_outcome: null,
             episodes_completed: null, recent_episodes: [], heartbeat_age_seconds: null,
-            verified_build: false, ready_to_train: false, source_sha256: fypSourceHash,
-            note: 'Demo status only. Mock mode does not inspect the FYP Unity Editor or trainer.',
+            verified_build: false, ready_to_train: false,
+            policy_supported: fypPolicies.find(policy => policy.policy_id === policyId)?.execution_supported === true,
+            source_sha256: fypSourceHash,
+            note: fypPolicies.find(policy => policy.policy_id === policyId)?.execution_supported
+                ? 'Demo status only. Mock mode does not inspect the FYP Unity Editor or trainer.'
+                : 'This mock policy is documentation only and cannot launch training.',
         }; break;
-        case 'football_fyp_environments': result = [fypEnvironment]; break;
-        case 'football_fyp_runs': result = fypRuns; break;
-        case 'football_fyp_evaluations': result = fypEvaluations; break;
+        case 'football_fyp_environments': result = [fypEnvironment, fypCooperativeEnvironment]; break;
+        case 'football_fyp_runs': result = policyId === 'football-v1' ? fypRuns : policyId === 'football-v2' ? fypCooperativeRuns : []; break;
+        case 'football_fyp_evaluations': result = policyId === 'football-v1' ? fypEvaluations : policyId === 'football-v2' ? fypCooperativeEvaluations : []; break;
         case 'get_storage_usage': result = {
             postgres: {
                 state: 'ready', measuredAt: stamp, databaseBytes: 32_000_000, tableBytes: 19_000_000, indexBytes: 6_000_000,

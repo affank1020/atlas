@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AtlasError } from '@atlas/protocol/errors';
 import type { Workspace } from '@atlas/protocol/workspace';
@@ -10,6 +10,8 @@ import { workspaceOperationSchemas } from '@atlas/protocol/workspace-operations'
 type Input = ReturnType<typeof workspaceOperationSchemas.football_control.parse>;
 const execFileAsync = promisify(execFile);
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const DEFAULT_POLICY_ID = 'football-v1';
 const cleanEnv = (): NodeJS.ProcessEnv => Object.fromEntries(
     ['PATH', 'HOME', 'TMPDIR', 'LANG', 'USER', 'LOGNAME']
         .filter(name => process.env[name] !== undefined)
@@ -26,32 +28,115 @@ function safeSource(workspace: Workspace, relative: string) {
     return resolved;
 }
 
-/** Separate, fail-closed ABI. Never interprets a legacy 54/5 or 54/7 policy as FootballV1. */
-export function fypManifest(workspace: Workspace) {
+function fypWorkspace(workspace: Workspace) {
     if (workspace.kind !== 'unity' || workspace.status !== 'active' || workspace.name !== 'FYP')
         throw new AtlasError('FYP requires its own registered, active Unity checkout.', 'WORKSPACE_UNAVAILABLE');
-    let data: any;
-    try {
-        const file = safeSource(workspace, 'Training/atlas_contract.json');
-        if (statSync(file).size > 32 * 1024) throw new Error('Oversized contract');
-        data = JSON.parse(readFileSync(file, 'utf8'));
-        if (data.contract_id !== 'fyp-football-v1' || data.behavior !== 'FootballV1' ||
-            data.observations?.size !== 25 || data.actions?.continuous !== 8 ||
-            data.trainer_kind !== 'poca' || data.source_project !== 'affank1020/FYP' ||
-            data.scene !== 'Assets/Football/Scenes/OpenGoalClose.unity')
-            throw new Error('Unsupported FYP ABI');
-        const prefab = readFileSync(safeSource(workspace, 'Assets/Football/Prefabs/Player.prefab'), 'utf8');
-        if (!['VectorObservationSize: 25','m_NumContinuousActions: 8','m_BehaviorName: FootballV1']
-            .every(token => prefab.includes(token)))
-            throw new Error('FYP prefab has a different observation/action ABI');
-        safeSource(workspace, 'Training/football_v1.yaml');
-        safeSource(workspace, data.scene);
-    } catch (error) {
-        if (error instanceof AtlasError) throw error;
-        throw new AtlasError('FYP manifest or prefab is missing or incompatible.', 'DRIVER_UNAVAILABLE');
+}
+
+function fypPolicyRecords(workspace: Workspace) {
+    fypWorkspace(workspace);
+    const root = realpathSync(workspace.rootPath);
+    const directory = path.join(root, 'Training', 'policies');
+    if (!existsSync(directory)) {
+        const legacyFile = safeSource(workspace, 'Training/atlas_contract.json');
+        let legacy: any;
+        try { legacy = JSON.parse(readFileSync(legacyFile, 'utf8')); }
+        catch { throw new AtlasError('FYP policy catalogue is missing or unreadable.', 'DRIVER_UNAVAILABLE'); }
+        if (legacy.contract_id !== 'fyp-football-v1' || legacy.behavior !== 'FootballV1' ||
+            legacy.observations?.size !== 25 || legacy.actions?.continuous !== 8)
+            throw new AtlasError('FYP policy catalogue is missing and the legacy contract is incompatible.', 'DRIVER_UNAVAILABLE');
+        return [{
+            record_schema_version: 1, policy_id: DEFAULT_POLICY_ID, display_name: 'FYP Football v1',
+            status: 'supported', revision: 1, purpose: 'Legacy contract profile.',
+            contract: { contract_id: legacy.contract_id, behavior_name: legacy.behavior,
+                observations: { size: legacy.observations.size }, actions: { continuous_count: legacy.actions.continuous } },
+            trainer: { algorithm: legacy.trainer_kind }, curriculum: [{ scene_path: legacy.scene }],
+            execution_supported: true,
+        }];
     }
-    return { available: true, contract: data,
-        provenance: 'source-tree-only; not Unity build, runner, or policy verification' };
+    if (lstatSync(directory).isSymbolicLink() || !statSync(directory).isDirectory() ||
+        !realpathSync(directory).startsWith(root + path.sep))
+        throw new AtlasError('FYP policy catalogue is unsafe.', 'DRIVER_UNAVAILABLE');
+    const ids = new Set<string>();
+    const records = readdirSync(directory).filter(name => name.endsWith('.json')).sort().map(name => {
+        if (!/^[a-z0-9][a-z0-9-]{0,63}\.json$/.test(name) && name !== 'fyp-football-v1.json')
+            throw new AtlasError('FYP policy catalogue contains an invalid file name.', 'DRIVER_UNAVAILABLE');
+        const file = safeSource(workspace, `Training/policies/${name}`);
+        if (statSync(file).size > 256 * 1024) throw new AtlasError('FYP policy record is oversized.', 'DRIVER_UNAVAILABLE');
+        let record: any;
+        try { record = JSON.parse(readFileSync(file, 'utf8')); }
+        catch { throw new AtlasError('FYP policy record is unreadable.', 'DRIVER_UNAVAILABLE'); }
+        if (!record || record.record_schema_version !== 1 || !POLICY_ID.test(record.policy_id ?? '') ||
+            !['draft', 'supported', 'archived'].includes(record.status) || !Number.isInteger(record.revision) ||
+            typeof record.display_name !== 'string' || !record.display_name.trim() ||
+            !record.contract || typeof record.contract !== 'object' ||
+            !record.contract.observations || !Array.isArray(record.contract.observations.channels) ||
+            !record.contract.actions || !Array.isArray(record.contract.actions.channels) ||
+            !record.actor || !Number.isInteger(record.actor.decision_period_physics_steps) ||
+            !record.actor.network || !record.trainer || typeof record.trainer.settings !== 'object' ||
+            !record.runtime || !record.artifacts || !Array.isArray(record.curriculum) ||
+            (name !== `${record.policy_id}.json` && !(record.policy_id === DEFAULT_POLICY_ID && name === 'fyp-football-v1.json')))
+            throw new AtlasError('FYP policy record does not match the supported schema.', 'DRIVER_UNAVAILABLE');
+        if (ids.has(record.policy_id)) throw new AtlasError('FYP policy catalogue has a duplicate policy ID.', 'DRIVER_UNAVAILABLE');
+        ids.add(record.policy_id);
+        const executionSupported = record.policy_id === DEFAULT_POLICY_ID && record.status === 'supported' &&
+            record.contract.contract_id === 'fyp-football-v1' && record.contract.behavior_name === 'FootballV1' &&
+            record.contract.observations?.size === 25 && record.contract.actions?.continuous_count === 8;
+        return { ...record, execution_supported: executionSupported };
+    });
+    if (!records.some(record => record.policy_id === DEFAULT_POLICY_ID))
+        throw new AtlasError('FYP policy catalogue does not contain Football v1.', 'DRIVER_UNAVAILABLE');
+    return records;
+}
+
+/** Separate, fail-closed ABI. Never interprets a legacy 54/5 or 54/7 policy as FootballV1. */
+export function fypManifest(workspace: Workspace, policyId = DEFAULT_POLICY_ID) {
+    fypWorkspace(workspace);
+    if (!POLICY_ID.test(policyId)) throw new AtlasError('Invalid FYP policy ID.', 'INVALID_ARGUMENT');
+    const policies = fypPolicyRecords(workspace);
+    const policy = policies.find(record => record.policy_id === policyId);
+    if (!policy) throw new AtlasError('FYP policy was not found.', 'NOT_FOUND');
+    let legacyData: any = null;
+    if (policy.execution_supported) {
+        try {
+            const file = safeSource(workspace, 'Training/atlas_contract.json');
+            if (statSync(file).size > 32 * 1024) throw new Error('Oversized contract');
+            legacyData = JSON.parse(readFileSync(file, 'utf8'));
+            if (legacyData.contract_id !== policy.contract.contract_id ||
+                legacyData.behavior !== policy.contract.behavior_name ||
+                legacyData.observations?.size !== policy.contract.observations?.size ||
+                legacyData.actions?.continuous !== policy.contract.actions?.continuous_count ||
+                legacyData.source_project !== 'affank1020/FYP' || legacyData.trainer_kind !== policy.trainer?.algorithm ||
+                legacyData.scene !== policy.curriculum?.[0]?.scene_path)
+                throw new Error('Supported policy and runtime contract differ');
+            const prefab = readFileSync(safeSource(workspace, 'Assets/Football/Prefabs/Player.prefab'), 'utf8');
+            const prefabTokens = [`VectorObservationSize: ${policy.contract.observations.size}`,
+                `m_NumContinuousActions: ${policy.contract.actions.continuous_count}`,
+                `m_BehaviorName: ${policy.contract.behavior_name}`];
+            if (Number.isInteger(policy.actor?.decision_period_physics_steps))
+                prefabTokens.push(`DecisionPeriod: ${policy.actor.decision_period_physics_steps}`);
+            if (!prefabTokens.every(token => prefab.includes(token)))
+                throw new Error('FYP prefab has a different observation/action contract');
+            safeSource(workspace, policy.trainer?.config_path ?? 'Training/football_v1.yaml');
+            safeSource(workspace, policy.curriculum?.[0]?.scene_path ?? legacyData.scene);
+        } catch (error) {
+            if (error instanceof AtlasError) throw error;
+            throw new AtlasError('FYP policy, runtime contract, or prefab is incompatible.', 'DRIVER_UNAVAILABLE');
+        }
+    }
+    return {
+        available: true, policy, policies,
+        execution_supported: policy.execution_supported,
+        contract: {
+            contract_id: policy.contract.contract_id,
+            behavior: policy.contract.behavior_name,
+            observations: { size: policy.contract.observations?.size },
+            actions: { continuous: policy.contract.actions?.continuous_count },
+            scene: policy.curriculum?.[0]?.scene_path ?? legacyData?.scene,
+            trainer_kind: policy.trainer?.algorithm,
+        },
+        provenance: 'policy-record; execution support is checked separately from documentation',
+    };
 }
 
 function bridge(workspace: Workspace) {
@@ -143,48 +228,50 @@ function taskStatus(workspace: Workspace, id: string) {
 }
 
 export async function fypOperation(workspace: Workspace, x: Input): Promise<unknown> {
-    if (x.action === 'fyp_manifest') return fypManifest(workspace);
-    if (x.action === 'fyp_preflight') return python(workspace, ['preflight']);
-    if (x.action === 'fyp_runs') return python(workspace, ['runs']);
+    const policyArgs = x.policyId ? ['--policy-id', x.policyId] : [];
+    if (x.action === 'fyp_policies') return fypPolicyRecords(workspace);
+    if (x.action === 'fyp_manifest') return fypManifest(workspace, x.policyId ?? DEFAULT_POLICY_ID);
+    if (x.action === 'fyp_preflight') return python(workspace, ['preflight', ...policyArgs]);
+    if (x.action === 'fyp_runs') return python(workspace, ['runs', ...policyArgs]);
     if (x.action === 'fyp_checkpoint_note') {
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId) || x.notes === undefined)
             throw new AtlasError('FYP checkpoint notes require a valid run ID and notes text.', 'INVALID_ARGUMENT');
-        return python(workspace, ['checkpoint-note', '--run-id', x.runId, '--notes=' + x.notes]);
+        return python(workspace, ['checkpoint-note', '--run-id', x.runId, ...policyArgs, '--notes=' + x.notes]);
     }
-    if (x.action === 'fyp_evaluations') return python(workspace, ['evaluations']);
+    if (x.action === 'fyp_evaluations') return python(workspace, ['evaluations', ...policyArgs]);
     if (x.action === 'fyp_environments') return python(workspace, ['environments']);
     if (x.action === 'fyp_status') {
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId))
             throw new AtlasError('Valid FYP run ID required.', 'INVALID_ARGUMENT');
-        return python(workspace, ['status', '--run-id', x.runId]);
+        return python(workspace, ['status', '--run-id', x.runId, ...policyArgs]);
     }
     if (x.action === 'fyp_task_status') {
         if (!x.runId) throw new AtlasError('FYP task ticket required.', 'INVALID_ARGUMENT');
         return taskStatus(workspace, x.runId);
     }
-    if (x.action === 'fyp_build') return launch(workspace, 'fyp_build', ['build']);
+    if (x.action === 'fyp_build') return launch(workspace, 'fyp_build', ['build', ...policyArgs]);
     if (x.action === 'fyp_train') {
         if (!['smoke','pilot_50k'].includes(x.preset ?? '') || x.seed === undefined)
             throw new AtlasError('FYP training requires an approved preset and seed.', 'INVALID_ARGUMENT');
-        const readiness = await python(workspace, ['preflight']);
+        const readiness = await python(workspace, ['preflight', ...policyArgs]);
         if (readiness?.ready_to_train !== true)
             throw new AtlasError('FYP preflight failed: configure the trainer and open the FYP FootballV1 scene in Edit Mode. Atlas will start the learner; then press Play to connect.', 'DRIVER_UNAVAILABLE');
         const runId = 'fyp-' + randomUUID();
         return launch(workspace, 'fyp_train',
             ['train', '--run-id', runId, '--preset', x.preset!,
-                '--seed', String(x.seed)], runId);
+                '--seed', String(x.seed), ...policyArgs], runId);
     }
     if (x.action === 'fyp_evaluate') {
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId) ||
             x.episodes === undefined || x.episodes < 1 || x.episodes > 100 || x.seed === undefined)
             throw new AtlasError('FYP evaluation requires a completed run ID, 1–100 episodes and seed.', 'INVALID_ARGUMENT');
-        const readiness = await python(workspace, ['preflight']);
+        const readiness = await python(workspace, ['preflight', ...policyArgs]);
         if (readiness?.ready_to_train !== true)
             throw new AtlasError('FYP preflight failed: open the FYP training scene in Unity Edit Mode; stop Play Mode before requesting evaluation.', 'DRIVER_UNAVAILABLE');
         const evaluationId = 'fyp-eval-' + randomUUID();
         return launch(workspace, 'fyp_evaluate',
             ['evaluate', '--evaluation-id', evaluationId, '--run-id', x.runId,
-                '--episodes', String(x.episodes), '--seed', String(x.seed)], x.runId);
+                '--episodes', String(x.episodes), '--seed', String(x.seed), ...policyArgs], x.runId);
     }
     throw new AtlasError('Unsupported FYP operation.', 'INVALID_ARGUMENT');
 }

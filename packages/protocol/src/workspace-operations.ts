@@ -58,13 +58,13 @@ export const workspaceOperationSchemas = {
     // Only the Football Training Application exposes carefully scoped typed actions.
     football_control: z.object({
         ...scope,
-        action: z.enum(['fyp_manifest', 'fyp_preflight', 'fyp_build', 'fyp_train', 'fyp_evaluate', 'fyp_runs', 'fyp_checkpoint_note', 'fyp_evaluations', 'fyp_environments', 'fyp_status', 'fyp_task_status', 'generalist_manifest', 'generalist_runs', 'generalist_run_detail', 'generalist_evaluation_detail', 'generalist_policies', 'generalist_assessments', 'generalist_policy_update', 'generalist_activity', 'generalist_reviews', 'generalist_review_update', 'generalist_status', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'training_resources', 'recover_queue', 'resume_training', 'drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status', 'validation_status', 'validation_python', 'validation_editor', 'validation_physics']),
+        action: z.enum(['fyp_policies', 'fyp_manifest', 'fyp_preflight', 'fyp_build', 'fyp_train', 'fyp_evaluate', 'fyp_runs', 'fyp_checkpoint_note', 'fyp_evaluations', 'fyp_environments', 'fyp_status', 'fyp_task_status', 'generalist_manifest', 'generalist_runs', 'generalist_run_detail', 'generalist_evaluation_detail', 'generalist_policies', 'generalist_assessments', 'generalist_policy_update', 'generalist_activity', 'generalist_reviews', 'generalist_review_update', 'generalist_status', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'training_resources', 'recover_queue', 'resume_training', 'drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status', 'validation_status', 'validation_python', 'validation_editor', 'validation_physics']),
         scenario: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         initializeFromRunId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         drill: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         runId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         notes: z.string().max(20_000).optional(),
-        policyId: z.string().regex(/^(?:policy_[A-Za-z0-9][A-Za-z0-9_-]{0,79}|generalist-[A-Za-z0-9_-]{1,70})$/).optional(),
+        policyId: z.string().regex(/^(?:[a-z0-9][a-z0-9-]{0,63}|policy_[A-Za-z0-9][A-Za-z0-9_-]{0,79}|generalist-[A-Za-z0-9_-]{1,70})$/).optional(),
         displayName: z.string().min(1).max(64).optional(),
         phase: z.enum(['g05','g1','g2','g3','g4','g5']).optional(),
         variant: z.string().min(1).max(80).optional(),

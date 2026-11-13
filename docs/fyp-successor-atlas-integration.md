@@ -29,6 +29,12 @@ Verified on 2026-11-12: project `ce09dbe0-0755-4bd8-9376-e4a3152d59f7` has an ac
 
 The FYP repository contains `Training/atlas_contract.json`, `Training/atlas_fyp.py` and an Editor status extension. Training artifacts, evaluation receipts, model exports, optional build stamps and logs live under ignored `.atlas-fyp/`. The heartbeat is fresh for five seconds and names the exact project root, so an installed Editor executable or a stale process cannot be mistaken for the FYP project running. The bridge does not accept caller-supplied commands.
 
+## Local policy records and receipt migration
+
+The local policy catalogue is sourced from `Training/policies/<policy-id>.json` in FYP and validated against `Training/policy_record.schema.json`. Atlas lists/selects these records and displays observation/action channels, actor and trainer settings, runtime/artifact requirements, and each curriculum stage. Stage environment details are shown only when the global Unity environment catalogue has the same version and definition hash. New training/evaluation receipts carry the selected policy ID, revision, record snapshot and hash; runs, evaluations, checkpoint notes and builds are scoped to the selected policy. Unity Editor status and the environment catalogue stay global.
+
+`Training/policy_migration.json` maps existing `fyp-football-v1` receipts to `football-v1` by their legacy contract ID. The bridge infers that association when listing historical records and leaves their files/artifacts untouched. A new policy ID starts with empty run and evaluation history. The local page currently runs in mock mode for visual review; deployment and live FYP training acceptance remain separate steps.
+
 ## Verified deployment and current blockers (2026-11-12)
 
 - Atlas Server deploy run [43062358640](https://github.com/affank1020/atlas/actions/runs/43062358640) succeeded for `7ad2fffa87fe823fe7b0ca137d13a10803d476fb`. The deployed Football Training UI shows the **FYP v1 (new)** tab.

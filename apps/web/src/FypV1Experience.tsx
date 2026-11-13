@@ -2,21 +2,22 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool } from './api';
 import { FypV1Evidence, TrainingEvidenceCard } from './FypV1Evidence';
 import { FypEnvironmentCatalog, type FypEnvironment } from './FypEnvironmentCatalog';
+import { FypPolicyPage, type FypPolicy } from './FypPolicyPage';
 
-type FypManifest = { available: boolean; contract: { contract_id: string; behavior: string; observations: { size: number }; actions: { continuous: number }; scene: string; trainer_kind: string } };
+type FypManifest = { available: boolean; policy: FypPolicy; policies: FypPolicy[]; execution_supported: boolean; contract: { contract_id: string; behavior: string; observations: { size: number }; actions: { continuous: number }; scene: string; trainer_kind: string } };
 type FypPreflight = {
     editor_available: boolean; editor_open: boolean; editor_playing: boolean; editor_compiling?: boolean;
     trainer_connected: boolean; trainer_available: boolean; scene_ready: boolean; active_scene: string | null;
     environment_present: boolean; episode: number | null; goals: number | null; last_outcome: string | null;
     episodes_completed: number | null; recent_episodes: { session_id: string; sequence: number; episode: number; seed: number; goals: number; elapsed_seconds: number; outcome: string; trainer_connected: boolean }[];
     environment_session_id?: string | null;
-    heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean;
+    heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean; policy_supported?: boolean;
     source_sha256: string; note: string;
 };
 type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; checkpoint_number?: number; training_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string; notes?: string };
 type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; evaluation_number?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; episodes?: { episode?: number; index?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string }[]; training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
-type FypPage = 'home' | 'checkpoints' | 'checkpoint' | 'runs' | 'run' | 'evaluations' | 'evaluation' | 'environments' | 'environment';
+type FypPage = 'home' | 'settings' | 'policy' | 'checkpoints' | 'checkpoint' | 'runs' | 'run' | 'evaluations' | 'evaluation' | 'environments' | 'environment';
 type FypRoute = { page: FypPage; checkpointId: string | null; runId?: string | null; evaluationId?: string | null; environmentId?: string | null; returnPage?: 'runs' | 'run' | 'evaluations' | 'checkpoints' | 'checkpoint' | 'checkpoint-evaluations' | null };
 type FypHistoryEntry = { path: string; page: FypPage; checkpointId: string | null; depth: number };
 const FYP_HISTORY_KEY = '__atlasFypRoute';
@@ -28,7 +29,7 @@ function readFypRoute(): FypRoute {
     const legacyCheckpointEvaluations = requested === 'evaluations' && params.get('from') === 'checkpoint';
     const page: FypPage = legacyCheckpointEvaluations || requested === 'checkpoint' || (requested === 'checkpoints' && params.has('checkpoint')) ? 'checkpoint'
         : requested === 'environment' || (requested === 'environments' && params.has('environment')) ? 'environment'
-        : ['checkpoints', 'runs', 'run', 'evaluations', 'evaluation', 'environments', 'environment'].includes(requested ?? '') ? requested as FypPage : 'home';
+        : ['settings', 'policy', 'checkpoints', 'runs', 'run', 'evaluations', 'evaluation', 'environments', 'environment'].includes(requested ?? '') ? requested as FypPage : 'home';
     const runId = page === 'run' || page === 'evaluations' || page === 'evaluation' ? params.get('run') : null;
     const checkpointId = page === 'checkpoint' ? params.get('checkpoint') ?? (legacyCheckpointEvaluations ? params.get('run') : null) : null;
     const evaluationId = page === 'evaluation' ? params.get('evaluation') : null;
@@ -45,6 +46,10 @@ function readFypRoute(): FypRoute {
 function writeFypRoute(route: FypRoute, method: 'pushState' | 'replaceState', depth: number) {
     const [path, query = ''] = window.location.hash.split('?');
     const params = new URLSearchParams(query);
+    try {
+        const selectedPolicy = window.localStorage.getItem(SELECTED_POLICY_KEY);
+        if (selectedPolicy) params.set('policy', selectedPolicy);
+    } catch {}
     if (route.page === 'home') params.delete('fypPage');
     else params.set('fypPage', route.page);
     if (route.page === 'checkpoint' && route.checkpointId) params.set('checkpoint', route.checkpointId);
@@ -69,9 +74,22 @@ function fypHistoryEntry(): FypHistoryEntry | undefined {
     return value?.path === window.location.hash.split('?')[0] && Number.isInteger(value.depth) ? value : undefined;
 }
 
+function readSelectedPolicy() {
+    try {
+        const query = window.location.hash.split('?')[1] ?? '';
+        const fromUrl = new URLSearchParams(query).get('policy');
+        if (fromUrl) {
+            window.localStorage.setItem(SELECTED_POLICY_KEY, fromUrl);
+            return fromUrl;
+        }
+        return window.localStorage.getItem(SELECTED_POLICY_KEY) || 'football-v1';
+    } catch { return 'football-v1'; }
+}
+
 const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'waiting_for_play', 'waiting_for_trainer_connection', 'stopping_after_requested_episodes', 'cancelling', 'unknown', 'incomplete']);
 const HEARTBEAT_MAX_AGE_SECONDS = 15;
 const OPERATION_STORAGE_KEY = 'atlas.football.fyp.operation';
+const SELECTED_POLICY_KEY = 'atlas.football.fyp.selected-policy';
 const CHECKPOINT_REVIEW_KEY = 'atlas.football.fyp.checkpoint-reviews';
 const isActive = (state?: string) => !!state && ACTIVE_STATES.has(state.toLowerCase());
 const sceneName = (path?: string | null) => path?.split('/').pop()?.replace(/\.unity$/i, '') || 'FYP scene';
@@ -109,6 +127,9 @@ export function FypV1Experience() {
     const [route, setRoute] = useState<FypRoute>(readFypRoute);
     const { page, runId: selectedRunId, checkpointId: selectedCheckpointId, evaluationId: selectedEvaluationId, returnPage } = route;
     const [manifest, setManifest] = useState<FypManifest | null>(null);
+    const [policies, setPolicies] = useState<FypPolicy[]>([]);
+    const [environmentRecords, setEnvironmentRecords] = useState<FypEnvironment[]>([]);
+    const [selectedPolicyId, setSelectedPolicyId] = useState(readSelectedPolicy);
     const [preflight, setPreflight] = useState<FypPreflight | null>(null);
     const [runs, setRuns] = useState<FypRun[]>([]);
     const [evaluations, setEvaluations] = useState<FypEvaluation[]>([]);
@@ -166,16 +187,29 @@ export function FypV1Experience() {
     };
     const refresh = useCallback(async () => {
         try {
-            const [m, p, r, e] = await Promise.all([
-                callTool<FypManifest>('football_fyp_manifest'),
-                callTool<FypPreflight>('football_fyp_preflight'),
-                callTool<FypRun[]>('football_fyp_runs'),
-                callTool<FypEvaluation[]>('football_fyp_evaluations'),
+            const listedPolicies = await callTool<FypPolicy[]>('football_fyp_policies');
+            setPolicies(listedPolicies);
+            const selectedPolicy = listedPolicies.find(policy => policy.policy_id === selectedPolicyId)
+                ?? listedPolicies.find(policy => policy.policy_id === 'football-v1')
+                ?? listedPolicies[0];
+            if (!selectedPolicy) throw new Error('No FYP policy records are available.');
+            if (selectedPolicy.policy_id !== selectedPolicyId) {
+                setSelectedPolicyId(selectedPolicy.policy_id);
+                try { window.localStorage.setItem(SELECTED_POLICY_KEY, selectedPolicy.policy_id); } catch {}
+            }
+            const policyInput = { policyId: selectedPolicy.policy_id };
+            const [m, p, r, e, envs] = await Promise.all([
+                callTool<FypManifest>('football_fyp_manifest', policyInput),
+                callTool<FypPreflight>('football_fyp_preflight', policyInput),
+                callTool<FypRun[]>('football_fyp_runs', policyInput),
+                callTool<FypEvaluation[]>('football_fyp_evaluations', policyInput),
+                callTool<FypEnvironment[]>('football_fyp_environments').catch(() => []),
             ]);
             setManifest(m); setPreflight(p); setRuns(r); setEvaluations(e); setError('');
+            setEnvironmentRecords(envs);
         } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
         finally { setLoading(false); }
-    }, []);
+    }, [selectedPolicyId]);
     useEffect(() => {
         void refresh();
         const timer = window.setInterval(() => { void refresh(); }, 3000);
@@ -213,14 +247,15 @@ export function FypV1Experience() {
     const activeEvaluation = useMemo(() => evaluations.find(evaluation => isActive(evaluation.state)), [evaluations]);
     const activeTicket = isActive(ticket?.status) ? ticket : null;
     const requestedAction = activeTicket?.action ?? (activeRun ? 'fyp_train' : activeEvaluation ? 'fyp_evaluate' : null);
+    const activePolicy = policies.find(policy => policy.policy_id === selectedPolicyId) ?? manifest?.policy;
     const manifestScene = manifest?.contract.scene;
     const sceneMatches = manifest?.available === true && !!preflight?.scene_ready &&
         !!manifestScene && preflight?.active_scene === manifestScene;
     const heartbeatFresh = preflight?.heartbeat_age_seconds != null && preflight.heartbeat_age_seconds <= HEARTBEAT_MAX_AGE_SECONDS;
-    const editorReady = !!preflight?.ready_to_train && !!preflight.editor_open && sceneMatches &&
+    const editorReady = !!manifest?.execution_supported && !!preflight?.policy_supported && !!preflight?.ready_to_train && !!preflight.editor_open && sceneMatches &&
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || !!activeRun || !!activeEvaluation;
-    const canEvaluate = editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
+    const canEvaluate = !!manifest?.execution_supported && editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
     const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
     const focusedRun = runs.find(run => run.run_id === (page === 'checkpoint' ? selectedCheckpointId : selectedRunId));
     const focusedEvaluation = evaluations.find(evaluation => evaluation.evaluation_id === selectedEvaluationId);
@@ -238,7 +273,8 @@ export function FypV1Experience() {
         else if (!preflight.editor_open) readinessMessage = `${requestedAction === 'fyp_evaluate' ? 'Evaluation' : 'Training'} requested · Unity closed`;
         else if (preflight.editor_playing) readinessMessage = 'Play Mode · waiting for trainer connection';
         else readinessMessage = `${requestedAction === 'fyp_evaluate' ? 'Evaluation' : 'Training'} requested · press Play`;
-    } else if (!manifest?.available) { readinessMessage = 'FYP Football contract unavailable'; readinessTone = 'warning'; }
+    } else if (!manifest?.available) { readinessMessage = 'FYP policy record unavailable'; readinessTone = 'warning'; }
+    else if (!manifest.execution_supported) { readinessMessage = 'Documentation only · no compatible trainer'; readinessTone = 'pending'; }
     else if (!preflight.editor_open) { readinessMessage = 'Unity closed · idle'; readinessTone = 'pending'; }
     else if (preflight.editor_playing && preflight.environment_present) { readinessMessage = 'Manual Play · keyboard controlled'; readinessTone = 'active'; }
     else if (!sceneMatches) { readinessMessage = `Open ${sceneName(manifest?.contract.scene)} in Unity`; readinessTone = 'warning'; }
@@ -264,7 +300,7 @@ export function FypV1Experience() {
     const evaluateRun = async (runId: string) => {
         setBusy(`evaluate:${runId}`); setError(''); setNotice('');
         try {
-            const response = await callTool<FypTicket>('football_fyp_evaluate', { runId, episodes: evaluationEpisodes, seed: evaluationSeed });
+            const response = await callTool<FypTicket>('football_fyp_evaluate', { policyId: selectedPolicyId, runId, episodes: evaluationEpisodes, seed: evaluationSeed });
             setTicket(response);
             setNotice('Evaluation request accepted. Home will show the operation status while Unity connects.');
             navigate({ page: 'home', checkpointId: null });
@@ -282,10 +318,10 @@ export function FypV1Experience() {
         setCheckpointReviews(next);
     };
 
-    const saveCheckpointNote = async (runId: string, notes: string) => {
+    const saveCheckpointNote = async (runId: string, notes: string): Promise<void> => {
         setSavingCheckpointNote(true); setError(''); setNotice('');
         try {
-            const result = await callTool<{ run_id: string; notes: string }>('football_fyp_checkpoint_note', { runId, notes });
+            const result = await callTool<{ run_id: string; notes: string }>('football_fyp_checkpoint_note', { policyId: selectedPolicyId, runId, notes });
             setRuns(current => current.map(run => run.run_id === runId ? { ...run, notes: result.notes } : run));
             setNotice('Checkpoint notes saved.');
         } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
@@ -299,7 +335,7 @@ export function FypV1Experience() {
     };
     const trainingBreadcrumb = focusedRun ? focusedRun.training_number ? `T${focusedRun.training_number}` : focusedRun.run_id : 'Training run';
     const evaluationBreadcrumb = focusedEvaluation ? focusedEvaluation.evaluation_number ? `E${focusedEvaluation.evaluation_number}` : focusedEvaluation.evaluation_id : 'Evaluation';
-    const pageTitle = page === 'home' ? 'Home' : page === 'checkpoints' ? 'Policy Checkpoints' : page === 'checkpoint' ? 'Checkpoint'
+    const pageTitle = page === 'home' ? 'Home' : page === 'settings' ? 'Settings' : page === 'policy' ? 'Policy plan' : page === 'checkpoints' ? 'Policy Checkpoints' : page === 'checkpoint' ? 'Checkpoint'
             : page === 'run' ? trainingBreadcrumb : page === 'evaluations' ? 'Evaluations'
             : page === 'evaluation' ? evaluationBreadcrumb
                 : page === 'runs' ? 'Recent Runs'
@@ -410,6 +446,7 @@ export function FypV1Experience() {
                 {page === 'checkpoints' && <p className="fyp-checkpoint-count">{completedRuns.length} checkpoint{completedRuns.length === 1 ? '' : 's'}</p>}
                 {page === 'runs' && <p className="fyp-checkpoint-count">{runs.length} run{runs.length === 1 ? '' : 's'}</p>}
                 {page === 'environments' && <p className="fyp-checkpoint-count">{environmentCount === undefined ? 'Loading…' : environmentCount === null ? 'Unavailable' : `${environmentCount} environment${environmentCount === 1 ? '' : 's'}`}</p>}
+                {page === 'home' && <button className="fyp-settings-link" type="button" onClick={() => navigate({ page: 'settings', checkpointId: null })} aria-label="Open settings">Settings</button>}
             </div>
         </header>
 
@@ -441,6 +478,10 @@ export function FypV1Experience() {
         </section>}
 
         {page === 'home' && <section className="fyp-home-grid" aria-label="FYP sections">
+            <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'policy', checkpointId: null })}>
+                <span className="fyp-home-card-heading"><strong>Policy plan</strong><span aria-hidden="true">→</span></span>
+                <span>{activePolicy?.display_name ?? 'Selected policy'} · revision {activePolicy?.revision ?? '—'}</span>
+            </button>
             <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>
                 <span className="fyp-home-card-heading"><strong>Policy Checkpoints</strong><span aria-hidden="true">→</span></span>
                 <span>{completedRuns.length} available</span>
@@ -454,6 +495,28 @@ export function FypV1Experience() {
                 <span>Browse Unity scenes, settings, and modifiers</span>
             </button>
         </section>}
+
+        {page === 'settings' && <section className="fg-panel fyp-settings-panel" aria-labelledby="fyp-settings-policy-title">
+            <div>
+                <h2 id="fyp-settings-policy-title">Current policy</h2>
+            </div>
+            <div className="fyp-settings-policy-field">
+                <select id="fyp-policy-selection" aria-label="Selected FYP policy" value={selectedPolicyId}
+                    onChange={event => {
+                        const nextId = event.target.value;
+                        setSelectedPolicyId(nextId);
+                        try { window.localStorage.setItem(SELECTED_POLICY_KEY, nextId); } catch {}
+                        const nextRoute = { page: 'settings' as const, checkpointId: null };
+                        writeFypRoute(nextRoute, 'replaceState', fypHistoryEntry()?.depth ?? 0);
+                    }}>
+                    {policies.map(policy => <option key={policy.policy_id} value={policy.policy_id}>{policy.display_name} · {policy.status}</option>)}
+                </select>
+            </div>
+            {activePolicy && <p className="fyp-settings-policy-summary">{activePolicy.purpose}</p>}
+            <button type="button" className="fg-link fyp-settings-plan-link" onClick={() => navigate({ page: 'policy', checkpointId: null })}>View policy plan →</button>
+        </section>}
+
+        {page === 'policy' && <FypPolicyPage policy={activePolicy} environments={environmentRecords} />}
 
         {page === 'checkpoints' && <section className="fyp-checkpoint-page" aria-label="Policy checkpoints">
             {completedRuns.length === 0 ? <p className="fg-muted">Completed training runs with an exported checkpoint will appear here.</p> :

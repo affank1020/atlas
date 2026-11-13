@@ -9,19 +9,19 @@ export type FypEnvironmentModifier = {
 };
 export type FypEnvironment = {
     environment_id: string; name: string; version: string; difficulty: string; purpose: string;
-    scene_path: string; policy_contract_id: string; definition_sha256: string;
+    scene_path: string; definition_sha256: string;
     snapshot_recorded?: boolean;
     settings: FypEnvironmentSetting[]; modifiers: FypEnvironmentModifier[];
 };
 
-export function FypEnvironmentCard({ environment, onOpen }: {
-    environment: FypEnvironment; onOpen?: (environmentId: string) => void;
+export function FypEnvironmentCard({ environment, onOpen, meta }: {
+    environment: FypEnvironment; onOpen?: (environmentId: string) => void; meta?: string;
 }) {
     const content = <>
         <span className="fyp-environment-card-heading"><strong>{environment.name}</strong></span>
         <span className="fyp-environment-difficulty">{environment.difficulty}</span>
         <span className="fyp-environment-purpose">{environment.purpose || 'No purpose recorded.'}</span>
-        <span className="fyp-environment-card-meta">Version {environment.version} · {environment.settings.length} settings · {environment.modifiers.length} modifiers</span>
+        <span className="fyp-environment-card-meta">{meta ?? `Version ${environment.version} · ${environment.settings.length} settings · ${environment.modifiers.length} modifiers`}</span>
     </>;
     return onOpen
         ? <button className="fyp-environment-card" type="button" onClick={() => onOpen(environment.environment_id)}>{content}</button>
@@ -82,7 +82,6 @@ export function FypEnvironmentCatalog({ initialEnvironmentId, onSelectEnvironmen
         </div>
         <div className="fyp-record-grid">
             <Record label="Scene" value={selected.scene_path} />
-            <Record label="Policy contract" value={selected.policy_contract_id} />
             <Record label="Environment ID" value={selected.environment_id} />
             <Record label="Definition SHA-256" value={selected.definition_sha256} />
         </div>
