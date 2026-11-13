@@ -64,13 +64,13 @@ test('mounted Code Reviews list and its detail tabs use their own data skeletons
     expect(container.querySelectorAll('.cr-status-grid > div')).toHaveLength(3);
 });
 
-test('FYP loading placeholder has no legacy activity, curriculum, or archive surfaces', () => {
+test('FYP loading placeholder has no legacy tabs or archive surfaces', () => {
     const { container } = render(<FootballGeneralistApplicationLoading />);
-    expect(screen.getByRole('status', { name: 'Loading Football Generalist application' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading FYP Football application' })).toBeInTheDocument();
     expect(container.querySelector('.fg-panel-title h2')).toHaveTextContent('FYP training');
     expect(container.querySelector('.fg-active-panel, .fg-curriculum, .fg-stats')).toBeNull();
     expect(container.querySelectorAll('.fg-panel')).toHaveLength(1);
-    expect(container.querySelectorAll('.fg-nav .fg-loading-tab')).toHaveLength(2);
+    expect(container.querySelector('.fg-nav, .fg-subnav')).toBeNull();
     expect(container.textContent).not.toMatch(/Active activity|Curriculum|Recent runs|Evaluations|Archive/);
     expect(container.querySelectorAll('button, a, input, textarea, select')).toHaveLength(0);
     expect(screen.getAllByRole('status')).toHaveLength(1);
