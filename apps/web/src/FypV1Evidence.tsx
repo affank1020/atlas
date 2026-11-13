@@ -5,6 +5,7 @@ import { FypEnvironmentCard, type FypEnvironment } from './FypEnvironmentCatalog
 type Episode = { index?: number; episode?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string; trainer_connected?: boolean };
 type FypRun = {
     run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string;
+    policy_id?: string; policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
     training_number?: number;
     exported_model?: boolean; checkpoint_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null;
     environment?: FypEnvironment;
@@ -12,6 +13,7 @@ type FypRun = {
 };
 type FypEvaluation = {
     evaluation_id: string; training_run_id: string; state: string; requested_episodes: number;
+    policy_id?: string; policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
     evaluation_number?: number;
     episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number;
     training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment;
@@ -109,6 +111,9 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Training steps" value={selectedRun.steps.toLocaleString()} />
                 <Record label="Training name" value={selectedRun.training_number ? `T${selectedRun.training_number}` : undefined} />
                 <Record label="Training seed" value={selectedRun.seed} />
+                <Record label="Policy ID" value={selectedRun.policy_id} />
+                <Record label="Policy revision" value={selectedRun.policy_revision} />
+                <Record label="Policy record SHA-256" value={selectedRun.policy_record_sha256} />
                 <Record label="Checkpoint exported" value={selectedRun.exported_model} />
                 <Record label="Checkpoint ID" value={checkpointLabel(selectedRun)} />
                 <Record label="Exit code" value={selectedRun.exit_code} />
@@ -117,6 +122,8 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Checkpoint SHA-256" value={selectedRun.checkpoint_sha256} />
                 <Record label="Run ID" value={selectedRun.run_id} />
             </div>
+            {selectedRun.policy_snapshot && <details className="fyp-policy-raw"><summary>Plan snapshot used by this run</summary>
+                <pre>{JSON.stringify(selectedRun.policy_snapshot, null, 2)}</pre></details>}
             {selectedRun.error && <p className="fg-error">{selectedRun.error}</p>}
         </>}
     </section>;
@@ -137,6 +144,9 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Goals scored" value={selectedEvaluation.goals_scored} />
                 <Record label="Goal rate" value={selectedEvaluation.goal_rate == null ? undefined : `${(selectedEvaluation.goal_rate * 100).toFixed(1)}%`} />
                 <Record label="Evaluation seed" value={selectedEvaluation.seed} />
+                <Record label="Policy ID" value={selectedEvaluation.policy_id} />
+                <Record label="Policy revision" value={selectedEvaluation.policy_revision} />
+                <Record label="Policy record SHA-256" value={selectedEvaluation.policy_record_sha256} />
                 <Record label="Evaluation name" value={selectedEvaluation.evaluation_number ? `E${selectedEvaluation.evaluation_number}` : undefined} />
                 <Record label="Checkpoint ID" value={checkpointLabel(evaluationRun)} />
                 <Record label="Training run" value={`${trainingTag(evaluationTrainingRun!) ? `${trainingTag(evaluationTrainingRun!)} · ` : ''}${labelForRun(evaluationTrainingRun!)}`} />
@@ -144,6 +154,8 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Evaluation ID" value={selectedEvaluation.evaluation_id} />
                 <Record label="Exit code" value={selectedEvaluation.exit_code} />
             </div>
+            {selectedEvaluation.policy_snapshot && <details className="fyp-policy-raw"><summary>Plan snapshot used by this evaluation</summary>
+                <pre>{JSON.stringify(selectedEvaluation.policy_snapshot, null, 2)}</pre></details>}
             {selectedEvaluation.error && <p className="fg-error">{selectedEvaluation.error}</p>}
             <h3>Recorded episodes</h3>
             {!selectedEvaluation.episodes?.length ? <p className="fg-muted">No per-episode records were saved.</p> : <div className="fyp-episode-table" role="table" aria-label="Evaluation episode results">

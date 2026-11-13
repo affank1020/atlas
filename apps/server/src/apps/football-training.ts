@@ -10,6 +10,7 @@ export const FOOTBALL_PROJECT_ID = 'ce09dbe0-0755-4bd8-9376-e4a3152d59f7';
 const runId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const policyId = z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const evaluationId = z.string().regex(/^eval_[A-Za-z0-9_]{1,74}$/);
+const fypPolicyId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const drill = runId;
 const integer = z.number().int();
 
@@ -57,19 +58,20 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         type: 'football-training', slug: 'football-training', projectId: FOOTBALL_PROJECT_ID,
         name: 'Football Training', description: 'Run and inspect Unity ML-Agents training, logs and policies on your connected Mac.',
         tools: [
-            action('football_fyp_manifest', 'Read the new standalone FYP FootballV1 25/8 policy contract, separate from legacy models.', {}, 'fyp_manifest'),
-            action('football_fyp_preflight', 'Check the FYP trainer and live Unity Editor heartbeat, Play Mode, scene and ML-Agents connection before starting a learner.', {}, 'fyp_preflight'),
-            action('football_fyp_build', 'Optional legacy operation: build a source-stamped FYP player. Editor training does not require this.', {}, 'fyp_build'),
+            action('football_fyp_policies', 'List documented FYP policy plans. Each policy has its own run history; the Unity session and environment catalogue stay shared.', {}, 'fyp_policies'),
+            action('football_fyp_manifest', 'Read one FYP policy plan, its observation/action contract, curriculum, runtime requirements and execution support.', { policyId: fypPolicyId.optional() }, 'fyp_manifest'),
+            action('football_fyp_preflight', 'Check the selected policy against the global FYP Unity Editor heartbeat and environment catalogue.', { policyId: fypPolicyId.optional() }, 'fyp_preflight'),
+            action('football_fyp_build', 'Optionally build the player required by the selected FYP policy.', { policyId: fypPolicyId.optional() }, 'fyp_build'),
             action('football_fyp_train', 'Start a bounded FYP v1 MA-POCA learner connected to the open Unity Editor in Play Mode; no player build is required.', {
-                preset: z.enum(['smoke','pilot_50k']), seed: integer.min(0).max(2147483647) }, 'fyp_train'),
-            action('football_fyp_runs', 'List durable FYP v1 training run receipts, never inferred as successful.', {}, 'fyp_runs'),
+                policyId: fypPolicyId.optional(), preset: z.enum(['smoke','pilot_50k']), seed: integer.min(0).max(2147483647) }, 'fyp_train'),
+            action('football_fyp_runs', 'List durable training receipts for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_runs'),
             action('football_fyp_checkpoint_note', 'Save freeform notes on one completed FYP checkpoint export.', {
-                runId, notes: z.string().max(20_000) }, 'fyp_checkpoint_note'),
+                policyId: fypPolicyId.optional(), runId, notes: z.string().max(20_000) }, 'fyp_checkpoint_note'),
             action('football_fyp_environments', 'Read the Unity-authored, versioned FYP environment catalogue with setup, episode rules, rewards and scene modifiers.', {}, 'fyp_environments'),
             action('football_fyp_evaluate', 'Run a bounded seeded checkpoint evaluation inside the open FYP Unity Editor. Start it with the FYP scene in Edit Mode, then press Play; no player build is required.', {
-                runId, episodes: integer.min(1).max(100), seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
-            action('football_fyp_evaluations', 'List source-pinned FYP checkpoint evaluations and their observed Unity episode outcomes.', {}, 'fyp_evaluations'),
-            action('football_fyp_status', 'Read a FYP v1 training run receipt.', { runId }, 'fyp_status'),
+                policyId: fypPolicyId.optional(), runId, episodes: integer.min(1).max(100), seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
+            action('football_fyp_evaluations', 'List source-pinned evaluations for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_evaluations'),
+            action('football_fyp_status', 'Read a selected policy training run receipt.', { policyId: fypPolicyId.optional(), runId }, 'fyp_status'),
             action('football_fyp_task_status', 'Inspect a bounded FYP build or training operation receipt.', { runId: z.string().uuid() }, 'fyp_task_status'),
             action('football_generalist_manifest', 'Read versioned generalist policy contract, curriculum and scenario definitions from the connected Unity workspace. Read-only; no build or training.', {}, 'generalist_manifest'),
             action('football_generalist_runs', 'Discover canonical generalist training receipts, including runs launched outside Atlas. Unknown state is not treated as success.', {}, 'generalist_runs'),
