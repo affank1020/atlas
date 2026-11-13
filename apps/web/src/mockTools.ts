@@ -135,6 +135,12 @@ const applications = [
 const fypSourceHash = '6b1d97e80a4c6325f09e3a71b8c52640d3e9f14a72c85b6019e4d3a7f2c81650';
 const fypModelHash = '4c7a2f9180de5631b4c8a6079e2d51f3a8604c7d1e9b3256f08a4d2c7b915e63';
 const fypCheckpointHash = 'a83e1c6f4b920d75e2a6f3108c4d7b591f06a3e8c2d47b915a6f0c3e8d214759';
+const fypPlayerSettings = {
+    forwardSpeed: 5, sidewaysSpeed: 3, backwardsSpeed: 2, acceleration: 16, braking: 22,
+    turnSpeed: 450, desiredFacingSpeed: 720, contactTolerance: 0.12, backwardKickMultiplier: 0.6,
+    gentleImpulse: 0.35, kickImpulse: 4, touchCooldown: 0.18, keyboardControl: true,
+};
+const fypPlayerSettingsHash = 'd338f993e6bfd16d2f2ca8e34f655590e9328031952bd3ff9ce4966832ed6b84';
 const fypPolicy = {
     record_schema_version: 1, policy_id: 'football-v1', display_name: 'FYP Football v1', status: 'supported', revision: 1,
     purpose: 'Solo open-goal football with a fixed policy interface that reserves one teammate slot.', execution_supported: true,
@@ -180,6 +186,7 @@ const fypPolicy = {
     curriculum: [{ stage: 1, environment_id: 'open-goal-close', environment_version: '1.0.0',
         definition_sha256: '5a286a2bc03108d012f3e91829977b3a972ea60efbe26a223db17852907e5d75',
         scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity', purpose: 'Solo open-goal scoring in the primary training scene.' }],
+    player_settings: { source_prefab: 'Assets/Football/Prefabs/Player.prefab', settings: fypPlayerSettings, snapshot_sha256: fypPlayerSettingsHash },
     notes: 'The teammate slot is selected by teamAgents order. This record documents the existing policy and does not imply compatibility with an expanded contract.',
 };
 const fypCooperativePolicy = {
@@ -213,10 +220,20 @@ const fypCooperativePolicy = {
         behavior_name: 'FootballV2',
         notes: 'This successor has its own model weights and checkpoint history, separate from Football v1.',
     },
-    curriculum: [{ stage: 1, environment_id: 'cooperative-scrimmage', environment_version: '1.0.0',
-        definition_sha256: fypCheckpointHash,
-        scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity',
-        purpose: 'Two-player cooperative play against one opponent in a shared scrimmage environment.' }],
+    curriculum: [
+        { stage: 1, environment_id: 'cooperative-scrimmage', environment_version: '1.0.0',
+            definition_sha256: fypCheckpointHash,
+            scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity',
+            purpose: 'Build passing and support habits in a two-player attack against one opponent.' },
+        { stage: 2, environment_id: 'cooperative-build-up', environment_version: '1.0.0',
+            definition_sha256: 'b'.repeat(64),
+            scene_path: 'Assets/Football/Scenes/CooperativeBuildUp.unity',
+            purpose: 'Move the ball through a wider field while keeping a passing option available.' },
+        { stage: 3, environment_id: 'cooperative-high-pressure', environment_version: '1.0.0',
+            definition_sha256: 'c'.repeat(64),
+            scene_path: 'Assets/Football/Scenes/CooperativeHighPressure.unity',
+            purpose: 'Create a scoring chance with two defenders closing down the space.' },
+    ],
     notes: 'Policy successor to Football v1. Adds opponent presence, relative position and velocity observations for cooperative play. Its run, evaluation and checkpoint history is separate from v1.',
 };
 const fypPolicies = [fypPolicy, fypCooperativePolicy];
@@ -225,6 +242,22 @@ const fypEnvironment = {
     purpose: 'Score in a close-range open goal using the shared FootballV1 policy.',
     scene_path: 'Assets/Football/Scenes/OpenGoalClose.unity',
     definition_sha256: '5a286a2bc03108d012f3e91829977b3a972ea60efbe26a223db17852907e5d75', snapshot_recorded: true,
+    player_settings_sha256: fypPlayerSettingsHash,
+    player_settings: [
+        { key: 'FootballPlayer.forwardSpeed', component: 'FootballPlayer', category: 'Player', label: 'Forward Speed', value: '5', unit: 'm/s' },
+        { key: 'FootballPlayer.sidewaysSpeed', component: 'FootballPlayer', category: 'Player', label: 'Sideways Speed', value: '3', unit: 'm/s' },
+        { key: 'FootballPlayer.backwardsSpeed', component: 'FootballPlayer', category: 'Player', label: 'Backwards Speed', value: '2', unit: 'm/s' },
+        { key: 'FootballPlayer.acceleration', component: 'FootballPlayer', category: 'Player', label: 'Acceleration', value: '16', unit: 'm/s²' },
+        { key: 'FootballPlayer.braking', component: 'FootballPlayer', category: 'Player', label: 'Braking', value: '22', unit: 'm/s²' },
+        { key: 'FootballPlayer.turnSpeed', component: 'FootballPlayer', category: 'Player', label: 'Turn Speed', value: '450', unit: 'degrees/s' },
+        { key: 'FootballPlayer.desiredFacingSpeed', component: 'FootballPlayer', category: 'Player', label: 'Desired Facing Speed', value: '720', unit: 'degrees/s' },
+        { key: 'FootballPlayer.contactTolerance', component: 'FootballPlayer', category: 'Player', label: 'Contact Tolerance', value: '0.12', unit: 'm' },
+        { key: 'FootballPlayer.backwardKickMultiplier', component: 'FootballPlayer', category: 'Player', label: 'Backward Kick Multiplier', value: '0.6', unit: '' },
+        { key: 'FootballPlayer.gentleImpulse', component: 'FootballPlayer', category: 'Player', label: 'Gentle Impulse', value: '0.35', unit: 'N·s' },
+        { key: 'FootballPlayer.kickImpulse', component: 'FootballPlayer', category: 'Player', label: 'Kick Impulse', value: '4', unit: 'N·s' },
+        { key: 'FootballPlayer.touchCooldown', component: 'FootballPlayer', category: 'Player', label: 'Touch Cooldown', value: '0.18', unit: 's' },
+        { key: 'FootballPlayer.keyboardControl', component: 'FootballPlayer', category: 'Player', label: 'Keyboard Control', value: 'True', unit: '' },
+    ],
     settings: [
         { key: 'SpawnRegion.size', component: 'SpawnRegion', category: 'Starting setup', label: 'Randomized spawn area', value: '(0, 0)', unit: 'm' },
         { key: 'SpawnRegion.yawVariation', component: 'SpawnRegion', category: 'Starting setup', label: 'Yaw variation', value: '0', unit: 'degrees' },
@@ -267,6 +300,8 @@ const fypCooperativeEnvironment = {
     purpose: 'Two teammates coordinate to score against one scripted opponent.',
     scene_path: 'Assets/Football/Scenes/CooperativeScrimmage.unity',
     definition_sha256: fypCheckpointHash, snapshot_recorded: true,
+    player_settings_sha256: fypEnvironment.player_settings_sha256,
+    player_settings: fypEnvironment.player_settings,
     settings: [
         { key: 'TeamSettings.playerCount', component: 'TeamSettings', category: 'Teams', label: 'Players per team', value: '2', unit: 'players' },
         { key: 'OpponentSettings.opponentCount', component: 'OpponentSettings', category: 'Teams', label: 'Opponents', value: '1', unit: 'player' },
@@ -279,6 +314,52 @@ const fypCooperativeEnvironment = {
     modifiers: [
         { name: 'Opponent spawn zone', shape: 'BoxCollider', position: '(0, 0.5, -5)', size: '(4, 1, 2)', is_trigger: true },
         { name: 'Team spawn zone', shape: 'BoxCollider', position: '(0, 0.5, 5)', size: '(6, 1, 2)', is_trigger: true },
+    ],
+};
+const fypCooperativeBuildUpEnvironment = {
+    environment_id: 'cooperative-build-up', name: 'Cooperative Build-up', version: '1.0.0', difficulty: '3 — developing',
+    purpose: 'A wider field gives the pair room to progress with passes and support runs.',
+    scene_path: 'Assets/Football/Scenes/CooperativeBuildUp.unity',
+    definition_sha256: 'b'.repeat(64), snapshot_recorded: true,
+    player_settings_sha256: fypEnvironment.player_settings_sha256,
+    player_settings: fypEnvironment.player_settings,
+    settings: [
+        { key: 'TeamSettings.playerCount', component: 'TeamSettings', category: 'Teams', label: 'Players per team', value: '2', unit: 'players' },
+        { key: 'OpponentSettings.opponentCount', component: 'OpponentSettings', category: 'Teams', label: 'Opponents', value: '1', unit: 'player' },
+        { key: 'FootballEnvironment.timeLimit', component: 'FootballEnvironment', category: 'Episode', label: 'Time limit', value: '45', unit: 's' },
+        { key: 'FootballEnvironment.playableHalfExtents', component: 'FootballEnvironment', category: 'Episode', label: 'Playable half extents', value: '(12, 20)', unit: 'm' },
+        { key: 'FootballEnvironment.goalReward', component: 'FootballEnvironment', category: 'Rewards', label: 'Goal reward', value: '1', unit: 'team reward' },
+        { key: 'SpawnRegion.teamFormation', component: 'SpawnRegion', category: 'Starting setup', label: 'Team formation', value: 'staggered support', unit: '' },
+        { key: 'SpawnRegion.ballStart', component: 'SpawnRegion', category: 'Starting setup', label: 'Ball start region', value: 'central third', unit: '' },
+        { key: 'OpponentSettings.spawnDistance', component: 'OpponentSettings', category: 'Starting setup', label: 'Opponent distance', value: '8', unit: 'm' },
+    ],
+    modifiers: [
+        { name: 'Central channel', shape: 'BoxCollider', position: '(0, 0.1, 1)', size: '(5, 0.2, 15)', is_trigger: true },
+        { name: 'Left passing gate', shape: 'BoxCollider', position: '(-5, 0.5, 7)', size: '(1, 1, 2)', is_trigger: true },
+        { name: 'Right passing gate', shape: 'BoxCollider', position: '(5, 0.5, 7)', size: '(1, 1, 2)', is_trigger: true },
+    ],
+};
+const fypCooperativePressureEnvironment = {
+    environment_id: 'cooperative-high-pressure', name: 'Cooperative High Pressure', version: '1.0.0', difficulty: '4 — advanced',
+    purpose: 'Two defenders compress space and force quick decisions before a shot.',
+    scene_path: 'Assets/Football/Scenes/CooperativeHighPressure.unity',
+    definition_sha256: 'c'.repeat(64), snapshot_recorded: true,
+    player_settings_sha256: fypEnvironment.player_settings_sha256,
+    player_settings: fypEnvironment.player_settings,
+    settings: [
+        { key: 'TeamSettings.playerCount', component: 'TeamSettings', category: 'Teams', label: 'Players per team', value: '2', unit: 'players' },
+        { key: 'OpponentSettings.opponentCount', component: 'OpponentSettings', category: 'Teams', label: 'Opponents', value: '2', unit: 'players' },
+        { key: 'FootballEnvironment.timeLimit', component: 'FootballEnvironment', category: 'Episode', label: 'Time limit', value: '35', unit: 's' },
+        { key: 'FootballEnvironment.playableHalfExtents', component: 'FootballEnvironment', category: 'Episode', label: 'Playable half extents', value: '(9, 15)', unit: 'm' },
+        { key: 'FootballEnvironment.goalReward', component: 'FootballEnvironment', category: 'Rewards', label: 'Goal reward', value: '1.5', unit: 'team reward' },
+        { key: 'FootballEnvironment.timeCostPerSecond', component: 'FootballEnvironment', category: 'Rewards', label: 'Time cost per second', value: '-0.002', unit: 'reward/s' },
+        { key: 'SpawnRegion.teamFormation', component: 'SpawnRegion', category: 'Starting setup', label: 'Team formation', value: 'compact diamond', unit: '' },
+        { key: 'OpponentSettings.spawnDistance', component: 'OpponentSettings', category: 'Starting setup', label: 'Nearest defender distance', value: '3', unit: 'm' },
+    ],
+    modifiers: [
+        { name: 'Left pressure zone', shape: 'BoxCollider', position: '(-3, 0.5, 1)', size: '(2, 1, 7)', is_trigger: true },
+        { name: 'Right pressure zone', shape: 'BoxCollider', position: '(3, 0.5, 1)', size: '(2, 1, 7)', is_trigger: true },
+        { name: 'Shot lane obstacle', shape: 'CapsuleCollider', position: '(0, 0.8, 8)', size: '(1, 1.6, 1)', is_trigger: false },
     ],
 };
 const fypRuns = [
@@ -446,7 +527,7 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
                 ? 'Demo status only. Mock mode does not inspect the FYP Unity Editor or trainer.'
                 : 'This mock policy is documentation only and cannot launch training.',
         }; break;
-        case 'football_fyp_environments': result = [fypEnvironment, fypCooperativeEnvironment]; break;
+        case 'football_fyp_environments': result = [fypEnvironment, fypCooperativeEnvironment, fypCooperativeBuildUpEnvironment, fypCooperativePressureEnvironment]; break;
         case 'football_fyp_runs': result = policyId === 'football-v1' ? fypRuns : policyId === 'football-v2' ? fypCooperativeRuns : []; break;
         case 'football_fyp_evaluations': result = policyId === 'football-v1' ? fypEvaluations : policyId === 'football-v2' ? fypCooperativeEvaluations : []; break;
         case 'get_storage_usage': result = {
