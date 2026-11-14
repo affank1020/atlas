@@ -12,6 +12,17 @@ const execFileAsync = promisify(execFile);
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const DEFAULT_POLICY_ID = 'football-v1';
+const EXECUTABLE_POLICIES: Record<string, { contractId: string; behavior: string; observations: number;
+    actions: number; trainer: string; config: string; scene: string; }> = {
+    'football-v1': {
+        contractId: 'fyp-football-v1', behavior: 'FootballV1', observations: 25, actions: 8,
+        trainer: 'poca', config: 'Training/football_v1.yaml', scene: 'Assets/Football/Scenes/OpenGoalClose.unity',
+    },
+    'football-instruction-v3': {
+        contractId: 'football-observation-v3', behavior: 'FootballInstructionV3', observations: 93, actions: 8,
+        trainer: 'poca', config: 'Training/football_instruction_v3.yaml', scene: 'Assets/Football/Scenes/OpenGoalClose.unity',
+    },
+};
 const cleanEnv = (): NodeJS.ProcessEnv => Object.fromEntries(
     ['PATH', 'HOME', 'TMPDIR', 'LANG', 'USER', 'LOGNAME']
         .filter(name => process.env[name] !== undefined)
@@ -79,9 +90,37 @@ function fypPolicyRecords(workspace: Workspace) {
             throw new AtlasError('FYP policy record does not match the supported schema.', 'DRIVER_UNAVAILABLE');
         if (ids.has(record.policy_id)) throw new AtlasError('FYP policy catalogue has a duplicate policy ID.', 'DRIVER_UNAVAILABLE');
         ids.add(record.policy_id);
-        const executionSupported = record.policy_id === DEFAULT_POLICY_ID && record.status === 'supported' &&
-            record.contract.contract_id === 'fyp-football-v1' && record.contract.behavior_name === 'FootballV1' &&
-            record.contract.observations?.size === 25 && record.contract.actions?.continuous_count === 8;
+        const executable = EXECUTABLE_POLICIES[record.policy_id];
+        const observationsCoverContract = (() => {
+            if (!Array.isArray(record.contract.observations.channels)) return false;
+            const channels = [...record.contract.observations.channels].sort((a, b) => a.start - b.start);
+            let next = 0;
+            for (const channel of channels) {
+                if (!Number.isInteger(channel.start) || !Number.isInteger(channel.size) || channel.size < 1 || channel.start !== next)
+                    return false;
+                next += channel.size;
+            }
+            return next === record.contract.observations.size;
+        })();
+        const actionsCoverContract = (() => {
+            if (!Array.isArray(record.contract.actions.channels)) return false;
+            const channels = [...record.contract.actions.channels].sort((a, b) => a.index - b.index);
+            return channels.length === record.contract.actions.continuous_count &&
+                channels.every((channel, index) => channel.index === index) &&
+                (record.contract.actions.discrete_branches?.length ?? 0) === 0;
+        })();
+        const executionSupported = !!executable && record.status === 'supported' &&
+            record.contract.contract_id === executable.contractId &&
+            record.contract.behavior_name === executable.behavior &&
+            record.contract.observations?.size === executable.observations &&
+            record.contract.observations?.stacked_vectors === 1 &&
+            record.contract.actions?.continuous_count === executable.actions &&
+            record.trainer?.algorithm === executable.trainer &&
+            record.trainer?.config_path === executable.config &&
+            record.curriculum?.[0]?.scene_path === executable.scene &&
+            record.actor?.decision_period_physics_steps === 5 &&
+            record.actor?.memory === 'feed_forward' &&
+            observationsCoverContract && actionsCoverContract;
         return { ...record, execution_supported: executionSupported };
     });
     if (!records.some(record => record.policy_id === DEFAULT_POLICY_ID))
@@ -89,7 +128,7 @@ function fypPolicyRecords(workspace: Workspace) {
     return records;
 }
 
-/** Separate, fail-closed ABI. Never interprets a legacy 54/5 or 54/7 policy as FootballV1. */
+/** Separate, fail-closed ABIs. Each executable policy has an explicit runtime registration. */
 export function fypManifest(workspace: Workspace, policyId = DEFAULT_POLICY_ID) {
     fypWorkspace(workspace);
     if (!POLICY_ID.test(policyId)) throw new AtlasError('Invalid FYP policy ID.', 'INVALID_ARGUMENT');
@@ -99,26 +138,40 @@ export function fypManifest(workspace: Workspace, policyId = DEFAULT_POLICY_ID) 
     let legacyData: any = null;
     if (policy.execution_supported) {
         try {
-            const file = safeSource(workspace, 'Training/atlas_contract.json');
-            if (statSync(file).size > 32 * 1024) throw new Error('Oversized contract');
-            legacyData = JSON.parse(readFileSync(file, 'utf8'));
-            if (legacyData.contract_id !== policy.contract.contract_id ||
-                legacyData.behavior !== policy.contract.behavior_name ||
-                legacyData.observations?.size !== policy.contract.observations?.size ||
-                legacyData.actions?.continuous !== policy.contract.actions?.continuous_count ||
-                legacyData.source_project !== 'affank1020/FYP' || legacyData.trainer_kind !== policy.trainer?.algorithm ||
-                legacyData.scene !== policy.curriculum?.[0]?.scene_path)
-                throw new Error('Supported policy and runtime contract differ');
+            const executable = EXECUTABLE_POLICIES[policy.policy_id];
+            if (!executable) throw new Error('Policy is not registered for execution');
+            const config = readFileSync(safeSource(workspace, executable.config), 'utf8');
+            if (!config.includes(`  ${executable.behavior}:`) ||
+                !new RegExp(`trainer_type:\\s*${executable.trainer}\\b`).test(config))
+                throw new Error('Trainer configuration does not match the registered policy');
+            const scene = readFileSync(safeSource(workspace, executable.scene), 'utf8');
             const prefab = readFileSync(safeSource(workspace, 'Assets/Football/Prefabs/Player.prefab'), 'utf8');
-            const prefabTokens = [`VectorObservationSize: ${policy.contract.observations.size}`,
-                `m_NumContinuousActions: ${policy.contract.actions.continuous_count}`,
-                `m_BehaviorName: ${policy.contract.behavior_name}`];
-            if (Number.isInteger(policy.actor?.decision_period_physics_steps))
-                prefabTokens.push(`DecisionPeriod: ${policy.actor.decision_period_physics_steps}`);
-            if (!prefabTokens.every(token => prefab.includes(token)))
-                throw new Error('FYP prefab has a different observation/action contract');
-            safeSource(workspace, policy.trainer?.config_path ?? 'Training/football_v1.yaml');
-            safeSource(workspace, policy.curriculum?.[0]?.scene_path ?? legacyData.scene);
+            if (policy.policy_id === DEFAULT_POLICY_ID) {
+                const file = safeSource(workspace, 'Training/atlas_contract.json');
+                if (statSync(file).size > 32 * 1024) throw new Error('Oversized contract');
+                legacyData = JSON.parse(readFileSync(file, 'utf8'));
+                if (legacyData.contract_id !== executable.contractId ||
+                    legacyData.behavior !== executable.behavior ||
+                    legacyData.observations?.size !== executable.observations ||
+                    legacyData.actions?.continuous !== executable.actions ||
+                    legacyData.source_project !== 'affank1020/FYP' || legacyData.trainer_kind !== executable.trainer ||
+                    legacyData.scene !== executable.scene)
+                    throw new Error('Supported policy and runtime contract differ');
+                const prefabTokens = [`VectorObservationSize: ${executable.observations}`,
+                    `m_NumContinuousActions: ${executable.actions}`, `m_BehaviorName: ${executable.behavior}`,
+                    `DecisionPeriod: ${policy.actor.decision_period_physics_steps}`];
+                if (!prefabTokens.every(token => prefab.includes(token)))
+                    throw new Error('FYP prefab has a different observation/action contract');
+            } else {
+                const sceneOverrides = [
+                    `propertyPath: m_BehaviorName\n      value: ${executable.behavior}`,
+                    `propertyPath: m_BrainParameters.VectorObservationSize\n      value: ${executable.observations}`,
+                ];
+                if (!sceneOverrides.every(token => scene.includes(token)) ||
+                    !prefab.includes(`m_NumContinuousActions: ${executable.actions}`) ||
+                    !prefab.includes(`DecisionPeriod: ${policy.actor.decision_period_physics_steps}`))
+                    throw new Error('FYP open-goal scene or shared prefab has a different v3 ABI');
+            }
         } catch (error) {
             if (error instanceof AtlasError) throw error;
             throw new AtlasError('FYP policy, runtime contract, or prefab is incompatible.', 'DRIVER_UNAVAILABLE');
@@ -255,7 +308,7 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
             throw new AtlasError('FYP training requires an approved preset and seed.', 'INVALID_ARGUMENT');
         const readiness = await python(workspace, ['preflight', ...policyArgs]);
         if (readiness?.ready_to_train !== true)
-            throw new AtlasError('FYP preflight failed: configure the trainer and open the FYP FootballV1 scene in Edit Mode. Atlas will start the learner; then press Play to connect.', 'DRIVER_UNAVAILABLE');
+            throw new AtlasError('FYP preflight failed: configure the trainer and open the selected policy environment in Edit Mode. Atlas will start the learner; then press Play to connect.', 'DRIVER_UNAVAILABLE');
         const runId = 'fyp-' + randomUUID();
         return launch(workspace, 'fyp_train',
             ['train', '--run-id', runId, '--preset', x.preset!,
