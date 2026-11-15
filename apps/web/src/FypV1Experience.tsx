@@ -318,13 +318,14 @@ export function FypV1Experience() {
         setCheckpointReviews(next);
     };
 
-    const saveCheckpointNote = async (runId: string, notes: string): Promise<void> => {
+    const saveCheckpointNote = async (runId: string, notes: string): Promise<boolean> => {
         setSavingCheckpointNote(true); setError(''); setNotice('');
         try {
             const result = await callTool<{ run_id: string; notes: string }>('football_fyp_checkpoint_note', { policyId: selectedPolicyId, runId, notes });
             setRuns(current => current.map(run => run.run_id === runId ? { ...run, notes: result.notes } : run));
             setNotice('Checkpoint notes saved.');
-        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+            return true;
+        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); return false; }
         finally { setSavingCheckpointNote(false); }
     };
 
@@ -547,7 +548,7 @@ export function FypV1Experience() {
 
         {page === 'checkpoint' && focusedRun && <>
             <CheckpointNotesEditor key={focusedRun.run_id} run={focusedRun} saving={savingCheckpointNote}
-                onSave={notes => void saveCheckpointNote(focusedRun.run_id, notes)} />
+                onSave={notes => saveCheckpointNote(focusedRun.run_id, notes)} />
             <section className="fg-panel fyp-checkpoint-status-panel" aria-label="Checkpoint status">
                 <fieldset className="fyp-checkpoint-status" aria-label={`Checkpoint status for ${runName(focusedRun.preset, focusedRun.training_number)}`}>
                     <legend>Checkpoint status</legend>
@@ -610,19 +611,36 @@ export function FypV1Experience() {
     </div>;
 }
 
-function CheckpointNotesEditor({ run, saving, onSave }: { run: FypRun; saving: boolean; onSave: (notes: string) => void }) {
+function CheckpointNotesEditor({ run, saving, onSave }: { run: FypRun; saving: boolean; onSave: (notes: string) => Promise<boolean> }) {
     const [draft, setDraft] = useState(run.notes ?? '');
+    const [editing, setEditing] = useState(false);
     useEffect(() => setDraft(run.notes ?? ''), [run.run_id, run.notes]);
     const saved = run.notes ?? '';
-    return <section className="fg-panel fyp-checkpoint-notes" aria-label="Checkpoint notes">
-        <label htmlFor={`checkpoint-notes-${run.run_id}`}>Notes</label>
-        <textarea id={`checkpoint-notes-${run.run_id}`} value={draft} maxLength={20_000}
-            placeholder="Add any notes about this checkpoint…" onChange={event => setDraft(event.target.value)} />
-        <div className="fyp-checkpoint-notes-footer">
-            <span>{draft.length.toLocaleString()} / 20,000 characters</span>
-            <button className="fg-button" type="button" disabled={saving || draft === saved} onClick={() => onSave(draft)}>
-                {saving ? 'Saving…' : 'Save notes'}
+    const save = async () => {
+        const result = await onSave(draft);
+        if (result) setEditing(false);
+    };
+    return <div className="fyp-checkpoint-notes" aria-label="Checkpoint notes">
+        {editing ? <>
+            <textarea id={`checkpoint-notes-${run.run_id}`} autoFocus value={draft} maxLength={20_000}
+                aria-label="Checkpoint notes" placeholder="Add notes about this checkpoint…"
+                onChange={event => setDraft(event.target.value)} />
+            <div className="fyp-checkpoint-notes-footer">
+                <span>{draft.length.toLocaleString()} / 20,000 characters</span>
+                <div className="fyp-checkpoint-notes-actions">
+                    <button className="fg-button" type="button" disabled={saving}
+                        onClick={() => { setDraft(saved); setEditing(false); }}>Cancel</button>
+                    <button className="fg-button primary" type="button" disabled={saving || draft === saved} onClick={() => void save()}>
+                        {saving ? 'Saving…' : 'Save'}
+                    </button>
+                </div>
+            </div>
+        </> : <div className="fyp-checkpoint-notes-view">
+            <p className={saved.trim() ? '' : 'fyp-checkpoint-notes-empty'}>{saved || 'No notes yet.'}</p>
+            <button className="fyp-checkpoint-notes-edit" type="button" aria-label="Edit notes"
+                title="Edit notes" onClick={() => setEditing(true)}>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.7 3.3a1.6 1.6 0 0 1 2.3 2.3L7 14.6l-3.1.8.8-3.1 9-9Z"/><path d="m12.5 4.5 3 3"/></svg>
             </button>
-        </div>
-    </section>;
+        </div>}
+    </div>;
 }
