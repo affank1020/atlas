@@ -158,8 +158,9 @@ export function fypManifest(workspace: Workspace, policyId = DEFAULT_POLICY_ID) 
                     legacyData.scene !== executable.scene)
                     throw new Error('Supported policy and runtime contract differ');
                 const prefabTokens = [`VectorObservationSize: ${executable.observations}`,
-                    `m_NumContinuousActions: ${executable.actions}`, `m_BehaviorName: ${executable.behavior}`,
-                    `DecisionPeriod: ${policy.actor.decision_period_physics_steps}`];
+                    `m_NumContinuousActions: ${executable.actions}`, `m_BehaviorName: ${executable.behavior}`];
+                if (Number.isInteger(policy.actor?.decision_period_physics_steps))
+                    prefabTokens.push(`DecisionPeriod: ${policy.actor.decision_period_physics_steps}`);
                 if (!prefabTokens.every(token => prefab.includes(token)))
                     throw new Error('FYP prefab has a different observation/action contract');
             } else {
