@@ -126,10 +126,17 @@
 .fyp-checkpoint-time { color:var(--text-secondary,#bac3d0); font-size:14px; font-weight:500; font-variant-numeric:tabular-nums; }
 .fyp-checkpoint-card-notes { display:-webkit-box; overflow:hidden; color:var(--text-secondary,#bac3d0); font-size:12px; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 .fyp-checkpoint-card-notes-empty { color:var(--text-muted,#9ba5b5); font-style:italic; }
-.fyp-checkpoint-notes { display:grid; gap:8px; }
-.fyp-checkpoint-notes>label { color:var(--text-secondary,#bac3d0); font-size:12px; font-weight:650; }
-.fyp-checkpoint-notes textarea { width:100%; min-height:94px; resize:vertical; padding:10px 11px; border:1px solid var(--border,#5b6577); border-radius:5px; background:var(--surface-secondary,#272f39); color:var(--text-primary,#dfe5f0); font:inherit; font-size:13px; line-height:1.45; }
-.fyp-checkpoint-notes-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--text-muted,#9ba5b5); font-size:11px; }
+.fyp-checkpoint-notes { width:100%; max-width:1100px; min-width:0; }
+.fyp-checkpoint-notes-view { display:flex; align-items:flex-start; gap:12px; }
+.fyp-checkpoint-notes-view>p { flex:1; min-width:0; margin:0; color:var(--text-primary,#dfe5f0); font-size:14px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+.fyp-checkpoint-notes-view>p.fyp-checkpoint-notes-empty { color:var(--text-muted,#9ba5b5); }
+.fyp-checkpoint-notes-edit { flex:none; display:grid; place-items:center; width:32px; height:32px; margin:-5px -5px 0 0; border:0; border-radius:5px; background:transparent; color:var(--text-muted,#9ba5b5); cursor:pointer; }
+.fyp-checkpoint-notes-edit:hover,.fyp-checkpoint-notes-edit:focus-visible { background:transparent; color:var(--text-primary,#dfe5f0); outline:none; }
+.fyp-checkpoint-notes-edit:focus-visible { box-shadow:0 0 0 2px var(--accent,#9cb5f3); }
+.fyp-checkpoint-notes-edit svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.fyp-checkpoint-notes textarea { display:block; width:100%; min-height:94px; resize:vertical; padding:10px 12px; border:1px solid color-mix(in srgb,var(--border,#384152) 60%,transparent); border-radius:5px; outline:none; box-shadow:none; background:transparent; color:var(--text-primary,#dfe5f0); font:inherit; font-size:13px; line-height:1.45; }
+.fyp-checkpoint-notes-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; color:var(--text-muted,#9ba5b5); font-size:11px; }
+.fyp-checkpoint-notes-actions { display:flex; align-items:center; gap:8px; }
 .fyp-environment-page { display:grid; gap:16px; }
 .fyp-environment-page>.fg-link { margin:0; }
 .fyp-environment-toolbar { display:flex; justify-content:flex-end; align-items:center; gap:12px; }
