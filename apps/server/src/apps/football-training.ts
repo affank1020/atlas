@@ -62,14 +62,16 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_fyp_manifest', 'Read one FYP policy plan, its observation/action contract, curriculum, runtime requirements and execution support.', { policyId: fypPolicyId.optional() }, 'fyp_manifest'),
             action('football_fyp_preflight', 'Check the selected policy against the global FYP Unity Editor heartbeat and environment catalogue.', { policyId: fypPolicyId.optional() }, 'fyp_preflight'),
             action('football_fyp_build', 'Optionally build the player required by the selected FYP policy.', { policyId: fypPolicyId.optional() }, 'fyp_build'),
-            action('football_fyp_train', 'Start a bounded FYP v1 MA-POCA learner connected to the open Unity Editor in Play Mode; no player build is required.', {
-                policyId: fypPolicyId.optional(), preset: z.enum(['smoke','pilot_50k']), seed: integer.min(0).max(2147483647) }, 'fyp_train'),
+            action('football_fyp_train', 'Start an FYP MA-POCA learner for a user-selected budget of 2,048–2,000,000 trainer steps and an experimental 1×–5× simulation scale, connected to the open Unity Editor in Play Mode; no player build is required.', {
+                policyId: fypPolicyId.optional(), maxSteps: integer.min(2048).max(2_000_000), timeScale: z.number().min(1).max(5).optional(), seed: integer.min(0).max(2147483647) }, 'fyp_train'),
             action('football_fyp_runs', 'List durable training receipts for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_runs'),
+            action('football_fyp_run_metrics', 'Read bounded trainer progress, reward graph points and a page of per-episode reward breakdowns for one FYP run.', {
+                policyId: fypPolicyId.optional(), runId, episodeOffset: integer.min(0).max(2_000_000).optional(), episodeLimit: integer.min(1).max(100).optional() }, 'fyp_run_metrics'),
             action('football_fyp_checkpoint_note', 'Save freeform notes on one completed FYP checkpoint export.', {
                 policyId: fypPolicyId.optional(), runId, notes: z.string().max(20_000) }, 'fyp_checkpoint_note'),
             action('football_fyp_environments', 'Read the Unity-authored, versioned FYP environment catalogue with setup, episode rules, rewards and scene modifiers.', {}, 'fyp_environments'),
             action('football_fyp_evaluate', 'Run a bounded seeded checkpoint evaluation inside the open FYP Unity Editor. Start it with the FYP scene in Edit Mode, then press Play; no player build is required.', {
-                policyId: fypPolicyId.optional(), runId, episodes: integer.min(1).max(100), seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
+                policyId: fypPolicyId.optional(), runId, episodes: integer.min(1).max(100), timeScale: z.number().min(1).max(5).optional(), seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
             action('football_fyp_evaluations', 'List source-pinned evaluations for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_evaluations'),
             action('football_fyp_status', 'Read a selected policy training run receipt.', { policyId: fypPolicyId.optional(), runId }, 'fyp_status'),
             action('football_fyp_task_status', 'Inspect a bounded FYP build or training operation receipt.', { runId: z.string().uuid() }, 'fyp_task_status'),

@@ -7,14 +7,14 @@ import { FypPolicyPage, type FypPolicy } from './FypPolicyPage';
 type FypManifest = { available: boolean; policy: FypPolicy; policies: FypPolicy[]; execution_supported: boolean; contract: { contract_id: string; behavior: string; observations: { size: number }; actions: { continuous: number }; scene: string; trainer_kind: string } };
 type FypPreflight = {
     editor_available: boolean; editor_open: boolean; editor_playing: boolean; editor_compiling?: boolean;
-    trainer_connected: boolean; trainer_available: boolean; scene_ready: boolean; active_scene: string | null;
+    trainer_connected: boolean; agent_controlled?: boolean; trainer_available: boolean; scene_ready: boolean; active_scene: string | null;
     environment_present: boolean; episode: number | null; goals: number | null; last_outcome: string | null;
     episodes_completed: number | null; recent_episodes: { session_id: string; sequence: number; episode: number; seed: number; goals: number; elapsed_seconds: number; outcome: string; trainer_connected: boolean }[];
     environment_session_id?: string | null;
     heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean; policy_supported?: boolean;
     source_sha256: string; note: string;
 };
-type FypRun = { run_id: string; preset: string; steps: number; seed: number; state: string; source_sha256: string; exported_model?: boolean; checkpoint_number?: number; training_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string; notes?: string };
+type FypRun = { run_id: string; preset: string; steps: number; steps_completed?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; mean_reward?: number | null; mean_episode_seconds?: number | null; seed: number; state: string; source_sha256: string; exported_model?: boolean; checkpoint_number?: number; training_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string; notes?: string };
 type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; evaluation_number?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; episodes?: { episode?: number; index?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string }[]; training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
 type FypPage = 'home' | 'settings' | 'policy' | 'checkpoints' | 'checkpoint' | 'runs' | 'run' | 'evaluations' | 'evaluation' | 'environments' | 'environment';
@@ -86,14 +86,14 @@ function readSelectedPolicy() {
     } catch { return 'football-v1'; }
 }
 
-const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'waiting_for_play', 'waiting_for_trainer_connection', 'stopping_after_requested_episodes', 'cancelling', 'unknown', 'incomplete']);
+const ACTIVE_STATES = new Set(['accepted', 'pending', 'queued', 'dispatching', 'launching', 'starting', 'active', 'running', 'waiting_for_play', 'waiting_for_trainer_connection', 'stopping_after_requested_episodes', 'cancelling']);
 const HEARTBEAT_MAX_AGE_SECONDS = 15;
 const OPERATION_STORAGE_KEY = 'atlas.football.fyp.operation';
 const SELECTED_POLICY_KEY = 'atlas.football.fyp.selected-policy';
 const CHECKPOINT_REVIEW_KEY = 'atlas.football.fyp.checkpoint-reviews';
 const isActive = (state?: string) => !!state && ACTIVE_STATES.has(state.toLowerCase());
 const sceneName = (path?: string | null) => path?.split('/').pop()?.replace(/\.unity$/i, '') || 'FYP scene';
-const runName = (preset: string, number?: number) => `${number ? `T${number} · ` : ''}${preset === 'smoke' ? 'Smoke run' : preset === 'pilot_50k' ? '50k pilot' : preset}`;
+const runName = (preset: string, number?: number) => `${number ? `T${number} · ` : ''}${preset === 'smoke' ? 'Smoke run' : preset === 'pilot_50k' ? '50k pilot' : preset === 'custom' ? 'Custom-budget run' : preset}`;
 const runDate = (value?: string) => value && !Number.isNaN(Date.parse(value))
     ? new Date(value).toLocaleDateString(undefined, { dateStyle: 'medium' }) : 'Date not recorded';
 const runTime = (value?: string) => value && !Number.isNaN(Date.parse(value))
@@ -135,6 +135,10 @@ export function FypV1Experience() {
     const [evaluations, setEvaluations] = useState<FypEvaluation[]>([]);
     const [evaluationSeed, setEvaluationSeed] = useState(515);
     const [evaluationEpisodes, setEvaluationEpisodes] = useState(10);
+    const [trainingSteps, setTrainingSteps] = useState(50000);
+    const [trainingSeed, setTrainingSeed] = useState(515);
+    const [trainingTimeScale, setTrainingTimeScale] = useState(1);
+    const [evaluationTimeScale, setEvaluationTimeScale] = useState(1);
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
@@ -256,6 +260,8 @@ export function FypV1Experience() {
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || !!activeRun || !!activeEvaluation;
     const canEvaluate = !!manifest?.execution_supported && editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
+    const canStartTraining = canEvaluate && Number.isSafeInteger(trainingSteps) && trainingSteps >= 2048 && trainingSteps <= 2_000_000 &&
+        Number.isSafeInteger(trainingSeed) && trainingSeed >= 0 && trainingSeed <= 2147483647;
     const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
     const focusedRun = runs.find(run => run.run_id === (page === 'checkpoint' ? selectedCheckpointId : selectedRunId));
     const focusedEvaluation = evaluations.find(evaluation => evaluation.evaluation_id === selectedEvaluationId);
@@ -276,6 +282,7 @@ export function FypV1Experience() {
     } else if (!manifest?.available) { readinessMessage = 'FYP policy record unavailable'; readinessTone = 'warning'; }
     else if (!manifest.execution_supported) { readinessMessage = 'Documentation only · no compatible trainer'; readinessTone = 'pending'; }
     else if (!preflight.editor_open) { readinessMessage = 'Unity closed · idle'; readinessTone = 'pending'; }
+    else if (preflight.editor_playing && preflight.environment_present && preflight.agent_controlled) { readinessMessage = 'Agent control active · manual actions disabled'; readinessTone = 'active'; }
     else if (preflight.editor_playing && preflight.environment_present) { readinessMessage = 'Manual Play · keyboard controlled'; readinessTone = 'active'; }
     else if (!sceneMatches) { readinessMessage = `Open ${sceneName(manifest?.contract.scene)} in Unity`; readinessTone = 'warning'; }
     else if (preflight.editor_compiling) { readinessMessage = 'Wait for Unity compilation to finish'; readinessTone = 'warning'; }
@@ -289,18 +296,31 @@ export function FypV1Experience() {
         ? preflight?.trainer_connected ? 'Unity is connected to the active Atlas operation.'
             : preflight?.editor_playing ? 'The editor is running. Atlas is waiting for the ML-Agents connection.'
                 : 'In the FYP Unity Editor, press Play to connect the trainer.'
-        : activeRun ? `${runName(activeRun.preset, activeRun.training_number)} · seed ${activeRun.seed}`
+        : activeRun ? `${runName(activeRun.preset, activeRun.training_number)} · ${(activeRun.steps_completed ?? 0).toLocaleString()} / ${activeRun.steps.toLocaleString()} steps · seed ${activeRun.seed}`
             : activeEvaluation ? `${activeEvaluation.evaluation_number ? `E${activeEvaluation.evaluation_number} · ` : ''}Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
-                : preflight?.editor_playing ? 'The FYP scene is running without a requested Atlas operation. Keyboard controls remain active.'
+        : preflight?.editor_playing ? preflight.agent_controlled ? 'An inference agent is controlling the scene; manual movement and reset controls are disabled.' : 'The FYP scene is running without a requested Atlas operation. Keyboard controls remain active.'
                     : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
     const activeOperationName = activeRun ? 'Training run' : activeEvaluation ? 'Checkpoint evaluation'
         : activeTicket?.action === 'fyp_evaluate' ? 'Checkpoint evaluation'
             : activeTicket?.action === 'fyp_train' ? 'Training run' : activeTicket ? 'Editor operation' : '';
     const activeOperationState = activeRun?.state ?? activeEvaluation?.state ?? activeTicket?.status ?? 'requested';
+    const startTraining = async () => {
+        setBusy('train'); setError(''); setNotice('');
+        try {
+            const response = await callTool<FypTicket>('football_fyp_train', {
+                policyId: selectedPolicyId, maxSteps: trainingSteps, seed: trainingSeed, timeScale: trainingTimeScale,
+            });
+            setTicket(response);
+            setNotice('Training request accepted. Home will show progress while Unity runs the learner.');
+            navigate({ page: 'home', checkpointId: null });
+            await refresh();
+        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { setBusy(''); }
+    };
     const evaluateRun = async (runId: string) => {
         setBusy(`evaluate:${runId}`); setError(''); setNotice('');
         try {
-            const response = await callTool<FypTicket>('football_fyp_evaluate', { policyId: selectedPolicyId, runId, episodes: evaluationEpisodes, seed: evaluationSeed });
+            const response = await callTool<FypTicket>('football_fyp_evaluate', { policyId: selectedPolicyId, runId, episodes: evaluationEpisodes, seed: evaluationSeed, timeScale: evaluationTimeScale });
             setTicket(response);
             setNotice('Evaluation request accepted. Home will show the operation status while Unity connects.');
             navigate({ page: 'home', checkpointId: null });
@@ -478,6 +498,55 @@ export function FypV1Experience() {
             </div>}
         </section>}
 
+        {page === 'home' && activeRun && <button className="fyp-active-run-card" type="button"
+            onClick={() => navigate({ page: 'run', checkpointId: null, runId: activeRun.run_id, returnPage: 'runs' })}>
+            <span className="fyp-operation-indicator" aria-hidden="true" />
+            <span className="fyp-active-run-content">
+                <strong>Training run · {activeRun.state}</strong>
+                <span>{activeRun.steps_completed?.toLocaleString() ?? 0} / {activeRun.steps.toLocaleString()} steps · {activeRun.episodes_completed ?? 0} episodes · seed {activeRun.seed}</span>
+            </span>
+            <span aria-hidden="true">Follow run →</span>
+        </button>}
+        {page === 'home' && !activeRun && activeEvaluation && <button className="fyp-active-run-card" type="button"
+            onClick={() => navigate({ page: 'evaluation', checkpointId: null, runId: activeEvaluation.training_run_id,
+                evaluationId: activeEvaluation.evaluation_id, returnPage: 'runs' })}>
+            <span className="fyp-operation-indicator" aria-hidden="true" />
+            <span className="fyp-active-run-content">
+                <strong>Checkpoint evaluation · {activeEvaluation.state}</strong>
+                <span>{activeEvaluation.episodes_completed ?? 0} / {activeEvaluation.requested_episodes} episodes · {activeEvaluation.goals_scored ?? 0} goals · seed {activeEvaluation.seed ?? '—'}</span>
+            </span>
+            <span aria-hidden="true">Follow evaluation →</span>
+        </button>}
+
+        {page === 'home' && <section className="fg-panel fyp-training-launcher" aria-labelledby="fyp-training-launcher-title">
+            <div className="fg-panel-title"><h2 id="fyp-training-launcher-title">Start training</h2><span>MA-POCA · {activePolicy?.display_name ?? selectedPolicyId}</span></div>
+            <p>Choose the maximum number of trainer steps for this run. The run stops when it reaches this budget.</p>
+            <div className="fyp-training-settings">
+                <label className="fyp-field">Step budget
+                    <input aria-label="FYP training step budget" type="number" min={2048} max={2_000_000} step={1000} value={trainingSteps}
+                        onChange={event => setTrainingSteps(event.target.value === '' ? 0 : Number(event.target.value))} />
+                    <small>2,048–2,000,000 steps</small>
+                </label>
+                <label className="fyp-field">Seed
+                    <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={trainingSeed}
+                        onChange={event => setTrainingSeed(event.target.value === '' ? -1 : Number(event.target.value))} />
+                </label>
+                <label className="fyp-field">Simulation speed
+                    <select aria-label="FYP training simulation speed" value={trainingTimeScale}
+                        onChange={event => setTrainingTimeScale(Number(event.target.value))}>
+                        {[1, 2, 3, 5].map(value => <option key={value} value={value}>{value}×</option>)}
+                    </select>
+                    <small>Higher speed is experimental; verify outcomes with the same seed.</small>
+                </label>
+                <button className="fg-button primary" type="button" disabled={!canStartTraining} onClick={() => void startTraining()}>
+                    {busy === 'train' ? 'Starting…' : 'Start training'}
+                </button>
+            </div>
+            {!canStartTraining && <p className="fyp-blocker" role="status">{operationActive
+                ? `${activeOperationName} is using the Unity Editor slot.`
+                : !editorReady ? readinessMessage : 'Enter a step budget from 2,048 to 2,000,000 and a valid seed.'}</p>}
+        </section>}
+
         {page === 'home' && <section className="fyp-home-grid" aria-label="FYP sections">
             <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'policy', checkpointId: null })}>
                 <span className="fyp-home-card-heading"><strong>Policy plan</strong><span aria-hidden="true">→</span></span>
@@ -574,6 +643,7 @@ export function FypV1Experience() {
                     onSeedChange: value => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(value || 0)))),
                     canStart: canEvaluate, starting: busy === `evaluate:${focusedRun.run_id}`,
                     blocker: operationActive ? `${activeOperationName} is using the Unity Editor slot.` : readinessMessage,
+                    timeScale: evaluationTimeScale, onTimeScaleChange: setEvaluationTimeScale,
                     operationActive, onViewHome: () => navigate({ page: 'home', checkpointId: null }),
                     onStart: () => void evaluateRun(focusedRun.run_id) }} />
         </>}
@@ -598,6 +668,7 @@ export function FypV1Experience() {
                 onSeedChange: value => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(value || 0)))),
                 canStart: canEvaluate, starting: busy === `evaluate:${selectedRunId}`,
                 blocker: operationActive ? `${activeOperationName} is using the Unity Editor slot.` : readinessMessage,
+                timeScale: evaluationTimeScale, onTimeScaleChange: setEvaluationTimeScale,
                 operationActive, onViewHome: () => navigate({ page: 'home', checkpointId: null }),
                 onStart: () => selectedRunId && void evaluateRun(selectedRunId) }} />}
         {page === 'evaluation' && <FypV1Evidence key={`evaluation:${selectedEvaluationId}`} runs={runs} evaluations={evaluations}
