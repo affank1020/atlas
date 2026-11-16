@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Workspace } from '../packages/protocol/src/workspace.js';
 import { fypManifest, fypOperation } from '../apps/node/src/capabilities/football-fyp.js';
+import { footballControl } from '../apps/node/src/capabilities/football.js';
 import { workspaceOperationSchemas } from '../packages/protocol/src/workspace-operations.js';
 
 test('successor FYP contract is a separate 25/8 ABI and not a legacy generalist', async () => {
@@ -50,6 +51,15 @@ test('successor FYP contract is a separate 25/8 ABI and not a legacy generalist'
             'evaluation-diagnostics', '--evaluation-id', diagnosticRequest.evaluationId,
             '--episode-index', '1', '--observation-index', '5', '--policy-id', 'football-v1',
         ] });
+        // Exercise the outer Node dispatcher too: nonzero saved-episode indexes
+        // must not enter the legacy one-scenario inference replay validation.
+        for (const episode of [0, 1, 7, 99]) {
+            assert.deepEqual(await footballControl(ws, { ...diagnosticRequest, replayEpisode: episode }), { args: [
+                'evaluation-diagnostics', '--evaluation-id', diagnosticRequest.evaluationId,
+                '--episode-index', String(episode), '--observation-index', '5', '--policy-id', 'football-v1',
+            ] });
+        }
+        await assert.rejects(footballControl(ws, { ...diagnosticRequest, replayEpisode: 100 }), (err: any) => err.code === 'INVALID_ARGUMENT');
         await assert.rejects(fypOperation(ws, { ...diagnosticRequest, replayEpisode: 100 }), (err: any) => err.code === 'INVALID_ARGUMENT');
         await assert.rejects(fypOperation(ws, { ...diagnosticRequest, evaluationId: 'eval_legacy' }), (err: any) => err.code === 'INVALID_ARGUMENT');
         const invalidNoteRequest = workspaceOperationSchemas.football_control.parse({
