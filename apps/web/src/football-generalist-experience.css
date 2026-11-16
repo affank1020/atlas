@@ -242,6 +242,8 @@
 .fyp-episode-table>div { display:grid; grid-template-columns:repeat(5,minmax(90px,1fr)); gap:10px; padding:10px 12px; border-bottom:1px solid var(--border,#384152); font-size:12px; }
 .fyp-episode-table>div:last-child { border-bottom:0; }
 .fyp-episode-table .fyp-episode-head { position:sticky; top:0; background:var(--surface-secondary,#272f39); color:var(--text-muted,#9ba5b5); }
+.fyp-training-episode-table>div { grid-template-columns:repeat(8,minmax(110px,1fr)); }
+.fyp-training-reward-summary { margin-top:0; }
 .fyp-training-panel>summary { display:flex; justify-content:space-between; align-items:center; gap:12px; cursor:pointer; }
 .fyp-training-panel>summary h2 { margin:0; font-size:15px; }
 .fyp-training-panel>summary span { color:var(--text-muted,#9ba5b5); font-size:12px; }
