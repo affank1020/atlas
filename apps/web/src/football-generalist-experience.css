@@ -105,11 +105,6 @@
 .fyp-active-run-content { display:grid; flex:1; gap:5px; min-width:0; }
 .fyp-active-run-content>span,.fyp-active-run-card>span:last-child { color:var(--text-muted,#9ba5b5); font-size:12px; }
 .fyp-active-run-card>span:last-child { color:var(--accent,#9cb5f3); white-space:nowrap; }
-.fyp-training-launcher>p { margin:0; color:var(--text-muted,#9ba5b5); font-size:12px; }
-.fyp-training-settings { display:flex; align-items:end; flex-wrap:wrap; gap:8px 16px; }
-.fyp-training-settings .fyp-field { margin:10px 0; }
-.fyp-training-settings .fyp-field small { color:var(--text-muted,#9ba5b5); font-weight:400; }
-.fyp-training-settings .fg-button { margin-bottom:10px; }
 .fyp-step-progress { margin:14px 0 4px; }
 .fyp-step-progress-label { display:flex; justify-content:space-between; gap:12px; color:var(--text-secondary,#bac3d0); font-size:12px; font-variant-numeric:tabular-nums; }
 .fyp-step-progress progress { width:100%; height:8px; margin-top:8px; accent-color:var(--accent,#9cb5f3); }

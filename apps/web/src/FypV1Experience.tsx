@@ -135,9 +135,6 @@ export function FypV1Experience() {
     const [evaluations, setEvaluations] = useState<FypEvaluation[]>([]);
     const [evaluationSeed, setEvaluationSeed] = useState(515);
     const [evaluationEpisodes, setEvaluationEpisodes] = useState(10);
-    const [trainingSteps, setTrainingSteps] = useState(50000);
-    const [trainingSeed, setTrainingSeed] = useState(515);
-    const [trainingTimeScale, setTrainingTimeScale] = useState(1);
     const [evaluationTimeScale, setEvaluationTimeScale] = useState(1);
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
@@ -260,8 +257,6 @@ export function FypV1Experience() {
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || !!activeRun || !!activeEvaluation;
     const canEvaluate = !!manifest?.execution_supported && editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
-    const canStartTraining = canEvaluate && Number.isSafeInteger(trainingSteps) && trainingSteps >= 2048 && trainingSteps <= 2_000_000 &&
-        Number.isSafeInteger(trainingSeed) && trainingSeed >= 0 && trainingSeed <= 2147483647;
     const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
     const focusedRun = runs.find(run => run.run_id === (page === 'checkpoint' ? selectedCheckpointId : selectedRunId));
     const focusedEvaluation = evaluations.find(evaluation => evaluation.evaluation_id === selectedEvaluationId);
@@ -299,24 +294,11 @@ export function FypV1Experience() {
         : activeRun ? `${runName(activeRun.preset, activeRun.training_number)} · ${(activeRun.steps_completed ?? 0).toLocaleString()} / ${activeRun.steps.toLocaleString()} steps · seed ${activeRun.seed}`
             : activeEvaluation ? `${activeEvaluation.evaluation_number ? `E${activeEvaluation.evaluation_number} · ` : ''}Checkpoint evaluation · ${activeEvaluation.episodes_completed ?? 0}/${activeEvaluation.requested_episodes} episodes`
         : preflight?.editor_playing ? preflight.agent_controlled ? 'An inference agent is controlling the scene; manual movement and reset controls are disabled.' : 'The FYP scene is running without a requested Atlas operation. Keyboard controls remain active.'
-                    : 'OpenGoalClose is the current FYP scene. Atlas starts the learner; Unity connects when you press Play.';
+                    : 'OpenGoalClose is the selected FYP scene. Unity is ready for an external learner or an Atlas evaluation.';
     const activeOperationName = activeRun ? 'Training run' : activeEvaluation ? 'Checkpoint evaluation'
         : activeTicket?.action === 'fyp_evaluate' ? 'Checkpoint evaluation'
             : activeTicket?.action === 'fyp_train' ? 'Training run' : activeTicket ? 'Editor operation' : '';
     const activeOperationState = activeRun?.state ?? activeEvaluation?.state ?? activeTicket?.status ?? 'requested';
-    const startTraining = async () => {
-        setBusy('train'); setError(''); setNotice('');
-        try {
-            const response = await callTool<FypTicket>('football_fyp_train', {
-                policyId: selectedPolicyId, maxSteps: trainingSteps, seed: trainingSeed, timeScale: trainingTimeScale,
-            });
-            setTicket(response);
-            setNotice('Training request accepted. Home will show progress while Unity runs the learner.');
-            navigate({ page: 'home', checkpointId: null });
-            await refresh();
-        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-        finally { setBusy(''); }
-    };
     const evaluateRun = async (runId: string) => {
         setBusy(`evaluate:${runId}`); setError(''); setNotice('');
         try {
@@ -517,35 +499,6 @@ export function FypV1Experience() {
             </span>
             <span aria-hidden="true">Follow evaluation →</span>
         </button>}
-
-        {page === 'home' && <section className="fg-panel fyp-training-launcher" aria-labelledby="fyp-training-launcher-title">
-            <div className="fg-panel-title"><h2 id="fyp-training-launcher-title">Start training</h2><span>MA-POCA · {activePolicy?.display_name ?? selectedPolicyId}</span></div>
-            <p>Choose the maximum number of trainer steps for this run. The run stops when it reaches this budget.</p>
-            <div className="fyp-training-settings">
-                <label className="fyp-field">Step budget
-                    <input aria-label="FYP training step budget" type="number" min={2048} max={2_000_000} step={1000} value={trainingSteps}
-                        onChange={event => setTrainingSteps(event.target.value === '' ? 0 : Number(event.target.value))} />
-                    <small>2,048–2,000,000 steps</small>
-                </label>
-                <label className="fyp-field">Seed
-                    <input aria-label="FYP training seed" type="number" min={0} max={2147483647} step={1} value={trainingSeed}
-                        onChange={event => setTrainingSeed(event.target.value === '' ? -1 : Number(event.target.value))} />
-                </label>
-                <label className="fyp-field">Simulation speed
-                    <select aria-label="FYP training simulation speed" value={trainingTimeScale}
-                        onChange={event => setTrainingTimeScale(Number(event.target.value))}>
-                        {[1, 2, 3, 5].map(value => <option key={value} value={value}>{value}×</option>)}
-                    </select>
-                    <small>Higher speed is experimental; verify outcomes with the same seed.</small>
-                </label>
-                <button className="fg-button primary" type="button" disabled={!canStartTraining} onClick={() => void startTraining()}>
-                    {busy === 'train' ? 'Starting…' : 'Start training'}
-                </button>
-            </div>
-            {!canStartTraining && <p className="fyp-blocker" role="status">{operationActive
-                ? `${activeOperationName} is using the Unity Editor slot.`
-                : !editorReady ? readinessMessage : 'Enter a step budget from 2,048 to 2,000,000 and a valid seed.'}</p>}
-        </section>}
 
         {page === 'home' && <section className="fyp-home-grid" aria-label="FYP sections">
             <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'policy', checkpointId: null })}>

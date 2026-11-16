@@ -78,6 +78,8 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
     const [error, setError] = useState('');
     const [updatedAt, setUpdatedAt] = useState('');
     const [runMetrics, setRunMetrics] = useState<FypRunMetrics | null>(null);
+    const [runMetricsLoading, setRunMetricsLoading] = useState(false);
+    const [runMetricsError, setRunMetricsError] = useState('');
     const [episodeOffset, setEpisodeOffset] = useState(0);
     const [detail, setDetail] = useState<Detail | null>(() => focus?.kind === 'run' ? { kind: 'run', id: focus.runId }
         : focus?.kind === 'evaluation' ? { kind: 'evaluation', id: focus.evaluationId } : null);
@@ -105,16 +107,22 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
     const selectedRun = detail?.kind === 'run' ? runs.find(run => run.run_id === detail.id) : undefined;
     const selectedEvaluation = detail?.kind === 'evaluation' ? evaluations.find(item => item.evaluation_id === detail.id) : undefined;
     useEffect(() => {
-        if (detail?.kind !== 'run') { setRunMetrics(null); setEpisodeOffset(0); return; }
+        if (detail?.kind !== 'run') { setRunMetrics(null); setRunMetricsError(''); setRunMetricsLoading(false); setEpisodeOffset(0); return; }
         let mounted = true;
+        setRunMetrics(null);
+        setRunMetricsError('');
+        setRunMetricsLoading(true);
         const load = async () => {
             try {
                 const data = await callTool<FypRunMetrics>('football_fyp_run_metrics', {
                     runId: detail.id, episodeOffset, episodeLimit: 50,
                 });
-                if (mounted) setRunMetrics(data);
+                if (mounted) { setRunMetrics(data); setRunMetricsError(''); setRunMetricsLoading(false); }
             } catch (failure) {
-                if (mounted) setError(failure instanceof Error ? failure.message : String(failure));
+                if (mounted) {
+                    setRunMetricsError(failure instanceof Error ? failure.message : String(failure));
+                    setRunMetricsLoading(false);
+                }
             }
         };
         void load();
@@ -166,12 +174,22 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <h3>Reward during training</h3>
                 <p className="fg-muted">MA-POCA mean episode reward and mean group reward from trainer summaries, plotted against trainer steps.</p>
                 {runMetrics?.training_metrics.length ? <RewardChart points={runMetrics.training_metrics} />
-                    : <p className="fg-muted">Waiting for trainer reward summaries.</p>}
+                    : runMetricsError ? <p className="fg-error">Trainer reward summaries could not be loaded: {runMetricsError}</p>
+                        : runMetricsLoading ? <p className="fg-muted">Loading trainer reward summaries…</p>
+                            : <p className="fg-muted">No trainer reward summaries have been recorded for this run.</p>}
                 <div className="fyp-chart-legend"><span>Mean reward</span><span>Mean group reward</span></div>
             </section>
             <section aria-label="Episode reward breakdowns">
                 <h3>Episode reward breakdowns</h3>
-                {!runMetrics?.episode_count ? <p className="fg-muted">Episode outcomes will appear here as they finish.</p> : <>
+                {!runMetrics?.episode_count ? <p className={runMetricsError ? 'fg-error' : 'fg-muted'}>
+                    {runMetricsError ? `Episode breakdowns could not be loaded: ${runMetricsError}`
+                        : runMetricsLoading ? 'Loading episode outcomes…'
+                            : (selectedRun.episodes_completed ?? 0) > 0
+                                ? `This run records ${selectedRun.episodes_completed} completed episodes, but its episode breakdown is empty.`
+                                : 'No episode outcomes have been recorded yet.'}
+                </p> : runMetrics.episodes.length === 0 ? <p className="fg-error">
+                    Atlas reports {runMetrics.episode_count} completed episodes, but returned no episode breakdown records.
+                </p> : <>
                     <div className="fyp-episode-breakdown-list">
                         {runMetrics.episodes.map((episode, index) => <details className="fyp-episode-breakdown" key={`${episode.episode ?? episode.index ?? index}-${episode.seed}`}>
                             <summary><strong>Episode {episode.episode ?? episode.index ?? episodeOffset + index + 1}</strong>
