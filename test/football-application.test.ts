@@ -175,6 +175,7 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
         ['football_fyp_checkpoint_note', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', notes: 'Inspect the close-range evaluation.' }, 'fyp_checkpoint_note'],
         ['football_fyp_environments', {}, 'fyp_environments'],
         ['football_fyp_evaluations', {}, 'fyp_evaluations'],
+        ['football_fyp_evaluation_diagnostics', { evaluationId: 'fyp-eval-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', replayEpisode: 2, offset: 3 }, 'fyp_evaluation_diagnostics'],
         ['football_fyp_evaluate', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', episodes: 10, seed: 64 }, 'fyp_evaluate'],
     ] as const;
     for (const [tool, input, action] of fypActions) {

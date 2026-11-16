@@ -42,6 +42,16 @@ test('successor FYP contract is a separate 25/8 ABI and not a legacy generalist'
             workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11', action: 'fyp_environments',
         });
         assert.deepEqual(await fypOperation(ws, environmentsRequest), { args: ['environments'] });
+        const diagnosticRequest = workspaceOperationSchemas.football_control.parse({
+            workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11', action: 'fyp_evaluation_diagnostics',
+            evaluationId: 'fyp-eval-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', replayEpisode: 1, offset: 5, policyId: 'football-v1',
+        });
+        assert.deepEqual(await fypOperation(ws, diagnosticRequest), { args: [
+            'evaluation-diagnostics', '--evaluation-id', diagnosticRequest.evaluationId,
+            '--episode-index', '1', '--observation-index', '5', '--policy-id', 'football-v1',
+        ] });
+        await assert.rejects(fypOperation(ws, { ...diagnosticRequest, replayEpisode: 100 }), (err: any) => err.code === 'INVALID_ARGUMENT');
+        await assert.rejects(fypOperation(ws, { ...diagnosticRequest, evaluationId: 'eval_legacy' }), (err: any) => err.code === 'INVALID_ARGUMENT');
         const invalidNoteRequest = workspaceOperationSchemas.football_control.parse({
             workspaceId: '861c6a57-2259-400a-9d03-20bc72942b11', action: 'fyp_checkpoint_note',
             runId: 'not-an-fyp-run', notes: 'no write expected',

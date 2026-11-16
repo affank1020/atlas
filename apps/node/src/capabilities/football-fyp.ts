@@ -202,7 +202,9 @@ async function python(workspace: Workspace, argv: string[]): Promise<any> {
     const file = bridge(workspace);
     const { stdout } = await execFileAsync('python3', [file, ...argv], {
         cwd: workspace.rootPath, env: cleanEnv(), shell: false,
-        maxBuffer: 512 * 1024, timeout: 90_000,
+        // Evaluation history includes bounded episode summaries and policy provenance.
+        // Keep room for repeated 100-episode evaluations; raw traces use a separate read.
+        maxBuffer: (argv[0] === 'evaluations' ? 8 * 1024 : 512) * 1024, timeout: 90_000,
     });
     try { return JSON.parse(stdout); }
     catch { throw new AtlasError('FYP driver returned invalid JSON.', 'DRIVER_UNAVAILABLE'); }
@@ -302,6 +304,17 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId) || x.notes === undefined)
             throw new AtlasError('FYP checkpoint notes require a valid run ID and notes text.', 'INVALID_ARGUMENT');
         return python(workspace, ['checkpoint-note', '--run-id', x.runId, ...policyArgs, '--notes=' + x.notes]);
+    }
+    if (x.action === 'fyp_evaluation_diagnostics') {
+        if (!x.evaluationId || !/^fyp-eval-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(x.evaluationId))
+            throw new AtlasError('Valid FYP evaluation ID required.', 'INVALID_ARGUMENT');
+        const episode = x.replayEpisode ?? 0;
+        const observation = x.offset ?? 0;
+        if (!Number.isInteger(episode) || episode < 0 || episode > 99 ||
+            !Number.isInteger(observation) || observation < 0 || observation > 10000)
+            throw new AtlasError('Invalid FYP diagnostic sample selection.', 'INVALID_ARGUMENT');
+        return python(workspace, ['evaluation-diagnostics', '--evaluation-id', x.evaluationId,
+            '--episode-index', String(episode), '--observation-index', String(observation), ...policyArgs]);
     }
     if (x.action === 'fyp_evaluations') return python(workspace, ['evaluations', ...policyArgs]);
     if (x.action === 'fyp_environments') return python(workspace, ['environments']);

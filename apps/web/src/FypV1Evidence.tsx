@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { callTool } from './api';
+import { FypEvaluationDiagnostics, type EvaluationDiagnostics } from './FypEvaluationDiagnostics';
 import { FypEnvironmentCard, type FypEnvironment } from './FypEnvironmentCatalog';
 
 type Episode = { index?: number; episode?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string; trainer_connected?: boolean;
@@ -22,6 +23,7 @@ type FypRun = {
 type FypEvaluation = {
     evaluation_id: string; training_run_id: string; state: string; requested_episodes: number;
     policy_id?: string; policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
+    diagnostics?: EvaluationDiagnostics;
     evaluation_number?: number;
     episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; time_scale?: number;
     training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment;
@@ -247,6 +249,8 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
             {selectedEvaluation.policy_snapshot && <details className="fyp-policy-raw"><summary>Plan snapshot used by this evaluation</summary>
                 <pre>{JSON.stringify(selectedEvaluation.policy_snapshot, null, 2)}</pre></details>}
             {selectedEvaluation.error && <p className="fg-error">{selectedEvaluation.error}</p>}
+            <FypEvaluationDiagnostics key={selectedEvaluation.evaluation_id} evaluationId={selectedEvaluation.evaluation_id}
+                policyId={selectedEvaluation.policy_id} diagnostics={selectedEvaluation.diagnostics} />
             <h3>Recorded episodes</h3>
             {!selectedEvaluation.episodes?.length ? <p className="fg-muted">No per-episode records were saved.</p> : <div className="fyp-episode-breakdown-list" aria-label="Evaluation episode reward breakdowns">
                 {selectedEvaluation.episodes.map((episode, index) => <details className="fyp-episode-breakdown" key={episode.index ?? episode.episode ?? index}>
