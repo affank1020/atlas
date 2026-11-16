@@ -17,7 +17,9 @@ export type FypPolicy = {
     trainer: { algorithm: string; config_path: string; python_package_version: string; settings: Record<string, unknown> };
     runtime: { unity_version: string; ml_agents_unity_version: string; player_build_required: boolean; build_requirements?: string[] };
     artifacts: { model_format: string; model_filename: string; behavior_name: string; checkpoint_format: string; notes?: string };
-    curriculum: { stage: number; environment_id: string; environment_version: string; definition_sha256?: string; player_settings_sha256?: string; scene_path: string; purpose: string; sampling?: Record<string, unknown> }[];
+    curriculum: { stage: number; stage_label?: string; status?: 'implemented' | 'proposed'; display_name?: string;
+        environment_id: string; environment_version?: string; definition_sha256?: string; player_settings_sha256?: string;
+        scene_path?: string; purpose: string; design?: Record<string, string | string[]>; sampling?: Record<string, unknown> }[];
     player_settings?: { source_prefab: string; snapshot_sha256: string; settings: Record<string, unknown> };
     notes?: string;
 };
@@ -135,16 +137,25 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
             <div className="fg-panel-title"><h2>Environment curriculum</h2><span>{policy.curriculum.length} stage{policy.curriculum.length === 1 ? '' : 's'}</span></div>
             {!policy.curriculum.length ? <p className="fg-muted">No environment stages are defined yet.</p> : <div className="fyp-curriculum-list">
                 {policy.curriculum.map(stage => {
+                    const stageLabel = stage.stage_label ?? stage.stage;
+                    if (stage.status === 'proposed') return <article className="fyp-environment-card fyp-environment-card-static" key={`${stage.stage}-${stage.environment_id}`}>
+                        <span className="fyp-environment-card-heading"><strong>{stage.display_name ?? stage.environment_id}</strong></span>
+                        <span className="fyp-environment-difficulty">Stage {stageLabel} · Proposed</span>
+                        <p className="fyp-environment-purpose">{stage.purpose}</p>
+                        <p className="fyp-environment-card-meta">Draft drill concept · scene and settings not assigned</p>
+                        <Record label="Environment ID" value={stage.environment_id} />
+                        <CurriculumDesign design={stage.design} />
+                    </article>;
                     const current = environments.find(item => item.environment_id === stage.environment_id);
                     const matches = !!current && !!stage.definition_sha256 &&
                         current.version === stage.environment_version && current.definition_sha256 === stage.definition_sha256;
                     const stageEnvironment: FypEnvironment = {
                         environment_id: stage.environment_id,
-                        name: current?.name ?? stage.environment_id,
-                        version: current?.version ?? stage.environment_version,
-                        difficulty: `Stage ${stage.stage}`,
+                        name: current?.name ?? stage.display_name ?? stage.environment_id,
+                        version: current?.version ?? stage.environment_version ?? 'Not recorded',
+                        difficulty: `Stage ${stageLabel}`,
                         purpose: stage.purpose,
-                        scene_path: stage.scene_path,
+                        scene_path: stage.scene_path ?? '',
                         definition_sha256: current?.definition_sha256 ?? stage.definition_sha256 ?? '',
                         player_settings_sha256: current?.player_settings_sha256,
                         player_settings: current?.player_settings ?? [],
@@ -155,12 +166,13 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
                         ? `Plan v${stage.environment_version} · Unity v${current.version} · ${matches ? 'matched' : 'current snapshot differs'}`
                         : `Plan v${stage.environment_version} · no current Unity scene`;
                     return <FypEnvironmentCard key={`${stage.stage}-${stage.environment_id}`}
-                        environment={stageEnvironment} meta={`Stage ${stage.stage} · ${cardMeta}`}>
+                        environment={stageEnvironment} meta={`Stage ${stageLabel} · ${cardMeta}`}>
                         <div className="fyp-record-grid fyp-policy-environment-reference">
                             <Record label="Environment ID" value={stage.environment_id} />
                             <Record label="Scene" value={stage.scene_path} />
                             <Record label="Pinned definition SHA-256" value={stage.definition_sha256} />
                         </div>
+                        <CurriculumDesign design={stage.design} />
                         {stage.sampling && <pre>{JSON.stringify(stage.sampling, null, 2)}</pre>}
                         {current ? <details className="fyp-policy-environment-snapshot">
                             <summary>View current Unity settings and scene schema · {current.settings.length} environment settings · {(current.player_settings ?? []).length} player settings · {current.modifiers.length} modifiers</summary>
@@ -205,6 +217,14 @@ export function FypPolicyPage({ policy, environments = [] }: { policy?: FypPolic
             </div>}
         </section>
     </section>;
+}
+
+function CurriculumDesign({ design }: { design?: Record<string, string | string[]> }) {
+    if (!design) return null;
+    return <div>{Object.entries(design).map(([key, value]) => <section key={key}>
+        <h3>{humanize(key)}</h3>
+        {Array.isArray(value) ? <ul>{value.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>{value}</p>}
+    </section>)}</div>;
 }
 
 function humanize(value: string) {
