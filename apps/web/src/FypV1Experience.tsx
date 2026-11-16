@@ -14,7 +14,7 @@ type FypPreflight = {
     heartbeat_age_seconds: number | null; verified_build: boolean; ready_to_train: boolean; policy_supported?: boolean;
     source_sha256: string; note: string;
 };
-type FypRun = { run_id: string; preset: string; steps: number; steps_completed?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; mean_reward?: number | null; mean_episode_seconds?: number | null; seed: number; state: string; source_sha256: string; exported_model?: boolean; checkpoint_number?: number; training_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string; notes?: string };
+type FypRun = { run_id: string; preset: string; steps: number; steps_completed?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; mean_reward?: number | null; mean_episode_seconds?: number | null; seed: number; state: string; source_sha256: string; exported_model?: boolean; checkpoint_exported?: boolean; checkpoint_number?: number; training_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null; environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string; notes?: string };
 type FypEvaluation = { evaluation_id: string; training_run_id: string; state: string; requested_episodes: number; evaluation_number?: number; episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; episodes?: { episode?: number; index?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string }[]; training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment; started_at?: string; finished_at?: string; error?: string };
 type FypTicket = { accepted?: boolean; ticket: string; run_id?: string | null; action: string; status: string; result?: unknown; error?: string; note?: string };
 type FypPage = 'home' | 'settings' | 'policy' | 'checkpoints' | 'checkpoint' | 'runs' | 'run' | 'evaluations' | 'evaluation' | 'environments' | 'environment';
@@ -257,7 +257,8 @@ export function FypV1Experience() {
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || !!activeRun || !!activeEvaluation;
     const canEvaluate = !!manifest?.execution_supported && editorReady && !activeTicket && !activeRun && !activeEvaluation && !busy;
-    const completedRuns = useMemo(() => runs.filter(run => run.state === 'completed' && run.exported_model === true), [runs]);
+    const availableCheckpoints = useMemo(() => runs.filter(run => run.exported_model === true &&
+        (run.state === 'completed' || (run.state === 'interrupted' && run.checkpoint_exported === true))), [runs]);
     const focusedRun = runs.find(run => run.run_id === (page === 'checkpoint' ? selectedCheckpointId : selectedRunId));
     const focusedEvaluation = evaluations.find(evaluation => evaluation.evaluation_id === selectedEvaluationId);
     const focusedRunEvaluations = focusedRun ? evaluations.filter(evaluation => evaluation.training_run_id === focusedRun.run_id) : [];
@@ -446,7 +447,7 @@ export function FypV1Experience() {
                         </> : <span className="fyp-checkpoint-headline-date">No evaluation recorded yet</span>}
                     </h1>
                 </> : <h1>{pageTitle}</h1>}
-                {page === 'checkpoints' && <p className="fyp-checkpoint-count">{completedRuns.length} checkpoint{completedRuns.length === 1 ? '' : 's'}</p>}
+                {page === 'checkpoints' && <p className="fyp-checkpoint-count">{availableCheckpoints.length} checkpoint{availableCheckpoints.length === 1 ? '' : 's'}</p>}
                 {page === 'runs' && <p className="fyp-checkpoint-count">{runs.length} run{runs.length === 1 ? '' : 's'}</p>}
                 {page === 'environments' && <p className="fyp-checkpoint-count">{environmentCount === undefined ? 'Loading…' : environmentCount === null ? 'Unavailable' : `${environmentCount} environment${environmentCount === 1 ? '' : 's'}`}</p>}
                 {page === 'home' && <button className="fyp-settings-link" type="button" onClick={() => navigate({ page: 'settings', checkpointId: null })} aria-label="Open settings">Settings</button>}
@@ -507,7 +508,7 @@ export function FypV1Experience() {
             </button>
             <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'checkpoints', checkpointId: null })}>
                 <span className="fyp-home-card-heading"><strong>Policy Checkpoints</strong><span aria-hidden="true">→</span></span>
-                <span>{completedRuns.length} available</span>
+                <span>{availableCheckpoints.length} available</span>
             </button>
             <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'runs', checkpointId: null })}>
                 <span className="fyp-home-card-heading"><strong>Recent Runs</strong><span aria-hidden="true">→</span></span>
@@ -542,8 +543,8 @@ export function FypV1Experience() {
         {page === 'policy' && <FypPolicyPage policy={activePolicy} environments={environmentRecords} />}
 
         {page === 'checkpoints' && <section className="fyp-checkpoint-page" aria-label="Policy checkpoints">
-            {completedRuns.length === 0 ? <p className="fg-muted">Completed training runs with an exported checkpoint will appear here.</p> :
-                <div className="fyp-checkpoint-grid">{completedRuns.map(run => {
+            {availableCheckpoints.length === 0 ? <p className="fg-muted">Runs with an exported checkpoint will appear here.</p> :
+                <div className="fyp-checkpoint-grid">{availableCheckpoints.map(run => {
                     const review = checkpointReviews[run.run_id];
                     const checkpointDate = checkpointRecordedAt(run);
                     const reviewLabel = review === 'keep' ? 'Kept' : review === 'discard' ? 'Discarded' : 'Unreviewed';
