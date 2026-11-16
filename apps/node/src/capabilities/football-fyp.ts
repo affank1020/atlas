@@ -202,7 +202,9 @@ async function python(workspace: Workspace, argv: string[]): Promise<any> {
     const file = bridge(workspace);
     const { stdout } = await execFileAsync('python3', [file, ...argv], {
         cwd: workspace.rootPath, env: cleanEnv(), shell: false,
-        maxBuffer: 512 * 1024, timeout: 90_000,
+        // Evaluation history includes bounded episode summaries and policy provenance.
+        // Keep room for repeated 100-episode evaluations; raw traces use a separate read.
+        maxBuffer: (argv[0] === 'evaluations' ? 8 * 1024 : 512) * 1024, timeout: 90_000,
     });
     try { return JSON.parse(stdout); }
     catch { throw new AtlasError('FYP driver returned invalid JSON.', 'DRIVER_UNAVAILABLE'); }
