@@ -175,7 +175,6 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
         ['football_fyp_checkpoint_note', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', notes: 'Inspect the close-range evaluation.' }, 'fyp_checkpoint_note'],
         ['football_fyp_environments', {}, 'fyp_environments'],
         ['football_fyp_evaluations', {}, 'fyp_evaluations'],
-        ['football_fyp_train', { preset: 'smoke', maxSteps: 2_048, seed: 63 }, 'fyp_train'],
         ['football_fyp_evaluate', { runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', episodes: 10, seed: 64 }, 'fyp_evaluate'],
     ] as const;
     for (const [tool, input, action] of fypActions) {
@@ -193,13 +192,8 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
     await assert.rejects(apps.invoke('football_fyp_checkpoint_note', {
         runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', notes: 'x'.repeat(20_001),
     }));
-    await assert.rejects(apps.invoke('football_fyp_train', {
-        maxSteps: 2_047, seed: 63,
-    }));
-    await apps.invoke('football_fyp_train', {
-        maxSteps: 2_048, seed: 63, command: '/bin/sh',
-    });
-    assert.equal(Object.hasOwn(invocations.at(-1)[2], 'command'), false);
+    assert.equal(apps.hasTool('football_fyp_train'), false);
+    await assert.rejects(apps.invoke('football_fyp_train', { maxSteps: 2_048, seed: 63 }));
 });
 
 test('FYP operations refuse to silently fall back to the legacy Unity workspace', async () => {
