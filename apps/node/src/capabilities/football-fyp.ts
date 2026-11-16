@@ -303,6 +303,17 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
             throw new AtlasError('FYP checkpoint notes require a valid run ID and notes text.', 'INVALID_ARGUMENT');
         return python(workspace, ['checkpoint-note', '--run-id', x.runId, ...policyArgs, '--notes=' + x.notes]);
     }
+    if (x.action === 'fyp_evaluation_diagnostics') {
+        if (!x.evaluationId || !/^fyp-eval-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(x.evaluationId))
+            throw new AtlasError('Valid FYP evaluation ID required.', 'INVALID_ARGUMENT');
+        const episode = x.replayEpisode ?? 0;
+        const observation = x.offset ?? 0;
+        if (!Number.isInteger(episode) || episode < 0 || episode > 99 ||
+            !Number.isInteger(observation) || observation < 0 || observation > 10000)
+            throw new AtlasError('Invalid FYP diagnostic sample selection.', 'INVALID_ARGUMENT');
+        return python(workspace, ['evaluation-diagnostics', '--evaluation-id', x.evaluationId,
+            '--episode-index', String(episode), '--observation-index', String(observation), ...policyArgs]);
+    }
     if (x.action === 'fyp_evaluations') return python(workspace, ['evaluations', ...policyArgs]);
     if (x.action === 'fyp_environments') return python(workspace, ['environments']);
     if (x.action === 'fyp_status') {
