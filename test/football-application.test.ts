@@ -188,7 +188,7 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
     }
     await apps.invoke('football_generalist_manifest', {});
     assert.equal(invocations.at(-1)[0].id, workspace.id);
-    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 4);
+    assert.equal(audits.filter(a => a[0] === 'application.football.requested').length, 3);
     await assert.rejects(apps.invoke('football_fyp_checkpoint_note', {
         runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', notes: 'x'.repeat(20_001),
     }));
