@@ -201,7 +201,7 @@ test('starting an evaluation from a checkpoint returns to Home', async () => {
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(await screen.findByText('Evaluation request accepted. Home will show the operation status while Unity connects.')).toBeInTheDocument();
     expect(screen.getByText(/Checkpoint evaluation.*accepted/)).toBeInTheDocument();
-    expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_fyp_evaluate', { policyId: 'football-v1', runId: 'run-smoke', episodes: 10, seed: 515 });
+    expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_fyp_evaluate', { policyId: 'football-v1', runId: 'run-smoke', episodes: 10, seed: 515, timeScale: 1 });
 });
 
 test.each([
