@@ -333,7 +333,8 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
     const policyArgs = x.policyId ? ['--policy-id', x.policyId] : [];
     if (x.action === 'fyp_policies') return fypPolicyRecords(workspace);
     if (x.action === 'fyp_manifest') return fypManifest(workspace, x.policyId ?? DEFAULT_POLICY_ID);
-    if (x.action === 'fyp_preflight') return python(workspace, ['preflight', ...policyArgs]);
+    const environmentArgs = x.environmentId ? ['--environment-id', x.environmentId] : [];
+    if (x.action === 'fyp_preflight') return python(workspace, ['preflight', ...policyArgs, ...environmentArgs]);
     if (x.action === 'fyp_runs') return python(workspace, ['runs', ...policyArgs]);
     if (x.action === 'fyp_run_metrics') {
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId))
@@ -375,19 +376,24 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
     }
     if (x.action === 'fyp_build') return launch(workspace, 'fyp_build', ['build', ...policyArgs]);
     if (x.action === 'fyp_train') {
+        const mode = x.checkpointMode ?? 'fresh';
+        if ((mode === 'fresh') !== (x.parentRunId === undefined))
+            throw new AtlasError('Resume and transfer require a parent checkpoint. Fresh training has no parent.', 'INVALID_ARGUMENT');
+        const checkpointArgs = ['--checkpoint-mode', mode];
+        if (x.parentRunId) checkpointArgs.push('--parent-run-id', x.parentRunId);
         const steps = x.maxSteps;
         if (steps === undefined || !Number.isInteger(steps) || steps < 2048 || steps > 2_000_000 || x.seed === undefined)
             throw new AtlasError('FYP training requires a step budget from 2,048 to 2,000,000 and a seed.', 'INVALID_ARGUMENT');
         const timeScale = x.timeScale ?? 1;
         if (!Number.isFinite(timeScale) || timeScale < 1 || timeScale > 5)
             throw new AtlasError('FYP simulation scale must be between 1× and 5×.', 'INVALID_ARGUMENT');
-        const readiness = await python(workspace, ['preflight', ...policyArgs]);
+        const readiness = await python(workspace, ['preflight', ...policyArgs, ...environmentArgs]);
         if (readiness?.ready_to_train !== true)
             throw new AtlasError('FYP preflight failed: configure the trainer and open the selected policy environment in Edit Mode. Atlas will start the learner; then press Play to connect.', 'DRIVER_UNAVAILABLE');
         const runId = 'fyp-' + randomUUID();
         return launch(workspace, 'fyp_train',
             ['train', '--run-id', runId, '--max-steps', String(steps),
-                '--time-scale', String(timeScale), '--seed', String(x.seed), ...policyArgs], runId);
+                '--time-scale', String(timeScale), '--seed', String(x.seed), ...policyArgs, ...environmentArgs, ...checkpointArgs], runId);
     }
     if (x.action === 'fyp_evaluate') {
         if (!x.runId || !/^fyp-[a-f0-9-]{36}$/.test(x.runId) ||
@@ -396,7 +402,7 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
         const timeScale = x.timeScale ?? 1;
         if (!Number.isFinite(timeScale) || timeScale < 1 || timeScale > 5)
             throw new AtlasError('FYP simulation scale must be between 1× and 5×.', 'INVALID_ARGUMENT');
-        const readiness = await python(workspace, ['preflight', ...policyArgs]);
+        const readiness = await python(workspace, ['preflight', ...policyArgs, ...environmentArgs]);
         if (readiness?.ready_to_train !== true)
             throw new AtlasError('FYP preflight failed: open the FYP training scene in Unity Edit Mode; stop Play Mode before requesting evaluation.', 'DRIVER_UNAVAILABLE');
         const evaluationId = 'fyp-eval-' + randomUUID();

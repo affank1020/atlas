@@ -12,6 +12,8 @@ export type FypRunSummary = {
     environment_reference?: string; notes?: string; started_at?: string; finished_at?: string;
 };
 export type FypRun = FypRunSummary & {
+    checkpoint_mode?: 'fresh' | 'resume' | 'transfer'; parent_run_id?: string | null;
+    parent_checkpoint_number?: number | null; starting_step?: number; additional_steps?: number;
     source_sha256: string; time_scale?: number; mean_episode_seconds?: number | null;
     policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
     environment?: FypEnvironment; model_sha256?: string | null; checkpoint_sha256?: string | null;
@@ -99,6 +101,12 @@ export function FypV1Evidence({ policyId, mode, run: selectedRun, evaluation: se
                 <Record label="Mean episode reward" value={selectedRun.mean_reward?.toFixed(4)} />
                 <Record label="Mean episode duration" value={selectedRun.mean_episode_seconds == null ? undefined : `${selectedRun.mean_episode_seconds.toFixed(1)}s`} />
                 <Record label="Training name" value={selectedRun.training_number ? `T${selectedRun.training_number}` : undefined} />
+                {selectedRun.parent_run_id && <>
+                    <Record label="Checkpoint continuation" value={selectedRun.checkpoint_mode} />
+                    <Record label="Parent checkpoint" value={selectedRun.parent_checkpoint_number ? `C${selectedRun.parent_checkpoint_number}` : selectedRun.parent_run_id} />
+                    <Record label="Starting step" value={selectedRun.starting_step} />
+                    <Record label="Additional steps" value={selectedRun.additional_steps} />
+                </>}
                 <Record label="Training seed" value={selectedRun.seed} />
                 <Record label="Simulation speed" value={`${selectedRun.time_scale ?? 1}×`} />
                 <Record label="Policy ID" value={selectedRun.policy_id} />
