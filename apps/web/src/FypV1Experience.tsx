@@ -129,6 +129,7 @@ export function FypV1Experience() {
     const [evaluationSeed, setEvaluationSeed] = useState(515);
     const [evaluationEpisodes, setEvaluationEpisodes] = useState(10);
     const [evaluationTimeScale, setEvaluationTimeScale] = useState(1);
+    const [evaluationEnvironmentId, setEvaluationEnvironmentId] = useState('');
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
@@ -202,7 +203,8 @@ export function FypV1Experience() {
     const live = useFypRead<FypLive>('football_fyp_live', {}, 3000);
     const overview = useFypRead<FypOverview>('football_fyp_overview',
         activePolicy && (page === 'home' || page === 'runs' || page === 'checkpoints') ? policyInput : null);
-    const environments = useFypRead<FypEnvironment[]>('football_fyp_environments', page === 'policy' ? {} : null);
+    const environments = useFypRead<FypEnvironment[]>('football_fyp_environments',
+        page === 'policy' || page === 'checkpoint' || page === 'evaluations' ? {} : null);
     const activity = useFypPage<HistoryRow>('football_fyp_history',
         { ...policyInput, historyView: 'activity' }, !!activePolicy && page === 'runs');
     const checkpoints = useFypPage<FypRunSummary>('football_fyp_history',
@@ -231,6 +233,20 @@ export function FypV1Experience() {
     const [savedNotes, setSavedNotes] = useState<{ runId: string; notes: string }>();
     const focusedRun = runDetail.data && savedNotes?.runId === runDetail.data.run_id
         ? { ...runDetail.data, notes: savedNotes.notes } : runDetail.data;
+    const evaluationEnvironments = (environments.data ?? []).filter(environment =>
+        activePolicy?.curriculum?.some(stage => stage.environment_id === environment.environment_id && stage.status !== 'proposed'));
+    useEffect(() => {
+        const trainingEnvironmentId = focusedRun?.environment?.environment_id;
+        if (trainingEnvironmentId) setEvaluationEnvironmentId(trainingEnvironmentId);
+    }, [focusedRun?.run_id, focusedRun?.environment?.environment_id]);
+    useEffect(() => {
+        if (!evaluationEnvironmentId && !focusedRun?.environment?.environment_id && evaluationEnvironments.length)
+            setEvaluationEnvironmentId(evaluationEnvironments[0].environment_id);
+    }, [evaluationEnvironmentId, evaluationEnvironments, focusedRun?.environment?.environment_id]);
+    const evaluationPreflightRead = useFypRead<FypPreflight>('football_fyp_preflight',
+        activePolicy && evaluationEnvironmentId && (page === 'checkpoint' || page === 'evaluations')
+            ? { ...policyInput, environmentId: evaluationEnvironmentId } : null, 3000);
+    const evaluationPreflight = evaluationPreflightRead.data;
     const activeTicket = isActive(ticket?.status) ? ticket : null;
     const ticketRead = useFypRead<FypTicket>('football_fyp_task_status', activeTicket ? { runId: activeTicket.ticket } : null, 2500);
     useEffect(() => {
@@ -277,8 +293,15 @@ export function FypV1Experience() {
     const editorReady = !!manifest?.execution_supported && !!preflight?.policy_supported && !!preflight?.ready_to_train && !!preflight.editor_open && sceneMatches &&
         !preflight.editor_compiling && !!preflight.trainer_available && !preflight.editor_playing && heartbeatFresh;
     const operationActive = !!activeTicket || live.data?.busy === true || !!activeRun || !!activeEvaluation;
-    const canEvaluate = !!manifest?.execution_supported && editorReady && !operationActive && !busy &&
-        !!live.data && !live.error && !preflightRead.error && !manifestRead.error;
+    const evaluationScene = evaluationEnvironments.find(environment => environment.environment_id === evaluationEnvironmentId);
+    const evaluationHeartbeatFresh = evaluationPreflight?.heartbeat_age_seconds != null &&
+        evaluationPreflight.heartbeat_age_seconds <= HEARTBEAT_MAX_AGE_SECONDS;
+    const evaluationEditorReady = !!evaluationPreflight?.ready_to_train && !!evaluationPreflight.editor_open &&
+        !evaluationPreflight.editor_playing && !evaluationPreflight.editor_compiling &&
+        !!evaluationPreflight.trainer_available && evaluationHeartbeatFresh &&
+        evaluationPreflight.active_scene === evaluationScene?.scene_path;
+    const canEvaluate = !!manifest?.execution_supported && !!evaluationScene && evaluationEditorReady &&
+        !operationActive && !busy && !!live.data && !live.error && !evaluationPreflightRead.error && !manifestRead.error;
 
     let readinessMessage = 'Checking Unity status…';
     let readinessTone = 'pending';
@@ -319,10 +342,10 @@ export function FypV1Experience() {
         : activeTicket?.action === 'fyp_evaluate' ? 'Checkpoint evaluation'
             : activeTicket?.action === 'fyp_train' ? 'Training run' : operationActive ? 'Editor operation' : '';
     const activeOperationState = activeRun?.state ?? activeEvaluation?.state ?? activeTicket?.status ?? 'requested';
-    const evaluateRun = async (runId: string) => {
+    const evaluateRun = async (runId: string, environmentId: string) => {
         setBusy(`evaluate:${runId}`); setError(''); setNotice('');
         try {
-            const response = await callTool<FypTicket>('football_fyp_evaluate', { policyId, runId, episodes: evaluationEpisodes, seed: evaluationSeed, timeScale: evaluationTimeScale });
+            const response = await callTool<FypTicket>('football_fyp_evaluate', { policyId, runId, environmentId, episodes: evaluationEpisodes, seed: evaluationSeed, timeScale: evaluationTimeScale });
             setTicket(response);
             setNotice('Evaluation request accepted. Home will show the operation status while Unity connects.');
             navigate({ page: 'home', checkpointId: null });
@@ -362,7 +385,17 @@ export function FypV1Experience() {
         count == null ? (overview.error ? 'Counts unavailable' : 'Loading counts…')
             : `${count} ${label}${count === 1 ? '' : 's'}`;
     const evaluationBlocker = operationActive ? `${activeOperationName} is using the Unity Editor slot.`
-        : live.error || live.loading ? 'Waiting for the shared Editor operation status.' : readinessMessage;
+        : live.error || live.loading ? 'Waiting for the shared Editor operation status.'
+            : !evaluationEnvironmentId ? 'Select an evaluation environment.'
+                : evaluationPreflightRead.error ? 'Could not read evaluation environment readiness.'
+                    : !evaluationPreflight?.editor_open ? 'Open the FYP Unity Editor.'
+                        : evaluationPreflight.editor_playing ? 'Stop Play Mode before requesting evaluation.'
+                            : !evaluationScene || evaluationPreflight.active_scene !== evaluationScene.scene_path
+                                ? `Open ${evaluationScene?.name ?? 'the selected environment'} in Unity.`
+                                    : evaluationPreflight.editor_compiling ? 'Wait for Unity compilation to finish.'
+                                        : !evaluationPreflight.trainer_available ? 'ML-Agents trainer is unavailable.'
+                                            : !evaluationPreflight.ready_to_train ? evaluationPreflight.note || 'Evaluation environment is not ready.'
+                                                : !evaluationHeartbeatFresh ? 'Waiting for a fresh Unity heartbeat.' : readinessMessage;
     const trainingBreadcrumb = focusedRun ? focusedRun.training_number ? `T${focusedRun.training_number}` : focusedRun.run_id : 'Training run';
     const evaluationBreadcrumb = focusedEvaluation ? focusedEvaluation.evaluation_number ? `E${focusedEvaluation.evaluation_number}` : focusedEvaluation.evaluation_id : 'Evaluation';
     const pageTitle = page === 'home' ? 'Home' : page === 'settings' ? 'Settings' : page === 'policy' ? 'Policy plan' : page === 'checkpoints' ? 'Policy Checkpoints' : page === 'checkpoint' ? 'Checkpoint'
@@ -628,13 +661,15 @@ export function FypV1Experience() {
                 onOpenEvaluation={evaluation => openEvaluation(evaluation, 'checkpoint')}
                 onOpenEnvironment={openEnvironment}
                 evaluationControls={{ episodes: evaluationEpisodes, seed: evaluationSeed,
+                    environments: evaluationEnvironments, environmentId: evaluationEnvironmentId,
+                    onEnvironmentChange: setEvaluationEnvironmentId,
                     onEpisodesChange: value => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(value || 1)))),
                     onSeedChange: value => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(value || 0)))),
                     canStart: canEvaluate, starting: busy === `evaluate:${focusedRun.run_id}`,
                     blocker: evaluationBlocker,
                     timeScale: evaluationTimeScale, onTimeScaleChange: setEvaluationTimeScale,
                     operationActive, onViewHome: () => navigate({ page: 'home', checkpointId: null }),
-                    onStart: () => void evaluateRun(focusedRun.run_id) }} />
+                    onStart: () => void evaluateRun(focusedRun.run_id, evaluationEnvironmentId) }} />
         </>}
 
         {page === 'runs' && <>
@@ -651,12 +686,14 @@ export function FypV1Experience() {
         {page === 'evaluations' && focusedRun && <FypV1Evidence policyId={policyId} mode="evaluations" history={evaluationHistory}
             onOpenEvaluation={evaluation => openEvaluation(evaluation, 'evaluations')}
             evaluationControls={{ episodes: evaluationEpisodes, seed: evaluationSeed,
+                environments: evaluationEnvironments, environmentId: evaluationEnvironmentId,
+                onEnvironmentChange: setEvaluationEnvironmentId,
                 onEpisodesChange: value => setEvaluationEpisodes(Math.max(1, Math.min(100, Math.floor(value || 1)))),
                 onSeedChange: value => setEvaluationSeed(Math.max(0, Math.min(2147483647, Math.floor(value || 0)))),
                 canStart: canEvaluate, starting: busy === `evaluate:${selectedRunId}`, blocker: evaluationBlocker,
                 timeScale: evaluationTimeScale, onTimeScaleChange: setEvaluationTimeScale,
                 operationActive, onViewHome: () => navigate({ page: 'home', checkpointId: null }),
-                onStart: () => selectedRunId && void evaluateRun(selectedRunId) }} />}
+                onStart: () => selectedRunId && void evaluateRun(selectedRunId, evaluationEnvironmentId) }} />}
         {page === 'evaluation' && <>
             <FypReadMessage label="Evaluation receipt" read={evaluationDetail} />
             {focusedEvaluation && runDetail.error && <FypReadMessage label="Linked training receipt" read={runDetail} />}

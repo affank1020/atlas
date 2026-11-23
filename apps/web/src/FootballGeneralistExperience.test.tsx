@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { callTool } from './api';
 import { FootballGeneralistExperience } from './FootballGeneralistExperience';
@@ -244,6 +244,7 @@ test('starting an evaluation from a checkpoint returns to Home', async () => {
         const policyResult = policyToolResult(name, input);
         if (policyResult !== undefined) return policyResult as never;
         if (name === 'football_fyp_preflight') return readyPreflight as never;
+        if (name === 'football_fyp_environments') return environments as never;
         const historyResult = historyToolResult(name, input);
         if (historyResult !== undefined) return historyResult as never;
         if (name === 'football_fyp_evaluate') return { ticket: 'ticket-eval-1', action: 'fyp_evaluate', status: 'accepted' } as never;
@@ -254,11 +255,16 @@ test('starting an evaluation from a checkpoint returns to Home', async () => {
     await screen.findByRole('heading', { name: 'Unity open · idle · ready to run' });
     fireEvent.click(screen.getByRole('button', { name: /Policy Checkpoints/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Open checkpoint C1/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Start evaluation' }));
+    const startEvaluation = await screen.findByRole('button', { name: 'Start evaluation' });
+    await waitFor(() => expect(startEvaluation).toBeEnabled());
+    fireEvent.click(startEvaluation);
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(await screen.findByText('Evaluation request accepted. Home will show the operation status while Unity connects.')).toBeInTheDocument();
     expect(screen.getByText(/Checkpoint evaluation.*accepted/)).toBeInTheDocument();
-    expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_fyp_evaluate', { policyId: 'football-v1', runId: 'run-smoke', episodes: 10, seed: 515, timeScale: 1 });
+    expect(vi.mocked(callTool)).toHaveBeenCalledWith('football_fyp_evaluate', {
+        policyId: 'football-v1', runId: 'run-smoke', environmentId: 'open-goal-close',
+        episodes: 10, seed: 515, timeScale: 1,
+    });
 });
 
 test.each([

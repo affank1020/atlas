@@ -33,6 +33,7 @@ export type HistoryRow = FypRunSummary | FypEvaluationSummary;
 export type HistoryPage = ReturnType<typeof useFypPage<HistoryRow>>;
 type EvaluationControls = {
     episodes: number; seed: number; timeScale: number; canStart: boolean; starting: boolean; blocker: string;
+    environments: FypEnvironment[]; environmentId: string; onEnvironmentChange: (value: string) => void;
     operationActive?: boolean; onViewHome?: () => void;
     onEpisodesChange: (value: number) => void; onSeedChange: (value: number) => void;
     onTimeScaleChange: (value: number) => void; onStart: () => void;
@@ -190,6 +191,15 @@ export function FypV1Evidence({ policyId, mode, run: selectedRun, evaluation: se
                         <select aria-label="FYP evaluation simulation speed" value={evaluationControls.timeScale}
                             onChange={event => evaluationControls.onTimeScaleChange(Number(event.target.value))}>
                             {[1, 2, 3, 5].map(value => <option key={value} value={value}>{value}×</option>)}
+                        </select>
+                    </label>
+                    <label className="fyp-field">Environment
+                        <select aria-label="FYP evaluation environment" value={evaluationControls.environmentId}
+                            onChange={event => evaluationControls.onEnvironmentChange(event.target.value)}>
+                            <option value="" disabled>Select an environment</option>
+                            {evaluationControls.environments.map(environment => <option key={environment.environment_id} value={environment.environment_id}>
+                                {environment.name} · v{environment.version}
+                            </option>)}
                         </select>
                     </label>
                 </div>

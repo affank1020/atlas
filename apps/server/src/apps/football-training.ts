@@ -83,11 +83,13 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_fyp_run_chart', 'Read bounded reward chart points for one FYP training run.', { policyId: fypPolicyId, runId: fypRunId }, 'fyp_run_chart'),
             action('football_fyp_run_metrics', 'Read bounded trainer progress, reward graph points and a page of per-episode reward breakdowns for one FYP run.', {
                 policyId: fypPolicyId.optional(), runId, episodeOffset: integer.min(0).max(2_000_000).optional(), episodeLimit: integer.min(1).max(100).optional() }, 'fyp_run_metrics'),
-            action('football_fyp_checkpoint_note', 'Save freeform notes on one completed FYP checkpoint export.', {
+            action('football_fyp_checkpoint_note', 'Save freeform notes on one verified FYP checkpoint export.', {
                 policyId: fypPolicyId.optional(), runId, notes: z.string().max(20_000) }, 'fyp_checkpoint_note'),
             action('football_fyp_environments', 'Read the Unity-authored, versioned FYP environment catalogue with setup, episode rules, rewards and scene modifiers.', {}, 'fyp_environments'),
             action('football_fyp_evaluate', 'Run a bounded seeded checkpoint evaluation inside the open FYP Unity Editor. Start it with the FYP scene in Edit Mode, then press Play; no player build is required.', {
-                policyId: fypPolicyId.optional(), runId, episodes: integer.min(1).max(100), timeScale: z.number().min(1).max(5).optional(), seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
+                policyId: fypPolicyId.optional(), runId, environmentId: fypPolicyId.optional(),
+                episodes: integer.min(1).max(100), timeScale: z.number().min(1).max(5).optional(),
+                seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
             action('football_fyp_evaluation_diagnostics', 'Read verified diagnostic summaries and bounded trajectories for one FYP evaluation episode.', {
                 policyId: fypPolicyId.optional(), evaluationId: z.string().regex(/^fyp-eval-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/),
                 replayEpisode: integer.min(0).max(99).optional(), offset: integer.min(0).max(10000).optional() }, 'fyp_evaluation_diagnostics'),

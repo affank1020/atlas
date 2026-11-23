@@ -408,7 +408,8 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
         const evaluationId = 'fyp-eval-' + randomUUID();
         return launch(workspace, 'fyp_evaluate',
             ['evaluate', '--evaluation-id', evaluationId, '--run-id', x.runId,
-                '--episodes', String(x.episodes), '--time-scale', String(timeScale), '--seed', String(x.seed), ...policyArgs], x.runId);
+                '--episodes', String(x.episodes), '--time-scale', String(timeScale), '--seed', String(x.seed),
+                ...policyArgs, ...environmentArgs], x.runId);
     }
     throw new AtlasError('Unsupported FYP operation.', 'INVALID_ARGUMENT');
 }
