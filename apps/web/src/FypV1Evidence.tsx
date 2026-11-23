@@ -1,36 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
-import { callTool } from './api';
+import { FypPagination, FypReadMessage, useFypPage, useFypRead } from './fypHistory';
 import { FypEvaluationDiagnostics, type EvaluationDiagnostics } from './FypEvaluationDiagnostics';
 import { FypEnvironmentCard, type FypEnvironment } from './FypEnvironmentCatalog';
 
-type Episode = { index?: number; episode?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string; trainer_connected?: boolean;
+type Episode = { sequence?: number; index?: number; episode?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string; trainer_connected?: boolean;
     time_cost_reward?: number; terminal_reward?: number; reward_total?: number; terminal_reward_type?: string };
 type TrainingMetric = { step: number; elapsed_seconds: number; mean_reward: number; mean_group_reward: number };
-type FypRunMetrics = { run_id: string; steps_completed: number; steps: number; episode_count: number;
-    training_metrics: TrainingMetric[]; episode_offset: number; episodes: Episode[] };
-type FypRun = {
+export type FypRunSummary = {
     run_id: string; preset: string; steps: number; steps_completed?: number; episodes_completed?: number;
-    goals_scored?: number; goal_rate?: number; mean_reward?: number | null; mean_episode_seconds?: number | null;
-    seed: number; time_scale?: number; state: string; source_sha256: string;
-    policy_id?: string; policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
-    training_number?: number;
-    environment_session_id?: string; episodes?: Episode[]; min_reward?: number | null; max_reward?: number | null;
-    outcomes?: Record<string, number>;
-    exported_model?: boolean; checkpoint_number?: number; model_sha256?: string | null; checkpoint_sha256?: string | null;
-    environment?: FypEnvironment;
-    exit_code?: number | null; started_at?: string; finished_at?: string; error?: string;
+    goals_scored?: number; mean_reward?: number | null; seed: number; state: string; policy_id?: string;
+    training_number?: number; checkpoint_number?: number; exported_model?: boolean; checkpoint_exported?: boolean;
+    environment_reference?: string; notes?: string; started_at?: string; finished_at?: string;
 };
-type FypEvaluation = {
+export type FypRun = FypRunSummary & {
+    source_sha256: string; time_scale?: number; mean_episode_seconds?: number | null;
+    policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
+    environment?: FypEnvironment; model_sha256?: string | null; checkpoint_sha256?: string | null;
+    exit_code?: number | null; error?: string;
+};
+export type FypEvaluationSummary = {
     evaluation_id: string; training_run_id: string; state: string; requested_episodes: number;
-    policy_id?: string; policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
-    diagnostics?: EvaluationDiagnostics;
-    evaluation_number?: number;
-    episodes_completed?: number; goals_scored?: number; goal_rate?: number; seed?: number; time_scale?: number;
-    training_environment?: FypEnvironment; evaluation_environment?: FypEnvironment;
-    started_at?: string; finished_at?: string; exit_code?: number | null; error?: string; episodes?: Episode[];
+    policy_id?: string; evaluation_number?: number; episodes_completed?: number; goals_scored?: number;
+    goal_rate?: number; seed?: number; started_at?: string; finished_at?: string; environment_reference?: string;
 };
-type Detail = { kind: 'run'; id: string } | { kind: 'evaluation'; id: string };
-type Focus = { kind: 'run' | 'evaluations'; runId: string } | { kind: 'evaluation'; runId: string; evaluationId: string; returnPage: 'runs' | 'run' | 'evaluations' | 'checkpoints' | 'checkpoint' | 'checkpoint-evaluations' };
+export type FypEvaluation = FypEvaluationSummary & {
+    policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
+    diagnostics?: EvaluationDiagnostics; time_scale?: number; evaluation_environment?: FypEnvironment;
+    exit_code?: number | null; error?: string;
+};
+export type HistoryRow = FypRunSummary | FypEvaluationSummary;
+export type HistoryPage = ReturnType<typeof useFypPage<HistoryRow>>;
 type EvaluationControls = {
     episodes: number; seed: number; timeScale: number; canStart: boolean; starting: boolean; blocker: string;
     operationActive?: boolean; onViewHome?: () => void;
@@ -38,19 +36,11 @@ type EvaluationControls = {
     onTimeScaleChange: (value: number) => void; onStart: () => void;
 };
 
-const labelForRun = (run: FypRun) => run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset === 'custom' ? 'Custom-budget run' : run.preset;
-const trainingTag = (run: FypRun) => run.training_number ? `T${run.training_number}` : undefined;
-const evaluationTag = (evaluation: FypEvaluation) => evaluation.evaluation_number ? `E${evaluation.evaluation_number}` : undefined;
-const checkpointLabel = (run?: FypRun) => run?.checkpoint_number ? `C${run.checkpoint_number}` : undefined;
+const labelForRun = (run: FypRunSummary) => run.preset === 'smoke' ? 'Smoke run' : run.preset === 'pilot_50k' ? '50k pilot' : run.preset === 'custom' ? 'Custom-budget run' : run.preset;
+const trainingTag = (run: FypRunSummary) => run.training_number ? `T${run.training_number}` : undefined;
+const evaluationTag = (evaluation: FypEvaluationSummary) => evaluation.evaluation_number ? `E${evaluation.evaluation_number}` : undefined;
+const checkpointLabel = (run?: FypRunSummary) => run?.checkpoint_number ? `C${run.checkpoint_number}` : undefined;
 const dateTime = (value?: string) => value && !Number.isNaN(Date.parse(value)) ? new Date(value).toLocaleString() : 'Not recorded';
-const startedAt = (run: FypRun) => {
-    const value = Date.parse(run.started_at ?? run.finished_at ?? '');
-    return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
-};
-const timestampFor = (started?: string, finished?: string) => {
-    const value = Date.parse(started ?? finished ?? '');
-    return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
-};
 const duration = (start?: string, end?: string) => {
     if (!start) return 'Not recorded';
     const seconds = Math.max(0, Math.round(((end ? Date.parse(end) : Date.now()) - Date.parse(start)) / 1000));
@@ -64,80 +54,34 @@ const environmentReference = (environment?: FypEnvironment) => environment
     ? `${environment.name} · v${environment.version}`
     : 'Not recorded';
 
-export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluations, focus, onBack, onOpenRun, onOpenEvaluation, onOpenEnvironment, onOpenCheckpoint, evaluationControls, flat }: {
-    runs?: FypRun[]; evaluations?: FypEvaluation[];
-    focus?: Focus; onBack?: () => void;
+type EvidenceProps = {
+    policyId: string;
+    mode: 'activity' | 'run' | 'evaluation' | 'evaluations';
+    run?: FypRun;
+    evaluation?: FypEvaluation;
+    history?: HistoryPage;
+    live?: boolean;
     onOpenRun?: (runId: string) => void;
-    onOpenEvaluation?: (evaluationId: string, source: 'runs' | 'run' | 'evaluations' | 'checkpoints') => void;
+    onOpenEvaluation?: (evaluation: FypEvaluationSummary) => void;
     onOpenEnvironment?: (environmentId: string) => void;
     onOpenCheckpoint?: (runId: string) => void;
     evaluationControls?: EvaluationControls;
-    flat?: boolean;
-} = {}) {
-    const [runs, setRuns] = useState<FypRun[]>(providedRuns ?? []);
-    const [evaluations, setEvaluations] = useState<FypEvaluation[]>(providedEvaluations ?? []);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
-    const [updatedAt, setUpdatedAt] = useState('');
-    const [runMetrics, setRunMetrics] = useState<FypRunMetrics | null>(null);
-    const [runMetricsLoading, setRunMetricsLoading] = useState(false);
-    const [runMetricsError, setRunMetricsError] = useState('');
-    const [episodeOffset, setEpisodeOffset] = useState(0);
-    const [detail, setDetail] = useState<Detail | null>(() => focus?.kind === 'run' ? { kind: 'run', id: focus.runId }
-        : focus?.kind === 'evaluation' ? { kind: 'evaluation', id: focus.evaluationId } : null);
+    onRefreshHistory?: () => void;
+};
 
-    const refresh = useCallback(async () => {
-        try {
-            const [runReceipts, evaluationReceipts] = await Promise.all([
-                callTool<FypRun[]>('football_fyp_runs'),
-                callTool<FypEvaluation[]>('football_fyp_evaluations'),
-            ]);
-            setRuns(runReceipts); setEvaluations(evaluationReceipts); setError(''); setUpdatedAt(new Date().toLocaleTimeString());
-        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-        finally { setLoading(false); }
-    }, []);
-    useEffect(() => {
-        if (providedRuns && providedEvaluations) {
-            setRuns(providedRuns); setEvaluations(providedEvaluations); setLoading(false);
-            return;
-        }
-        void refresh();
-        const timer = window.setInterval(() => { void refresh(); }, 3000);
-        return () => window.clearInterval(timer);
-    }, [refresh, providedRuns, providedEvaluations]);
-
-    const selectedRun = detail?.kind === 'run' ? runs.find(run => run.run_id === detail.id) : undefined;
-    const selectedEvaluation = detail?.kind === 'evaluation' ? evaluations.find(item => item.evaluation_id === detail.id) : undefined;
-    useEffect(() => {
-        if (detail?.kind !== 'run') { setRunMetrics(null); setRunMetricsError(''); setRunMetricsLoading(false); setEpisodeOffset(0); return; }
-        let mounted = true;
-        setRunMetrics(null);
-        setRunMetricsError('');
-        setRunMetricsLoading(true);
-        const load = async () => {
-            try {
-                const data = await callTool<FypRunMetrics>('football_fyp_run_metrics', {
-                    runId: detail.id, episodeOffset, episodeLimit: 50,
-                });
-                if (mounted) { setRunMetrics(data); setRunMetricsError(''); setRunMetricsLoading(false); }
-            } catch (failure) {
-                if (mounted) {
-                    setRunMetricsError(failure instanceof Error ? failure.message : String(failure));
-                    setRunMetricsLoading(false);
-                }
-            }
-        };
-        void load();
-        const timer = window.setInterval(() => { void load(); }, 3000);
-        return () => { mounted = false; window.clearInterval(timer); };
-    }, [detail?.kind, detail?.id, episodeOffset]);
-    const evaluationRun = selectedEvaluation ? runs.find(run => run.run_id === selectedEvaluation.training_run_id) : undefined;
-    const evaluationTrainingRun = selectedEvaluation ? evaluationRun ?? {
+export function FypV1Evidence({ policyId, mode, run: selectedRun, evaluation: selectedEvaluation,
+    history, live, onOpenRun, onOpenEvaluation, onOpenEnvironment, onOpenCheckpoint, evaluationControls, onRefreshHistory }: EvidenceProps) {
+    const evaluationRun = selectedRun;
+    const evaluationTrainingRun = evaluationRun ?? (selectedEvaluation && {
         run_id: selectedEvaluation.training_run_id, preset: 'Training run', steps: 0, seed: 0, state: '', source_sha256: '',
-    } : undefined;
-    if (detail?.kind === 'run') return <section className="fyp-evidence-page fyp-record-detail" aria-label="Training run details">
-        {focus?.kind !== 'run' && <button type="button" className="fg-link" onClick={() => onBack ? onBack() : setDetail(null)}>← Recent Runs</button>}
-        {!selectedRun ? <p className="fg-muted">This training receipt is no longer available.</p> : <>
+    });
+    const graph = useFypRead<{ training_metrics: TrainingMetric[]; steps_completed: number }>(
+        'football_fyp_run_chart', mode === 'run' && selectedRun ? { policyId, runId: selectedRun.run_id } : null,
+        live ? 3000 : undefined,
+    );
+    const stepsCompleted = Math.max(graph.data?.steps_completed ?? 0,
+        selectedRun?.steps_completed ?? (selectedRun?.state === 'completed' ? selectedRun.steps : 0));
+    if (mode === 'run' && selectedRun) return <section className="fyp-evidence-page fyp-record-detail" aria-label="Training run details">
             <div className="fyp-record-status"><span className={`fyp-state fyp-state-${selectedRun.state.toLowerCase()}`}>{selectedRun.state}</span></div>
             {selectedRun.environment && <div className="fyp-record-environment fyp-environment-cards">
                 <FypEnvironmentCard environment={selectedRun.environment} onOpen={onOpenEnvironment} />
@@ -149,7 +93,7 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Finished" value={dateTime(selectedRun.finished_at)} exact={iso(selectedRun.finished_at)} />
                 <Record label={selectedRun.finished_at ? 'Duration' : 'Elapsed'} value={duration(selectedRun.started_at, selectedRun.finished_at)} />
                 <Record label="Training steps" value={selectedRun.steps.toLocaleString()} />
-                <Record label="Steps completed" value={`${(selectedRun.steps_completed ?? (selectedRun.state === 'completed' ? selectedRun.steps : 0)).toLocaleString()} / ${selectedRun.steps.toLocaleString()}`} />
+                <Record label="Steps completed" value={`${stepsCompleted.toLocaleString()} / ${selectedRun.steps.toLocaleString()}`} />
                 <Record label="Episodes completed" value={selectedRun.episodes_completed} />
                 <Record label="Goals scored" value={selectedRun.goals_scored} />
                 <Record label="Mean episode reward" value={selectedRun.mean_reward?.toFixed(4)} />
@@ -169,58 +113,23 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 <Record label="Run ID" value={selectedRun.run_id} />
             </div>
             <div className="fyp-step-progress">
-                <div className="fyp-step-progress-label"><strong>Training progress</strong><span>{(selectedRun.steps_completed ?? (selectedRun.state === 'completed' ? selectedRun.steps : 0)).toLocaleString()} / {selectedRun.steps.toLocaleString()} steps</span></div>
-                <progress max={selectedRun.steps} value={Math.min(selectedRun.steps, selectedRun.steps_completed ?? (selectedRun.state === 'completed' ? selectedRun.steps : 0))} />
+                <div className="fyp-step-progress-label"><strong>Training progress</strong><span>{stepsCompleted.toLocaleString()} / {selectedRun.steps.toLocaleString()} steps</span></div>
+                <progress max={selectedRun.steps} value={Math.min(selectedRun.steps, stepsCompleted)} />
             </div>
             <section className="fyp-run-metrics" aria-label="Training reward metrics">
                 <h3>Reward during training</h3>
                 <p className="fg-muted">MA-POCA mean episode reward and mean group reward from trainer summaries, plotted against trainer steps.</p>
-                {runMetrics?.training_metrics.length ? <RewardChart points={runMetrics.training_metrics} />
-                    : runMetricsError ? <p className="fg-error">Trainer reward summaries could not be loaded: {runMetricsError}</p>
-                        : runMetricsLoading ? <p className="fg-muted">Loading trainer reward summaries…</p>
-                            : <p className="fg-muted">No trainer reward summaries have been recorded for this run.</p>}
+                <FypReadMessage label="Trainer reward summaries" read={graph} />
+                {graph.data?.training_metrics.length ? <RewardChart points={graph.data.training_metrics} />
+                    : graph.data && <p className="fg-muted">No trainer reward summaries have been recorded for this run.</p>}
                 <div className="fyp-chart-legend"><span>Mean reward</span><span>Mean group reward</span></div>
             </section>
-            <section aria-label="Episode reward breakdowns">
-                <h3>Episode reward breakdowns</h3>
-                {!runMetrics?.episode_count ? <p className={runMetricsError ? 'fg-error' : 'fg-muted'}>
-                    {runMetricsError ? `Episode breakdowns could not be loaded: ${runMetricsError}`
-                        : runMetricsLoading ? 'Loading episode outcomes…'
-                            : (selectedRun.episodes_completed ?? 0) > 0
-                                ? `This run records ${selectedRun.episodes_completed} completed episodes, but its episode breakdown is empty.`
-                                : 'No episode outcomes have been recorded yet.'}
-                </p> : runMetrics.episodes.length === 0 ? <p className="fg-error">
-                    Atlas reports {runMetrics.episode_count} completed episodes, but returned no episode breakdown records.
-                </p> : <>
-                    <div className="fyp-episode-breakdown-list">
-                        {runMetrics.episodes.map((episode, index) => <details className="fyp-episode-breakdown" key={`${episode.episode ?? episode.index ?? index}-${episode.seed}`}>
-                            <summary><strong>Episode {episode.episode ?? episode.index ?? episodeOffset + index + 1}</strong>
-                                <span>{episode.outcome ?? '—'}</span><span>{episode.elapsed_seconds == null ? '—' : `${episode.elapsed_seconds.toFixed(1)}s`}</span>
-                                <span>Total {episode.reward_total == null ? '—' : episode.reward_total.toFixed(4)}</span></summary>
-                            <div className="fyp-episode-reward-parts">
-                                <Record label="Time cost reward" value={episode.time_cost_reward?.toFixed(4)} />
-                                <Record label={episode.terminal_reward_type === 'goal' ? 'Goal reward' : 'Terminal reward'} value={episode.terminal_reward?.toFixed(4)} />
-                                <Record label="Total reward" value={episode.reward_total?.toFixed(4)} />
-                                <Record label="Goals" value={episode.goals} />
-                                <Record label="Episode seed" value={episode.seed} />
-                            </div>
-                        </details>)}
-                    </div>
-                    <div className="fyp-episode-pager">
-                        <button className="fg-button" type="button" disabled={episodeOffset <= 0} onClick={() => setEpisodeOffset(Math.max(0, episodeOffset - 50))}>← Newer episodes</button>
-                        <span>{Math.max(1, runMetrics.episode_count - episodeOffset - runMetrics.episodes.length + 1)}–{Math.max(0, runMetrics.episode_count - episodeOffset)} of {runMetrics.episode_count}</span>
-                        <button className="fg-button" type="button" disabled={episodeOffset + 50 >= runMetrics.episode_count} onClick={() => setEpisodeOffset(episodeOffset + 50)}>Older episodes →</button>
-                    </div>
-                </>}
-            </section>
+            <EpisodeBreakdowns policyId={policyId} runId={selectedRun.run_id} live={live} />
             {selectedRun.policy_snapshot && <details className="fyp-policy-raw"><summary>Plan snapshot used by this run</summary>
                 <pre>{JSON.stringify(selectedRun.policy_snapshot, null, 2)}</pre></details>}
             {selectedRun.error && <p className="fg-error">{selectedRun.error}</p>}
-        </>}
     </section>;
-    if (detail?.kind === 'evaluation') return <section className="fyp-evidence-page fyp-record-detail" aria-label="Evaluation details">
-        {focus?.kind !== 'evaluation' && <button type="button" className="fg-link" onClick={() => onBack ? onBack() : setDetail(null)}>← {focus?.kind === 'evaluations' ? 'Evaluations' : 'Recent Runs'}</button>}
-        {!selectedEvaluation ? <p className="fg-muted">This evaluation receipt is no longer available.</p> : <>
+    if (mode === 'evaluation' && selectedEvaluation) return <section className="fyp-evidence-page fyp-record-detail" aria-label="Evaluation details">
             <div className="fyp-record-status"><span className={`fyp-state fyp-state-${selectedEvaluation.state.toLowerCase()}`}>{selectedEvaluation.state}</span></div>
             {selectedEvaluation.evaluation_environment && <div className="fyp-record-environment fyp-environment-cards">
                 <FypEnvironmentCard environment={selectedEvaluation.evaluation_environment} onOpen={onOpenEnvironment} />
@@ -251,28 +160,15 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
             {selectedEvaluation.error && <p className="fg-error">{selectedEvaluation.error}</p>}
             <FypEvaluationDiagnostics key={selectedEvaluation.evaluation_id} evaluationId={selectedEvaluation.evaluation_id}
                 policyId={selectedEvaluation.policy_id} diagnostics={selectedEvaluation.diagnostics} />
-            <h3>Recorded episodes</h3>
-            {!selectedEvaluation.episodes?.length ? <p className="fg-muted">No per-episode records were saved.</p> : <div className="fyp-episode-breakdown-list" aria-label="Evaluation episode reward breakdowns">
-                {selectedEvaluation.episodes.map((episode, index) => <details className="fyp-episode-breakdown" key={episode.index ?? episode.episode ?? index}>
-                    <summary><strong>Episode {episode.episode ?? episode.index ?? index + 1}</strong><span>{format(episode.outcome)}</span>
-                        <span>{episode.elapsed_seconds == null ? '—' : `${episode.elapsed_seconds.toFixed(1)}s`}</span>
-                        <span>Total {episode.reward_total == null ? '—' : episode.reward_total.toFixed(4)}</span></summary>
-                    <div className="fyp-episode-reward-parts">
-                        <Record label="Time cost reward" value={episode.time_cost_reward?.toFixed(4)} />
-                        <Record label={episode.terminal_reward_type === 'goal' ? 'Goal reward' : 'Terminal reward'} value={episode.terminal_reward?.toFixed(4)} />
-                        <Record label="Total reward" value={episode.reward_total?.toFixed(4)} />
-                        <Record label="Goals" value={episode.goals} />
-                        <Record label="Episode seed" value={episode.seed} />
-                    </div>
-                </details>)}
-            </div>}
-        </>}
+            <EpisodeBreakdowns policyId={policyId} evaluationId={selectedEvaluation.evaluation_id} live={live} />
     </section>;
 
-    if (focus?.kind === 'evaluations') {
-        const runEvaluations = evaluations.filter(item => item.training_run_id === focus.runId);
+    if (mode === 'evaluations' && history) {
         return <section className="fyp-checkpoint-evaluations" aria-label="Checkpoint evaluations">
-            <h2 className="fyp-checkpoint-section-title">Evaluations</h2>
+            <div className="fyp-episode-heading">
+                <h2 className="fyp-checkpoint-section-title">Evaluations</h2>
+                <button className="fg-button" type="button" onClick={() => { history.restart(); onRefreshHistory?.(); }}>Refresh evaluations</button>
+            </div>
             {evaluationControls && <div className="fyp-evaluation-launcher">
                 <h3>Start a new evaluation</h3>
                 <div className="fyp-evaluation-settings">
@@ -296,35 +192,61 @@ export function FypV1Evidence({ runs: providedRuns, evaluations: providedEvaluat
                 {evaluationControls.operationActive && evaluationControls.onViewHome &&
                     <button className="fg-link" type="button" onClick={evaluationControls.onViewHome}>View the active operation on Home →</button>}
             </div>}
-            {!runEvaluations.length ? <p className="fg-muted">No evaluations recorded for this checkpoint yet.</p> :
-                <div className="fyp-evidence-runs" aria-label="Recorded evaluations">{runEvaluations.map(item => <EvaluationEvidenceCard key={item.evaluation_id} evaluation={item}
-                    onOpen={() => onOpenEvaluation ? onOpenEvaluation(item.evaluation_id, 'checkpoints') : setDetail({ kind: 'evaluation', id: item.evaluation_id })} />)}</div>}
+            <HistoryRows history={history} onOpenEvaluation={onOpenEvaluation}
+                empty="No evaluations recorded for this checkpoint yet." label="Evaluations" />
         </section>;
     }
+    if (mode !== 'activity' || !history) return null;
+    return <section className="fyp-evidence-page" aria-label="Recent training and evaluation runs">
+        <HistoryRows history={history} onOpenRun={onOpenRun} onOpenEvaluation={onOpenEvaluation}
+            empty="No training runs or evaluations recorded yet." label="Recent runs" />
+    </section>;
+}
 
-    const recentActivity = [
-        ...runs.map(run => ({ kind: 'training' as const, run, id: run.run_id, timestamp: startedAt(run) })),
-        ...evaluations.map(evaluation => ({ kind: 'evaluation' as const, evaluation, id: evaluation.evaluation_id,
-            timestamp: timestampFor(evaluation.started_at, evaluation.finished_at) })),
-    ].sort((a, b) => {
-        const difference = b.timestamp - a.timestamp;
-        return Number.isNaN(difference) || difference === 0 ? a.id.localeCompare(b.id) : difference;
-    });
+function HistoryRows({ history, empty, label, onOpenRun, onOpenEvaluation }: {
+    history: HistoryPage; empty: string; label: string;
+    onOpenRun?: EvidenceProps['onOpenRun']; onOpenEvaluation?: EvidenceProps['onOpenEvaluation'];
+}) {
+    return <>
+        <FypReadMessage label={label} read={history} />
+        {history.data && !history.items.length && <p className="fg-muted">{empty}</p>}
+        <div className="fyp-evidence-runs" aria-busy={history.loading}>
+            {history.items.map(item => 'run_id' in item
+                ? <TrainingEvidenceCard key={item.run_id} run={item} onOpen={() => onOpenRun?.(item.run_id)} />
+                : <EvaluationEvidenceCard key={item.evaluation_id} evaluation={item} onOpen={() => onOpenEvaluation?.(item)} />)}
+        </div>
+        <FypPagination label={`${label} pagination`} page={history} />
+    </>;
+}
 
-    return <section className={`${flat ? '' : 'fg-panel '}fyp-evidence-page`} aria-label="Recent training and evaluation runs">
-        {!flat && <div className="fg-panel-title"><h2>Run timeline</h2>
-            {providedRuns && providedEvaluations
-                ? <span>{recentActivity.length} entries</span>
-                : <div className="fg-refresh-controls"><span className="fg-refresh-status" role="status">{loading ? 'Loading…' : `Updated ${updatedAt || '—'}`}</span>
-                    <button className="fg-button" type="button" onClick={() => void refresh()}>Refresh</button></div>}
-        </div>}
-        {error && <p className="fg-error" role="alert">{error}</p>}
-        {!loading && !recentActivity.length && <p className="fg-muted">No training runs or evaluations recorded yet.</p>}
-        <div className="fyp-evidence-runs">{recentActivity.map(item => item.kind === 'training'
-            ? <TrainingEvidenceCard key={`training:${item.id}`} run={item.run}
-                onOpen={() => onOpenRun ? onOpenRun(item.id) : setDetail({ kind: 'run', id: item.id })} />
-            : <EvaluationEvidenceCard key={`evaluation:${item.id}`} evaluation={item.evaluation}
-                onOpen={() => onOpenEvaluation ? onOpenEvaluation(item.id, 'runs') : setDetail({ kind: 'evaluation', id: item.id })} />)}</div>
+function EpisodeBreakdowns({ policyId, runId, evaluationId, live }: {
+    policyId: string; runId?: string; evaluationId?: string; live?: boolean;
+}) {
+    const page = useFypPage<Episode>('football_fyp_episode_page', { policyId, runId, evaluationId, limit: 25 },
+        true, live ? 3000 : undefined);
+    const label = evaluationId ? 'Recorded episodes' : 'Episode reward breakdowns';
+    return <section aria-label={label}>
+        <div className="fyp-episode-heading">
+            <h3>{label}</h3>
+            {!page.followingLatest && <button className="fg-button" type="button" onClick={page.restart}>Refresh episodes</button>}
+        </div>
+        <FypReadMessage label={label} read={page} />
+        {page.data && !page.items.length && <p className="fg-muted">No episode outcomes have been recorded yet.</p>}
+        <div className="fyp-episode-breakdown-list" aria-busy={page.loading}>
+            {page.items.map((episode, index) => <details className="fyp-episode-breakdown" key={episode.sequence ?? episode.episode ?? episode.index ?? index}>
+                <summary><strong>Episode {episode.episode ?? episode.index ?? page.index * 25 + index + 1}</strong>
+                    <span>{format(episode.outcome)}</span><span>{episodeDuration(episode.elapsed_seconds)}</span>
+                    <span>Total {episode.reward_total == null ? '—' : episode.reward_total.toFixed(4)}</span></summary>
+                <div className="fyp-episode-reward-parts">
+                    <Record label="Time cost reward" value={episode.time_cost_reward?.toFixed(4)} />
+                    <Record label={episode.terminal_reward_type === 'goal' ? 'Goal reward' : 'Terminal reward'} value={episode.terminal_reward?.toFixed(4)} />
+                    <Record label="Total reward" value={episode.reward_total?.toFixed(4)} />
+                    <Record label="Goals" value={episode.goals} />
+                    <Record label="Episode seed" value={episode.seed} />
+                </div>
+            </details>)}
+        </div>
+        <FypPagination label={`${label} pagination`} page={page} />
     </section>;
 }
 
@@ -364,34 +286,23 @@ function IndexPill({ children, kind }: { children?: string; kind: 'training' | '
     return <span className={`fyp-index-pill fyp-${kind}-pill`}>{children}</span>;
 }
 
-export function TrainingEvidenceCard({ run, onOpen }: { run: FypRun; onOpen: () => void }) {
+export function TrainingEvidenceCard({ run, onOpen }: { run: FypRunSummary & { environment?: FypEnvironment }; onOpen: () => void }) {
     const episodeSummary = `${run.episodes_completed ?? 0} episodes · mean reward ${reward(run.mean_reward)}`;
     return <button className="fyp-evidence-card" type="button" onClick={onOpen}>
         <span><strong>{trainingTag(run) && <IndexPill kind="training">{trainingTag(run)}</IndexPill>}{labelForRun(run)}</strong>
             <small>{dateTime(run.started_at ?? run.finished_at)}</small>
-            <small>{environmentReference(run.environment)}</small></span>
+            <small>{run.environment_reference ?? environmentReference(run.environment)}</small></span>
         <span className={`fyp-state fyp-state-${run.state.toLowerCase()}`}>{run.state}</span>
         <span>{run.state === 'completed' ? run.steps.toLocaleString() : `${(run.steps_completed ?? 0).toLocaleString()} / ${run.steps.toLocaleString()}`} steps · {episodeSummary} · seed {run.seed}</span>
     </button>;
 }
 
-function EvaluationEvidenceCard({ evaluation, onOpen }: { evaluation: FypEvaluation; onOpen: () => void }) {
+function EvaluationEvidenceCard({ evaluation, onOpen }: { evaluation: FypEvaluationSummary; onOpen: () => void }) {
     return <button className="fyp-evidence-card" type="button" onClick={onOpen}>
         <span><strong>{evaluationTag(evaluation) && <IndexPill kind="evaluation">{evaluationTag(evaluation)}</IndexPill>}Evaluation</strong>
             <small>{dateTime(evaluation.started_at ?? evaluation.finished_at)}</small>
-            <small>{environmentReference(evaluation.evaluation_environment)}</small></span>
+            <small>{evaluation.environment_reference ?? 'Not recorded'}</small></span>
         <span className={`fyp-state fyp-state-${evaluation.state.toLowerCase()}`}>{evaluation.state}</span>
         <span>{evaluation.episodes_completed ?? 0}/{evaluation.requested_episodes} episodes · {evaluation.goals_scored ?? '—'} goals · seed {evaluation.seed ?? '—'}</span>
-    </button>;
-}
-
-function EnvironmentButton({ environment, onOpen, label }: {
-    environment: FypEnvironment; onOpen?: (environmentId: string) => void; label: string;
-}) {
-    const version = environment.snapshot_recorded === false ? 'historical settings not recorded' : `v${environment.version}`;
-    const destination = environment.snapshot_recorded === false ? 'View current environment' : 'View environment';
-    if (!onOpen) return <p className="fyp-environment-link-label">{label}: {environment.name} · {version}</p>;
-    return <button className="fyp-environment-link-label" type="button" onClick={() => onOpen(environment.environment_id)}>
-        {label}: {environment.name} · {version} · {destination} →
     </button>;
 }

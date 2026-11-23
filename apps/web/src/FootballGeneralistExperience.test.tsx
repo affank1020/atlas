@@ -93,6 +93,21 @@ const environments = [{
     settings: [], modifiers: [],
 }];
 
+function historyToolResult(name: string, input: Record<string, unknown> = {}) {
+    switch (name) {
+        case 'football_fyp_live': return { training: null, evaluation: null, busy: false };
+        case 'football_fyp_overview': return { runs: 1, checkpoints: 1, evaluations: 1 };
+        case 'football_fyp_run_detail': return runs[0];
+        case 'football_fyp_evaluation_detail': return evaluations[0];
+        case 'football_fyp_run_chart': return { steps_completed: 2048, training_metrics: [] };
+        case 'football_fyp_episode_page': return { items: [], page_cursor: null, next_cursor: null };
+        case 'football_fyp_history': {
+            const items = input.historyView === 'checkpoints' ? runs : input.historyView === 'evaluations' ? evaluations : [...runs, ...evaluations];
+            return { items, page_cursor: 'first', next_cursor: null };
+        }
+    }
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
@@ -102,8 +117,8 @@ beforeEach(() => {
         const policyResult = policyToolResult(name, input);
         if (policyResult !== undefined) return policyResult as never;
         if (name === 'football_fyp_preflight') return { ...readyPreflight, editor_open: false, ready_to_train: false } as never;
-        if (name === 'football_fyp_runs') return runs as never;
-        if (name === 'football_fyp_evaluations') return evaluations as never;
+        const historyResult = historyToolResult(name, input);
+        if (historyResult !== undefined) return historyResult as never;
         if (name === 'football_fyp_environments') return environments as never;
         throw new Error('Unexpected tool: ' + name);
     });
@@ -128,11 +143,12 @@ test('checkpoint, run history, and environment pages use their current layouts',
 
     fireEvent.click(screen.getByRole('button', { name: /Policy Checkpoints/ }));
     expect(await screen.findByRole('heading', { name: 'Policy Checkpoints' })).toBeInTheDocument();
-    expect(document.querySelector('time[datetime="2026-11-10T10:20:00.000Z"]')).toHaveTextContent(/2026/);
-    fireEvent.click(screen.getByRole('button', { name: /Open checkpoint C1/ }));
+    const checkpoint = await screen.findByRole('button', { name: /Open checkpoint C1/ });
+    expect(checkpoint.querySelector('time[datetime="2026-11-10T10:20:00.000Z"]')).toHaveTextContent(/2026/);
+    fireEvent.click(checkpoint);
     expect(await screen.findByRole('heading', { name: /C1/ })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Training run' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start evaluation' })).toBeDisabled();
     expect(screen.getByLabelText('FYP evaluation episodes')).toBeInTheDocument();
 
@@ -145,12 +161,52 @@ test('checkpoint, run history, and environment pages use their current layouts',
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Recent Runs/ }));
     expect(await screen.findByRole('heading', { name: 'Recent Runs' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Evaluation.*10\/10 episodes/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Home' }));
     fireEvent.click(screen.getByRole('button', { name: /Environments/ }));
     expect(await screen.findByRole('button', { name: /Open Goal — Close/ })).toBeInTheDocument();
+});
+
+test('recent history keeps its first page cursor and opens a receipt from the next page by ID', async () => {
+    vi.mocked(callTool).mockImplementation(async (name, input) => {
+        if (name === 'football_fyp_history') return (input?.cursor === 'older'
+            ? { items: evaluations, page_cursor: 'older', next_cursor: null }
+            : { items: runs, page_cursor: 'first', next_cursor: 'older' }) as never;
+        const result = policyToolResult(name, input) ?? historyToolResult(name, input);
+        if (result !== undefined) return result as never;
+        if (name === 'football_fyp_preflight') return readyPreflight as never;
+        throw new Error('Unexpected tool: ' + name);
+    });
+    render(<FootballGeneralistExperience />);
+    fireEvent.click(await screen.findByRole('button', { name: /Recent Runs/ }));
+    const pager = await screen.findByRole('navigation', { name: 'Recent runs pagination' });
+    expect(within(pager).getByRole('button', { name: 'Previous' })).toBeDisabled();
+    fireEvent.click(within(pager).getByRole('button', { name: 'Next' }));
+    expect(await screen.findByRole('button', { name: /Evaluation.*10\/10 episodes/ })).toBeInTheDocument();
+    expect(within(pager).getByRole('button', { name: 'Next' })).toBeDisabled();
+    fireEvent.click(within(pager).getByRole('button', { name: 'Previous' }));
+    expect(await screen.findByRole('button', { name: /T1Smoke run/ })).toBeInTheDocument();
+    expect(callTool).toHaveBeenCalledWith('football_fyp_history', expect.objectContaining({ cursor: 'first' }), expect.any(AbortSignal));
+    fireEvent.click(within(pager).getByRole('button', { name: 'Next' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Evaluation.*10\/10 episodes/ }));
+    expect(await screen.findByRole('region', { name: 'Evaluation details' })).toBeInTheDocument();
+    expect(callTool).toHaveBeenCalledWith('football_fyp_evaluation_detail', { policyId: 'football-v1', evaluationId: 'eval-1' }, expect.any(AbortSignal));
+});
+
+test('a history count error leaves the Unity status visible', async () => {
+    vi.mocked(callTool).mockImplementation(async (name, input) => {
+        if (name === 'football_fyp_overview') throw new Error('History unavailable');
+        if (name === 'football_fyp_preflight') return readyPreflight as never;
+        const result = policyToolResult(name, input) ?? historyToolResult(name, input);
+        if (result !== undefined) return result as never;
+        throw new Error('Unexpected tool: ' + name);
+    });
+    render(<FootballGeneralistExperience />);
+    expect(await screen.findByRole('heading', { name: 'Unity open · idle · ready to run' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Recent Runs.*Counts unavailable/ })).toBeInTheDocument();
+    expect(screen.queryByText('Unity status unavailable')).not.toBeInTheDocument();
 });
 
 test('a legacy Control Room URL redirects to Home', async () => {
@@ -188,9 +244,10 @@ test('starting an evaluation from a checkpoint returns to Home', async () => {
         const policyResult = policyToolResult(name, input);
         if (policyResult !== undefined) return policyResult as never;
         if (name === 'football_fyp_preflight') return readyPreflight as never;
-        if (name === 'football_fyp_runs') return runs as never;
-        if (name === 'football_fyp_evaluations') return evaluations as never;
+        const historyResult = historyToolResult(name, input);
+        if (historyResult !== undefined) return historyResult as never;
         if (name === 'football_fyp_evaluate') return { ticket: 'ticket-eval-1', action: 'fyp_evaluate', status: 'accepted' } as never;
+        if (name === 'football_fyp_task_status') return { ticket: 'ticket-eval-1', action: 'fyp_evaluate', status: 'accepted' } as never;
         throw new Error('Unexpected tool: ' + name);
     });
     render(<FootballGeneralistExperience />);
@@ -213,8 +270,8 @@ test.each([
         const policyResult = policyToolResult(name, input);
         if (policyResult !== undefined) return policyResult as never;
         if (name === 'football_fyp_preflight') return preflight as never;
-        if (name === 'football_fyp_runs') return [] as never;
-        if (name === 'football_fyp_evaluations') return [] as never;
+        const historyResult = historyToolResult(name, input);
+        if (historyResult !== undefined) return historyResult as never;
         throw new Error('Unexpected tool: ' + name);
     });
     render(<FootballGeneralistExperience />);

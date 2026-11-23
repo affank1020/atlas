@@ -11,8 +11,11 @@ const runId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const policyId = z.string().regex(/^policy_[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const evaluationId = z.string().regex(/^eval_[A-Za-z0-9_]{1,74}$/);
 const fypPolicyId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
+const fypRunId = z.string().regex(/^fyp-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+const fypEvaluationId = z.string().regex(/^fyp-eval-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
 const drill = runId;
 const integer = z.number().int();
+const fypPage = { limit: integer.min(1).max(50).optional(), cursor: z.string().regex(/^[A-Za-z0-9_-]{1,1024}$/).optional() };
 
 export class FootballTrainingService {
     constructor(
@@ -63,6 +66,16 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
             action('football_fyp_preflight', 'Check the selected policy against the global FYP Unity Editor heartbeat and environment catalogue.', { policyId: fypPolicyId.optional() }, 'fyp_preflight'),
             action('football_fyp_build', 'Optionally build the player required by the selected FYP policy.', { policyId: fypPolicyId.optional() }, 'fyp_build'),
             action('football_fyp_runs', 'List durable training receipts for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_runs'),
+            action('football_fyp_history', 'Page newest-first FYP activity, checkpoints, or evaluations for one run. Use next_cursor with the same filters and page size.', {
+                policyId: fypPolicyId, historyView: z.enum(['activity', 'checkpoints', 'evaluations']), runId: fypRunId.optional(), ...fypPage }, 'fyp_history'),
+            action('football_fyp_overview', 'Read FYP training, checkpoint and evaluation counts for one policy.', { policyId: fypPolicyId }, 'fyp_overview'),
+            action('football_fyp_live', 'Read live operation summaries for the shared FYP Editor.', {}, 'fyp_live'),
+            action('football_fyp_run_detail', 'Read one FYP training receipt and its checkpoint note by ID.', { policyId: fypPolicyId, runId: fypRunId }, 'fyp_run_detail'),
+            action('football_fyp_evaluation_detail', 'Read one FYP evaluation receipt by ID, with diagnostics metadata and saved provenance.', {
+                policyId: fypPolicyId, evaluationId: fypEvaluationId }, 'fyp_evaluation_detail'),
+            action('football_fyp_episode_page', 'Page recorded episodes of exactly one training run or evaluation. Use next_cursor with the same filters and page size.', {
+                policyId: fypPolicyId, runId: fypRunId.optional(), evaluationId: fypEvaluationId.optional(), ...fypPage }, 'fyp_episode_page'),
+            action('football_fyp_run_chart', 'Read bounded reward chart points for one FYP training run.', { policyId: fypPolicyId, runId: fypRunId }, 'fyp_run_chart'),
             action('football_fyp_run_metrics', 'Read bounded trainer progress, reward graph points and a page of per-episode reward breakdowns for one FYP run.', {
                 policyId: fypPolicyId.optional(), runId, episodeOffset: integer.min(0).max(2_000_000).optional(), episodeLimit: integer.min(1).max(100).optional() }, 'fyp_run_metrics'),
             action('football_fyp_checkpoint_note', 'Save freeform notes on one completed FYP checkpoint export.', {

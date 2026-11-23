@@ -27,7 +27,7 @@
 .fyp-breadcrumb-link { margin:-4px -7px; border:0; border-radius:4px; padding:4px 7px; background:transparent; color:var(--text-muted,#9ba5b5); font:inherit; cursor:pointer; }
 .fg .fyp-breadcrumb-link:hover { border:0; background:transparent; color:var(--text-primary,#dfe5f0); }
 .fyp-breadcrumb-link:focus-visible { outline:2px solid var(--accent,#9cb5f3); outline-offset:2px; }
-.fyp-page-title-row { display:flex; justify-content:space-between; align-items:baseline; gap:16px; width:100%; }
+.fyp-page-title-row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:16px; width:100%; }
 .fyp-settings-link { flex:none; margin-left:auto; border:1px solid var(--border,#384152); border-radius:5px; padding:7px 11px; background:transparent; color:var(--text-secondary,#bac3d0); font:inherit; font-size:12px; cursor:pointer; }
 .fyp-settings-link:hover,.fyp-settings-link:focus-visible { border-color:var(--accent,#9cb5f3); color:var(--text-primary,#dfe5f0); outline:none; }
 .fyp-settings-panel { display:grid; gap:14px; max-width:760px; }
@@ -96,6 +96,12 @@
 .fyp-readiness-header h2 { margin:4px 0 0; font-size:19px; }
 .fyp-readiness .fg-button:hover:not(:disabled),.fyp-readiness .fg-button:focus-visible { border-color:var(--accent,#9cb5f3); background:transparent; outline:none; }
 .fyp-status-context { margin:-7px 0 0; color:var(--text-muted,#9ba5b5); font-size:12px; }
+.fyp-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px 16px; margin:16px 0 4px; }
+.fyp-pagination span { min-width:72px; text-align:center; color:var(--text-secondary,#bac3d0); font-variant-numeric:tabular-nums; }
+.fyp-pagination button { min-width:88px; }
+.fyp-read-message { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:var(--danger,#fb9090); margin:8px 0; }
+.fyp-episode-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.fyp-history-refresh { margin-inline-start:auto; }
 .fyp-live-summary { display:grid; gap:5px; margin-top:12px; padding:12px 14px; border:1px solid var(--border,#384152); border-radius:5px; background:var(--panel-alt,#202126); font-size:13px; }
 .fyp-readiness .fyp-live-summary { background:transparent; }
 .fyp-live-summary>span,.fyp-ticket { color:var(--text-muted,#9ba5b5); overflow-wrap:anywhere; }
@@ -120,8 +126,6 @@
 .fyp-episode-breakdown { border-bottom:1px solid var(--border,#384152); padding:7px 0; }
 .fyp-episode-breakdown summary { display:flex; flex-wrap:wrap; gap:8px 16px; color:var(--text-secondary,#bac3d0); font-size:12px; cursor:pointer; }
 .fyp-episode-reward-parts { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; padding:10px 0; }
-.fyp-episode-pager { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:12px; }
-.fyp-episode-pager span { color:var(--text-muted,#9ba5b5); font-size:11px; }
 .fyp-ticket { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px; }
 .fyp-operation-banner { display:flex; align-items:center; gap:10px; width:100%; padding:11px 14px; border:1px solid color-mix(in srgb,var(--accent,#9cb5f3) 35%,var(--border,#384152)); border-radius:5px; background:color-mix(in srgb,var(--accent,#9cb5f3) 7%,var(--surface,#1d222b)); color:var(--text-primary,#dfe5f0); text-align:left; font:inherit; font-size:12px; cursor:pointer; }
 .fyp-operation-banner>span:nth-child(2) { display:flex; align-items:center; flex:1; gap:8px; min-width:0; flex-wrap:wrap; }
