@@ -63,7 +63,12 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
         tools: [
             action('football_fyp_policies', 'List documented FYP policy plans. Each policy has its own run history; the Unity session and environment catalogue stay shared.', {}, 'fyp_policies'),
             action('football_fyp_manifest', 'Read one FYP policy plan, its observation/action contract, curriculum, runtime requirements and execution support.', { policyId: fypPolicyId.optional() }, 'fyp_manifest'),
-            action('football_fyp_preflight', 'Check the selected policy against the global FYP Unity Editor heartbeat and environment catalogue.', { policyId: fypPolicyId.optional() }, 'fyp_preflight'),
+            action('football_fyp_preflight', 'Check the selected policy against the global FYP Unity Editor heartbeat and environment catalogue.', { policyId: fypPolicyId.optional(), environmentId: fypPolicyId.optional() }, 'fyp_preflight'),
+            action('football_fyp_train', 'Train fresh, resume with additional steps, or transfer a compatible checkpoint to a selected curriculum environment.', {
+                policyId: fypPolicyId.optional(), environmentId: fypPolicyId.optional(),
+                checkpointMode: z.enum(['fresh', 'resume', 'transfer']).default('fresh'), parentRunId: fypRunId.optional(),
+                maxSteps: integer.min(2048).max(2_000_000), seed: integer.min(0).max(2147483647),
+                timeScale: z.number().min(1).max(5).optional() }, 'fyp_train'),
             action('football_fyp_build', 'Optionally build the player required by the selected FYP policy.', { policyId: fypPolicyId.optional() }, 'fyp_build'),
             action('football_fyp_runs', 'List durable training receipts for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_runs'),
             action('football_fyp_history', 'Page newest-first FYP activity, checkpoints, or evaluations for one run. Use next_cursor with the same filters and page size.', {

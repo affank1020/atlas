@@ -193,8 +193,17 @@ test('canonical FYP tools route to FYP, never the first legacy Unity checkout', 
     await assert.rejects(apps.invoke('football_fyp_checkpoint_note', {
         runId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', notes: 'x'.repeat(20_001),
     }));
-    assert.equal(apps.hasTool('football_fyp_train'), false);
-    await assert.rejects(apps.invoke('football_fyp_train', { maxSteps: 2_048, seed: 63 }));
+    assert.equal(apps.hasTool('football_fyp_train'), true);
+    await apps.invoke('football_fyp_train', { checkpointMode: 'transfer',
+        parentRunId: 'fyp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', environmentId: 'open-goal-varied',
+        maxSteps: 250_000, seed: 63 });
+    const continuation = invocations.at(-1);
+    assert.equal(continuation[0].id, fypWorkspace.id);
+    assert.equal(continuation[2].action, 'fyp_train');
+    assert.equal(continuation[2].checkpointMode, 'transfer');
+    assert.equal(continuation[2].environmentId, 'open-goal-varied');
+    assert.doesNotThrow(() => workspaceOperationSchemas.football_control.parse(continuation[2]));
+    await assert.rejects(apps.invoke('football_fyp_train', { maxSteps: 0, seed: 63 }));
 });
 
 test('FYP operations refuse to silently fall back to the legacy Unity workspace', async () => {
