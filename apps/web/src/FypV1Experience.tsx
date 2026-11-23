@@ -1,4 +1,3 @@
-import { FypTrainingForm } from './FypTrainingForm';
 import { useEffect, useRef, useState } from 'react';
 import { callTool } from './api';
 import { FypV1Evidence, TrainingEvidenceCard, type FypRun, type FypRunSummary, type FypEvaluation, type FypEvaluationSummary, type HistoryRow } from './FypV1Evidence';
@@ -538,8 +537,6 @@ export function FypV1Experience() {
             <span aria-hidden="true">Follow evaluation →</span>
         </button>}
 
-        {page === 'home' && manifest?.execution_supported && <FypTrainingForm key={policyId} policyId={policyId}
-            disabled={operationActive || !!live.error || live.loading} onAccepted={response => { setTicket(response); setNotice('Training accepted. Press Play in Unity to connect.'); live.refresh(); }} />}
         {page === 'home' && <section className="fyp-home-grid" aria-label="FYP sections">
             <button className="fyp-home-card" type="button" onClick={() => navigate({ page: 'policy', checkpointId: null })}>
                 <span className="fyp-home-card-heading"><strong>Policy plan</strong><span aria-hidden="true">→</span></span>
@@ -622,8 +619,6 @@ export function FypV1Experience() {
                     </label>)}
                 </fieldset>
             </section>
-            {manifest?.execution_supported && <FypTrainingForm key={focusedRun.run_id} policyId={policyId} parent={focusedRun}
-                disabled={operationActive || !!live.error || live.loading} onAccepted={response => { setTicket(response); setNotice('Training accepted. Press Play in Unity to connect.'); navigate({ page: 'home', checkpointId: null }); live.refresh(); }} />}
             <section className="fyp-checkpoint-run-summary" aria-labelledby="fyp-checkpoint-training-title">
                 <h2 id="fyp-checkpoint-training-title" className="fyp-checkpoint-section-title">Training run</h2>
                 <TrainingEvidenceCard run={focusedRun}
