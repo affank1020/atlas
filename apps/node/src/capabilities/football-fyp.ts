@@ -203,7 +203,7 @@ async function python(workspace: Workspace, argv: string[]): Promise<any> {
     const legacyHistory = argv[0] === 'runs' || argv[0] === 'evaluations';
     let stdout: string;
     try {
-        ({ stdout } = await execFileAsync('python3', [file, ...argv], {
+        ({ stdout } = await execFileAsync('python3', ['-B', file, ...argv], {
             cwd: workspace.rootPath, env: cleanEnv(), shell: false,
             // Keep legacy lists usable for existing consumers, with room for the Node frame envelope.
             maxBuffer: (legacyHistory ? 1536 : 512) * 1024, timeout: 90_000,
@@ -352,15 +352,18 @@ export async function fypOperation(workspace: Workspace, x: Input): Promise<unkn
             throw new AtlasError('FYP checkpoint notes require a valid run ID and notes text.', 'INVALID_ARGUMENT');
         return python(workspace, ['checkpoint-note', '--run-id', x.runId, ...policyArgs, '--notes=' + x.notes]);
     }
-    if (x.action === 'fyp_evaluation_diagnostics') {
-        if (!x.evaluationId || !/^fyp-eval-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(x.evaluationId))
-            throw new AtlasError('Valid FYP evaluation ID required.', 'INVALID_ARGUMENT');
+    if (x.action === 'fyp_evaluation_diagnostics' || x.action === 'fyp_training_diagnostics') {
+        const training = x.action === 'fyp_training_diagnostics';
+        const id = training ? x.runId : x.evaluationId;
+        const prefix = training ? 'fyp-' : 'fyp-eval-';
+        if (!id?.startsWith(prefix) || !UUID.test(id.slice(prefix.length)))
+            throw new AtlasError(training ? 'Valid FYP training run ID required.' : 'Valid FYP evaluation ID required.', 'INVALID_ARGUMENT');
         const episode = x.replayEpisode ?? 0;
         const observation = x.offset ?? 0;
         if (!Number.isInteger(episode) || episode < 0 || episode > 99 ||
             !Number.isInteger(observation) || observation < 0 || observation > 10000)
             throw new AtlasError('Invalid FYP diagnostic sample selection.', 'INVALID_ARGUMENT');
-        return python(workspace, ['evaluation-diagnostics', '--evaluation-id', x.evaluationId,
+        return python(workspace, [training ? 'training-diagnostics' : 'evaluation-diagnostics', training ? '--run-id' : '--evaluation-id', id,
             '--episode-index', String(episode), '--observation-index', String(observation), ...policyArgs]);
     }
     if (x.action === 'fyp_evaluations') return python(workspace, ['evaluations', ...policyArgs]);
