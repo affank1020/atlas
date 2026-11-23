@@ -530,6 +530,37 @@ export function mockTool<T>(name: string, input: Record<string, unknown> = {}): 
         case 'football_fyp_environments': result = [fypEnvironment, fypCooperativeEnvironment, fypCooperativeBuildUpEnvironment, fypCooperativePressureEnvironment]; break;
         case 'football_fyp_runs': result = policyId === 'football-v1' ? fypRuns : policyId === 'football-v2' ? fypCooperativeRuns : []; break;
         case 'football_fyp_evaluations': result = policyId === 'football-v1' ? fypEvaluations : policyId === 'football-v2' ? fypCooperativeEvaluations : []; break;
+        case 'football_fyp_history':
+        case 'football_fyp_overview':
+        case 'football_fyp_run_detail':
+        case 'football_fyp_evaluation_detail':
+        case 'football_fyp_episode_page': {
+            const runs = policyId === 'football-v1' ? fypRuns : policyId === 'football-v2' ? fypCooperativeRuns : [];
+            const evaluations = policyId === 'football-v1' ? fypEvaluations : policyId === 'football-v2' ? fypCooperativeEvaluations : [];
+            const checkpoints = runs.filter(run => run.state === 'completed' && run.exported_model);
+            const run = runs.find(item => item.run_id === input.runId);
+            const evaluation = evaluations.find(item => item.evaluation_id === input.evaluationId);
+            if (name === 'football_fyp_overview') { result = { runs: runs.length, evaluations: evaluations.length, checkpoints: checkpoints.length }; break; }
+            if (name === 'football_fyp_run_detail') { result = run; break; }
+            if (name === 'football_fyp_evaluation_detail') { result = evaluation; break; }
+            const limit = Number(input.limit ?? 25);
+            const offset = typeof input.cursor === 'string' ? Number(input.cursor.slice('demo-'.length)) : 0;
+            const date = (item: { started_at: string; finished_at: string }) =>
+                input.historyView === 'checkpoints' ? item.finished_at : item.started_at;
+            const reference = (environment?: { name: string; version: string }) => environment && `${environment.name} · v${environment.version}`;
+            const runRows = (input.historyView === 'checkpoints' ? checkpoints : runs).map(({ environment, ...item }) =>
+                ({ ...item, environment_reference: reference(environment) }));
+            const evaluationRows = evaluations.filter(item => !input.runId || item.training_run_id === input.runId)
+                .map(({ evaluation_environment, ...item }) => ({ ...item, environment_reference: reference(evaluation_environment) }));
+            const history = (input.historyView === 'checkpoints' ? runRows : input.historyView === 'evaluations'
+                ? evaluationRows : [...runRows, ...evaluationRows]).sort((a, b) => date(b).localeCompare(date(a)));
+            const items = name === 'football_fyp_episode_page' ? evaluation?.episodes ?? [] : history;
+            result = { items: items.slice(offset, offset + limit), page_cursor: items.length ? `demo-${offset}` : null,
+                next_cursor: offset + limit < items.length ? `demo-${offset + limit}` : null };
+            break;
+        }
+        case 'football_fyp_live': result = { training: null, evaluation: null, busy: false }; break;
+        case 'football_fyp_run_chart': result = { steps_completed: 0, training_metrics: [] }; break;
         case 'get_storage_usage': result = {
             postgres: {
                 state: 'ready', measuredAt: stamp, databaseBytes: 32_000_000, tableBytes: 19_000_000, indexBytes: 6_000_000,

@@ -200,14 +200,51 @@ function bridge(workspace: Workspace) {
 
 async function python(workspace: Workspace, argv: string[]): Promise<any> {
     const file = bridge(workspace);
-    const { stdout } = await execFileAsync('python3', [file, ...argv], {
-        cwd: workspace.rootPath, env: cleanEnv(), shell: false,
-        // Evaluation history includes bounded episode summaries and policy provenance.
-        // Keep room for repeated 100-episode evaluations; raw traces use a separate read.
-        maxBuffer: (argv[0] === 'evaluations' ? 8 * 1024 : 512) * 1024, timeout: 90_000,
-    });
+    const legacyHistory = argv[0] === 'runs' || argv[0] === 'evaluations';
+    let stdout: string;
+    try {
+        ({ stdout } = await execFileAsync('python3', [file, ...argv], {
+            cwd: workspace.rootPath, env: cleanEnv(), shell: false,
+            // Keep legacy lists usable for existing consumers, with room for the Node frame envelope.
+            maxBuffer: (legacyHistory ? 1536 : 512) * 1024, timeout: 90_000,
+        }));
+    } catch (error) {
+        if (legacyHistory && (error as NodeJS.ErrnoException).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+            throw new AtlasError('This FYP history exceeds the legacy list size limit. Use football_fyp_history to read it in pages.', 'DRIVER_UNAVAILABLE');
+        throw error;
+    }
     try { return JSON.parse(stdout); }
     catch { throw new AtlasError('FYP driver returned invalid JSON.', 'DRIVER_UNAVAILABLE'); }
+}
+
+async function historyOperation(workspace: Workspace, x: Input, command: string): Promise<unknown> {
+    fypWorkspace(workspace);
+    const invalid = (message: string) => new AtlasError(message, 'INVALID_ARGUMENT');
+    if (command !== 'live' && (!x.policyId || !POLICY_ID.test(x.policyId))) throw invalid('A valid FYP policy is required.');
+    if (x.limit !== undefined && x.limit > 50) throw invalid('FYP page size must be between 1 and 50.');
+    if (command === 'history' && (!x.historyView || (x.historyView === 'evaluations') !== Boolean(x.runId)))
+        throw invalid('Evaluation history requires a run ID. Other histories use just the policy.');
+    if (command === 'episode-page' && Boolean(x.runId) === Boolean(x.evaluationId))
+        throw invalid('Choose one training run or evaluation for episode history.');
+    const args = [command];
+    for (const [flag, value] of [['policy-id', x.policyId], ['view', x.historyView], ['run-id', x.runId],
+        ['evaluation-id', x.evaluationId], ['limit', x.limit], ['cursor', x.cursor]] as const) {
+        if (value !== undefined) args.push(`--${flag}=${value}`);
+    }
+    const file = safeSource(workspace, 'Training/fyp_history.py');
+    let stdout: string;
+    try {
+        ({ stdout } = await execFileAsync('python3', ['-B', file, ...args], {
+            cwd: workspace.rootPath, env: cleanEnv(), shell: false, maxBuffer: 512 * 1024, timeout: 20_000,
+        }));
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (Number(code) === 4) throw invalid('The page cursor is invalid for this request. Start from the first page.');
+        if (Number(code) === 3) throw new AtlasError('FYP receipt not found for the selected policy.', 'NOT_FOUND');
+        throw new AtlasError('FYP history could not be read.', 'DRIVER_UNAVAILABLE');
+    }
+    try { return JSON.parse(stdout); }
+    catch { throw new AtlasError('FYP history returned invalid JSON.', 'DRIVER_UNAVAILABLE'); }
 }
 
 function operationsDir(workspace: Workspace) {
@@ -284,6 +321,15 @@ function taskStatus(workspace: Workspace, id: string) {
 }
 
 export async function fypOperation(workspace: Workspace, x: Input): Promise<unknown> {
+    switch (x.action) {
+        case 'fyp_history': return historyOperation(workspace, x, 'history');
+        case 'fyp_overview': return historyOperation(workspace, x, 'overview');
+        case 'fyp_live': return historyOperation(workspace, x, 'live');
+        case 'fyp_run_detail': return historyOperation(workspace, x, 'run-detail');
+        case 'fyp_evaluation_detail': return historyOperation(workspace, x, 'evaluation-detail');
+        case 'fyp_episode_page': return historyOperation(workspace, x, 'episode-page');
+        case 'fyp_run_chart': return historyOperation(workspace, x, 'chart');
+    }
     const policyArgs = x.policyId ? ['--policy-id', x.policyId] : [];
     if (x.action === 'fyp_policies') return fypPolicyRecords(workspace);
     if (x.action === 'fyp_manifest') return fypManifest(workspace, x.policyId ?? DEFAULT_POLICY_ID);
