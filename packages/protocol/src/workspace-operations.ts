@@ -59,7 +59,7 @@ export const workspaceOperationSchemas = {
     football_control: z.object({
         ...scope,
         action: z.enum(['fyp_policies', 'fyp_manifest', 'fyp_preflight', 'fyp_build', 'fyp_train', 'fyp_evaluate', 'fyp_runs', 'fyp_run_metrics', 'fyp_checkpoint_note', 'fyp_evaluations', 'fyp_evaluation_diagnostics', 'fyp_environments', 'fyp_status', 'fyp_task_status',
-            'fyp_history', 'fyp_overview', 'fyp_live', 'fyp_run_detail', 'fyp_evaluation_detail', 'fyp_episode_page', 'fyp_run_chart',
+            'fyp_history', 'fyp_overview', 'fyp_live', 'fyp_run_detail', 'fyp_evaluation_detail', 'fyp_episode_page', 'fyp_run_chart', 'fyp_training_diagnostics',
             'generalist_manifest', 'generalist_runs', 'generalist_run_detail', 'generalist_evaluation_detail', 'generalist_policies', 'generalist_assessments', 'generalist_policy_update', 'generalist_activity', 'generalist_reviews', 'generalist_review_update', 'generalist_status', 'generalist_stop', 'generalist_package', 'generalist_train', 'generalist_evaluate', 'generalist_baseline', 'generalist_watch', 'prebuild_training', 'training_resources', 'recover_queue', 'resume_training', 'drills', 'jobs', 'job_logs', 'policies', 'index_policy', 'launch_headless', 'launch_status', 'stop_job', 'evaluation_plan', 'evaluate', 'evaluate_baseline', 'evaluation_status', 'evaluations', 'evaluation_detail', 'viewer_sessions', 'watch_policy', 'watch_live', 'viewer_launch_status', 'validation_status', 'validation_python', 'validation_editor', 'validation_physics']),
         scenario: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/).optional(),
         checkpointMode: z.enum(['fresh', 'resume', 'transfer']).optional(),

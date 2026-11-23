@@ -91,8 +91,11 @@ export function footballTrainingApplication(service: Pick<FootballTrainingServic
                 episodes: integer.min(1).max(100), timeScale: z.number().min(1).max(5).optional(),
                 seed: integer.min(0).max(2147483647) }, 'fyp_evaluate'),
             action('football_fyp_evaluation_diagnostics', 'Read verified diagnostic summaries and bounded trajectories for one FYP evaluation episode.', {
-                policyId: fypPolicyId.optional(), evaluationId: z.string().regex(/^fyp-eval-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/),
+                policyId: fypPolicyId.optional(), evaluationId: fypEvaluationId,
                 replayEpisode: integer.min(0).max(99).optional(), offset: integer.min(0).max(10000).optional() }, 'fyp_evaluation_diagnostics'),
+            action('football_fyp_training_diagnostics', 'Read verified behaviour diagnostics for one recorded episode of a FYP training run.', {
+                policyId: fypPolicyId.optional(), runId: fypRunId,
+                replayEpisode: integer.min(0).max(99).optional(), offset: integer.min(0).max(10000).optional() }, 'fyp_training_diagnostics'),
             action('football_fyp_evaluations', 'List source-pinned evaluations for one selected policy.', { policyId: fypPolicyId.optional() }, 'fyp_evaluations'),
             action('football_fyp_status', 'Read a selected policy training run receipt.', { policyId: fypPolicyId.optional(), runId }, 'fyp_status'),
             action('football_fyp_task_status', 'Inspect a bounded FYP build or training operation receipt.', { runId: z.string().uuid() }, 'fyp_task_status'),

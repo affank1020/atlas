@@ -96,7 +96,7 @@ function validateAction(x: Input) {
         throw new AtlasError('A baseline controller is required.', 'INVALID_ARGUMENT');
     // FYP diagnostics uses a zero-based index to read an existing episode;
     // it does not launch a legacy scenario replay.
-    if (x.action !== 'fyp_evaluation_diagnostics' && x.replayEpisode &&
+    if (!['fyp_evaluation_diagnostics', 'fyp_training_diagnostics'].includes(x.action) && x.replayEpisode &&
         (!['evaluate', 'evaluate_baseline'].includes(x.action) || (x.episodes ?? 100) !== 1))
         throw new AtlasError('Scenario replay requires a one-episode evaluation.', 'INVALID_ARGUMENT');
     if (x.evaluationStage !== undefined && x.action !== 'evaluate')

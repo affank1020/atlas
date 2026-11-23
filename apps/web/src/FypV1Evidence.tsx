@@ -1,5 +1,5 @@
 import { FypPagination, FypReadMessage, useFypPage, useFypRead } from './fypHistory';
-import { FypEvaluationDiagnostics, type EvaluationDiagnostics } from './FypEvaluationDiagnostics';
+import { FypBehaviourDiagnostics, FypEvaluationDiagnostics, type BehaviourDiagnostics } from './FypEvaluationDiagnostics';
 import { FypEnvironmentCard, type FypEnvironment } from './FypEnvironmentCatalog';
 
 type Episode = { sequence?: number; index?: number; episode?: number; seed?: number; goals?: number; elapsed_seconds?: number; outcome?: string; trainer_connected?: boolean;
@@ -17,6 +17,7 @@ export type FypRun = FypRunSummary & {
     source_sha256: string; time_scale?: number; mean_episode_seconds?: number | null;
     policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
     environment?: FypEnvironment; model_sha256?: string | null; checkpoint_sha256?: string | null;
+    diagnostics?: BehaviourDiagnostics;
     exit_code?: number | null; error?: string;
 };
 export type FypEvaluationSummary = {
@@ -26,7 +27,7 @@ export type FypEvaluationSummary = {
 };
 export type FypEvaluation = FypEvaluationSummary & {
     policy_revision?: number; policy_record_sha256?: string; policy_snapshot?: Record<string, unknown>;
-    diagnostics?: EvaluationDiagnostics; time_scale?: number; evaluation_environment?: FypEnvironment;
+    diagnostics?: BehaviourDiagnostics; time_scale?: number; evaluation_environment?: FypEnvironment;
     exit_code?: number | null; error?: string;
 };
 export type HistoryRow = FypRunSummary | FypEvaluationSummary;
@@ -133,6 +134,8 @@ export function FypV1Evidence({ policyId, mode, run: selectedRun, evaluation: se
                     : graph.data && <p className="fg-muted">No trainer reward summaries have been recorded for this run.</p>}
                 <div className="fyp-chart-legend"><span>Mean reward</span><span>Mean group reward</span></div>
             </section>
+            <FypBehaviourDiagnostics key={selectedRun.run_id} kind="training" id={selectedRun.run_id}
+                policyId={policyId} diagnostics={selectedRun.diagnostics} />
             <EpisodeBreakdowns policyId={policyId} runId={selectedRun.run_id} live={live} />
             {selectedRun.policy_snapshot && <details className="fyp-policy-raw"><summary>Plan snapshot used by this run</summary>
                 <pre>{JSON.stringify(selectedRun.policy_snapshot, null, 2)}</pre></details>}

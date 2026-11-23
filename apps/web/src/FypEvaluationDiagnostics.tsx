@@ -4,17 +4,18 @@ import './FypEvaluationDiagnostics.css';
 
 type Summary = { session_id: string; episode: number; outcome: string; elapsed_seconds: number; player_distance_metres: number;
     absolute_turn_degrees: number; final_ball_distance_metres: number; touch_attempts: number; touch_results: Record<string, number> };
-export type EvaluationDiagnostics = { state: string; reason?: string; sha256?: string; bytes?: number; episodes?: Summary[]; sampling?: string; limitations?: string };
+export type BehaviourDiagnostics = { state: string; reason?: string; sha256?: string; bytes?: number; episodes?: Summary[]; sampling?: string; limitations?: string };
+export type EvaluationDiagnostics = BehaviourDiagnostics;
 type Vec = { x: number; y: number; z: number };
 type State = { elapsed_seconds: number; physics_step: number; player_position: Vec; ball_position: Vec; player_velocity: Vec; ball_velocity: Vec;
     yaw_degrees: number; yaw_rate_radians: number; ball_angular_velocity: Vec; movement: {x:number;y:number}; obstructed: boolean; absolute_turn_degrees: number; desired_facing: Vec; desired_facing_active: boolean; can_touch: boolean; cooldown_seconds: number };
 type Action = { elapsed_seconds: number; values: number[] };
 type Touch = { elapsed_seconds: number; result: string; power: number; touch_direction: {x:number;y:number}; impulse: Vec };
-type Detail = { diagnostics: EvaluationDiagnostics; trace: { states: State[]; actions: Action[]; touches: Touch[];
+type Detail = { trace?: { states: State[]; actions: Action[]; touches: Touch[];
     counts: { states: number; actions: number; touches: number; observations: number }; display_limit: number;
     observation?: { elapsed_seconds: number; values: number[] } | null; observation_index: number };
     observation_channels: { name: string; start: number; size: number; encoding?: string }[];
-    model_sha256?: string; evaluation_source_sha256?: string };
+    model_sha256?: string; evaluation_source_sha256?: string; source_sha256?: string };
 const fmt = (value: number | undefined, digits = 1) => value != null && Number.isFinite(value) ? value.toFixed(digits) : '—';
 const vector = (v: Vec | undefined) => v ? [v.x,v.y,v.z].map(n => fmt(n,2)).join(', ') : '—';
 const speed = (v: Vec | undefined) => v ? Math.hypot(v.x,v.y,v.z) : undefined;
@@ -24,32 +25,45 @@ const colors = ['#6eb5ff', '#ffbe70', '#bd9cff', '#70dfbf'];
 export function FypEvaluationDiagnostics({ evaluationId, policyId, diagnostics }: {
     evaluationId: string; policyId?: string; diagnostics?: EvaluationDiagnostics;
 }) {
+    return <FypBehaviourDiagnostics kind="evaluation" id={evaluationId} policyId={policyId} diagnostics={diagnostics} />;
+}
+
+export function FypBehaviourDiagnostics({ kind, id, policyId, diagnostics }: {
+    kind: 'training' | 'evaluation'; id: string; policyId?: string; diagnostics?: BehaviourDiagnostics;
+}) {
     const [episode, setEpisode] = useState(() => Math.max(0, diagnostics?.episodes?.findIndex(e => e.outcome !== 'Goal scored') ?? 0));
     const [observation, setObservation] = useState(0);
     const [frame, setFrame] = useState(0);
     const [order, setOrder] = useState('failures');
-    const [group, setGroup] = useState('facing');
+    const [group, setGroup] = useState(kind === 'training' ? 'movement' : 'facing');
     const [data, setData] = useState<Detail | null>(null);
     const [error, setError] = useState('');
     const [retry, setRetry] = useState(0);
     const episodes = diagnostics?.episodes ?? [];
+    const label = kind === 'training' ? 'Training diagnostics' : 'Evaluation diagnostics';
+    const activity = kind === 'training' ? 'this training run' : 'this evaluation';
     useEffect(() => {
         if (diagnostics?.state !== 'complete') return;
         const controller = new AbortController();
         setError('');
-        void callTool<Detail>('football_fyp_evaluation_diagnostics', {
-            evaluationId, policyId, replayEpisode: episode, offset: observation,
-        }, controller.signal).then(result => { if (!controller.signal.aborted) setData(result); })
+        const source = kind === 'training' ? { runId: id } : { evaluationId: id };
+        void callTool<Detail>(`football_fyp_${kind}_diagnostics`, {
+            ...source, policyId, replayEpisode: episode, offset: observation,
+        }, controller.signal).then(result => {
+            if (!result.trace) throw new Error('The recorded episode trace is unavailable.');
+            if (!controller.signal.aborted) setData(result);
+        })
             .catch(failure => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : String(failure)); });
         return () => controller.abort();
-    }, [evaluationId, policyId, diagnostics?.state, episode, observation, retry]);
+    }, [kind, id, policyId, diagnostics?.state, diagnostics?.sha256, episode, observation, retry]);
     const ordered = useMemo(() => episodes.map((item, index) => ({ ...item, index })).sort((a, b) =>
         order === 'turning' ? b.absolute_turn_degrees - a.absolute_turn_degrees : order === 'episode' ? a.index - b.index :
+            order === 'movement' ? a.player_distance_metres - b.player_distance_metres :
             Number(a.outcome === 'Goal scored') - Number(b.outcome === 'Goal scored') || a.index - b.index), [episodes, order]);
-    if (diagnostics?.state !== 'complete') return <section className="fyp-diagnostics" aria-label="Evaluation diagnostics">
-        <h3>Behaviour diagnostics</h3><p className="fg-muted">{diagnostics?.state === 'pending' ? 'Diagnostics are not available yet. They are checked when the evaluation finishes.' :
-            diagnostics?.state === 'disabled' ? 'Diagnostic recording was disabled for this evaluation.' :
-            diagnostics?.state === 'incomplete' ? 'Diagnostic recording is incomplete.' : 'No diagnostic trace was recorded for this evaluation.'}</p>
+    if (diagnostics?.state !== 'complete') return <section className="fyp-diagnostics" aria-label={label}>
+        <h3>Behaviour diagnostics</h3><p className="fg-muted">{diagnostics?.state === 'pending' ? `Episode traces will be available when ${activity} finishes.` :
+            diagnostics?.state === 'disabled' ? `Diagnostic recording was disabled for ${activity}.` :
+            diagnostics?.state === 'incomplete' ? 'Diagnostic recording is incomplete.' : `No diagnostic trace was recorded for ${activity}.`}</p>
         {diagnostics?.reason && <p className="fg-muted">{diagnostics.reason}</p>}
     </section>;
     const selected = episodes[episode];
@@ -60,16 +74,17 @@ export function FypEvaluationDiagnostics({ evaluationId, policyId, diagnostics }
     const successes = episodes.filter(e => e.outcome === 'Goal scored'), failures = episodes.filter(e => e.outcome !== 'Goal scored');
     const channels = group === 'movement' ? [0, 1] : group === 'facing' ? [2, 3] : group === 'direction' ? [4, 5] : [6, 7];
     const actionNames = ['Strafe', 'Forward / back', 'Desired facing X', 'Desired facing Z', 'Touch direction X', 'Touch direction Z', 'Touch power (raw)', 'Touch trigger (raw)'];
-    return <section className="fyp-diagnostics" aria-label="Evaluation diagnostics">
-        <div className="fyp-diagnostic-heading"><div><span className="fyp-diagnostic-eyebrow">BEHAVIOUR</span><h3>What happened during evaluation</h3></div>
-            <span className="fyp-diagnostic-badge">{episodes.length} episodes recorded</span></div>
+    return <section className="fyp-diagnostics" aria-label={label}>
+        <div className="fyp-diagnostic-heading"><div><span className="fyp-diagnostic-eyebrow">BEHAVIOUR</span><h3>What happened during {kind}</h3></div>
+            <span className="fyp-diagnostic-badge">{episodes.length} {kind === 'training' ? 'episodes sampled' : 'episodes recorded'}</span></div>
         <div className="fyp-diagnostic-comparison">
             {[{ label: 'Scoring episodes', items: successes }, { label: 'Other outcomes', items: failures }].map(({ label, items }) =>
                 <div key={label}><strong>{items.length} <small>{label}</small></strong><span>Mean movement <b>{mean('player_distance_metres', items)} m</b></span>
                     <span>Mean total turning <b>{mean('absolute_turn_degrees', items)}°</b></span></div>)}
         </div>
         <div className="fyp-diagnostic-heading"><h4>Explore episodes</h4><label>Sort <select aria-label="Sort diagnostic episodes" value={order} onChange={e => setOrder(e.target.value)}>
-            <option value="failures">Failures first</option><option value="turning">Most turning</option><option value="episode">Episode order</option></select></label></div>
+            <option value="failures">Failures first</option><option value="turning">Most turning</option><option value="movement">Least movement</option>
+            <option value="episode">Episode order</option></select></label></div>
         <div className="fyp-diagnostic-table-wrap"><table className="fyp-diagnostic-table"><thead><tr><th>Episode</th><th>Outcome</th><th>Time</th><th>Movement</th><th>Total turning</th><th>Touches / attempts</th></tr></thead>
             <tbody>{ordered.map(e => <tr key={`${e.session_id}:${e.episode}`} aria-selected={e.index === episode}><td><button type="button" aria-pressed={e.index === episode} onClick={() => {
                 if (e.index !== episode) { setData(null); setEpisode(e.index); setObservation(0); setFrame(0); }
@@ -91,6 +106,7 @@ export function FypEvaluationDiagnostics({ evaluationId, policyId, diagnostics }
                         <dt>Applied movement · local X/Z</dt><dd>{state.movement ? `${fmt(state.movement.x,2)}, ${fmt(state.movement.y,2)}` : '—'}</dd></dl></details>}
                 </div><div className="fyp-diagnostic-panel"><h5>Total turning over time</h5><Turning states={trace.states} />
                     <p className="fg-muted">Cumulative absolute yaw change. Turning back and forth adds to the total.</p>
+                    <h5>Horizontal player speed</h5><PlayerSpeed states={trace.states} />
                     <h5>Policy actions</h5><select aria-label="Action channels" value={group} onChange={e => setGroup(e.target.value)}>
                         <option value="movement">Movement</option><option value="facing">Desired facing</option><option value="direction">Touch direction</option><option value="power">Power and trigger</option></select>
                     <Series times={trace.actions.map(a => a.elapsed_seconds)} series={channels.map(c => ({ name: actionNames[c], values: trace.actions.map(a => a.values[c]) }))} domain={[-1,1]} />
@@ -111,7 +127,9 @@ export function FypEvaluationDiagnostics({ evaluationId, policyId, diagnostics }
                 <p className="fg-muted fyp-diagnostic-note">Sampled trajectories, not a physics replay. Each display series shows up to {trace.display_limit} evenly spaced records; the raw artifact retains all records.
                     {' '}This episode contains {trace.counts.states} state, {trace.counts.actions} action and {trace.counts.touches} touch records.</p>
                 <details className="fyp-diagnostic-provenance"><summary>Recording details</summary><p>{diagnostics.sampling}</p><p>{diagnostics.limitations}</p>
-                    <p>Trace SHA-256 <code>{diagnostics.sha256}</code></p><p>Model SHA-256 <code>{data?.model_sha256}</code></p><p>Evaluation source SHA-256 <code>{data?.evaluation_source_sha256}</code></p></details>
+                    <p>Trace SHA-256 <code>{diagnostics.sha256}</code></p>
+                    {kind === 'evaluation' && <p>Model SHA-256 <code>{data?.model_sha256}</code></p>}
+                    <p>{kind === 'training' ? 'Training' : 'Evaluation'} source SHA-256 <code>{data?.source_sha256 ?? data?.evaluation_source_sha256}</code></p></details>
             </>}
         </div>}
     </section>;
@@ -138,6 +156,10 @@ function Trajectory({ states, frame }: { states: State[]; frame: number }) {
 function Turning({ states }: { states: State[] }) {
     const values = states.map(s => s.absolute_turn_degrees);
     return <Series times={states.map(s=>s.elapsed_seconds)} series={[{name:'Total turning (degrees)',values}]} domain={[0, Math.max(1,...values)]} />;
+}
+function PlayerSpeed({ states }: { states: State[] }) {
+    const values = states.map(s => Math.hypot(s.player_velocity?.x ?? 0, s.player_velocity?.z ?? 0));
+    return <Series times={states.map(s => s.elapsed_seconds)} series={[{name:'Horizontal player speed (m/s)', values}]} domain={[0, Math.max(1, ...values)]} />;
 }
 function Series({ times, series, domain }: { times: number[]; series: {name:string;values:number[]}[]; domain:[number,number] }) {
     const [low,high]=domain, duration=Math.max(.01,...times);
