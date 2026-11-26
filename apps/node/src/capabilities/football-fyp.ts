@@ -22,6 +22,10 @@ const EXECUTABLE_POLICIES: Record<string, { contractId: string; behavior: string
         contractId: 'football-observation-v3', behavior: 'FootballInstructionV3', observations: 93, actions: 8,
         trainer: 'poca', config: 'Training/football_instruction_v3.yaml', scene: 'Assets/Football/Scenes/OpenGoalClose.unity',
     },
+    'football-navigation-v4': {
+        contractId: 'football-observation-v4', behavior: 'FootballNavigationV4', observations: 98, actions: 8,
+        trainer: 'poca', config: 'Training/football_navigation_v4.yaml', scene: 'Assets/Football/Scenes/StationaryBallAcquisition.unity',
+    },
 };
 const cleanEnv = (): NodeJS.ProcessEnv => Object.fromEntries(
     ['PATH', 'HOME', 'TMPDIR', 'LANG', 'USER', 'LOGNAME']
